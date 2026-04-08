@@ -1,0 +1,30 @@
+From 9f222acbff58522c086dbbb225958695572746aa Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Fri, 6 Jun 2025 14:32:54 -0700
+Subject: [PATCH] fixup prompt system ready event retrieval
+
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ source-embedded/CcspCwmpProcessor/ccsp_cwmp_proco_event.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/source-embedded/CcspCwmpProcessor/ccsp_cwmp_proco_event.c b/source-embedded/CcspCwmpProcessor/ccsp_cwmp_proco_event.c
+index 3f7cfedb..c9335e86 100644
+--- a/source-embedded/CcspCwmpProcessor/ccsp_cwmp_proco_event.c
++++ b/source-embedded/CcspCwmpProcessor/ccsp_cwmp_proco_event.c
+@@ -284,7 +284,11 @@ void waitUntilSystemReady(	void*	cbContext)
+ 	{
+ 		CcspTr069PaTraceInfo(("Waiting for system ready signal\n"));
+ 		// After waiting for 24 * 5 = 120s (2mins) send dbus message to CR to query for system ready
+-		if(wait_time == 24)
++
++        // This TR-069 version hasn't been updated to use rbus for to receive: system ready event.
++        // Therefore we should proceed immediately with the alternative checkIfSystemReady() method.
++        // Remove the 24 * 5s delay: Replace 'if(wait_time == 24)' with 'if (1)''
++        if (1)
+ 		{
+ 			wait_time = 0;
+ 			if(checkIfSystemReady())
+-- 
+2.25.1
+

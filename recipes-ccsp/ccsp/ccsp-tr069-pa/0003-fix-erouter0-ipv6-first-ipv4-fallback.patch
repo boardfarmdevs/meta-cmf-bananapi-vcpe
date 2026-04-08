@@ -1,0 +1,45 @@
+diff --git a/source-embedded/DslhManagementServer/ccsp_management_server.c b/source-embedded/DslhManagementServer/ccsp_management_server.c
+index eb72726..ffeb5d9 100755
+--- a/source-embedded/DslhManagementServer/ccsp_management_server.c
++++ b/source-embedded/DslhManagementServer/ccsp_management_server.c
+@@ -1220,24 +1220,27 @@ ANSC_STATUS CcspManagementServer_GenerateConnectionRequestURL(
+             getifaddrs(&if_addrs);
+             CcspTraceDebug(("%s: searching for '%s' interface\n", __func__, g_Tr069PaOutboundIfName));
+             for (struct ifaddrs *ifa = if_addrs; ifa != NULL; ifa = ifa->ifa_next) {
+-                const struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+-                const char *name = ifa->ifa_name;
+-
+-                if (addr && addr->sin_family == AF_INET) { // IPv4
+-                    if (!strcmp(name, g_Tr069PaOutboundIfName)) { // get OutboundIfName
+-                        CcspTraceDebug(("%s: found '%s' interface\n", __func__, name));
+-                        if (inet_ntop(AF_INET, &addr->sin_addr, ipAddr, sizeof(ipAddr)) != NULL) {
+-                            CcspTraceDebug(("%s: '%s' addres is '%s'\n", __func__, g_Tr069PaOutboundIfName, ipAddr));
++                if (ifa->ifa_addr && strcmp(ifa->ifa_name, g_Tr069PaOutboundIfName) == 0) {
++                    if (ifa->ifa_addr->sa_family == AF_INET6) {
++                        const struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)ifa->ifa_addr;
++                        if (!IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr) && 
++                            !IN6_IS_ADDR_LOOPBACK(&addr6->sin6_addr) &&
++                            !IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr) &&
++                            inet_ntop(AF_INET6, &addr6->sin6_addr, ipAddr, sizeof(ipAddr)) != NULL) {
++                            CcspTraceDebug(("%s: found IPv6 address '%s' on interface '%s'\n", __func__, ipAddr, g_Tr069PaOutboundIfName));
+                             OutboundIfName_ip_found = true;
+-                        } else {
+-                            CcspTraceError(("%s: failed to get ip address of '%s' interface: %s\n", __func__, g_Tr069PaOutboundIfName, strerror(errno)));
++                            break;
++                        }
++                    } else if (ifa->ifa_addr->sa_family == AF_INET) {
++                        const struct sockaddr_in *addr4 = (struct sockaddr_in *)ifa->ifa_addr;
++                        if (inet_ntop(AF_INET, &addr4->sin_addr, ipAddr, sizeof(ipAddr)) != NULL) {
++                            CcspTraceDebug(("%s: found IPv4 address '%s' on interface '%s'\n", __func__, ipAddr, g_Tr069PaOutboundIfName));
++                            OutboundIfName_ip_found = true;
++                            break;
+                         }
+-
+-                        break;
+                     }
+                 }
+             }
+-
+             if (if_addrs != NULL)
+                 freeifaddrs(if_addrs);
+ 

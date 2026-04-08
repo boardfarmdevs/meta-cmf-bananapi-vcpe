@@ -1,0 +1,13 @@
+[Unit]
+Description=mount /nvram (vCPE stub - LXD already mounts it as a volume)
+DefaultDependencies=no
+Before=basic.target sysinit.target
+
+[Service]
+Type=oneshot
+# Create subdirs asserted by downstream units (e.g. /nvram/secure for gwprovapp).
+ExecStart=/bin/mkdir -p /nvram/secure
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

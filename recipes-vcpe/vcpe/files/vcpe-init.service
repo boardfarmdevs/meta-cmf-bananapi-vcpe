@@ -1,0 +1,14 @@
+[Unit]
+Description=vcpe-init Service
+DefaultDependencies=no
+After=dev-mount.target
+Before=basic.target network.target
+Requires=tmp.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/vcpe-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

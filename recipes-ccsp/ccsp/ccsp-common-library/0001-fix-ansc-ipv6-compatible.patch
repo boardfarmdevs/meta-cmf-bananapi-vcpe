@@ -1,0 +1,119 @@
+diff --git a/source/util_api/ansc/AnscPlatform/ansc_http_parser.c b/source/util_api/ansc/AnscPlatform/ansc_http_parser.c
+old mode 100644
+new mode 100755
+index 451c081e9..0c7f20308
+--- a/source/util_api/ansc/AnscPlatform/ansc_http_parser.c
++++ b/source/util_api/ansc/AnscPlatform/ansc_http_parser.c
+@@ -9158,7 +9158,11 @@ HttpSmpoUtilParseAbsoluteURI
+                 }
+ 
+ #ifdef _ANSC_IPV6_COMPATIBLE_
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++                if ( !(pPortStart = (unsigned char *)(_ansc_strchr( (char *)(pHost), ']'))) )
++#else
+                 if ( !(pPortStart = _ansc_strchr(pHost, ']')) )
++#endif
+                 {
+                     pPortStart = pHost;
+                 }
+diff --git a/source/util_api/ansc/AnscSimpleClientTcp/ansc_scto_operation.c b/source/util_api/ansc/AnscSimpleClientTcp/ansc_scto_operation.c
+old mode 100644
+new mode 100755
+index cb9cc2aaa..7f9f2ca8d
+--- a/source/util_api/ansc/AnscSimpleClientTcp/ansc_scto_operation.c
++++ b/source/util_api/ansc/AnscSimpleClientTcp/ansc_scto_operation.c
+@@ -112,9 +112,13 @@ AnscSctoEngage
+     PANSC_SIMPLE_CLIENT_TCP_OBJECT  pMyObject    = (PANSC_SIMPLE_CLIENT_TCP_OBJECT)hThisObject;
+     PANSC_SCTO_WORKER_OBJECT        pWorker      = (PANSC_SCTO_WORKER_OBJECT      )pMyObject->hWorker;
+     int                             s_error      = 0;
++#ifndef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_ // remove xskt_client_addr for _ANSC_IPV6_COMPATIBLE_
+     ansc_socket_addr_in             ansc_client_addr;
++#endif
+     ansc_socket_addr_in             ansc_server_addr;
++#ifndef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_ // remove xskt_client_addr for _ANSC_IPV6_COMPATIBLE_
+     xskt_socket_addr_in             xskt_client_addr;
++#endif
+     xskt_socket_addr_in             xskt_server_addr;
+ 
+ #ifdef _ANSC_IPV6_COMPATIBLE_
+@@ -188,7 +192,11 @@ AnscSctoEngage
+ 
+         AnscTrace("!!! Peer Port: %s !!!\n", port);
+ 
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++        unsigned char * pPeerName = pMyObject->GetPeerName((ANSC_HANDLE)pMyObject);
++#else
+         char * pPeerName = pMyObject->GetPeerName((ANSC_HANDLE)pMyObject);
++#endif
+ 
+         AnscTrace("Peer Name: %s!!!\n", pPeerName);
+ 
+@@ -213,7 +221,11 @@ AnscSctoEngage
+ */
+         if ( _xskt_getaddrinfo
+                 (
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_                    
++                    (char *)(pMyObject->GetPeerName((ANSC_HANDLE)pMyObject)), 
++#else
+                     pMyObject->GetPeerName((ANSC_HANDLE)pMyObject), 
++#endif                
+                     port,
+                     &xskt_hints,
+ 	            &pxskt_server_addrinfo_orig // Modification for handling memory leak
+@@ -230,7 +242,11 @@ AnscSctoEngage
+         {
+             AnscTrace("!!! error 1 !!!\n");
+ 
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++            if ( (pMyObject->Mode & ANSC_SCTO_MODE_NO_BSP_NOTIFY_CONN_ERR) == 0 )
++#else            
+             if ( pMyObject->Mode & ANSC_SCTO_MODE_NO_BSP_NOTIFY_CONN_ERR == 0 )
++#endif
+             {
+                 pWorker->Notify
+ 	            	(
+@@ -263,7 +279,11 @@ AnscSctoEngage
+ 
+         if ( _ansc_getaddrinfo
+                 (
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++                    (char*)(pMyObject->GetPeerName((ANSC_HANDLE)pMyObject)), 
++#else
+                     pMyObject->GetPeerName((ANSC_HANDLE)pMyObject), 
++#endif
+                     port,
+                     &ansc_hints,
+                     &pansc_server_addrinfo
+@@ -277,7 +297,11 @@ AnscSctoEngage
+                 )
+             )
+         {
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++            if ( (pMyObject->Mode & ANSC_SCTO_MODE_NO_BSP_NOTIFY_CONN_ERR ) == 0 )
++#else
+             if ( pMyObject->Mode & ANSC_SCTO_MODE_NO_BSP_NOTIFY_CONN_ERR == 0 )
++#endif
+             {
+                 pWorker->Notify
+ 	            	(
+diff --git a/source/util_api/http/components/HttpWebcSession/http_wcso_request.c b/source/util_api/http/components/HttpWebcSession/http_wcso_request.c
+old mode 100644
+new mode 100755
+index 528dc6087..2d64f3a45
+--- a/source/util_api/http/components/HttpWebcSession/http_wcso_request.c
++++ b/source/util_api/http/components/HttpWebcSession/http_wcso_request.c
+@@ -118,10 +118,14 @@ HttpWcsoConnect
+     ANSC_STATUS                     returnStatus     = ANSC_STATUS_SUCCESS;
+     PHTTP_WEBC_SESSION_OBJECT       pMyObject        = (PHTTP_WEBC_SESSION_OBJECT     )hThisObject;
+     PHTTP_WEBC_SESSION_PROPERTY     pProperty        = (PHTTP_WEBC_SESSION_PROPERTY   )&pMyObject->Property;
++#ifndef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_    // remove pBspIf, pHttpSco if _ANSC_IPV6_COMPATIBLE_
+     PHTTP_BSP_INTERFACE             pBspIf           = (PHTTP_BSP_INTERFACE           )pMyObject->hBspIf;
+     PHTTP_SIMPLE_CLIENT_OBJECT      pHttpSco         = (PHTTP_SIMPLE_CLIENT_OBJECT    )pMyObject->hOwnerContext;
++#endif
+     HTTP_SCO_HOST_ADDRESSES         PeerAddr;
++#ifndef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_    // remove bSameAddresses if _ANSC_IPV6_COMPATIBLE_
+     BOOL                            bSameAddresses   = FALSE;
++#endif    
+     ANSC_IPV4_ADDRESS               ipAddr;
+     memset(&ipAddr, 1, sizeof(ANSC_IPV4_ADDRESS));
+     AnscStartupXsocketWrapper((ANSC_HANDLE)pMyObject);

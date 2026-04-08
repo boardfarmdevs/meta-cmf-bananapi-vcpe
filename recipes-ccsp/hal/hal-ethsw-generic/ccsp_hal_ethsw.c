@@ -1,0 +1,1220 @@
+ /*
+* If not stated otherwise in this file or this component's LICENSE file the
+* following copyright and licenses apply:
+*
+* Copyright 2019 RDK Management
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+* http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/ioctl.h>  /* ioctl()  */
+#include <sys/socket.h> /* socket() */
+#include <arpa/inet.h>  
+#include <linux/if.h>   /* struct ifreq */
+#include <stdbool.h>
+
+#include "ccsp_hal_ethsw.h" 
+
+
+/**********************************************************************
+                    DEFINITIONS
+**********************************************************************/
+
+#define  CcspHalEthSwTrace(msg)                     printf("%s - ", __FUNCTION__); printf msg;
+#define MAX_BUF_SIZE 1024
+#define MACADDRESS_SIZE 6
+#define LM_ARP_ENTRY_FORMAT  "%63s %63s %63s %63s %17s %63s"
+
+#define ETH_WAN_INTERFACE  "erouter0"
+#define ETH_WAN_IFNAME   "eth0"
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+static pthread_t ethsw_tid;
+static int hal_init_done = 0;
+appCallBack ethWanCallbacks;
+#define  ETH_INITIALIZE  "/tmp/ethagent_initialized"
+void *ethsw_thread_main(void *context __attribute__((unused)));
+#endif
+
+#define  ETHSWITCHTOOL   "ethtool"
+#define  MIITOOL         "mii_mgr_cl45"
+#define  WANLINKUP       "0x796D"
+#define  MAX_LAN_PORT     6
+/**********************************************************************
+                            MAIN ROUTINES
+**********************************************************************/
+
+CCSP_HAL_ETHSW_ADMIN_STATUS admin_status;
+
+int is_interface_exists(const char *fname)
+{
+    FILE *file;
+    if ((file = fopen(fname, "r")))
+    {
+        fclose(file);
+        return 1;
+    }
+    return 0;
+}
+
+int is_interface_link(const char *fname)
+{
+    FILE *file;
+    if ((file = fopen(fname, "r")))
+    {
+        char buf[32] = {0};
+        fgets(buf,sizeof(buf),file);
+        fclose(file);
+        if(strtol(buf, NULL, 10))
+            return 1;
+    }
+    return 0;
+}
+/* CcspHalEthSwInit :  */
+/**
+* @description Do what needed to intialize the Eth hal.
+* @param None
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwInit
+    (
+        void
+    )
+{
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+    int rc;
+
+    if (hal_init_done) {
+        return RETURN_OK;
+    }
+
+    // Create thread to handle async events and callbacks.
+    rc = pthread_create(&ethsw_tid, NULL, ethsw_thread_main, NULL);
+    if (rc != 0) {
+        return RETURN_ERR;
+    }
+
+    hal_init_done = 1;
+#endif
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwGetPortStatus :  */
+/**
+* @description Retrieve the current port status -- link speed, duplex mode, etc.
+
+* @param PortId      -- Port ID as defined in CCSP_HAL_ETHSW_PORT
+* @param pLinkRate   -- Receives the current link rate, as in CCSP_HAL_ETHSW_LINK_RATE
+* @param pDuplexMode -- Receives the current duplex mode, as in CCSP_HAL_ETHSW_DUPLEX_MODE
+* @param pStatus     -- Receives the current link status, as in CCSP_HAL_ETHSW_LINK_STATUS
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwGetPortStatus
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        PCCSP_HAL_ETHSW_LINK_RATE   pLinkRate,
+        PCCSP_HAL_ETHSW_DUPLEX_MODE pDuplexMode,
+        PCCSP_HAL_ETHSW_LINK_STATUS pStatus
+    )
+{
+    char path[32] = {0};
+    FILE *fp = NULL;
+    char cmd[64] = {0};
+    char filepath[32] = {0};
+    char buf[32] = {0};
+    char duplex[6] = {0};
+    int link = 0;
+    int speed = 0;
+    char ifName[16] = {0};
+
+    if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL || pStatus == NULL)
+        return  RETURN_ERR;
+
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5){
+        sprintf(ifName,"%s", "eth3");
+    }
+#endif
+    else if (PortId == 1)
+    {
+	sprintf(ifName,"%s", "erouter0");
+    }
+    else{
+        sprintf(ifName, "lan%d", (PortId-1));
+    }
+    sprintf(path, "/sys/class/net/%s/carrier", ifName);
+    link = is_interface_link(path);
+
+    if(link){
+        *pStatus  = CCSP_HAL_ETHSW_LINK_Up;
+    }else{
+        *pStatus   = CCSP_HAL_ETHSW_LINK_Down;
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK; 
+    }
+    sprintf(cmd, "%s %s | grep -i speed > /tmp/%s_speed", ETHSWITCHTOOL, ifName, ifName);
+    system(cmd);
+    sprintf(filepath, "/tmp/%s_speed", ifName);
+    fp = fopen(filepath, "r");
+    if(fp != NULL)
+    {
+        fgets(buf,sizeof(buf),fp);
+        if(strstr(buf,"Unknown") == NULL){
+            sscanf(buf,"       Speed: %dMb/s", &speed);
+        }        
+        fclose(fp);
+    }else{
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK;        
+    }
+    
+    if(speed)
+    {
+        memset(buf,0,sizeof(buf));
+        memset(cmd,0,sizeof(cmd));
+        memset(filepath,0,sizeof(filepath));
+        sprintf(cmd, "%s %s | grep -i duplex > /tmp/%s_duplex", ETHSWITCHTOOL, ifName, ifName);
+        system(cmd);
+        sprintf(filepath, "/tmp/%s_duplex", ifName);
+        fp = fopen(filepath, "r");
+        if(fp != NULL)
+        {
+            fgets(buf,sizeof(buf),fp);
+            if(strstr(buf,"Unknown") == NULL){
+                sscanf(buf,"        Duplex: %s", duplex);
+            }
+            fclose(fp);
+            if(!strcmp(duplex,"Full")) 
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Full;
+            else
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Half;         
+        }
+    }
+    switch (speed)
+    {
+        case 0:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_Auto;
+            *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+            break;
+        }
+
+        case 10:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Mbps;
+            break;
+        }
+
+        case 100:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_100Mbps;
+            break;
+        }
+
+        case 1000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_1Gbps;
+            break;
+        }
+
+        case 2500:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_2_5Gbps;
+            break;
+        }
+
+        case 5000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_5Gbps;
+            break;
+        }
+
+        case 10000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Gbps;
+            break;
+        }
+
+        default:
+        {
+            CcspHalEthSwTrace(("Unsupported link rate %d port id %d\n",speed, PortId));
+            return  RETURN_ERR;
+        }
+    }
+
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwGetPortCfg :  */
+/**
+* @description Retrieve the current port config -- link speed, duplex mode, etc.
+
+* @param PortId      -- Port ID as defined in CCSP_HAL_ETHSW_PORT
+* @param pLinkRate   -- Receives the current link rate, as in CCSP_HAL_ETHSW_LINK_RATE
+* @param pDuplexMode -- Receives the current duplex mode, as in CCSP_HAL_ETHSW_DUPLEX_MODE
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwGetPortCfg
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        PCCSP_HAL_ETHSW_LINK_RATE   pLinkRate,
+        PCCSP_HAL_ETHSW_DUPLEX_MODE pDuplexMode
+    )
+{
+
+    FILE *fp = NULL;
+    char cmd[64] = {0};
+    char filepath[32] = {0};
+    char buf[32] = {0};
+    char duplex[6] = {0};
+    int speed = 0;
+    char ifName[16] = {0};
+
+    if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL)
+        return  RETURN_ERR;
+
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5){
+        sprintf(ifName,"%s", "eth3");
+    }
+#endif
+    else if (PortId == 1)
+    {
+        sprintf(ifName,"%s", "erouter0");
+    }
+    else
+    {
+        sprintf(ifName, "lan%d", (PortId-1));
+    }
+
+    sprintf(cmd, "%s %s | grep -i speed > /tmp/%s_speed", ETHSWITCHTOOL, ifName, ifName);
+    system(cmd);
+    sprintf(filepath, "/tmp/%s_speed", ifName);
+    fp = fopen(filepath, "r");
+    if(fp != NULL)
+    {
+        fgets(buf,sizeof(buf),fp);
+        if(strstr(buf,"Unknown") == NULL){
+            sscanf(buf,"       Speed: %dMb/s", &speed);
+        }        
+        fclose(fp);
+    }else{
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK;        
+    }
+    
+    if(speed)
+    {
+        memset(buf,0,sizeof(buf));
+        memset(cmd,0,sizeof(cmd));
+        memset(filepath,0,sizeof(filepath));
+        sprintf(cmd, "%s %s | grep -i duplex > /tmp/%s_duplex", ETHSWITCHTOOL, ifName, ifName);
+        system(cmd);
+        sprintf(filepath, "/tmp/%s_duplex", ifName);
+        fp = fopen(filepath, "r");
+        if(fp != NULL)
+        {
+            fgets(buf,sizeof(buf),fp);
+            if(strstr(buf,"Unknown") == NULL){
+                sscanf(buf,"        Duplex: %s", duplex);
+            }
+            fclose(fp);
+            if(!strcmp(duplex,"Full")) 
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Full;
+            else
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Half;         
+        }
+    }
+    switch (speed)
+    {
+        case 0:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_Auto;
+            *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+            break;
+        }
+
+        case 10:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Mbps;
+            break;
+        }
+
+        case 100:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_100Mbps;
+            break;
+        }
+
+        case 1000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_1Gbps;
+            break;
+        }
+
+        case 2500:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_2_5Gbps;
+            break;
+        }
+
+        case 5000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_5Gbps;
+            break;
+        }
+
+        case 10000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Gbps;
+            break;
+        }
+
+        default:
+        {
+            CcspHalEthSwTrace(("Unsupported link rate %d port id %d\n",speed, PortId));
+            return  RETURN_ERR;
+        }
+    }
+
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwSetPortCfg :  */
+/**
+* @description Set the port configuration -- link speed, duplex mode
+
+* @param PortId      -- Port ID as defined in CCSP_HAL_ETHSW_PORT
+* @param LinkRate    -- Set the link rate, as in CCSP_HAL_ETHSW_LINK_RATE
+* @param DuplexMode  -- Set the duplex mode, as in CCSP_HAL_ETHSW_DUPLEX_MODE
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwSetPortCfg
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        CCSP_HAL_ETHSW_LINK_RATE    LinkRate,
+        CCSP_HAL_ETHSW_DUPLEX_MODE  DuplexMode
+    )
+{
+    CcspHalEthSwTrace(("set port %d LinkRate to %d, DuplexMode to %d", PortId, LinkRate, DuplexMode));
+    
+    if(PortId <= 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+
+    char cmd[128] = {0};
+    char setduplex[6] = {0}; 
+    char ifName[16] = {0};
+
+    if(DuplexMode == 2 || DuplexMode == 0)
+        strcpy(setduplex,"full");
+    else if (DuplexMode == 1)
+        strcpy(setduplex,"half");
+    else
+        return  RETURN_ERR;
+
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5){
+        sprintf(ifName,"%s", "eth3");
+    }else
+#endif
+    {
+        sprintf(ifName, "lan%d", (PortId-1));
+    }
+
+    switch (LinkRate)
+    {
+        case CCSP_HAL_ETHSW_LINK_10Mbps:
+        {
+            sprintf(cmd,"%s -s %s speed %d duplex %s", ETHSWITCHTOOL, ifName, 10, setduplex);
+            system(cmd);
+            break;
+        }
+
+        case CCSP_HAL_ETHSW_LINK_100Mbps:
+        {
+            sprintf(cmd,"%s -s %s speed %d duplex %s", ETHSWITCHTOOL, ifName, 100, setduplex);
+            system(cmd);
+            break;
+        }
+
+        case CCSP_HAL_ETHSW_LINK_1Gbps:
+        {
+            sprintf(cmd,"%s -s %s speed %d duplex full", ETHSWITCHTOOL, ifName, 1000);
+            system(cmd);
+            break;
+        }
+        case CCSP_HAL_ETHSW_LINK_2_5Gbps:
+        case CCSP_HAL_ETHSW_LINK_5Gbps:
+        case CCSP_HAL_ETHSW_LINK_10Gbps:
+        case CCSP_HAL_ETHSW_LINK_Auto:
+        {
+            sprintf(cmd,"%s -s %s autoneg on", ETHSWITCHTOOL, ifName);
+            system(cmd);
+            break;
+        }
+        default:
+        {
+            CcspHalEthSwTrace(("Unsupported link rate %d port id %d\n",LinkRate, PortId));
+            return  RETURN_ERR;
+        }
+    }
+
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwGetPortAdminStatus :  */
+/**
+* @description Retrieve the current port admin status.
+
+* @param PortId      -- Port ID as defined in CCSP_HAL_ETHSW_PORT
+* @param pAdminStatus -- Receives the current admin status
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwGetPortAdminStatus
+    (
+        CCSP_HAL_ETHSW_PORT           PortId,
+        PCCSP_HAL_ETHSW_ADMIN_STATUS  pAdminStatus
+    )
+{
+    if(PortId == NULL || pAdminStatus == NULL)
+        return  RETURN_ERR;
+	
+    CcspHalEthSwTrace(("port id %d", PortId));
+ 
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+
+ 	int sockfd;
+    struct ifreq ifr;
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    {
+        printf("====> open socket fail \n");
+        return RETURN_ERR;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    if (PortId == 1)
+	       snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", "erouter0");
+    else
+        snprintf(ifr.ifr_name, sizeof(ifr.ifr_name),"lan%d",(PortId-1));
+
+    if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0)
+    {
+        printf("====> ioctl open socket fail \n");
+        close(sockfd);
+        return RETURN_ERR;
+    }
+
+    close(sockfd);
+    if(ifr.ifr_flags & IFF_UP)
+        *pAdminStatus   = CCSP_HAL_ETHSW_AdminUp;
+    else
+        *pAdminStatus   = CCSP_HAL_ETHSW_AdminDown;
+    
+    /*if(admin_status)
+        *pAdminStatus   = CCSP_HAL_ETHSW_AdminDown; */
+	
+  return RETURN_OK;
+}
+
+/* CcspHalEthSwSetPortAdminStatus :  */
+/**
+* @description Set the ethernet port admin status
+
+* @param AdminStatus -- set the admin status, as defined in CCSP_HAL_ETHSW_ADMIN_STATUS
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwSetPortAdminStatus
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        CCSP_HAL_ETHSW_ADMIN_STATUS AdminStatus
+    )
+{
+    CcspHalEthSwTrace(("set port %d AdminStatus to %d", PortId, AdminStatus));
+    if(AdminStatus < CCSP_HAL_ETHSW_AdminUp || AdminStatus > CCSP_HAL_ETHSW_AdminTest)
+        return  RETURN_ERR;
+    if(PortId <= 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+    
+    char cmd1[32] = {0};
+    char cmd2[32] = {0};
+
+    sprintf(cmd1,"ip link set lan%d up",(PortId-1));
+    sprintf(cmd2,"ip link set lan%d down",(PortId-1));
+
+    switch (PortId)
+    {
+        case CCSP_HAL_ETHSW_EthPort1:
+        case CCSP_HAL_ETHSW_EthPort2:
+        case CCSP_HAL_ETHSW_EthPort3:
+        case CCSP_HAL_ETHSW_EthPort4:
+        {
+
+            {
+                 if(AdminStatus==0)
+                 {
+                    system(cmd1);
+                    admin_status=0;
+                 }
+                 else
+                 {
+                     system(cmd2);
+                     admin_status=1;
+                 }
+             }
+             break;
+        }
+        default:
+            CcspHalEthSwTrace(("Unsupported port id %d", PortId));
+            return  RETURN_ERR;
+    }
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwSetAgingSpeed :  */
+/**
+* @description Set the ethernet port configuration -- admin up/down, link speed, duplex mode
+
+* @param PortId      -- Port ID as defined in CCSP_HAL_ETHSW_PORT
+* @param AgingSpeed  -- integer value of aging speed
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwSetAgingSpeed
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        INT                         AgingSpeed
+    )
+{
+    CcspHalEthSwTrace(("set port %d aging speed to %d", PortId, AgingSpeed));
+    if(AgingSpeed < 0 || AgingSpeed > 300)
+        return  RETURN_ERR;
+    if(PortId < 1)
+        return  RETURN_ERR;
+    return  RETURN_OK;
+}
+
+
+/* CcspHalEthSwLocatePortByMacAddress :  */
+/**
+* @description Retrieve the port number that the specificed MAC address is associated with (seen)
+
+* @param pMacAddr    -- Specifies the MAC address -- 6 bytes
+* @param pPortId     -- Receives the found port number that the MAC address is seen on
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+* @execution Synchronous.
+* @sideeffect None.
+
+*
+* @note This function must not suspend and must not invoke any blocking system
+* calls. It should probably just send a message to a driver event handler task.
+*
+*/
+INT
+CcspHalEthSwLocatePortByMacAddress
+    (
+		unsigned char * pMacAddr, 
+		INT * pPortId
+    )
+{
+    if (pMacAddr == NULL)
+        return RETURN_ERR;
+
+    CcspHalEthSwTrace
+        ((
+            "%s -- search for MAC address %02x:%02x:%02x:%02x:%02x:%02x",
+            __FUNCTION__,
+            pMacAddr[0], pMacAddr[1], pMacAddr[2], 
+            pMacAddr[3], pMacAddr[4], pMacAddr[5]
+        ));
+
+	char cmd[128] = {0};
+	char buf[128] = {0};
+	char foundmac[18] = {0};
+	int port = 0;
+	FILE *fp = NULL;
+
+	sprintf(foundmac,"%02x:%02x:%02x:%02x:%02x:%02x",pMacAddr[0], pMacAddr[1], pMacAddr[2], pMacAddr[3], pMacAddr[4], pMacAddr[5]);
+
+	snprintf(cmd,128, "bridge fdb show | grep %s | awk '$0 ~ /master/{print $3} '", foundmac);
+	
+	fp = popen(cmd, "r");
+	if(fp != NULL)
+	{
+		if(fgets(buf,sizeof(buf),fp) != NULL)
+		{
+			pclose(fp);
+			if (strncmp(buf, "lan",3))
+			{
+#ifdef THREE_GMACS_SUPPORT
+				if (!strncmp(buf, "eth3",4))
+				{
+					*pPortId = 5;
+					return RETURN_OK;
+				}
+#endif
+				return RETURN_ERR;
+			}else{	
+				sscanf(buf,"lan%d",&port);
+				*pPortId = port+1;
+				return RETURN_OK;
+			}
+		}             
+        pclose(fp);
+	}
+	return  RETURN_ERR;
+}
+
+//For Getting Current Interface Name from corresponding hostapd configuration
+void GetInterfaceName(char *interface_name, char *conf_file)
+{
+        FILE *fp = NULL;
+        char path[MAX_BUF_SIZE] = {0},output_string[MAX_BUF_SIZE] = {0},fname[MAX_BUF_SIZE] = {0};
+        int count = 0;
+        char *interface = NULL;
+
+        fp = fopen(conf_file, "r");
+        if(fp == NULL)
+        {
+                printf("conf_file %s not exists \n", conf_file);
+                return;
+        }
+        fclose(fp);
+
+        sprintf(fname,"%s%s%s","cat ",conf_file," | grep interface=");
+        fp = popen(fname,"r");
+        if(fp == NULL)
+        {
+                        printf("Failed to run command in Function %s\n",__FUNCTION__);
+                        strcpy(interface_name, "");
+                        return;
+        }
+        if(fgets(path, sizeof(path)-1, fp) != NULL)
+        {
+                        interface = strchr(path,'=');
+
+                        if(interface != NULL)
+                                strncpy(output_string, interface+1, sizeof(output_string));
+        }
+
+        for(count = 0;output_string[count]!='\n';count++)
+                        interface_name[count] = output_string[count];
+        interface_name[count]='\0';
+
+        fprintf(stderr,"Interface name %s \n", interface_name);
+
+        pclose(fp);
+}
+/* CcspHalExtSw_getAssociatedDevice :  */
+/**
+* @description Collected the active wired clients information
+
+* @param output_array_size    -- Size of the active wired connected clients
+* @param output_struct     -- Structure of  wired clients informations
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+*/
+
+INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **output_struct)
+{
+	CHAR buf[MAX_BUF_SIZE] = {0},str[MAX_BUF_SIZE] = {0},interface_name[50] = {0},macAddr[50] = {0};
+	FILE *fp = NULL,*fp1 = NULL;
+	INT count = 0,str_count = 0;
+	ULONG maccount = 0,eth_count = 0;
+	INT arr[MACADDRESS_SIZE] = {0};
+	UCHAR mac[MACADDRESS_SIZE] = {0};
+	CHAR ipAddr[50],stub[50],phyAddr[50],ifName[32],status[32];
+	int ret;
+	if(output_struct == NULL)
+	{
+		printf("\nNot enough memory\n");
+		return RETURN_ERR;
+	}
+
+	system("echo -n  > /tmp/ethernetmac.txt");
+
+	system("cat /nvram/dnsmasq.leases | cut -d ' ' -f2 > /tmp/connected_mac.txt"); //storing the all associated device information in tmp folder
+	//storing the private wifi  associated device iformation in tmp folder
+	GetInterfaceName(interface_name,"/nvram/hostapd0.conf");
+	sprintf(buf,"iw dev %s station dump | grep Station | cut -d ' ' -f2 > /tmp/Associated_Devices.txt",interface_name);
+	system(buf);
+	GetInterfaceName(interface_name,"/nvram/hostapd1.conf");
+	sprintf(buf,"iw dev %s station dump | grep Station | cut -d ' ' -f2 >> /tmp/Associated_Devices.txt",interface_name);
+	system(buf);
+
+	system("diff /tmp/Associated_Devices.txt /tmp/connected_mac.txt | grep \"^+\" | cut -c2- | sed -n '1!p' > /tmp/ethernet_connected_clients.txt"); //separating the ethernet associated device information from connected_mac test file
+	fp=popen("cat /tmp/ethernet_connected_clients.txt | wc -l","r"); // For getting the  ethernet connected mac count
+	if(fp == NULL)
+		return RETURN_ERR;
+	else
+	{
+		fgets(buf,MAX_BUF_SIZE,fp);
+		maccount = strtol(buf, NULL, 10);
+		fprintf(stderr,"ethernet umac is %d \n",maccount);
+	}
+	pclose(fp);
+	eth_device_t *temp=NULL;
+	temp = (eth_device_t*)calloc(1, sizeof(eth_device_t)*maccount);
+	if(temp == NULL)
+	{
+		fprintf(stderr,"Not enough memory \n");
+		return RETURN_ERR;
+	}
+	fp=fopen("/tmp/ethernet_connected_clients.txt","r"); // reading the ethernet associated device information
+	if(fp == NULL)
+	{
+		*output_struct = NULL;
+		*output_array_size = 0;
+		free(temp);
+		return RETURN_ERR;
+	}
+	else
+	{
+		for(count = 0;count < maccount ; count++)
+		{
+			fgets(str,MAX_BUF_SIZE,fp);	
+			for(str_count = 0;str[str_count]!='\n';str_count++)
+				macAddr[str_count] = str[str_count];
+			macAddr[str_count] = '\0';
+			system("ip nei show | grep brlan0 > /tmp/arp_cache");
+			fp1=fopen("/tmp/arp_cache","r");
+			if(fp1 == NULL){
+				fclose(fp);
+				free(temp);
+				return RETURN_ERR;
+			}
+			while(fgets(buf,sizeof(buf),fp1) != NULL)
+			{
+				if ( strstr(buf, "FAILED") != 0 )
+					continue;
+				/*
+Sample:
+10.0.0.208 dev brlan0 lladdr d4:be:d9:99:7f:47 STALE
+10.0.0.107 dev brlan0 lladdr 64:a2:f9:d2:f5:67 REACHABLE
+				 */
+				ret = sscanf(buf, LM_ARP_ENTRY_FORMAT,
+						ipAddr,
+						stub,
+						ifName,
+						stub,
+						phyAddr,
+						status);  
+				if(ret != 6)
+					continue;
+				if(strcmp(phyAddr,macAddr) == 0)
+				{
+					memset(buf,0,sizeof(buf));
+					if(strcmp(status,"REACHABLE") == 0)
+					{
+						sprintf(buf,"echo %s >> /tmp/ethernetmac.txt",macAddr);
+						system(buf);
+						eth_count++;
+						break;
+					}
+					else if((strcmp(status,"STALE") == 0) || (strcmp(status,"DELAY")))
+					{
+						sprintf(buf,"ping -q -c 1 -W 1  \"%s\"  > /dev/null 2>&1",ipAddr);
+						fprintf(stderr,"buf is %s and MACADRRESS %s\n",buf,macAddr);
+						if (WEXITSTATUS(system(buf)) == 0)
+						{
+							fprintf(stderr,"Inside STALE SUCCESS \n");
+							memset(buf,0,sizeof(buf));
+							sprintf(buf,"echo %s >> /tmp/ethernetmac.txt",macAddr);
+							system(buf);
+							eth_count++;
+							break;
+						}
+					}
+					else
+					{
+						fprintf(stderr,"Running in different state \n");
+						break;
+					}
+				}
+				else
+					fprintf(stderr,"MAcAddress is not valid \n");
+			}
+			fclose(fp1);
+		}
+	}
+	fclose(fp);
+	fp=fopen("/tmp/ethernetmac.txt","r");
+	if(fp == NULL)
+	{
+		*output_struct = NULL;
+		*output_array_size = 0;
+		free(temp);
+		return RETURN_OK;
+	}
+	else
+	{
+		memset(buf,0,sizeof(buf));
+		for(count = 0;count < eth_count ; count++)
+		{
+			fgets(buf,sizeof(buf),fp);
+			if(MACADDRESS_SIZE  == sscanf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",&arr[0],&arr[1],&arr[2],&arr[3],&arr[4],&arr[5]) )
+			{
+				for( int ethclientindex = 0; ethclientindex < 6; ++ethclientindex )
+				{
+					mac[ethclientindex] = (unsigned char) arr[ethclientindex];
+				}
+				memcpy(temp[count].eth_devMacAddress,mac,(sizeof(unsigned char))*6);
+				fprintf(stderr,"MAC %d = %X:%X:%X:%X:%X:%X \n", count, temp[count].eth_devMacAddress[0],temp[count].eth_devMacAddress[1], temp[count].eth_devMacAddress[2], temp[count].eth_devMacAddress[3], temp[count].eth_devMacAddress[4], temp[count].eth_devMacAddress[5]);
+			}
+			temp[count].eth_port= 0;
+			CcspHalEthSwLocatePortByMacAddress(temp[count].eth_devMacAddress, &temp[count].eth_port);
+			temp[count].eth_vlanid=-1;
+			FILE *fp2 = NULL;
+			char cmd[64] = {0};
+			char filepath[32] = {0};
+			char buffer[32] = {0};
+#ifdef THREE_GMACS_SUPPORT
+			if (temp[count].eth_port == 5){
+				sprintf(filepath, "/sys/class/net/eth3/speed");   
+			}else
+#endif
+			{
+				sprintf(filepath, "/sys/class/net/lan%d/speed",(temp[count].eth_port-1));
+			}
+			fp2 = fopen(filepath, "r");
+			if(fp2 != NULL)
+			{
+				fgets(buffer,sizeof(buffer),fp2);
+				temp[count].eth_devTxRate = strtol(buffer, NULL, 10);
+				temp[count].eth_Active=1;
+				fclose(fp2);
+			}else{
+				temp[count].eth_devTxRate= -1;
+				temp[count].eth_Active=0;
+			}
+			temp[count].eth_devRxRate = temp[count].eth_devTxRate;
+		}
+	}
+	fclose(fp);
+	*output_struct = temp;
+	*output_array_size = eth_count;
+	fprintf(stderr,"Connected Active ethernet clients count is %ld \n",*output_array_size);
+	return 	RETURN_OK;
+}
+
+/* CcspHalExtSw_getEthWanEnable  */
+/**
+* @description Return the Ethwan Enbale status
+
+* @param enable    -- Having status of WANMode ( Ethernet,DOCSIS)
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+*/
+
+INT CcspHalExtSw_getEthWanEnable(BOOLEAN *enable)
+{
+	int sockfd;
+    struct ifreq ifr;
+
+    if (enable == NULL)
+        return RETURN_ERR;
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    {
+        printf("====> open socket fail \n");
+        return RETURN_ERR;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ETH_WAN_INTERFACE);
+
+    if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0)
+    {
+        printf("====> ioctl open socket fail \n");
+        close(sockfd);
+        return RETURN_ERR;
+    }
+
+    close(sockfd);
+    *enable = ifr.ifr_flags & IFF_UP;
+	return RETURN_OK;
+}
+
+/* CcspHalExtSw_getEthWanPort:  */
+/**
+* @description Return the ethwan port
+
+* @param port    -- having ethwan port
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+*/
+
+INT CcspHalExtSw_getEthWanPort(UINT *Port)
+{
+	if(Port == NULL)
+		return RETURN_ERR;
+	
+	*Port = 6;
+	return RETURN_OK;
+}
+
+/* CcspHalExtSw_setEthWanEnable :  */
+/**
+* @description setting the ethwan enable status
+
+* @enable    -- Switch from ethernet mode to docsis mode or vice-versa
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+*/
+
+INT CcspHalExtSw_setEthWanEnable(BOOLEAN enable)
+{
+    char cmd[32] = {0};
+
+    sprintf(cmd,"ifconfig %s %s",ETH_WAN_INTERFACE, enable ? "up":"down");
+    system(cmd);
+
+	return RETURN_OK;
+}
+
+
+/* CcspHalExtSw_setEthWanPort :  */
+/**
+* @description  Need to set the ethwan port
+
+* @param port    -- Setting the ethwan port
+
+*
+* @return The status of the operation.
+* @retval RETURN_OK if successful.
+* @retval RETURN_ERR if any error is detected
+*
+*/
+
+INT CcspHalExtSw_setEthWanPort(UINT Port)
+{
+	if(Port != 6)
+		return  RETURN_ERR;
+	return RETURN_OK;
+}
+
+INT GWP_GetEthWanLinkStatus()
+{
+    int link = 0;
+    char path[32] = {0};
+
+    sprintf(path, "/sys/class/net/erouter0/carrier");
+    link = is_interface_link(path);
+
+    if(link){
+        return 1;
+    }else{
+        return 0; 
+    }
+}
+
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+void *ethsw_thread_main(void *context __attribute__((unused)))
+{
+	int previousLinkDetected = 0;
+	int currentLinkDeteced = 0;
+	int timeout = 0;
+	int file = 0;
+
+	while(timeout != 180)
+	{
+		if (file == access(ETH_INITIALIZE, R_OK))
+		{
+			CcspHalEthSwTrace(("Eth agent initialized \n"));
+			break;
+		}
+		else
+		{
+			timeout = timeout+1;
+			sleep(1);
+		}
+	}
+
+	while(1)
+	{
+		currentLinkDeteced = GWP_GetEthWanLinkStatus();
+		if (currentLinkDeteced != previousLinkDetected)
+		{
+			if (currentLinkDeteced)
+			{
+				CcspHalEthSwTrace(("send_link_event: Got Link UP Event\n"));
+				ethWanCallbacks.pGWP_act_EthWanLinkUP();    
+			}
+			else
+			{
+				CcspHalEthSwTrace(("send_link_event: Got Link DOWN Event\n"));
+				ethWanCallbacks.pGWP_act_EthWanLinkDown();   
+			}
+			previousLinkDetected = currentLinkDeteced;
+		}
+		sleep(5);
+	}
+
+    return NULL;
+}
+#endif
+void GWP_RegisterEthWan_Callback(appCallBack *obj) {
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+    int rc;
+
+    if (obj == NULL) {
+        rc = RETURN_ERR;
+    } else {
+        ethWanCallbacks.pGWP_act_EthWanLinkUP = obj->pGWP_act_EthWanLinkUP;
+        ethWanCallbacks.pGWP_act_EthWanLinkDown = obj->pGWP_act_EthWanLinkDown;
+        rc = RETURN_OK;
+    }
+#endif	
+}
+
+INT GWP_GetEthWanInterfaceName
+(
+ unsigned char * Interface,
+ ULONG           maxSize
+)
+{
+    //Maxsize param should be minimum 4charecters(eth0) including NULL charecter
+    if( ( Interface == NULL ) || ( maxSize < ( strlen( ETH_WAN_IFNAME ) + 1 ) ) )
+    {
+        printf("ERROR: Invalid argument. \n");
+        return RETURN_ERR;
+    }
+    snprintf(Interface, maxSize, "%s", ETH_WAN_IFNAME);
+    return RETURN_OK;
+}

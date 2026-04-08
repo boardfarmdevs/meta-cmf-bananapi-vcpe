@@ -1,0 +1,115 @@
+diff --git a/source-embedded/CcspCwmpTcpConnReqHandler/ccsp_cwmp_tcpcrho_operation.c b/source-embedded/CcspCwmpTcpConnReqHandler/ccsp_cwmp_tcpcrho_operation.c
+old mode 100644
+new mode 100755
+index d5562b3f..afe6b3f8
+--- a/source-embedded/CcspCwmpTcpConnReqHandler/ccsp_cwmp_tcpcrho_operation.c
++++ b/source-embedded/CcspCwmpTcpConnReqHandler/ccsp_cwmp_tcpcrho_operation.c
+@@ -90,6 +90,7 @@ extern int s_sysevent_connect (token_t *out_se_token);
+  *  2             : 0 for other images
+  */
+ #define DEVICE_PROPERTIES    "/etc/device.properties" 
++#ifndef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
+ static int bIsComcastImage( void)
+ {
+     char PartnerId[255] = {'\0'};
+@@ -107,7 +108,7 @@ static int bIsComcastImage( void)
+ 
+    return isComcastImg;
+ }
+-
++#endif
+ /**********************************************************************
+ 
+     caller:     owner of this object
+@@ -316,10 +317,15 @@ CcspCwmpTcpcrhoCreateTcpServers
+     }
+     else if ( !pTcpServer && pProperty->HostPort != 0 )
+     {
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++        {
++           // If HostAddress value is zero, then bind the outbound interface's ip address
++           if( pProperty->HostAddr[0] == 0)
++#else
+         if ( bIsComcastImage() ) {
+-
+            // If HostAddress value is zero, then bind the outbound interface's ip address
+            if( pProperty->HostAddress.Value == 0)
++#endif           
+            {
+               CcspTr069PaTraceInfo(("%s, HostAddress value is 0\n",__FUNCTION__));
+               token_t  se_token;
+@@ -331,6 +337,27 @@ CcspCwmpTcpcrhoCreateTcpServers
+               }
+               else
+               {
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++                 if (sysevent_get(se_fd, se_token, "wan6_ipaddr", buf, sizeof(buf)) == 0 && buf[0] != '\0')
++                 {
++                    CcspTr069PaTraceInfo(("%s, Got IPv6 address from sysevent: %s\n", __FUNCTION__, buf));
++                    strncpy(pProperty->HostAddr, buf, sizeof(pProperty->HostAddr) - 1);
++                    pProperty->HostAddr[sizeof(pProperty->HostAddr) - 1] = '\0';
++                 }
++                 else if (sysevent_get(se_fd, se_token, "ipv4_wan_ipaddr", buf, sizeof(buf)) == 0 && buf[0] != '\0')
++                 {
++                    CcspTr069PaTraceInfo(("%s, Got IPv4 address from sysevent: %s\n", __FUNCTION__, buf));
++                    strncpy(pProperty->HostAddr, buf, sizeof(pProperty->HostAddr) - 1);
++                    pProperty->HostAddr[sizeof(pProperty->HostAddr) - 1] = '\0';
++                 }
++                 else
++                 {
++                    CcspTr069PaTraceError(("%s, Failed to get IP address from sysevent\n", __FUNCTION__));
++                    CcspTr069PaTraceInfo(("%s, Set HostAddr to IPv6 address: %s\n", __FUNCTION__, "::"));
++                    strncpy(pProperty->HostAddr, "::", sizeof(pProperty->HostAddr) - 1);
++                    pProperty->HostAddr[sizeof(pProperty->HostAddr) - 1] = '\0';                    
++                 }
++#else                
+                  // Get ipv4 address from sysevent
+                  if( 0 == sysevent_get(se_fd, se_token, "ipv4_wan_ipaddr", buf, sizeof(buf)) && '\0' != buf[0] )
+                  {
+@@ -343,6 +370,7 @@ CcspCwmpTcpcrhoCreateTcpServers
+                   // If sysevent fails, let TR69 bind on 0.0.0.0
+                   CcspTr069PaTraceError(("%s, sysevent_get failed to get value of ipv4_wan_ipaddr!!!\n",__FUNCTION__));
+                  }
++#endif
+               }
+            }
+        
+diff --git a/source-embedded/DslhManagementServer/ccsp_management_server.c b/source-embedded/DslhManagementServer/ccsp_management_server.c
+old mode 100644
+new mode 100755
+index c6b52fa9..a94c6f8f
+--- a/source-embedded/DslhManagementServer/ccsp_management_server.c
++++ b/source-embedded/DslhManagementServer/ccsp_management_server.c
+@@ -1094,7 +1094,11 @@ ANSC_STATUS CcspManagementServer_GenerateConnectionRequestURL(
+         {
+             // Get FirstUpstreamIpInterfaceParameterName parameter value 
+             char * parameterNames[1];
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++            parameterNames[0] = AnscCloneString("Device.DeviceInfo.X_COMCAST-COM_WAN_IPv6");
++#else
+             parameterNames[0] = AnscCloneString(pFirstUpstreamIpAddress);
++#endif
+ 
+             parameterValStruct_t **parameterval = NULL;
+             int val_size = 0;
+@@ -1151,9 +1155,20 @@ ANSC_STATUS CcspManagementServer_GenerateConnectionRequestURL(
+     if(strlen(ipAddr) <= 0  || AnscEqualString(ipAddr, "0.0.0.0", TRUE)) {
+         return ANSC_STATUS_SUCCESS;
+     }
++
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++    rc = strcat_s(result, sizeof(result), "[");
++    ERR_CHK(rc);
++#endif
++
+     rc = strcat_s(result, sizeof(result), ipAddr);
+     ERR_CHK(rc);
+ 
++#ifdef SERCOMM_FIX_ANSC_IPV6_COMPATIBLE_
++    rc = strcat_s(result, sizeof(result), "]");
++    ERR_CHK(rc);
++#endif
++
+     if ( TRUE )
+     {
+         char* pPort = objectInfo[ManagementServerID].parameters[ManagementServerX_CISCO_COM_ConnectionRequestURLPortID].value;

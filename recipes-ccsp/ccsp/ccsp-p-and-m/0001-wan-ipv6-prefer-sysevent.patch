@@ -1,0 +1,28 @@
+Fix: prefer sysevent "wan6_ipaddr" as the authoritative value. Fall back
+to the old ifaddr walk if sysevent is unset.
+
+---
+ custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_custom.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_custom.c b/custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_custom.c
+--- a/custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_custom.c
++++ b/custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_custom.c
+@@ -311,6 +311,17 @@ CosaDmlDiGetRouterIPv6Address
+ 	ipv6_addr_info_t * p_v6addr = NULL;
+     int  v6addr_num = 0, i, l_iIpV6AddrLen;
+
++    /* vCPE: prefer the DHCPv6-assigned address from sysevent so it matches
++     * what CcspCwmpTcpcrhoCreateTcpServers() binds its connection-request
++     * listener to. Without this, an SLAAC (EUI-64) address can win the
++     * ifaddr walk below and the published ConnectionRequestURL points at
++     * an address with no listener. */
++    commonSyseventGet("wan6_ipaddr", pValue, *pulSize);
++    if (pValue[0] != '\0') {
++        *pulSize = strlen(pValue);
++        return ANSC_STATUS_SUCCESS;
++    }
++
+ #if defined(_RDKB_GLOBAL_PRODUCT_REQ_)
+     char            acLANIPv6GUASupport[8] = {0};
+     unsigned char   IsLANIPv6GUASupported  = FALSE;

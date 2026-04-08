@@ -1,0 +1,13 @@
+[Unit]
+Description=Backup root bash history to persistent storage
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'history -w && cp /home/root/.bash_history /nvram/'
+TimeoutStartSec=30
+RemainAfterExit=yes
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target

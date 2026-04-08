@@ -1,0 +1,79 @@
+#@TYPE: Machine
+#@NAME: qemux86bpibroadband
+#@RDK_FLAVOR: rdkb
+#@DESCRIPTION: Banana Pi R4 RDK-B userspace built for x86, packaged as an LXC container
+
+require conf/machine/qemux86.conf
+
+MACHINE_IMAGE_NAME = "X86EMLTRBPIBB"
+
+# Inherit bananapi / mt7988 / filogic / broadband overrides so userspace bbappends still apply.
+MACHINEOVERRIDES .= ":broadband"
+MACHINEOVERRIDES .= ":bananapi4-rdk-broadband"
+MACHINEOVERRIDES .= ":mt7988"
+MACHINEOVERRIDES .= ":filogic"
+
+DISTRO_FEATURES_append = " parodus referencepltfm WanFailOverSupportEnable"
+DISTRO_FEATURES_append_broadband = " core-net-lib rdkb_wan_manager"
+DISTRO_FEATURES_append_broadband = " WanManagerUnificationEnable halVersion3"
+# Needed so ccsp-common-library installs RdkFwUpgradeManager.service.
+DISTRO_FEATURES_append_broadband = " fwupgrade_manager"
+DISTRO_FEATURES_remove = " bluetooth bluez5 rdkb_inter_device_manager"
+DISTRO_FEATURES_remove = " sdmmc kernel6-6 EasyMesh"
+
+# Container shares host kernel.
+PREFERRED_PROVIDER_virtual/kernel = "linux-dummy"
+DEPENDS_remove_pn-utopia_qemux86bpibroadband = "kernel-autoconf"
+
+PREFERRED_PROVIDER_hal-wifi_onewifi = "hal-wifi-generic"
+
+# Strip MACHINE from PACKAGE_EXTRA_ARCHS to avoid duplicate with MACHINE_ARCH.
+PACKAGE_EXTRA_ARCHS_remove = "${MACHINE}"
+
+# Mask BSP / kernel / wifi drivers / bootloader / atf: nothing below runs in LXC.
+BBMASK .= "|.*meta-filogic/(?!recipes-ccsp/hal/hal-fwupgrade|recipes-wifi/(ucode|libnl-tiny|ubus|uci)/).*"
+BBMASK .= "|.*meta-cmf-filogic/recipes-bsp/.*"
+BBMASK .= "|.*meta-cmf-filogic/recipes-kernel/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-bsp/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-kernel/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-wifi/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-connectivity/atf.*"
+BBMASK .= "|.*recipes-bsp/u-boot.*"
+
+# Mask image / packagegroup bbappends pulling mt7988-only RDEPENDS.
+BBMASK .= "|.*meta-cmf-filogic/recipes-core/images/.*"
+BBMASK .= "|.*meta-cmf-filogic/recipes-devtools/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-core/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-devtools/.*"
+
+# Misc kernel-module / internal-gerrit bits.
+BBMASK .= "|.*meta-rdk-broadband/recipes-ccsp/ccsp/ccsp-hotspot-kmod.bb"
+BBMASK .= "|.*meta-rdk-ext/recipes-core/glib-networking/glib-networking_2.48.2.bb"
+BBMASK .= "|.*openembedded-core/meta/recipes-kernel/make-mod-scripts/make-mod-scripts_1.0.bb"
+BBMASK .= "|.*meta-rdk-ext/recipes-kernel/nat46/.*"
+BBMASK .= "|.*meta-rdk/recipes-support/base64/base64_git.bb"
+BBMASK .= "|.*meta-rdk-broadband/recipes-rdkb/sysint-broadband/sysint-broadband-min.bb"
+
+# Mask HAL bbappends that patch absent gerrit source; we overlay instead.
+BBMASK .= "|.*meta-cmf-filogic/recipes-ccsp/hal/.*"
+BBMASK .= "|.*meta-cmf-bananapi/meta-rdk-mtk-bpir4/recipes-ccsp/hal/(hal-platform-generic|hal-ethsw-generic).*"
+
+PREFERRED_VERSION_lighttpd = "1.4.53"
+PREFERRED_VERSION_nmap = "7.80"
+PREFERRED_VERSION_python3-jinja2-native = "3.1.1"
+PREFERRED_PROVIDER_ps = "procps"
+
+RDEPENDS_packagegroup-rdk-oss-broadband_remove   = "mt76 mt7988-wifi rtl88x2bu rtl8812au rtl8192eu"
+RDEPENDS_packagegroup-rdk-ccsp-broadband_remove  = "ccsp-hotspot-kmod xupnp"
+
+IMAGE_INSTALL_append = " vcpe-init"
+
+# Force-install ccsp-gwprovapp (bpir4 packagegroup that normally pulls it is masked).
+IMAGE_INSTALL_append = " ccsp-gwprovapp"
+
+IMAGE_FSTYPES = "tar.gz lxc"
+IMAGE_CLASSES += "image_types_lxc"
+IMAGE_INSTALL_remove = " e2fsprogs breakpad-staticdev"
+
+DL_DIR    = "${HOME}/oe/downloads"
+SSTATE_DIR = "${HOME}/oe/sstate-cache"
