@@ -1,0 +1,14 @@
+[Unit]
+Description=Lab crash-upload setup (point RDK-B crash upload at the lab SSR, plain curl)
+# Order after the WAN is up (erouter0 has an IP) but stay out of
+# wan-initialized.target itself - being WantedBy that target while also After it
+# creates an ordering cycle with coredump-upload.service.
+After=wan-initialized.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/share/lab-crashupload/lab-crashupload-setup.sh
+
+[Install]
+WantedBy=multi-user.target

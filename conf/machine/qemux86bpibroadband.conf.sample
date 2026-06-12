@@ -75,5 +75,8 @@ IMAGE_FSTYPES = "tar.gz lxc"
 IMAGE_CLASSES += "image_types_lxc"
 IMAGE_INSTALL_remove = " e2fsprogs breakpad-staticdev"
 
+# Lab crash-dump demo + crash-upload adapter (recipes-vcpe/breakpad-demo).
+IMAGE_INSTALL_append = " breakpad-demo"
+
 DL_DIR    = "${HOME}/oe/downloads"
 SSTATE_DIR = "${HOME}/oe/sstate-cache"
