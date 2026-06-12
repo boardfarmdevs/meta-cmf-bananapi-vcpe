@@ -95,4 +95,40 @@ TimeoutStartSec=60s
 EOF
 }
 
-ROOTFS_POSTPROCESS_COMMAND_append = " mask_onewifi_units; fix_ccspwebui; fix_cr_deviceprofile; vcpe_drop_boot_sleeps; vcpe_fix_dnsmasq_lan_deps; vcpe_fix_sync_ordering;"
+# LCM: cthulhu's service unit writes to /sys/fs/cgroup/memory/memory.use_hierarchy
+# and /sys/fs/cgroup/cpuset/cgroup.clone_children -- cgroup v1 paths.  Hosts
+# running cgroup v2 unified (modern Linux) lack these; the ExecStartPre's fail
+# and cthulhu never starts.  The directives are advisory performance hints, safe
+# to drop on cgroup v2.
+vcpe_fix_lcm_cthulhu_cgroup() {
+    if [ -f ${IMAGE_ROOTFS}${systemd_unitdir}/system/lcm-cthulhu.service ]; then
+        mkdir -p ${IMAGE_ROOTFS}${systemd_unitdir}/system/lcm-cthulhu.service.d
+        cat > ${IMAGE_ROOTFS}${systemd_unitdir}/system/lcm-cthulhu.service.d/00-vcpe.conf <<'EOF'
+[Service]
+# cgroup v1 paths don't exist on cgroup v2 hosts; strip the v1 ExecStartPre's
+ExecStartPre=
+EOF
+    fi
+}
+
+# LCM: cthulhu writes per-container syslog-ng configs to
+# /lcm/cthulhu/syslogng/configs/<DUID>.conf and runs `syslog-ng-ctl reload`
+# to pick them up.  syslog-ng walks them via /etc/amx/cthulhu/syslog-ng-lcm.conf
+# (an @include for the configs dir).  But the shipped /etc/syslog-ng/syslog-ng.conf
+# has NO @include pointing at that fragment, so syslog-ng never knows about the
+# per-container sources.  cthulhu then logs "Syslogng did not create the log
+# socket" and silent long-running daemons in containers (like lighttpd) lose
+# their stdio plumbing.  Fix: append the @include to the main config.
+vcpe_fix_syslog_ng_cthulhu_include() {
+    cfg=${IMAGE_ROOTFS}${sysconfdir}/syslog-ng/syslog-ng.conf
+    if [ -f "$cfg" ] && ! grep -q "syslog-ng-lcm.conf" "$cfg"; then
+        cat >> "$cfg" <<'EOF'
+
+# Pulled in by meta-cmf-bananapi-vcpe so LCM/cthulhu per-container log
+# sockets are routable.  See /etc/amx/cthulhu/syslog-ng-lcm.conf.
+@include "/etc/amx/cthulhu/syslog-ng-lcm.conf"
+EOF
+    fi
+}
+
+ROOTFS_POSTPROCESS_COMMAND_append = " mask_onewifi_units; fix_ccspwebui; fix_cr_deviceprofile; vcpe_drop_boot_sleeps; vcpe_fix_dnsmasq_lan_deps; vcpe_fix_sync_ordering; vcpe_fix_lcm_cthulhu_cgroup; vcpe_fix_syslog_ng_cthulhu_include;"

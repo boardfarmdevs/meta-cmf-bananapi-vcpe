@@ -1,0 +1,46 @@
+Subject: mod-amxb-rbus: weak fallback for rbusConfig_Get on rdkcentral rbus
+
+The prpl-foundation fork of rbus exports rbusConfig_Get() for reading
+runtime timeout config.  The rdkcentral fork (used by RDK-B) does not.
+
+mod-amxb-rbus v1.3.2 was built against the prpl fork's headers; without
+that symbol it fails to load at runtime with:
+
+    /usr/bin/timingila: symbol lookup error:
+      /usr/bin/mods/amxb/mod-amxb-rbus.so: undefined symbol: rbusConfig_Get
+
+…and lcm-timingila.service exits 127 in a loop.
+
+Fix: declare and define the symbol as __attribute__((weak)) so the .so
+links cleanly.  At dynamic-load time, a strong rbusConfig_Get from a
+future librbus that ships one will override the weak fallback; otherwise
+the weak one is used and returns NULL.
+
+amxb_rbus_set_timeout() already guards the result with when_null(...),
+so a NULL return makes the timeout setter a no-op (rbus uses its
+compiled-in defaults).  No behavioural change for AMX clients that
+don't override the default rbus timeouts.
+
+Upstream: rdkcentral/rbus would need to gain rbusConfig_Get for this
+shim to be retired.  Until then this is the bridge.
+---
+ src/amxb_rbus_timeouts.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/amxb_rbus_timeouts.c b/src/amxb_rbus_timeouts.c
+--- a/src/amxb_rbus_timeouts.c
++++ b/src/amxb_rbus_timeouts.c
+@@ -73,7 +73,12 @@ typedef struct _rbusConfig_t {
+
+ // LUCKELY THIS SYMBOL IS EXPORTED BY LIBRBUS, SO IT CAN BE CALLED
+ // AND THE TIMEOUT CONFIG CAN BE RETRIEVED
+-rbusConfig_t* rbusConfig_Get(void);
++// vCPE: rdkcentral rbus does NOT export this.  Provide a weak fallback
++// so the module loads; amxb_rbus_set_timeout() handles NULL gracefully.
++__attribute__((weak)) rbusConfig_t* rbusConfig_Get(void);
++__attribute__((weak)) rbusConfig_t* rbusConfig_Get(void) {
++    return NULL;
++}
+
+ // END OF COPY
+ ////////////////////////////////////////////////////////////////////////////////

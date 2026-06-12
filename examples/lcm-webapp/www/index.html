@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LCM webapp on RDK-B vCPE</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main>
+        <h1>It works.</h1>
+        <p class="lead">This page is being served from inside an OCI container.</p>
+
+        <ul class="trace">
+            <li><b>Container runtime:</b> <code>crun</code></li>
+            <li><b>Container orchestrator:</b> <code>cthulhu</code> (prpl-foundation LCM)</li>
+            <li><b>Bundle repo:</b> <code>celephais</code></li>
+            <li><b>TR-181 adapter:</b> <code>timingila</code> &nbsp;→&nbsp; <code>Device.SoftwareModules.*</code></li>
+            <li><b>USP agent:</b> <code>obuspa</code></li>
+            <li><b>Deployed via:</b> <code>ba-cli Device.SoftwareModules.InstallDU(URL=ghcr.io/&hellip;)</code></li>
+            <li><b>Image source:</b> <code>ghcr.io/robvogelaar/lcm-webapp</code></li>
+        </ul>
+
+        <p class="footer">Pulled from a public ghcr.io registry, converted to an OCI bundle on the build host, served back to the vCPE over HTTP, installed by the LCM stack as a Deployment Unit, started by cthulhu, executed by crun.</p>
+
+        <div class="meta">
+            <small id="clock"></small>
+        </div>
+    </main>
+    <script>
+        const tick = () => {
+            document.getElementById('clock').textContent = 'page rendered at ' + new Date().toISOString();
+        };
+        tick();
+        setInterval(tick, 1000);
+    </script>
+</body>
+</html>

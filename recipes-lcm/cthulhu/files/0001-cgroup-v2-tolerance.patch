@@ -1,0 +1,59 @@
+Subject: cthulhu: short-circuit cthulhu_cgroup_config on cgroup v2 hosts
+
+cthulhu_cgroup_config() calls three sub-helpers in sequence:
+
+  cthulhu_config_devices()       — writes devices.allow / devices.deny
+  cthulhu_cgroup_config_cpu()    — writes cpu.cfs_quota_us / cpu.shares
+  cthulhu_cgroup_config_memory() — writes memory.limit_in_bytes etc.
+
+All three use v1-only cgroup file names.  cthulhu_cgroup_config_cpu has
+an internal setting_exists guard so it returns 0 on a cgroup v2 host,
+but config_devices and config_memory don't — they unconditionally
+fopen("devices.allow", "w") etc. against a kernel-managed directory,
+get EPERM / ENOENT, and propagate failure.
+
+cthulhu_sb_start() then refuses to bring the sandbox to Up state.  EE
+in the TR-181 view stays Disabled.  timingila rejects every InstallDU
+with fault 7225 ("Deployment Unit to Execution Environment Mismatch",
+which it also raises when EE.Status isn't Enabled).
+
+This matters on any modern Linux host running cgroup v2 unified
+hierarchy (most distros since ~2021).  cthulhu *does* detect the v2
+layout (cgroup_layout_unified) but only branches on it for path
+construction, not to suppress v1-only operations.
+
+Pragmatic fix: when cgroup v2 is detected, return 0 from
+cthulhu_cgroup_config() before any sub-helpers run.  The sandbox is
+then "resource-unlimited" — acceptable for dev/test environments.
+Real cgroup v2 limits would need v2-native setting calls
+(cpu.weight, memory.max, device-cgroup BPF programs) — that's a much
+larger porting effort and a candidate for upstream contribution to
+gitlab.com/prpl-foundation/lcm/applications/cthulhu.
+
+Tested in vcpe-002 LXC container running on a cgroup-v2 host:
+sandbox transitions to Up, Device.SoftwareModules.ExecEnv.1.Status
+becomes Enabled, obuspa's InstallDU completes end-to-end and a real
+crun container appears in `crun list`.
+---
+ src/cthulhu_cgroup.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/cthulhu_cgroup.c b/src/cthulhu_cgroup.c
+--- a/src/cthulhu_cgroup.c
++++ b/src/cthulhu_cgroup.c
+@@ -651,6 +651,15 @@
+  */
+ int cthulhu_cgroup_config(const char* cgroup_name, amxd_object_t* sb_obj, cthulhu_notif_data_t* notif_data) {
+     int res = -1;
++
++    /* vCPE: On cgroup v2 unified hosts the v1 setting file names
++     * (devices.allow, memory.limit_in_bytes, ...) don't exist; the v1
++     * config calls below would all return -1.  Short-circuit to success
++     * so the sandbox can transition to Up.  Resource limits are skipped. */
++    if(cthulhu_cgroup_layout_get() == cgroup_layout_unified) {
++        SAH_TRACEZ_INFO(ME, "cgroup v2 unified detected; skipping v1-style sandbox cgroup config for [%s]", cgroup_name);
++        return 0;
++    }
+     if(cthulhu_config_devices(cgroup_name, sb_obj) < 0) {
+         NOTIF_FAILED(notif_data, tr181_fault_request_denied, "Could not configure device cgroup for [%s]", cgroup_name);
+         goto exit;

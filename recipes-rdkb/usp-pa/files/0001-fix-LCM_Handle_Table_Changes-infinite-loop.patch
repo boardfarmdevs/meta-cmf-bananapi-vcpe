@@ -1,0 +1,45 @@
+Subject: usp-pa-vendor-rdk: terminate LCM_Handle_Table_Changes property scan
+
+LCM_Handle_Table_Changes() walks the properties of an incoming rbus event
+looking for one named "rowName".  The while(prop != NULL) loop has no
+iterator advance:
+
+    while (prop != NULL) {
+        const char * prop_name = rbusProperty_GetName(prop);
+        rbusValue_t val = rbusProperty_GetValue(prop);
+        if (strcmp("rowName", prop_name) == 0) {
+            rowName = rbusValue_GetString(val, NULL);
+            break;
+        }
+        /* missing: prop = rbusProperty_GetNext(prop); */
+    }
+
+If the first property of the event isn't "rowName", the loop pins the same
+prop forever — pegging obuspa's rbus event-callback thread at 100% CPU as
+soon as timingila publishes any Device.SoftwareModules.* table-change.
+
+Symptom observed:
+    $ ps -o pid,pcpu -C obuspa
+       PID  %CPU
+      4881   136
+
+Fix: advance the iterator at the end of the loop body, matching the
+otherwise-identical loop at line 124 of the same file.
+
+Trivial single-line fix; suitable for an upstream PR to
+github.com/rdkcentral/usp-pa-vendor-rdk.
+---
+ lcm_rbus_datamodel.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lcm_rbus_datamodel.c b/lcm_rbus_datamodel.c
+--- a/lcm_rbus_datamodel.c
++++ b/lcm_rbus_datamodel.c
+@@ -293,6 +293,7 @@ static void LCM_Handle_Table_Changes(__attribute((unused)) rbusHandle_t handle,
+             rowName = rbusValue_GetString(val,NULL);
+             break;
+         }
++        prop = rbusProperty_GetNext(prop);
+     }
+
+     if (rowName == NULL) { return; }    //exit early if this is null as the required string was not found
