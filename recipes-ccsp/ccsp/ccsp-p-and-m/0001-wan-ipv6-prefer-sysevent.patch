@@ -23,6 +23,6 @@ diff --git a/custom/comcast/source/TR-181/custom_sbapi/cosa_deviceinfo_apis_cust
 +        return ANSC_STATUS_SUCCESS;
 +    }
 +
- #if defined(_RDKB_GLOBAL_PRODUCT_REQ_)
-     char            acLANIPv6GUASupport[8] = {0};
-     unsigned char   IsLANIPv6GUASupported  = FALSE;
+ #if defined(_WNXL11BWL_PRODUCT_REQ_) || defined(FEATURE_RDKB_CONFIGURABLE_WAN_INTERFACE)
+         char wan_interface[32] = {0};
+         commonSyseventGet("current_wan_ifname", wan_interface, sizeof(wan_interface));
