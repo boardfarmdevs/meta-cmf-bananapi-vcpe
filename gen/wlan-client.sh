@@ -28,6 +28,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE_IMG="${WLAN_CLIENT_IMAGE:-wlan-client-base}"   # the self-contained client image
 SRC_IMG="${WLAN_CLIENT_SRC_IMAGE:-alpine}"          # minimal base to build it from
 WNMBIN="$HERE/wpa_supplicant/wpa_supplicant-wnm"    # committed CONFIG_WNM supplicant
+WMD_PIDF=${WMEDIUMD_PIDFILE:-/run/meta-cmf-wmediumd/wmediumd.pid}
 
 INST=""; FORCE_BUILD=0
 while true; do
@@ -153,8 +154,8 @@ up)
     # wmediumd-up.sh replaces the old daemon atomically enough for this lab and
     # preserves the caller's requested baseline SNR.
     if [ -x "$HERE/wmediumd/wmediumd-up.sh" ] &&
-       [ -s /tmp/wmediumd.pid ] &&
-       sudo kill -0 "$(cat /tmp/wmediumd.pid)" 2>/dev/null; then
+       [ -s "$WMD_PIDF" ] &&
+       sudo kill -0 "$(cat "$WMD_PIDF")" 2>/dev/null; then
         echo "  wmediumd: refreshing active-radio matrix for $CT"
         SNR="${SNR:-40}" "$HERE/wmediumd/wmediumd-up.sh" up
     fi

@@ -14,10 +14,17 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 WMD=${WMEDIUMD:-$HERE/wmediumd.patched}
 [ -x "$WMD" ] || WMD=$HERE/src/wmediumd/wmediumd
-CFG=${CFG:-/tmp/wmediumd.cfg}
-PIDF=/tmp/wmediumd.pid
 CONTROL=${WMEDIUMD_CONTROL:-/run/wmediumd-control.sock}
 CONTROL_GROUP=${WMEDIUMD_CONTROL_GROUP:-lxd}
+RUNTIME=${WMEDIUMD_RUNTIME_DIR:-/run/meta-cmf-wmediumd}
+CFG=${CFG:-$RUNTIME/wmediumd.cfg}
+PIDF=${WMEDIUMD_PIDFILE:-$RUNTIME/wmediumd.pid}
+LOG=${WMEDIUMD_LOG:-$RUNTIME/wmediumd.log}
+
+# Keep shared daemon state out of sticky /tmp. Ubuntu's protected-regular-file
+# policy otherwise makes a root provision fail after a non-root lab run (and
+# vice versa) even though both callers are authorized to manage the daemon.
+sudo install -d -m 0775 -o root -g "$CONTROL_GROUP" "$RUNTIME"
 
 # `up` is also the normal way to refresh the matrix after adding clients.  It
 # must replace the existing daemon, not overwrite the pidfile and leave the old
@@ -53,25 +60,25 @@ case "${1:-up}" in
         sudo ip link set "${netdev##*/}" down
     done
     echo ">> generating config -> $CFG"
-    "$HERE/gen-config.sh" "${SNR:-40}" > "$CFG"
+    "$HERE/gen-config.sh" "${SNR:-40}" | sudo tee "$CFG" >/dev/null
     echo ">> self-test"
     sudo "$WMD" -T || {
         echo "wmediumd self-test failed; the binary may be an unpatched/stale v0.3.1 build" >&2
         exit 1
     }
     echo ">> starting wmediumd"
-    sudo rm -f "$PIDF" "$CONTROL" /tmp/wmediumd.log
-    sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' >/tmp/wmediumd.log 2>&1 & echo \$! > '$PIDF'"
+    sudo rm -f "$PIDF" "$CONTROL" "$LOG"
+    sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
     sleep 1
     pid=$(cat "$PIDF" 2>/dev/null || true)
     if [ -z "$pid" ] || ! sudo kill -0 "$pid" 2>/dev/null; then
         echo "!! wmediumd exited during startup" >&2
-        tail -20 /tmp/wmediumd.log 2>/dev/null >&2 || true
+        tail -20 "$LOG" 2>/dev/null >&2 || true
         exit 1
     fi
-    if grep -Eqi "Operation not supported|Device or resource busy|REGISTER.*failed|Unable to find sender" /tmp/wmediumd.log 2>/dev/null; then
+    if grep -Eqi "Operation not supported|Device or resource busy|REGISTER.*failed|Unable to find sender" "$LOG" 2>/dev/null; then
         echo "!! wmediumd registered incompletely or rejected a radio" >&2
-        tail -20 /tmp/wmediumd.log 2>/dev/null >&2 || true
+        tail -20 "$LOG" 2>/dev/null >&2 || true
         sudo kill "$pid" 2>/dev/null || true
         sudo rm -f "$PIDF"
         exit 1
@@ -84,7 +91,7 @@ case "${1:-up}" in
     fi
     sudo chgrp "$CONTROL_GROUP" "$CONTROL"
     sudo chmod 0660 "$CONTROL"
-    echo ">> up (pid $pid); log /tmp/wmediumd.log"
+    echo ">> up (pid $pid); log $LOG"
     ;;
   down)
     stop_running_wmediumd
@@ -92,7 +99,7 @@ case "${1:-up}" in
     ;;
   status)
     if [ -f "$PIDF" ] && sudo kill -0 "$(cat "$PIDF")" 2>/dev/null; then
-        echo "wmediumd running (pid $(cat "$PIDF"))"; tail -3 /tmp/wmediumd.log 2>/dev/null
+        echo "wmediumd running (pid $(cat "$PIDF"))"; tail -3 "$LOG" 2>/dev/null
     else echo "wmediumd not running"; fi
     ;;
   *) echo "usage: $0 {up|down|status}" >&2; exit 2 ;;
