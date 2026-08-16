@@ -26,10 +26,10 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 |---|---|
 | [doc/easymesh](doc/easymesh) | the EasyMesh lab — start here |
 | [doc/easymesh/architecture.md](doc/easymesh/architecture.md) | how EasyMesh, the containers, hwsim and the client fit together |
-| [doc/easymesh/deploy-and-test.md](doc/easymesh/deploy-and-test.md) | deploy the two containers, bring up the mesh, validate end to end |
-| [doc/easymesh/steering.md](doc/easymesh/steering.md) | directed 802.11v client steering (`steer_drv` / `steer.sh`) |
-| [doc/easymesh/wmediumd-multichan.md](doc/easymesh/wmediumd-multichan.md) | the optional multichannel wmediumd RF model |
-| [doc/easymesh/patches.md](doc/easymesh/patches.md) | every patch, by recipe and why (hwsim- / container- / defect-driven) |
+| [doc/easymesh/patch-set.md](doc/easymesh/patch-set.md) | clean 0815 patch boundaries, retained fixes and removals |
+| [doc/easymesh/lab-setup.md](doc/easymesh/lab-setup.md) | deploy, scale, access and validate both runtime labs |
+| [doc/easymesh/configurator.md](doc/easymesh/configurator.md) | deterministic RF scenarios and dynamic wmediumd control |
+| [doc/easymesh/steering.md](doc/easymesh/steering.md) | commanded steering, policy boundaries and optimizer experiments |
 | [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
 
 ## layout
@@ -47,4 +47,5 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 
 Every patch header carries the trace it was root-caused from — minidump stacks,
 netlink captures, or log excerpts — so start there rather than from the diff. See
-[doc/easymesh/patches.md](doc/easymesh/patches.md) for the full catalog.
+[doc/easymesh/patch-set.md](doc/easymesh/patch-set.md) for the retention and
+ownership rationale; the bbappends remain the executable patch inventory.

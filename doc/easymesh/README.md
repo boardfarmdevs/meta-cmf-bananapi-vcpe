@@ -1,63 +1,73 @@
-# EasyMesh on LXD + mac80211_hwsim
+# EasyMesh evaluation lab
 
-This layer retargets the Banana Pi R4 RDK-B broadband build to x86, packaged as
-an LXC rootfs, so the same RDK-B EasyMesh userspace stack runs inside LXD on a
-host machine with **simulated** Wi-Fi (`mac80211_hwsim`) instead of real radios.
-Two containers — a `qemux86bpibroadband` controller (with a colocated agent) and
-a `qemux86bpiap` extender — form a mesh over the simulated radios: 1905
-transport, AP-Autoconfiguration, WSC M1/M2, wireless backhaul, and the fronthaul
-VAPs the controller pushes to the extender. An Alpine `wlan-client` associates as
-a real station.
+This directory is the authoritative documentation for the 0815-codex EasyMesh
+lab. The lab runs the Banana Pi RDK-B EasyMesh userspace in LXD containers with
+Linux 7.0 `mac80211_hwsim` radios and a patched multichannel wmediumd.
 
-Start here, then follow the section that matches what you're doing.
+The purpose is repeatable onboarding and steering experimentation, including RF
+gradients that are independent from the steering decision being evaluated.
 
-## Documents
+## Read in this order
 
-**Foundations — how it works and how to run it**
+| Document | Question it answers |
+| --- | --- |
+| [architecture.md](architecture.md) | What runs where, how the control and data planes work, and how nodes onboard |
+| [patch-set.md](patch-set.md) | Which 0815 patches are retained, why they exist, and what was removed from 0814 |
+| [lab-setup.md](lab-setup.md) | How to build, deploy, scale, access and validate the rev130 and rev150-VM labs |
+| [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
+| [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
 
-| | |
-|---|---|
-| [architecture.md](architecture.md) | how EasyMesh, the containers, hwsim, wmediumd and the client fit together; process/API boundaries; control vs data plane; current state and limits |
-| [platforms.md](platforms.md) | the deployment-requirements matrix — dual-band (6.8 / rev150) vs tri-band (7.0 / rev120): kernels, the hwsim pool, and why the two need different images (one build flag) |
-| [deploy-and-test.md](deploy-and-test.md) | deploy the two containers on the runtime host, bring up the mesh, add clients, validate end-to-end, troubleshoot, teardown |
+These six files, including this index, are the complete current documentation
+set. Historical bring-up notes and superseded 6.8-era decisions remain in Git
+history rather than beside current operating instructions.
 
-**6 GHz**
+## Current accepted baseline
 
-| | |
-|---|---|
-| [6ghz.md](6ghz.md) | the whole 6 GHz story on Linux 7.0: the 6.8-vs-7.0 kernel setup, the issues found and fixed (single-phy tri-band bring-up, WPA3/SAE + PMF in the WSC M2, the backhaul WDS-before-auth race, OneWifi-restart replay), the SAE-H2E + PMF acceptance, and the standalone hwsim 6 GHz VLP-AP verification (appendix) |
+```text
+source             codex/0815-clean
+runtime code       73e7c1e (later commits are documentation only)
+kernel             Linux 7.0.0-28
+topology           controller + colocated agent + four extenders
+model              5 agents / 15 radios / 50 BSSs
+clients            10 active WLAN clients
+medium             patched multichannel wmediumd
+```
 
-**RF simulation**
+Accepted images:
 
-| | |
-|---|---|
-| [wmediumd-multichan.md](wmediumd-multichan.md) | the multichannel wmediumd model (optional RF gradient) — design, patch series, acceptance ladder; runnable tooling lives in this layer's gen/ |
+| Role | Artifact | SHA-256 |
+| --- | --- | --- |
+| controller | `X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2` | `9b9809d71c916a199682556d850cecf365c9d8c8fa7f1d062d600e0d56c4d432` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2` | `62f143df46e7526c4b6af3cfe89e0454cb184daf09e70a265c65280a9e6efa92` |
 
-**Steering & policy testing**
+The rev150 VM has passed clean deployment, 10/10 client export, a 10/10 final
+steering sample, an earlier 30/30 steering matrix, and a dynamic two-AP
+crossover with verified medium restoration. rev130 must be redeployed with the
+same images and scaled gates before its results are considered comparable.
 
-| | |
-|---|---|
-| [steering/steering.md](steering/steering.md) | directed 802.11v client steering — the flow, the `steer_drv`/`steer.sh` tooling, the acceptance test, the gotchas |
-| [steering/steering-policy.md](steering/steering-policy.md) | the steering **policy** approach — the closed loop, the EasyMesh agent policy, the controller optimization strategy, the decision state machine, and the required run record |
-| [steering/wmediumd-configurator.md](steering/wmediumd-configurator.md) | design for an RF-scenario **configurator** used to exercise steering policies — the scenario language, its semantics, and the compiled event plan on top of wmediumd |
+## Runtime access
 
-**Reference**
+From the `192.168.2.0/24` lab network:
 
-| | |
-|---|---|
-| [0815-patch-stack.md](0815-patch-stack.md) | clean 0815-codex history, patch classes, deliberate removals, ordered core series and acceptance gates |
-| [patches.md](patches.md) | every patch in this layer, by recipe, why it exists (hwsim- / container- / defect-driven), and upstreaming notes |
-| [TODO.md](TODO.md) | open work from the latest external review — identity atomicity, 6 GHz capability-gating, Gate B, and more, by priority |
-| [../build](../build) | building the two images on the build host |
+```text
+http://192.168.2.130:8888    rev130 WebUI
+http://192.168.2.150:18889   rev150 Vagrant-VM WebUI
+```
 
-## Orientation
+SSH into the VM through rev150:
 
-- **Build host** `rev140` (Ubuntu 20.04) builds the two LXC images. The **runtime
-  host** runs the LXD/hwsim lab: `rev150` (kernel 6.8) for the 2.4 + 5 GHz baseline,
-  or `rev120` (kernel 7.0) for 6 GHz — see [6ghz.md](6ghz.md) for the 6.8-vs-7.0
-  split. Deploy tooling (`bpi.sh`, `wlan-client.sh`) lives in this layer under
-  `gen/`.
-- Hard invariant: each BPI container gets **exactly one** hwsim phy
-  (`FEATURE_SINGLE_PHY`) — see [architecture.md](architecture.md).
-- Every patch header carries the trace it was root-caused from (minidump stacks,
-  netlink captures, log excerpts) — start there, not from the diff.
+```sh
+ssh -tt rev@192.168.2.150 \
+  "cd /home/rev/easymesh-vagrant-lab && vagrant ssh"
+```
+
+## Documentation rules
+
+- 0815-codex is the working implementation; 0814 is comparison material only.
+- Record source revision, image hashes and live container provenance for every
+  result.
+- Do not describe commanded steering as an autonomous steering policy.
+- Do not add host-specific diaries here. Convert a finding into architecture,
+  setup, patch rationale, configurator semantics or steering behavior.
+- A successful API response, 1905 ACK or association alone is not an end-to-end
+  pass; use the gates in [lab-setup.md](lab-setup.md).

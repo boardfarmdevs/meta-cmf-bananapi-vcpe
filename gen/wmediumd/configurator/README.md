@@ -1,7 +1,7 @@
 # wmediumd configurator
 
 This directory contains the scenario-language implementation described in
-`doc/easymesh/steering/wmediumd-configurator.md`.
+`doc/easymesh/configurator.md`.
 
 Python 3.8 or newer is supported so the offline compiler and tests can also run
 on the rev140 build host; live inventory and execution still run inside the lab
