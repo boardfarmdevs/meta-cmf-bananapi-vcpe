@@ -29,16 +29,29 @@ sudo install -d -m 0775 -o root -g "$CONTROL_GROUP" "$RUNTIME"
 # `up` is also the normal way to refresh the matrix after adding clients.  It
 # must replace the existing daemon, not overwrite the pidfile and leave the old
 # process registered with mac80211_hwsim.  Match the full executable path so an
-# unrelated system wmediumd is not affected, wait for REGISTER ownership to be
-# released, and use SIGKILL only as a bounded fallback.
+# unrelated system wmediumd is not affected. Also include the owner of our
+# configured control socket: it may have been started from another checkout of
+# this same lab. Wait for REGISTER ownership to be released, and use SIGKILL
+# only as a bounded fallback.
+find_running_wmediumd() {
+    local pattern="$1" pids
+    pids=$(sudo pgrep -f "$pattern" 2>/dev/null || true)
+    if [ -S "$CONTROL" ] && command -v fuser >/dev/null 2>&1; then
+        pids="$pids $(sudo fuser "$CONTROL" 2>/dev/null || true)"
+    fi
+    # Normalize whitespace and suppress duplicates when both checks find the
+    # same daemon.
+    printf '%s\n' $pids | sed '/^[[:space:]]*$/d' | sort -un
+}
+
 stop_running_wmediumd() {
     local pattern pids n
     pattern="^${WMD//./\\.}([[:space:]]|$)"
-    pids=$(sudo pgrep -f "$pattern" 2>/dev/null || true)
+    pids=$(find_running_wmediumd "$pattern")
     [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL"; return; }
     sudo kill $pids 2>/dev/null || true
     for n in $(seq 1 20); do
-        pids=$(sudo pgrep -f "$pattern" 2>/dev/null || true)
+        pids=$(find_running_wmediumd "$pattern")
         [ -z "$pids" ] && break
         sleep 0.1
     done
