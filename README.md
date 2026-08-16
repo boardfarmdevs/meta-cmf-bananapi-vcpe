@@ -30,7 +30,7 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 | [doc/easymesh/lab-setup.md](doc/easymesh/lab-setup.md) | deploy, scale, access and validate both runtime labs |
 | [doc/easymesh/configurator.md](doc/easymesh/configurator.md) | deterministic RF scenarios and dynamic wmediumd control |
 | [doc/easymesh/steering.md](doc/easymesh/steering.md) | commanded steering, policy boundaries and optimizer experiments |
-| [doc/easymesh/optimizer.md](doc/easymesh/optimizer.md) | completely external optimizer architecture and interfaces |
+| [doc/easymesh/optimizer.md](doc/easymesh/optimizer.md) ([PDF](doc/easymesh/optimizer.pdf)) | completely external optimizer architecture and interfaces |
 | [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
 
 ## layout

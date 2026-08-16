@@ -16,7 +16,7 @@ gradients that are independent from the steering decision being evaluated.
 | [lab-setup.md](lab-setup.md) | How to build, deploy, scale, access and validate the rev130 and rev150-VM labs |
 | [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
 | [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
-| [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
+| [optimizer.md](optimizer.md) ([PDF](optimizer.pdf)) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
 
 These seven files, including this index, are the complete current documentation
 set. Historical bring-up notes and superseded 6.8-era decisions remain in Git

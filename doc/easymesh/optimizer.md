@@ -285,7 +285,7 @@ sequenceDiagram
     participant V as External verifier
     participant J as Experiment journal
 
-    Note over E,P: Agent-local steering is disabled; no BPI component selects a target
+    Note over E,P: Agent-local steering is disabled and no BPI component selects a target
     R->>W: Apply next atomic SNR generation
     W->>N: Change simulated frame delivery conditions
     N->>E: Real association and link measurements
