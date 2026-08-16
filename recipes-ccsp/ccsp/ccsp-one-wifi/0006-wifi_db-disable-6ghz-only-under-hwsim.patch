@@ -1,0 +1,109 @@
+wifi_db: disable the 6GHz radio only, under HWSIM_RADIO.
+
+Every 6GHz channel mac80211_hwsim offers is flagged no-IR ("no initiate
+radiation") by the regulatory domain the host runs, so a 6GHz VAP can never
+beacon in this environment. The host's global regdomain is country US, whose
+6GHz rule reads
+
+    (5925 - 7125 @ 320), (N/A, 12), (N/A), NO-OUTDOOR, PASSIVE-SCAN
+
+and cfg80211 turns PASSIVE-SCAN into IEEE80211_CHAN_NO_IR. All 59 of the phy's
+6GHz channels carry it; none are disabled.
+
+Verified directly rather than inferred, by attempting an AP start on a free
+hwsim radio with an identical wpa_supplicant configuration at three
+frequencies, changing nothing but the frequency:
+
+    5180 MHz  (5GHz, no flags)      -> AP-ENABLED
+    5865 MHz  (5GHz, no IR)         -> nl80211: Failed to set channel: -22
+    5955 MHz  (6GHz ch 1, no IR)    -> nl80211: Failed to set channel: -22
+
+The determinant is the no-IR flag, not the band -- a 5GHz channel carrying it
+fails in exactly the same way, with the same errno, at the same point.
+
+hwsim itself is not the limitation. It advertises the 6GHz band with all its
+channels present and enabled, and it does advertise HE ("HE Iftypes: AP",
+"HE Iftypes: managed", with full HE MAC and PHY capability sets) for both AP
+and managed interface types. An earlier version of this patch claimed 6GHz
+failed because hwsim exposes no HE capability and 6GHz mandates HE. That was
+wrong -- it came from a grep whose negative result was never sanity-checked.
+The radios are perfectly capable; they are simply not permitted to transmit.
+
+2.4GHz and 5GHz both work, and both are kept enabled. They can only be UP
+simultaneously if the module was loaded with channels>=2: hwsim defaults to
+"#channels <= 1" (see "valid interface combinations"), and bringing up a
+second band's VAPs while another band is active then fails with kernel error
+-16 (EBUSY) on the first "Set freq". meta-lxd loads the pool with channels=2
+for exactly this reason.
+
+2.4GHz in particular has to stay enabled because the EasyMesh controller maps
+the fronthaul haul onto its 2.4GHz radio. With that radio disabled the
+controller kept the image default SSID while the extender served private_ssid,
+so the two nodes never shared an ESS and client roaming could not be tested at
+all.
+
+Leaving the 6GHz radio enabled is not harmless: its em_t never reaches
+em_state_agent_onewifi_bssconfig_ind, and unified-wifi-mesh's Topology Query
+handler waits for every radio to get there before answering. See
+unified-wifi-mesh patch 0003, which stops that handler blocking on a radio
+that is disabled. Both changes are needed -- this one so the radio is honestly
+marked disabled, that one so the disabled state is respected.
+
+Real BananaPi R4 hardware is unaffected: all bands still default enabled there,
+and a regulatory setup that actually permits 6GHz AP operation will bring the
+radio up normally.
+
+Capability gate (review P1 #2): the no-IR constraint above is specific to the
+6.8-era regulatory domain. On a 7.0 host loaded with regtest=5 the hwsim custom
+domain (custom_03) leaves 6GHz IR-capable and a 6GHz AP beacons on 5975 -- proven
+standalone in doc/easymesh/Linux-7.0-hwsim-6GHz-VLP-AP-results.md. So the disable
+must not be unconditional under HWSIM_RADIO; it is gated additionally on
+!defined(HWSIM_6GHZ_CAPABLE). Building with -DHWSIM_6GHZ_CAPABLE (set
+HWSIM_6GHZ_CAPABLE = "1" in the recipe, off by default) keeps 6GHz enabled so a
+capable host can exercise wifi2. NOTE: enabling 6GHz also needs the security
+defaults to become band-aware (6GHz mandates SAE-H2E + PMF; patches 0005/0007
+force WPA2) -- see review P1 #3 -- so -DHWSIM_6GHZ_CAPABLE alone is necessary but
+not sufficient for a standards-correct tri-band VAP.
+
+---
+ source/db/wifi_db.c | 28 ++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/source/db/wifi_db.c b/source/db/wifi_db.c
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -98,6 +98,34 @@
+     }
+ 
+     cfg.enable = true;
++#if defined(HWSIM_RADIO) && !defined(HWSIM_6GHZ_CAPABLE)
++    /* Disable the 6GHz radio: every 6GHz channel mac80211_hwsim offers is
++     * flagged no-IR by this host's regulatory domain, so a 6GHz VAP can never
++     * beacon here. Confirmed by attempting an AP start on a free hwsim radio
++     * with one configuration at three frequencies:
++     *
++     *     5180 MHz (5GHz, no flags)   -> AP-ENABLED
++     *     5865 MHz (5GHz, no IR)      -> Failed to set channel: -22
++     *     5955 MHz (6GHz, no IR)      -> Failed to set channel: -22
++     *
++     * The no-IR flag is what decides it, not the band. hwsim advertises the
++     * 6GHz band and does advertise HE for AP and managed iftypes; the radios
++     * are capable, just not permitted to transmit.
++     *
++     * 2.4GHz and 5GHz both work and both stay enabled. They can only be UP at
++     * the same time if the module was loaded with channels>=2 -- hwsim
++     * defaults to "#channels <= 1" and the second band's first "Set freq"
++     * then fails with -16 (EBUSY). meta-lxd loads the pool with channels=2.
++     *
++     * 2.4GHz must stay enabled because the EasyMesh controller maps the
++     * fronthaul haul onto its 2.4GHz radio; disabling it left the controller
++     * on the image default SSID while the extender served private_ssid, so the
++     * two nodes never shared an ESS. Real BananaPi R4 hardware is unaffected. */
++    if (cfg.band != WIFI_FREQUENCY_5_BAND && cfg.band != WIFI_FREQUENCY_5L_BAND &&
++        cfg.band != WIFI_FREQUENCY_5H_BAND && cfg.band != WIFI_FREQUENCY_2_4_BAND) {
++        cfg.enable = false;
++    }
++#endif /* HWSIM_RADIO && !HWSIM_6GHZ_CAPABLE */
+ 
+     switch (cfg.band) {
+         case WIFI_FREQUENCY_2_4_BAND:

@@ -1,0 +1,42 @@
+Fix build of wifi_db.c's #else branch (ONEWIFI_DB_SUPPORT undefined -
+only reachable when EasyMesh is set, see ccsp-one-wifi.bbappend's
+CFLAGS_remove of -DONEWIFI_DB_SUPPORT). This branch was apparently
+never compiled before EasyMesh started removing that macro, and has
+two latent bugs:
+
+1. init_wifidb() (this branch's own copy) calls init_wifidb_data()
+   and wifidb_init_rfc_config_default() before either is declared -
+   both are defined later in this same file, in this same branch, but
+   with no forward declaration the compiler implicitly declares them
+   at the call site, then errors with "conflicting types" once it
+   reaches the real definition further down.
+2. init_wifidb_data()'s VAP loop compares a plain `int` loop counter
+   against getTotalNumberVAPs(), which returns UINT -
+   -Werror=sign-compare.
+
+---
+ source/db/wifi_db.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/source/db/wifi_db.c b/source/db/wifi_db.c
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -52,6 +52,9 @@
+ extern int wifidb_update_wifi_radio_config(int radio_index, wifi_radio_operationParam_t *config, wifi_radio_feature_param_t *feat_config);
+ extern int get_wifi_global_param(wifi_global_param_t *config);
+ #else
++void init_wifidb_data(void);
++void wifidb_init_rfc_config_default(wifi_rfc_dml_parameters_t *config);
++
+ void init_wifidb(void)
+ {
+     init_wifidb_data();
+@@ -687,7 +690,7 @@
+         init_radio_config_default(index, radio_oper_conf, radio_feat_conf);
+     }
+
+-    for (index = 0; index < getTotalNumberVAPs(); index++)
++    for (index = 0; index < (int)getTotalNumberVAPs(); index++)
+     {
+         vap_index = VAP_INDEX(g_wifidb->hal_cap, index);
+         wifi_vap_info_t *vapInfo = getVapInfo(vap_index);

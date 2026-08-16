@@ -1,0 +1,29 @@
+Fix build: -Werror treats the plain #define of IEEE80211_HDRLEN here as
+a hard error once rdk-wifi-libhostap is a DEPENDS (EasyMesh/em_extender
+builds only - see ccsp-one-wifi.bbappend's
+`DEPENDS += "...EasyMesh...rdk-wifi-libhostap..."`). Its installed
+src/common/ieee802_11_defs.h already defines the same macro
+(sizeof(struct ieee80211_hdr), 24 bytes for the non-QoS/no-addr4 case -
+same value, so this is a naming collision, not a behavior difference)
+and gets pulled in transitively via the em apps-manager include chain
+(wifi_apps_mgr.h -> wifi_ctrl.h -> wifi_mgr.h -> wifi_monitor.c). Guard
+with #ifndef so whichever header is seen first wins, instead of
+redefining unconditionally.
+
+---
+ source/apps/em/wifi_em.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/source/apps/em/wifi_em.h b/source/apps/em/wifi_em.h
+--- a/source/apps/em/wifi_em.h
++++ b/source/apps/em/wifi_em.h
+@@ -39,7 +39,9 @@
+ #define WIFI_EM_FAILED_CONNECTION             "Device.WiFi.EM.FailedConnection"
+
+ #define WNM_CATEGORY               10
++#ifndef IEEE80211_HDRLEN
+ #define IEEE80211_HDRLEN           24
++#endif
+ #define IEEE80211_EID_NEIGHBOR     52
+ #define IEEE80211_NEIGHBOR_REPORT_MIN_LEN  13
+
