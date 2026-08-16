@@ -182,6 +182,31 @@ up)
         echo "$CT: associated but DHCP did not provide an address" >&2
         exit 1
     }
+
+    # Do not let a caller immediately add another station (which refreshes the
+    # fixed wmediumd registration matrix) while the controller is still doing
+    # the new STA capability exchange. Losing that short exchange leaves a
+    # physically associated client absent from STAList/WebUI until it roams.
+    # When this is a standalone WLAN test with no controller, skip the gate.
+    if [ "${WAIT_EASYMESH_EXPORT:-1}" = 1 ] \
+       && lxc info bpibroadband >/dev/null 2>&1 \
+       && [ "$(lxc exec bpibroadband -- systemctl is-active em_ctrl 2>/dev/null || true)" = active ]; then
+        sta=$(lxc exec "$CT" -- iw dev wlan0 info | awk '/addr/{print $2; exit}')
+        exported=0
+        for n in $(seq 1 50); do
+            if [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
+                    -e "select count(*) from STAList where MACAddress='$sta' and Associated=1" \
+                    2>/dev/null || true)" = 1 ]; then
+                exported=1
+                break
+            fi
+            sleep 0.2
+        done
+        if [ "$exported" != 1 ]; then
+            echo "$CT: associated but EasyMesh controller did not export STA $sta" >&2
+            exit 1
+        fi
+    fi
     "$0" ${INST:+-i $INST} status
     ;;
 status)
