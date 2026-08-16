@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec </dev/null
+repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
+results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
+
+echo TOPOLOGY
+curl -fsS http://127.0.0.1:8888/api/v1/topology | jq -r '
+    .nodes[] | [.name, .id, ([.haulTypes[]?.BSSList[]?] | length),
+    (.STAList | length)] | @tsv'
+echo MODEL
+lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+    'select (select count(*) from DeviceList),
+    (select count(*) from RadioList),
+    (select count(*) from BSSList),
+    (select count(*) from STAList where Associated=1)' 2>/dev/null
+echo API
+curl -fsS http://127.0.0.1:8888/api/v1/clients \
+    | jq -r '"active=\(.active) total=\(.total)"'
+
+echo RESTARTS
+for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+    for unit in onewifi em_agent; do
+        restarts=$(lxc exec "$container" -- systemctl show "$unit" \
+            -p NRestarts --value)
+        echo "$container $unit=$restarts"
+    done
+done
+for unit in em_ctrl em_cli; do
+    restarts=$(lxc exec bpibroadband -- systemctl show "$unit" \
+        -p NRestarts --value)
+    echo "bpibroadband $unit=$restarts"
+done
+
+echo CONNECTIVITY
+while read -r client; do
+    (
+        loss=$(lxc exec "$client" -- ping -q -c 40 -i 0.05 -W 1 10.0.0.1 \
+            | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
+        echo "$client ${loss:-FAIL}"
+    ) &
+done < <(lxc list -c n --format csv \
+    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
+wait
+
+if [ -s "$results" ]; then
+    echo MATRIX
+    awk -F, 'NR > 1 {
+        gsub(/%/, "", $11)
+        n++; pass += ($12 == "PASS")
+        sl += $8; sd += $9; sa += $10; loss += $11
+        if (($8 + 0) > ml) ml = $8 + 0
+        if (($9 + 0) > md) md = $9 + 0
+        if (($10 + 0) > ma) ma = $10 + 0
+        if (($11 + 0) > mx) mx = $11 + 0
+    } END {
+        if (!n) { print "no steering samples"; exit }
+        printf "pass=%d/%d link_avg=%.0fms link_max=%dms db_avg=%.0fms db_max=%dms api_avg=%.0fms api_max=%dms loss_avg=%.1f%% loss_max=%d%%\n", pass, n, sl/n, ml, sd/n, md, sa/n, ma, loss/n, mx
+    }' "$results"
+fi
+
+echo MEMORY
+free -h | sed -n '1,2p'
