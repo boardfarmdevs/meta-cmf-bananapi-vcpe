@@ -36,6 +36,12 @@ sudo install -d -m 0775 -o root -g "$CONTROL_GROUP" "$RUNTIME"
 find_running_wmediumd() {
     local pattern="$1" pids
     pids=$(sudo pgrep -f "$pattern" 2>/dev/null || true)
+    # Releases before the control API was added were started as
+    #   /home/<user>/.../gen/wmediumd/wmediumd.patched -c <config>
+    # and therefore cannot be found through CONTROL.  Include only that
+    # lab-specific executable shape so an unrelated packaged wmediumd remains
+    # outside our lifecycle management.
+    pids="$pids $(sudo pgrep -f '^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\.patched[[:space:]]+-c[[:space:]]+' 2>/dev/null || true)"
     if [ -S "$CONTROL" ] && command -v fuser >/dev/null 2>&1; then
         pids="$pids $(sudo fuser "$CONTROL" 2>/dev/null || true)"
     fi
