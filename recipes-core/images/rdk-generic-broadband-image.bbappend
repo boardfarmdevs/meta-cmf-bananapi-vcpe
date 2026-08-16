@@ -1,9 +1,18 @@
-mask_onewifi_units() {
-    for unit in onewifi.service filogicwifiinitialized.path \
-                checkfilogicwifisupport.path checkfilogicwifisupport.service; do
-        ln -sf /dev/null ${IMAGE_ROOTFS}${systemd_unitdir}/system/$unit
-    done
-}
+# mask_onewifi_units() used to symlink onewifi.service, filogicwifiinitialized.path,
+# checkfilogicwifisupport.path and checkfilogicwifisupport.service to /dev/null. That
+# dates from when this image had no wifi at all in the container (see fix_cr_deviceprofile
+# below, which still removes the wifi component from cr-deviceprofile.xml "no wifi hw in
+# LXC"), so OneWifi could only have spun on Restart=always.
+#
+# It is now actively wrong: the container gets real mac80211_hwsim radios, and OneWifi is
+# what drives EasyMesh -- it owns the VAPs, the WSC M2 apply and the bridge enslavement.
+# With onewifi.service masked, em_ctrl.service never leaves the queue (it is ordered after
+# it), so the controller never answered AP-Autoconfiguration at all. The AP-extender image
+# is built from rdk-generic-ap-extender-image and never ran this function, which is why
+# OneWifi worked there and not here -- the two sides silently disagreed.
+#
+# The units are left exactly as ccsp-common-library ships them, matching the extender,
+# where all four are enabled/static and OneWifi comes up cleanly.
 
 fix_ccspwebui() {
     sed -i 's/gwprovethwan\.service/gwprovapp.service/g' \
@@ -131,4 +140,4 @@ EOF
     fi
 }
 
-ROOTFS_POSTPROCESS_COMMAND_append = " mask_onewifi_units; fix_ccspwebui; fix_cr_deviceprofile; vcpe_drop_boot_sleeps; vcpe_fix_dnsmasq_lan_deps; vcpe_fix_sync_ordering; vcpe_fix_lcm_cthulhu_cgroup; vcpe_fix_syslog_ng_cthulhu_include;"
+ROOTFS_POSTPROCESS_COMMAND_append = " fix_ccspwebui; fix_cr_deviceprofile; vcpe_drop_boot_sleeps; vcpe_fix_dnsmasq_lan_deps; vcpe_fix_sync_ordering; vcpe_fix_lcm_cthulhu_cgroup; vcpe_fix_syslog_ng_cthulhu_include;"
