@@ -193,7 +193,14 @@ up)
        && [ "$(lxc exec bpibroadband -- systemctl is-active em_ctrl 2>/dev/null || true)" = active ]; then
         sta=$(lxc exec "$CT" -- iw dev wlan0 info | awk '/addr/{print $2; exit}')
         exported=0
-        for n in $(seq 1 50); do
+        # A newly started controller/agent can need more than ten seconds to
+        # finish the topology notification and client-capability exchange.  A
+        # short timeout turns that healthy convergence into a deployment
+        # failure; keep the wait bounded, but cover one full 30-second model
+        # reconciliation interval.  Tests may override the poll count without
+        # bypassing the readiness contract.
+        export_polls=${EASYMESH_EXPORT_POLLS:-150}
+        for n in $(seq 1 "$export_polls"); do
             if [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
                     -e "select count(*) from STAList where MACAddress='$sta' and Associated=1" \
                     2>/dev/null || true)" = 1 ]; then
