@@ -26,8 +26,12 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `95d4990` | wmediumd replacement across tooling checkouts |
 | `d22b076` | client creation gated on controller export |
 | `73e7c1e` | full bounded model-reconciliation interval |
+| `6f30c90` | replacement of legacy pre-control-socket lab daemons |
+| `fdf7d13` | portable steering and health acceptance harness |
 
-Documentation-only commits after `73e7c1e` do not change the tested runtime.
+The accepted images contain runtime source through `73e7c1e`. Later host-side
+commits refine lifecycle management, tests and documentation without changing
+those image contents.
 
 ## Patch boundaries
 
@@ -160,10 +164,10 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 | controller | `X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2` | `9b9809d71c916a199682556d850cecf365c9d8c8fa7f1d062d600e0d56c4d432` |
 | extender | `X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2` | `62f143df46e7526c4b6af3cfe89e0454cb184daf09e70a265c65280a9e6efa92` |
 
-The accepted rev150-VM run reached `5/15/50`, exported 10/10 clients, recorded
-zero service restarts, passed 10/10 final and 30/30 extended commanded steering,
-and completed/restored a dynamic RF crossover without changing the wmediumd
-PID.
+Both rev130 and the rev150 VM reached `5/15/50`, exported 10/10 clients,
+recorded zero service restarts, passed 10/10 final commanded steering and
+completed/restored a dynamic RF crossover without changing the wmediumd PID.
+The VM additionally passed an earlier 30/30 extended steering matrix.
 
 ## Remaining engineering debt
 
@@ -172,4 +176,7 @@ PID.
 - Consolidate authorized WDS creation into one implementation owner.
 - Make FULL versus DELTA associated-client inputs explicit.
 - Root-cause the rare RBUS raw-frame provider delivery miss.
+- Decode and eliminate the repeated netlink command-2 `EINVAL` diagnostics
+  emitted by wmediumd during normal WLAN activity. They occur on both labs and
+  have not correlated with registration, traffic, steering or restore failure.
 - Complete VM reboot/persistent topology reconstruction acceptance.

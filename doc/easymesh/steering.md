@@ -5,6 +5,10 @@
 Commanded EasyMesh steering works. An autonomous steering policy is not yet
 proven.
 
+The planned optimizer is a completely external host-side component. No BPI
+EasyMesh, agent, OneWifi or WebUI process performs candidate selection or makes
+the steering decision. See [optimizer.md](optimizer.md).
+
 The accepted crossover test used an independent RF gradient and an explicit
 `steer.sh` call at 42 seconds. The passive run with the same gradient did not
 roam. Therefore the result proves commanded steering under RF stimulus, not an
@@ -229,4 +233,3 @@ Screenshots support this record but are not the source of truth.
 - Do not accept command response or 1905 ACK without the actual roam.
 - Do not implement agent-led mode until OneWifi policy consumption and its
   locally initiated steering path are verified.
-

@@ -182,5 +182,6 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
 - One rare RBUS raw-frame provider delivery miss was observed after a long
   steering sequence and succeeded on immediate retry; it is not hidden by a
   duplicate-BTM workaround.
-- No autonomous steering evaluator is currently proven. See
-  [steering.md](steering.md).
+- No autonomous steering evaluator is currently proven. The planned decision
+  engine is completely external to the BPI containers; see
+  [optimizer.md](optimizer.md) and [steering.md](steering.md).

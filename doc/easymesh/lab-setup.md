@@ -15,7 +15,8 @@ kernel, topology, clients, wmediumd and test parameters match.
 ## Accepted inputs
 
 ```text
-runtime source revision   73e7c1e3dac94b91bd2e9c84c6183cd234258d93
+image runtime revision    73e7c1e3dac94b91bd2e9c84c6183cd234258d93
+host tooling              current codex/0815-clean head
 kernel                    7.0.0-28-generic
 controller image          X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2
 extender image            X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
@@ -41,7 +42,7 @@ Artifacts are built on rev140 under
 ## Runtime prerequisites
 
 - Linux 7.0.0-28 with the patched hwsim module;
-- LXD 6.7 with a storage pool and management bridge;
+- LXD 6.7 or 6.9 with a storage pool and management bridge;
 - a 24-radio hwsim pool loaded with `channels=3 regtest=5`;
 - patched `wmediumd.patched` from this repository;
 - the prebuilt WNM-capable WLAN-client image; and
@@ -76,6 +77,8 @@ gen/hwsim/                         build/load patched hwsim
 gen/wmediumd/wmediumd-up.sh        generate/start/stop the medium
 gen/wmediumd/configurator/         compile and run RF scenarios
 gen/steer.sh                       host-side steering convenience wrapper
+gen/tests/steering-matrix.sh       portable ten-client steering acceptance
+gen/tests/health-audit.sh          topology, restart and traffic audit
 ```
 
 The rev150 VM source is
@@ -252,9 +255,27 @@ curl -fsS http://127.0.0.1:8888/api/v1/clients | jq '{total,active}'
 Then run the same health audit, steering rounds and RF scenario. Store the CSV
 and configurator JSON/JSONL artifacts with host, revision, hashes and timestamps.
 
-Current status: the VM is on the accepted images at four extenders/ten clients.
-rev130 was last observed on older 20260815 images at two extenders/five clients
-and must be cleanly redeployed before parity is claimed.
+```sh
+gen/tests/steering-matrix.sh 1
+gen/tests/health-audit.sh
+```
+
+Parity established on 2026-08-16:
+
+| Gate | rev130 | rev150 VM |
+| --- | --- | --- |
+| kernel | `7.0.0-28-generic` | `7.0.0-28-generic` |
+| controller/extender images | accepted 20260816 pair | accepted 20260816 pair |
+| model and clients | `5/15/50`, API 10/10 | `5/15/50`, API 10/10 |
+| service restarts | zero | zero |
+| final steering sample | 10/10 | 10/10 |
+| two-AP crossover | passive and commanded pass; restored | passive and commanded pass; restored |
+
+rev130's final steering sample averaged 1.68 seconds to the client link, 3.39
+seconds to the controller database and 3.29 seconds to the API. Follow-up
+traffic checks reported 0% loss on all ten clients. The commanded crossover
+delivered 1,399/1,400 probes while retaining the same wmediumd PID. LXD itself
+is an intentional platform variance: 6.9 on rev130 and 6.7 in the VM.
 
 ## Troubleshooting order
 
