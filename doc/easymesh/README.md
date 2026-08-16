@@ -45,6 +45,7 @@ Start here, then follow the section that matches what you're doing.
 
 | | |
 |---|---|
+| [0815-patch-stack.md](0815-patch-stack.md) | clean 0815-codex history, patch classes, deliberate removals, ordered core series and acceptance gates |
 | [patches.md](patches.md) | every patch in this layer, by recipe, why it exists (hwsim- / container- / defect-driven), and upstreaming notes |
 | [TODO.md](TODO.md) | open work from the latest external review — identity atomicity, 6 GHz capability-gating, Gate B, and more, by priority |
 | [../build](../build) | building the two images on the build host |
