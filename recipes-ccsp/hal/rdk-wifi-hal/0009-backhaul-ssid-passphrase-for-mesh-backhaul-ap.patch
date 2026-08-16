@@ -1,0 +1,56 @@
+Root cause of the EasyMesh controller<->extender backhaul link never
+associating, even after 0007/0008 fixed the beacon-start blocker and both
+containers' 5GHz VAPs were confirmed beaconing/scanning correctly.
+
+platform_get_ssid_default() and platform_get_keypassphrase_default() are
+supposed to source the SSID/passphrase for BOTH the backhaul STA (extender
+side, mesh_sta_5g) AND the backhaul AP (controller side, mesh_backhaul_5g)
+from /nvram/EasymeshCfg.json's Backhaul_SSID/Backhaul_KeyPassphrase --
+platform_get_ssid_default()'s own comment already says "mesh STA or mesh
+backhaul", and is_wifi_hal_vap_mesh_backhaul() exists in this exact file
+(declared in wifi_hal_priv.h) for precisely this purpose. But the actual
+`if` condition in both functions only ever checked
+is_wifi_hal_vap_mesh_sta(), never is_wifi_hal_vap_mesh_backhaul() -- so the
+AP-mode backhaul VAP silently fell through to the same generic
+serial-number-derived default SSID/password as every other VAP (confirmed
+via a raw netlink capture: wifi0.1/wifi1.1's actual broadcast SSID is
+"BPI-RDKB-MLO-AP-", identical to private_ssid_2g/5g, not "mesh_backhaul").
+
+Confirmed as the actual blocker via the extender's own logs (wifiCtrl.txt):
+its EasyMesh state machine (vap_svc_mesh_ext.c) was correctly scanning for
+SSID "mesh_backhaul" (read from its own EasymeshCfg.json) every ~9 seconds
+and reporting zero results -- even though `iw scan` on the same interface
+found the controller's backhaul beacon fine. A further raw netlink capture
+of the scan-complete multicast event (nl_groups=0x080000, cmd=0x22 /
+NL80211_CMD_NEW_SCAN_RESULTS) confirmed kernel-level scanning and event
+delivery both work correctly; the extender's own SSID-match filter was
+correctly rejecting the beacon because it wasn't broadcasting the SSID
+either side agrees it should be.
+
+Add the missing is_wifi_hal_vap_mesh_backhaul() check to both functions so
+the controller's backhaul AP actually broadcasts "mesh_backhaul" with
+passphrase "test-backhaul", matching what the extender is configured to
+look for.
+
+---
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -204,7 +204,7 @@
+     wifi_hal_dbg_print("%s:%d \n",__func__,__LINE__);  
+     /* if the vap_index is that of mesh STA then try to obtain the ssid from
+        /nvram/EasymeshCfg.json file */
+-    if (is_wifi_hal_vap_mesh_sta(vap_index)) {
++    if (is_wifi_hal_vap_mesh_sta(vap_index) || is_wifi_hal_vap_mesh_backhaul(vap_index)) {
+         if (!json_parse_backhaul_keypassphrase(password)) {
+             wifi_hal_dbg_print("%s:%d, read password from jSON file\n", __func__, __LINE__);
+             return 0;
+@@ -226,7 +226,7 @@
+     wifi_hal_dbg_print("%s:%d \n", __func__, __LINE__);
+     /* if the vap_index is that of mesh STA or mesh backhaul then try to obtain the ssid from
+        /nvram/EasymeshCfg.json file */
+-    if (is_wifi_hal_vap_mesh_sta(vap_index)) {
++    if (is_wifi_hal_vap_mesh_sta(vap_index) || is_wifi_hal_vap_mesh_backhaul(vap_index)) {
+         if (!json_parse_backhaul_ssid(ssid)) {
+             wifi_hal_dbg_print("%s:%d, read SSID:%s from jSON file\n", __func__, __LINE__, ssid);
+             return 0;

@@ -1,0 +1,48 @@
+nl80211_put_acl()'s "disabled" branch was fixed in 0007 (wrong attribute
+type, a universal bug). This is the remaining half of the same underlying
+problem: mac80211_hwsim advertises no MAC ACL capability at all -- no
+NL80211_ATTR_MAC_ACL_MAX_MAC_ADDRS on the wiphy (confirmed: no "ACL" line at
+all in `iw phy phy13 info`, unlike drivers that do support it) -- so even a
+properly-nested, valid ACL_POLICY/MAC_ADDRS pair from the "enabled" branch
+still gets the whole START_AP/NEW_BEACON request rejected with -EOPNOTSUPP.
+
+Confirmed via a raw netlink capture (strace -x, decoded with pyroute2) on
+the mesh_backhaul VAPs specifically: they're the only ones with
+mac_filter_enable=true (see wifi_db.c's isVapMeshBackhaul() branch), i.e.
+the only ones that reach nl80211_put_acl()'s "enabled" branch instead of the
+"disabled" one 0007 already fixed. Both wifi0.1 (mesh_backhaul_2g) and
+wifi1.1 (mesh_backhaul_5g) carry ACL_POLICY=DENY_UNLESS_LISTED with a
+single placeholder null-MAC entry -- a well-formed, correctly-nested
+attribute -- and both get -EOPNOTSUPP anyway, while their sibling VAPs on
+the same radios (which 0007 already lets through, since they have
+mac_filter_enable=false) succeed.
+
+Skip the whole nl80211_put_acl() call under HWSIM_RADIO. Real BananaPi R4
+hardware (which does support ACL, hence this code existing at all) is
+unaffected -- the guard only adds !defined(HWSIM_RADIO), it doesn't change
+real-hardware behavior.
+
+---
+ src/wifi_hal_nl80211.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -17376,8 +17376,16 @@
+         }
+     }
+
+-#if defined(NL80211_ACL) && !defined(PLATFORM_LINUX)
++#if defined(NL80211_ACL) && !defined(PLATFORM_LINUX) && !defined(HWSIM_RADIO)
+     //Raspberry Pi kernel requires patching to support ACL functionality.
++    //mac80211_hwsim advertises no MAC ACL capability at all (no
++    //NL80211_ATTR_MAC_ACL_MAX_MAC_ADDRS on the wiphy): even a properly-nested,
++    //valid ACL_POLICY/MAC_ADDRS pair (not just the malformed disabled-case this
++    //file's other patch fixes) gets the whole START_AP/NEW_BEACON request
++    //rejected with -EOPNOTSUPP -- confirmed via a raw netlink capture on the
++    //mesh_backhaul VAPs specifically (the only ones with mac_filter_enable=true,
++    //i.e. the only ones that reach the "enabled" branch of nl80211_put_acl()).
++    //Skip the call entirely under hwsim; real BananaPi R4 hardware is unaffected.
+     nl80211_put_acl(msg, interface);
+ #endif

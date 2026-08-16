@@ -1,0 +1,75 @@
+wpa_sm_notify_disassoc(): guard against a NULL state machine, matching
+its sibling wpa_sm_notify_assoc().
+
+Confirmed by breakpad minidump from an OneWifi SIGSEGV on the EasyMesh
+leaf, taken at the exact second the controller's WSC M2 fronthaul VAP
+config was applied:
+
+  Crash reason:  SIGSEGV /SEGV_MAPERR
+  Crash address: 0x44c
+  Thread 1 (crashed)
+   0  libhostap.so.2 + 0xa21c4     wpa_sm_notify_disassoc      (edi = 0x0)
+   1  libhostap.so.2 + 0x4d239     wpas_event_disconnect
+   2  librdk_wifihal.so.0 + 0x4668c  nl80211_disconnect_event
+   3  librdk_wifihal.so.0 + 0x48748  process_global_nl80211_event
+   4-6 libnl-3.so.200                 (netlink callback dispatch)
+   7  librdk_wifihal.so.0 + 0x416f8  nl_recv_func
+
+The faulting instruction is
+
+  0xa21c4 <wpa_sm_notify_disassoc+69>:  mov 0x44c(%edi),%eax
+  0xa21ca <wpa_sm_notify_disassoc+75>:  call <wpa_sm_get_state>
+
+i.e. src/rsn_supp/wpa.c:4521's wpa_sm_get_state(sm), with %edi (the `sm`
+argument) holding 0 -- so the crash address is just the offset of the
+field being loaded off a NULL base.
+
+This function is reachable with sm == NULL and does not check for it.
+The four calls preceding line 4521 all happen to tolerate NULL
+internally (eloop_cancel_timeout only compares the pointer;
+rsn_preauth_deinit and pmksa_cache_clear_current both early-return on
+NULL), so the function gets four statements deep before the first
+unguarded dereference -- which is why this reads as a hard crash rather
+than an obvious missing-check.
+
+How it is reached here: wifi_hal's nl80211_disconnect_event()
+(src/wifi_hal_nl80211_events.c) unconditionally forwards every
+NL80211_CMD_DISCONNECT into supplicant_event(&interface->wpa_s,
+EVENT_DISASSOC, NULL) before it tears down interface->u.sta.wpa_sm, and
+wpas_event_disconnect() -> wpa_supplicant_mark_disassoc() passes
+wpa_s->wpa straight through. On the EasyMesh leaf the kernel emits a
+DISCONNECT for the mesh STA while the M2-driven VAP reconfiguration is
+bringing interfaces down, at a point where no wpa_sm has been allocated
+for that interface -- so wpa_s->wpa is legitimately NULL and the event
+is simply nothing to act on.
+
+Fixed here rather than at the wifi_hal call site because the NULL is
+valid state, not a wifi_hal bug, and because this file's own convention
+is for these entry points to tolerate it: wpa_sm_notify_assoc(),
+wpa_sm_set_pmk(), wpa_sm_set_pmk_from_pmksa(), wpa_sm_set_scard_ctx()
+and wpa_sm_set_eapol() all open with exactly this guard.
+wpa_sm_notify_disassoc() is the odd one out.
+
+Net effect of the crash: OneWifi core-dumped and systemd restarted it,
+which discarded the just-applied fronthaul VAP configuration. Since AP
+autoconfiguration only runs once per agent start, the leaf never got its
+fronthaul VAPs and no client could ever associate to it -- despite the
+1905 exchange, WSC M1/M2 and the backhaul link all being healthy.
+
+---
+ source/hostap-2.11/src/rsn_supp/wpa.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/source/hostap-2.11/src/rsn_supp/wpa.c b/source/hostap-2.11/src/rsn_supp/wpa.c
+--- a/source/hostap-2.11/src/rsn_supp/wpa.c
++++ b/source/hostap-2.11/src/rsn_supp/wpa.c
+@@ -4514,6 +4514,9 @@
+  */
+ void wpa_sm_notify_disassoc(struct wpa_sm *sm)
+ {
++	if (sm == NULL)
++		return;
++
+ 	eloop_cancel_timeout(wpa_sm_start_preauth, sm, NULL);
+ 	eloop_cancel_timeout(wpa_sm_rekey_ptk, sm, NULL);
+ 	rsn_preauth_deinit(sm);

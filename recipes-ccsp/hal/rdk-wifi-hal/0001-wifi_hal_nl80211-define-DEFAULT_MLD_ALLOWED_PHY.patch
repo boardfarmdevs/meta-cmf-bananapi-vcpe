@@ -1,0 +1,35 @@
+Fix build: DEFAULT_MLD_ALLOWED_PHY was introduced by upstream commit
+07a0822e ("RDKB-62554: Provide implementation for Banana Pi STA MLO
+connection (#683)") but never defined anywhere in rdk-wifi-hal or in
+the rdk-wifi-libhostap headers it depends on, breaking the build with
+"'DEFAULT_MLD_ALLOWED_PHY' undeclared".
+
+wpa_supplicant's conf->mld_allowed_phy is a 3-bit band bitmap
+(BIT(0)=2.4GHz, BIT(1)=5GHz, BIT(2)=6GHz; see check_mld_allowed_phy()
+and wpas_sme_set_mlo_links() in wpa_supplicant/sme.c, and the
+INT_RANGE(mld_allowed_phy, 0, 7) config entry in wpa_supplicant/config.c).
+A value of 0 disables MLO link setup entirely (the check is used as a
+boolean gate in wpas_sme_set_mlo_links()), so since this assignment
+only runs when the interface actually has MLO configured
+(interface->mlo_params.valid_links != 0U), the correct default is 7 -
+allow MLO links on all three bands - matching the intent of the
+STA MLO connection feature this line belongs to.
+
+---
+ wifi_hal_nl80211.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -87,6 +87,10 @@
+ #define ONEWIFI_TESTSUITE_TMPFILE "/tmp/onewifi_testsuite_configured"
+ #define KEY_MGMT_SAE_EXT 67108864
+ #define MAX_MBSSID_INTERFACES 8
++/* Bitmap for wpa_supplicant conf->mld_allowed_phy: BIT(0)=2.4GHz,
++ * BIT(1)=5GHz, BIT(2)=6GHz (see check_mld_allowed_phy() in
++ * wpa_supplicant/sme.c). Allow MLO links on all three bands. */
++#define DEFAULT_MLD_ALLOWED_PHY 7
+
+ #if defined(EASY_MESH_NODE) && defined(_PLATFORM_BANANAPI_R4_)
+ #define CSA_TAG_ID 37

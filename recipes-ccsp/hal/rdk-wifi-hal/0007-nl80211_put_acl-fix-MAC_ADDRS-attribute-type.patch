@@ -1,0 +1,98 @@
+Root cause of the "Failed to set beacon parameter for interface: wifi0
+error: -95(Operation not supported)" failure that blocked the controller's
+VAPs from ever beaconing under mac80211_hwsim -- and it's a genuine bug, not
+an hwsim-only quirk.
+
+Root-caused via a raw netlink capture (strace -x on the exact
+NL80211_CMD_START_AP sendmsg for wifi0, decoded with pyroute2's own nl80211
+attribute parser to remove any doubt about manual byte-counting errors) after
+ruling out every content-based hypothesis (802.11ax/be, MLO, spectrum
+management, WPA3/SAE all confirmed absent from the message, yet -EOPNOTSUPP
+persisted). Decisive control test: plain vanilla hostapd against the exact
+same wiphy/interface (wlan0) with a minimal config succeeded cleanly
+(AP-ENABLED) -- proving mac80211_hwsim can start an AP fine, and the fault is
+specific to something wifi_hal's own message includes that hostapd's own
+driver_nl80211.c doesn't.
+
+That difference: NL80211_ATTR_MAC_ADDRS and NL80211_ATTR_ACL_POLICY, present
+even though this VAP has ACL disabled (mac_filter_enable == false).
+nl80211_put_acl()'s disabled branch does:
+
+    nla_put_u32(msg, NL80211_ATTR_ACL_POLICY, NL80211_ACL_POLICY_ACCEPT_UNLESS_LISTED);
+    nla_put_u32(msg, NL80211_ATTR_MAC_ADDRS, 0);
+
+NL80211_ATTR_MAC_ADDRS's kernel netlink attribute policy expects a NESTED
+attribute (a list of MAC addresses, built via nla_nest_start/nla_nest_end --
+see the *enabled* branch just above, which does this correctly), not a plain
+u32. Sending it as a bare u32 violates that policy, and cfg80211 rejects the
+entire START_AP/NEW_BEACON request with -EOPNOTSUPP wherever the driver's
+attribute policy is validated strictly. This isn't an hwsim-specific gap --
+it's a wrong attribute type -- so the fix applies unconditionally to all
+platforms, not gated behind HWSIM_RADIO like the earlier default-config
+patches in this series.
+
+Two call sites have the same bug: nl80211_put_acl() (called directly inside
+wifi_drv_set_ap(), i.e. this is the exact function/message this bug was
+found in) and the standalone nl80211_set_acl() (NL80211_CMD_SET_MAC_ACL,
+used for runtime ACL updates -- not yet observed to be exercised in this
+container, but fixed for consistency since it's the identical bug).
+
+Fix: nl80211_put_acl() just omits both attributes when ACL is disabled --
+their absence already means "no restriction" to the kernel, so nothing needs
+to be sent at all. nl80211_set_acl() keeps sending ACL_POLICY (since that
+command's whole purpose is ACL state) but uses a properly nested, empty MAC
+list instead of the malformed u32 -- ACCEPT_UNLESS_LISTED with zero entries
+is functionally identical to "disabled" (every station accepted).
+
+---
+ src/wifi_hal_nl80211.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -16329,8 +16329,14 @@
+                                                                                  "Whitelist");
+
+     } else {
+-        nla_put_u32(msg, NL80211_ATTR_ACL_POLICY, NL80211_ACL_POLICY_ACCEPT_UNLESS_LISTED);
+-        nla_put_u32(msg, NL80211_ATTR_MAC_ADDRS, 0);
++        /* NL80211_ATTR_MAC_ADDRS is a nested attribute (a list of MAC addresses);
++         * sending it as a bare nla_put_u32(..., 0) violates its kernel netlink
++         * attribute policy (expects NLA_NESTED, not NLA_U32), so cfg80211 rejects
++         * the whole START_AP/NEW_BEACON request with -EOPNOTSUPP wherever the
++         * driver's policy is validated strictly (confirmed via a raw netlink
++         * capture against mac80211_hwsim). Simply omitting both attributes when
++         * ACL is disabled is correct and sufficient: their absence already means
++         * "no ACL restriction" to the kernel. */
+         wifi_hal_dbg_print("%s:%d: Disable ACL\n", __func__, __LINE__);
+     }
+
+@@ -16404,16 +16410,26 @@
+             vap->u.bss_info.mac_filter_mode == wifi_mac_filter_mode_black_list ? "Blacklist" : "Whitelist");
+
+     } else {
++        /* NL80211_ATTR_MAC_ADDRS is a nested attribute (a list of MAC addresses);
++         * nla_put_u32(..., 0) sends it as a plain u32 instead, violating its
++         * kernel netlink attribute policy (see nl80211_put_acl() above for the
++         * same bug, confirmed via a raw netlink capture against
++         * mac80211_hwsim). Use a properly nested, empty list instead: with
++         * ACCEPT_UNLESS_LISTED and zero entries this is functionally identical
++         * to "disabled" (every station is accepted) but doesn't violate the
++         * attribute's expected type. */
+         if (nla_put_u32(msg, NL80211_ATTR_ACL_POLICY, NL80211_ACL_POLICY_ACCEPT_UNLESS_LISTED) < 0 ){
+             wifi_hal_dbg_print("%s:%d: nl80211: Failed to set ACL policy\n", __func__, __LINE__);
+             nlmsg_free(msg);
+             return -ENOMEM;
+         }
+-        if (nla_put_u32(msg, NL80211_ATTR_MAC_ADDRS, 0) < 0) {
+-            wifi_hal_dbg_print("%s:%d: nl80211: Failed to accept ACL Policy\n", __func__, __LINE__);
++        acl = nla_nest_start(msg, NL80211_ATTR_MAC_ADDRS);
++        if (acl == NULL) {
++            wifi_hal_dbg_print("%s:%d: nl80211: Failed to add empty ACL list to msg\n", __func__, __LINE__);
+             nlmsg_free(msg);
+             return -ENOMEM;
+         }
++        nla_nest_end(msg, acl);
+         wifi_hal_dbg_print("%s:%d: Disable ACL\n", __func__, __LINE__);
+     }
