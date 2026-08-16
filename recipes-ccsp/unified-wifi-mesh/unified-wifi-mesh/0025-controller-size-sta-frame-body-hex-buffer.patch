@@ -1,0 +1,65 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] controller: size STA frame-body hex buffers for NUL
+
+The maximum association frame body is 512 bytes.  Its hexadecimal database
+representation requires 1024 characters plus a terminating NUL, but the STA
+database code allocates only 1024 bytes and passes that size to hex().  hex()
+therefore rejects a maximum-length frame without initializing the output.
+The subsequent SQL statement reads uninitialized stack data, fails, and the
+live station can remain absent from controller API and topology output.
+
+Reserve the terminator in update, comparison, and database synchronization
+paths, and pass the actual buffer size to hex().
+
+---
+ src/dm/dm_sta_list.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/dm/dm_sta_list.cpp b/src/dm/dm_sta_list.cpp
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -291,13 +291,13 @@ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
+     mac_addr_str_t sta_mac_str, bssid_mac_str, radio_mac_str;
+     em_sta_info_t *info = static_cast<em_sta_info_t *>(data);
+     int ret = 0;
+-    char frame_body[EM_MAX_FRAME_BODY_LEN*2];
++    char frame_body[EM_MAX_FRAME_BODY_LEN*2 + 1];
+ 
+     //printf("dm_sta_list_t:%s:%d: Operation: %s\n", __func__, __LINE__, em_cmd_t::get_orch_op_str(op));
+ 
+ 	switch (op) {
+ 		case dm_orch_type_db_insert:
+-			dm_easy_mesh_t::hex(info->frame_body_len, info->frame_body, EM_MAX_FRAME_BODY_LEN*2, frame_body);
++			dm_easy_mesh_t::hex(info->frame_body_len, info->frame_body, sizeof(frame_body), frame_body);
+ 			ret = insert_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->id, sta_mac_str),
+ 						dm_easy_mesh_t::macbytes_to_string(info->bssid, bssid_mac_str),
+ 						dm_easy_mesh_t::macbytes_to_string(info->radiomac, radio_mac_str),
+@@ -311,7 +311,7 @@ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
+ 			break;
+ 
+ 		case dm_orch_type_db_update:
+-			dm_easy_mesh_t::hex(info->frame_body_len, info->frame_body, EM_MAX_FRAME_BODY_LEN*2, frame_body);
++			dm_easy_mesh_t::hex(info->frame_body_len, info->frame_body, sizeof(frame_body), frame_body);
+ 			ret = update_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->bssid, bssid_mac_str), 
+ 						dm_easy_mesh_t::macbytes_to_string(info->radiomac, radio_mac_str),
+ 						info->associated, info->last_ul_rate, info->last_dl_rate,
+@@ -356,7 +356,7 @@ bool dm_sta_list_t::compare_db(db_client_t& db_client, const dm_sta_t& sta)
+ {
+     em_sta_info_t info;
+     mac_addr_str_t mac;
+-    char frame_body[EM_MAX_FRAME_BODY_LEN*2];
++    char frame_body[EM_MAX_FRAME_BODY_LEN*2 + 1];
+ 
+     db_query_t    query;
+     void *ctx;
+@@ -411,7 +411,7 @@ int dm_sta_list_t::sync_db(db_client_t& db_client, void *ctx)
+     em_sta_info_t info;
+     mac_addr_str_t	mac;
+     int rc = 0;
+-    char frame_body[EM_MAX_FRAME_BODY_LEN*2];
++    char frame_body[EM_MAX_FRAME_BODY_LEN*2 + 1];
+ 
+     while (db_client.next_result(ctx)) {
+         memset(&info, 0, sizeof(em_sta_info_t));
+-- 
+2.43.0

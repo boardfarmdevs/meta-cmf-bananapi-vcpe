@@ -1,0 +1,148 @@
+From 70a77ad7c970ff17c90dd0c447cbdf4770e74b70 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 9 Aug 2026 15:50:00 -0700
+Subject: [PATCH] steering: route 1905 ACK to the requesting radio
+
+The controller routes a 1905 ACK without a radio-identifying TLV to the first
+non-AL radio object.  That is not necessarily the radio which sent a Client
+Steering Request, so the ACK falls through to the policy handler and steering
+retries until exhaustion.
+
+Remember the Client Steering Request MID and use the existing source-AL radio
+lookup to select the pending radio with the matching MID.  Clear the MID on
+ACK, send failure, retry exhaustion, and cancellation.
+
+Upstream-Status: Pending
+---
+ inc/em_steering.h               |  3 +++
+ src/ctrl/em_ctrl.cpp            | 27 ++++++++++++++++++++++++++-
+ src/em/steering/em_steering.cpp |  6 +++++-
+ src/orch/em_orch_ctrl.cpp       |  2 ++
+ 4 files changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/inc/em_steering.h b/inc/em_steering.h
+index 1658afc..e040ce6 100644
+--- a/inc/em_steering.h
++++ b/inc/em_steering.h
+@@ -24,6 +24,7 @@
+ class em_steering_t {
+ 
+     unsigned int m_client_steering_req_tx_cnt;
++    unsigned short m_client_steering_req_msg_id;
+     em_state_t m_client_steering_prev_state;
+     unsigned int m_client_assoc_ctrl_req_tx_cnt;
+ 
+@@ -327,6 +328,8 @@ public:
+ 	 * @note Ensure that the count is a valid unsigned integer.
+ 	 */
+ 	void set_client_steering_req_tx_count(unsigned int cnt) { m_client_steering_req_tx_cnt = cnt; }
++	void set_client_steering_req_msg_id(unsigned short msg_id) { m_client_steering_req_msg_id = msg_id; }
++	unsigned short get_client_steering_req_msg_id() { return m_client_steering_req_msg_id; }
+ 	void set_client_steering_prev_state(em_state_t state) { m_client_steering_prev_state = state; }
+ 	em_state_t get_client_steering_prev_state() { return m_client_steering_prev_state; }
+     
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 9333b79..a7d0ec8 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1046,7 +1046,6 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             break;
+ 
+         case em_msg_type_ap_mld_config_resp:
+-        case em_msg_type_1905_ack:
+             em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+             while(em != NULL) {
+                 if ((em->is_al_interface_em() == false)) {
+@@ -1056,6 +1055,32 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             }
+             break;
+ 
++        case em_msg_type_1905_ack:
++        {
++            std::vector<em_t *> em_radios;
++            unsigned short response_msg_id = ntohs(cmdu->id);
++
++            get_all_em_for_al_mac(hdr->src, em_radios);
++            for (auto &radio_em : em_radios) {
++                if ((radio_em->get_state() == em_state_ctrl_sta_steer_pending) &&
++                    (radio_em->get_client_steering_req_msg_id() == response_msg_id)) {
++                    em = radio_em;
++                    break;
++                }
++            }
++
++            if (em == NULL) {
++                /* No radio has a steering op outstanding for this ACK's MID, so
++                 * the ACK is not for steering. Do NOT misroute it to an arbitrary
++                 * (first non-AL) radio -- that arbitrary fallback was the very
++                 * defect this patch fixes. Leaving em == NULL makes the caller
++                 * drop the frame; a genuine non-steering ACK has no per-radio
++                 * steering state to advance here, so dropping is the correct
++                 * behaviour. */
++            }
++            break;
++        }
++
+         case em_msg_type_beacon_metrics_rsp:
+             em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+             while(em != NULL) {
+diff --git a/src/em/steering/em_steering.cpp b/src/em/steering/em_steering.cpp
+index 1454770..654c9be 100644
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -191,7 +191,8 @@ int em_steering_t::send_client_steering_req_msg()
+ 
+     memset(tmp, 0, sizeof(em_cmdu_t));
+     cmdu->type = htons(msg_type);
+-    cmdu->id = htons(get_mgr()->get_next_msg_id());
++    m_client_steering_req_msg_id = get_mgr()->get_next_msg_id();
++    cmdu->id = htons(m_client_steering_req_msg_id);
+     cmdu->last_frag_ind = 1;
+     cmdu->relay_ind = 0;
+ 
+@@ -222,6 +223,7 @@ int em_steering_t::send_client_steering_req_msg()
+ 
+     if (send_frame(buff, static_cast<unsigned int> (len))  < 0) {
+         printf("%s:%d: Client Steering Request msg send failed, error:%d\n", __func__, __LINE__, errno);
++        m_client_steering_req_msg_id = 0;
+         return -1;
+     }
+ 
+@@ -540,6 +542,7 @@ int em_steering_t::handle_client_steering_report(unsigned char *buff, unsigned i
+ 
+ int em_steering_t::handle_ack_msg(unsigned char *buff, unsigned int len)
+ {
++    m_client_steering_req_msg_id = 0;
+     set_state(em_state_ctrl_steer_btm_req_ack_rcvd);
+     return 0;
+ }
+@@ -643,6 +646,7 @@ void em_steering_t::process_msg(unsigned char *data, unsigned int len)
+ em_steering_t::em_steering_t()
+ {
+     m_client_steering_req_tx_cnt = 0;
++    m_client_steering_req_msg_id = 0;
+     m_client_steering_prev_state = em_state_ctrl_unconfigured;
+     m_client_assoc_ctrl_req_tx_cnt = 0;
+ }
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index b5eb368..3718ff9 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -234,6 +234,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+                 || (em->get_state() == em_state_ctrl_steer_btm_req_ack_rcvd)) {
+                 em_state_t previous = em->get_client_steering_prev_state();
+                 em->set_client_steering_req_tx_count(0);
++                em->set_client_steering_req_msg_id(0);
+                 if ((previous == em_state_ctrl_configured) ||
+                     (previous == em_state_ctrl_topo_synchronized)) {
+                     em->set_state(previous);
+@@ -422,6 +423,7 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+         {
+             em_state_t previous = em->get_client_steering_prev_state();
+             em->set_client_steering_req_tx_count(0);
++            em->set_client_steering_req_msg_id(0);
+             if ((previous == em_state_ctrl_configured) ||
+                 (previous == em_state_ctrl_topo_synchronized)) {
+                 em->set_state(previous);
+-- 
+2.53.0

@@ -1,0 +1,66 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] agent: deliver STA notifications during onboarding
+
+A OneWifi association can arrive as soon as an M2-created BSS becomes active,
+while the corresponding EasyMesh radio is still completing AP capability or
+topology synchronization.  sta_list orchestration currently waits for the
+radio to reach configured/topo_synchronized and expires after ten seconds.
+The association remains live in OneWifi, but its one-shot Client Association
+Event never reaches the controller.
+
+Topology notifications are fire-and-forget and do not own a response
+transaction.  Allow sta_list to execute in any radio state, send its snapshot
+synchronously, preserve the radio's prior onboarding state, and mark the
+orchestration complete.  This also removes the next-protocol-tick window in
+which another exchange could overwrite agent_topology_notify before it sends.
+
+---
+ src/em/em.cpp                 | 12 +++++++++++-
+ src/orch/em_orch_agent.cpp    |  9 +++++----
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -93,9 +93,19 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+     // now set the em state to start message exchages with peer
+     cmd_type = pcmd->m_type;
+     switch (cmd_type) {
+-        case em_cmd_type_sta_list:
++        case em_cmd_type_sta_list: {
++            /* Client Association Event notifications are fire-and-forget and
++             * carry no response transaction.  Send this command snapshot in
++             * the orchestrator call itself.  Preserve any onboarding state
++             * (for example ap_cap_report) rather than using the shared radio
++             * state machine as temporary notification storage. */
++            em_state_t saved_state = m_sm.get_state();
+             m_sm.set_state(em_state_agent_topology_notify);
++            em_configuration_t::process_agent_state();
++            m_sm.set_state(saved_state);
++            m_orch_state = em_orch_state_fini;
+ 			break;
++        }
+ 
+         case em_cmd_type_set_ssid:
+         case em_cmd_type_set_radio:
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -176,10 +176,11 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+ 			return true;
+ 		}
+     } else if (pcmd->m_type == em_cmd_type_sta_list) {
+-		if ((em->get_state() == em_state_agent_configured) ||
+-				(em->get_state() >= em_state_agent_topo_synchronized)){
+-			return true;
+-		}
++		/* A live OneWifi association can arrive while this radio is finishing
++		 * onboarding (commonly ap_cap_report).  The notification sender does
++		 * not require a response and orch_execute() preserves that state, so
++		 * delaying here only lets the one-shot command expire after 10 seconds. */
++		return true;
+     } else if (pcmd->m_type == em_cmd_type_sta_link_metrics) {
+ 		if (em->get_state() == em_state_agent_configured) {
+ 			return true;
+-- 
+2.43.0

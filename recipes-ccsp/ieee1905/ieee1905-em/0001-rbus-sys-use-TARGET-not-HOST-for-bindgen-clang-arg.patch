@@ -1,0 +1,31 @@
+Fix cross-compile: bindgen's compile-time struct-layout assertions
+(size_of::<T>() - N, e.g. FILE 216, tm 56) come out sized for whatever
+target `--clang_arg(--target=...)` was given. This build.rs reads
+Cargo's `HOST` env var, which is the triple of the machine *running*
+the build (e.g. x86_64-...), not `TARGET` (the triple actually being
+compiled for). On a 64-bit build host cross-compiling for this
+project's 32-bit i686 container target, that mismatch makes bindgen
+parse libc headers as 64-bit while rustc itself correctly builds the
+struct as 32-bit, so the generated assertion computes e.g.
+`124_usize - 216_usize` and overflows at compile time
+(error[E0080] in rbus-sys's generated bindings.rs).
+
+Cargo always provides both HOST and TARGET to build scripts - use the
+one that actually means "the architecture we're compiling for".
+
+---
+ rbus-sys/build.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/rbus-sys/build.rs b/rbus-sys/build.rs
+--- a/rbus-sys/build.rs
++++ b/rbus-sys/build.rs
+@@ -9,7 +9,7 @@
+ /// https://github.com/messense/homebrew-macos-cross-toolchains
+ ///
+ fn main() -> anyhow::Result<()> {
+-    let host_triple = std::env::var("HOST")?;
++    let host_triple = std::env::var("TARGET")?;
+
+     let base_dir = Path::new(RBUS_DIR).canonicalize();
+     let base_dir = base_dir.map_err(|e| anyhow!("path {RBUS_DIR} not found: {e:?}"))?;

@@ -1,0 +1,58 @@
+securityTypeMap: "WPA2 Personal" is WSC WPA2-PSK (0x0020), not WPA2
+(0x0010).
+
+securityTypeMap maps the AuthType string stored in the controller's
+NetworkSSIDList straight to a WSC authentication type, and the entry for
+"WPA2 Personal" points at EM_AUTH_WPA2:
+
+    #define EM_AUTH_WPA2     0x0010
+    #define EM_AUTH_WPA2PSK  0x0020
+
+0x0010 is WPA2-Enterprise in WSC; WPA2-*Personal* is 0x0020. So a
+controller configured for WPA2 Personal encodes Enterprise into the WSC
+M2 it sends the agent.
+
+The agent stores whatever arrives (em_configuration.cpp:4474,
+"##authtype[N]: 10" in its log) and the resulting BSS/STA config comes
+out as security mode 512 -- wifi_security_mode_wpa3_personal -- rather
+than 16, wifi_security_mode_wpa2_personal. On the leaf that surfaces as
+
+    is_vap_param_config_changed: Changed param
+        vap_info_old->u.sta_info.security.mode: [16] -> [512]
+
+immediately after WSC M2 is applied: the mesh STA is reconfigured for
+SAE while the controller's backhaul AP is still WPA2-PSK-CCMP. The
+suites can no longer be reconciled, and because
+sme_send_authentication() returns void and gives up silently when
+wpa_supplicant_set_suites() fails, no authentication frame is ever
+transmitted. The AP side sees nothing but probe requests, the STA
+retries connect forever, and the backhaul never comes back after
+autoconfiguration -- with no error logged anywhere along the path.
+
+It also self-locks: once M2 has pushed SAE onto the STA, the backhaul is
+the only route by which a corrected M2 could arrive, so the leaf stays
+stuck until OneWifi is restarted and re-applies its local defaults.
+
+This is not specific to the container/hwsim port, but the port is what
+exposes it. Stock BananaPi R4 seeds "WPA3 Personal", which maps
+correctly, so the broken entry is never consulted. This build forces
+WPA2 (ccsp-one-wifi patches 0005/0007, because mac80211_hwsim does not
+carry SAE reliably here), which selects exactly the one wrong row in
+the table.
+
+---
+ inc/em_base.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/inc/em_base.h b/inc/em_base.h
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -3699,7 +3699,7 @@
+ 
+ static const SecurityTypeMap securityTypeMap[] = {
+     { "Open",            EM_AUTH_OPEN },
+-    { "WPA2 Personal",   EM_AUTH_WPA2 },
++    { "WPA2 Personal",   EM_AUTH_WPA2PSK },
+     { "Enhanced Open",   EM_AUTH_ENHANCED_OPEN },
+     { "WPA3 Personal",   EM_AUTH_WPA3_PERSONAL },
+     { "WPA3 Transition", EM_AUTH_WPA3_TRANSITION }

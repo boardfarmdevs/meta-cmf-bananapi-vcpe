@@ -1,0 +1,27 @@
+Keep associated fronthaul clients visible when STA SSID is absent.
+
+After a successful BTM steer, the controller can report the station under its
+new BSS with Associated=true while leaving the STA-level SSID empty.  The BSS
+already supplies the authoritative SSID and haul classification.  Filtering on
+the redundant STA SSID therefore hides a correctly associated client from both
+/api/v1/clients and the topology overlay.
+
+Classify the station from its parent BSS: require a non-empty BSS SSID and omit
+all backhaul BSSs.  This preserves the intended fronthaul-only view before and
+after roaming.
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3066,10 +3066,10 @@ func buildLiveDevicesClients() ([]Device, []Client, error) {
+ 		for _, radio := range radioList {
+ 			for _, bss := range radio.BSSList {
+ 				for _, sta := range bss.STAList {
+-					if !sta.Associated || sta.SSID == "" {
++					if !sta.Associated || bss.SSID == "" {
+ 						continue
+ 					}
+-					if bss.HaulType == "Backhaul" && bss.SSID == sta.SSID {
++					if bss.HaulType == "Backhaul" {
+ 						continue
+ 					}
+ 					id := sta.MACAddress + "_" + sta.MLDAddr

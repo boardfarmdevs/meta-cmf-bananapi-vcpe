@@ -1,0 +1,45 @@
+agent: exclude an administratively disabled radio from onboarding
+
+Completes "Gate B". Patch 0003 stops the controller's Topology-Query handler
+blocking on a disabled radio, but a disabled radio still received a full
+onboarding state machine on the agent: em_orch_agent's dm_orch_type_em_insert
+loop created an em_t for every radio unconditionally, and that em_t then sat
+permanently in em_state_agent_unconfigured while dev_init/WSC-M1 fanned out to
+it. 0003 only treats the downstream Topology-Response symptom.
+
+Fix it at the source: in the radio-insert loop, skip create_node() for a radio
+whose radio_info.enabled is false. The radio is still represented in the data
+model (the commit_config calls above already ran), but it gets no state machine,
+so no dev_init/M1 is generated for it. This generalises beyond 6 GHz -- any
+administratively disabled radio is now excluded from onboarding rather than
+parked in a stuck unconfigured node.
+
+Note: the controller-side em_capability.cpp handle_ap_radio_basic_cap() still
+sets radio_info->enabled = true unconditionally (the AP Basic Capability TLV
+carries no enabled bit); with this change the agent no longer reports a disabled
+radio's capabilities, so the controller does not learn it in the first place.
+
+Upstream-Status: Pending
+---
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index b2394542..295a25aa 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -260,6 +260,17 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 config.type = em_commit_target_bss;
+                 dm->commit_config(pcmd->m_data_model, config);
+                 band =  pcmd->get_radio(i)->get_radio_info()->band;
++                /* Gate B: a disabled radio must not become an onboarding
++                 * state-machine participant. Without this it still gets an em_t
++                 * that never leaves em_state_agent_unconfigured, and dev_init/M1
++                 * fan out to it (topo-query patch 0003 only papers over the
++                 * downstream Topology-Response wait). The radio stays represented
++                 * in the data model (commit_config above already ran); we simply
++                 * do not create its state machine, so no M1 is generated for it. */
++                if (pcmd->get_radio(i)->get_radio_info()->enabled == false) {
++                    em_printfout("radio %s is disabled; retained in data model, no onboarding node (no dev_init/M1)", mac_str);
++                    continue;
++                }
+                 em_printfout("calling create_node band=%d", band);
+                 if ((em = m_mgr->create_node(intf, band, dm, 0, em_profile_type_3, em_service_type_agent)) == NULL) {
+                     em_printfout("Failed to create node");

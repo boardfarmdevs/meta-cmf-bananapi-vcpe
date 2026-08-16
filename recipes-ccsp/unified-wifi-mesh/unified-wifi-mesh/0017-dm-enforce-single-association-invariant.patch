@@ -1,0 +1,176 @@
+Subject: [PATCH] dm: repair STA delta removal and association ordering
+
+Implement the empty runtime remove_sta path and free the removed dm_sta_t.
+Enforce the non-MLO single-association invariant before inserting the new map
+entry, while the stale objects are still available to identify and delete
+their database rows. Also build delete_list keys with the required RUID
+component.
+
+The previous candidate enforced after update_list; put_sta had already hidden
+the stale map entry by then, leaving the old STAList row persistent. Runtime
+reproduced two Associated=1 rows after a successful steer.
+
+The single-association rule (same STA id, different BSSID => delete) is correct
+only for non-MLO records. An MLO station legitimately associates on multiple
+links (different BSSIDs under one MLD), which are not stale, so the enforcement
+is gated behind EM_MLO_SUPPORT (undefined by default; an MLO build must compile
+it out and add per-MLD/per-link handling). This keeps the invariant from
+silently becoming the permanent data model as Wi-Fi 7 / 6 GHz become realistic.
+
+Upstream-Status: Pending
+---
+ inc/dm_sta_list.h            |  7 +++++++
+ src/dm/dm_easy_mesh_list.cpp | 31 +++++++++++++++++++++++++++++
+ src/dm/dm_sta_list.cpp       | 50 ++++++++++++++++++++++++++++++++++--
+ 3 files changed, 86 insertions(+), 2 deletions(-)
+
+diff --git a/inc/dm_sta_list.h b/inc/dm_sta_list.h
+index 827dc15..f833e4b 100644
+--- a/inc/dm_sta_list.h
++++ b/inc/dm_sta_list.h
+@@ -237,6 +237,13 @@ public:
+ 	 * @note Ensure that the database client is properly initialized before calling this function.
+ 	 */
+ 	int set_config(db_client_t& db_client, dm_sta_t& sta, void *parent_id);
++
++	/**
++	 * Remove stale non-MLO attributions before storing a new association.
++	 * This must run while the old entries are still present in the map so the
++	 * corresponding database rows can be identified and deleted.
++	 */
++	void enforce_single_assoc(db_client_t& db_client, dm_sta_t& sta);
+     
+ 	/**!
+ 	 * @brief Retrieves the configuration settings.
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index 2a5cbe1..5ebc149 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -699,7 +699,38 @@ dm_sta_t *dm_easy_mesh_list_t::get_sta(const char *key)
+ 
+ void dm_easy_mesh_list_t::remove_sta(const char *key)
+ {
++    dm_easy_mesh_t *dm;
++    dm_sta_t *removed;
++    mac_address_t sta_mac, ruid;
++    bssid_t bssid;
++    mac_addr_str_t radio_mac_str;
++    bool found = false;
++    unsigned int i;
++
++    dm_sta_t::parse_sta_bss_radio_from_key(key, sta_mac, bssid, ruid);
++    dm_easy_mesh_t::macbytes_to_string(ruid, radio_mac_str);
++
++    dm = static_cast<dm_easy_mesh_t *> (hash_map_get_first(m_list));
++    while (dm != NULL) {
++        for (i = 0; i < dm->m_num_radios; i++) {
++            if (memcmp(dm->m_radio[i].m_radio_info.intf.mac, ruid, sizeof(mac_address_t)) == 0) {
++                found = true;
++                break;
++            }
++        }
++        if (found == true) {
++            break;
++        }
++        dm = static_cast<dm_easy_mesh_t *> (hash_map_get_next(m_list, dm));
++    }
++
++    if (found == false) {
++        printf("%s:%d: Could not find dm with radio:%s\n", __func__, __LINE__, radio_mac_str);
++        return;
++    }
+ 
++    removed = static_cast<dm_sta_t *> (hash_map_remove(dm->m_sta_map, key));
++    delete removed;
+ }
+ 
+ void dm_easy_mesh_list_t::put_sta(const char *key, const dm_sta_t *sta)
+diff --git a/src/dm/dm_sta_list.cpp b/src/dm/dm_sta_list.cpp
+index a1d1e80..ef252de 100644
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -75,6 +75,49 @@ int dm_sta_list_t::analyze_config(const cJSON *obj_arr, void *parent_id, em_cmd_
+     return 0;
+ }
+
++/* OneWifi reports association changes as deltas. For the non-MLO station
++ * records used here, a new Associated=1 record displaces every attribution
++ * for the same station on a different BSS. Run this before update_list():
++ * put_sta() makes the new map state visible, and enforcing afterward loses
++ * the stale objects needed to delete their persistent rows. */
++void dm_sta_list_t::enforce_single_assoc(db_client_t& db_client, dm_sta_t& sta)
++{
++    /* MLO safety gate (review P2 #7): an MLO station legitimately holds
++     * simultaneous associations on multiple links (different BSSIDs under one
++     * MLD MAC), which are NOT stale. The blanket "same STA id, different BSSID
++     * => delete" rule below is only correct for non-MLO records; under MLO it
++     * would delete valid affiliated-link associations. This is deliberately
++     * non-MLO only: an MLO build defines EM_MLO_SUPPORT, which compiles the
++     * enforcement out and MUST replace it with per-MLD/per-link handling
++     * (compare MLD MAC + link, not just STA id + BSSID). */
++#if defined(EM_MLO_SUPPORT)
++    (void)db_client; (void)sta;
++    return;
++#endif
++    dm_sta_t *psta, *stale[32];
++    unsigned int num_stale = 0, i;
++
++    if (sta.m_sta_info.associated == false) {
++        return;
++    }
++
++    psta = get_first_sta();
++    while (psta != NULL) {
++        if ((memcmp(psta->m_sta_info.id, sta.m_sta_info.id, sizeof(mac_address_t)) == 0) &&
++                (memcmp(psta->m_sta_info.bssid, sta.m_sta_info.bssid, sizeof(mac_address_t)) != 0) &&
++                (num_stale < (sizeof(stale)/sizeof(stale[0])))) {
++            stale[num_stale++] = psta;
++        }
++        psta = get_next_sta(psta);
++    }
++
++    for (i = 0; i < num_stale; i++) {
++        dm_sta_t old = *stale[i];
++        update_db(db_client, dm_orch_type_db_delete, old.get_sta_info());
++        update_list(old, dm_orch_type_db_delete);
++    }
++}
++
+ int dm_sta_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void *parent_id)
+ {
+     cJSON *obj;
+@@ -87,6 +118,7 @@ int dm_sta_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void
+     for (i = 0; i < size; i++) {
+         obj = cJSON_GetArrayItem(obj_arr, i);
+         sta.decode(obj, parent_id);
++        enforce_single_assoc(db_client, sta);
+         update_db(db_client, (op = get_dm_orch_type(db_client, sta)), sta.get_sta_info());
+         update_list(sta, op);
+     }
+@@ -99,6 +131,7 @@ int dm_sta_list_t::set_config(db_client_t& db_client, dm_sta_t& sta, void *paren
+     dm_orch_type_t op;
+ 
+     //printf("dm_op_class_list_t::%s:%d: id: %s\n", __func__, __LINE__, (char *)parent_id);
++    enforce_single_assoc(db_client, sta);
+     update_db(db_client, (op = get_dm_orch_type(db_client, sta)), sta.get_sta_info());
+     update_list(sta, op);
+ 
+@@ -174,7 +207,7 @@ void dm_sta_list_t::update_list(const dm_sta_t& sta, dm_orch_type_t op)
+ void dm_sta_list_t::delete_list()
+ {       
+     dm_sta_t *psta, *tmp;
+-    mac_addr_str_t	sta_mac_str, bssid_mac_str;
++    mac_addr_str_t	sta_mac_str, bssid_mac_str, radio_mac_str;
+     em_long_string_t key;
+     
+     psta = get_first_sta();
+@@ -184,7 +217,8 @@ void dm_sta_list_t::delete_list()
+     
+    	dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(tmp->m_sta_info.id), sta_mac_str);
+     	dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(tmp->m_sta_info.bssid), bssid_mac_str);
+-    	snprintf(key, sizeof (em_long_string_t), "%s@%s", sta_mac_str, bssid_mac_str);
++		dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(tmp->m_sta_info.radiomac), radio_mac_str);
++		snprintf(key, sizeof (em_long_string_t), "%s@%s@%s", sta_mac_str, bssid_mac_str, radio_mac_str);
+         remove_sta(key);    
+     }
+ }   

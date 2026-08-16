@@ -1,0 +1,30 @@
+net_node: size the tree-string buffer so large trees don't overflow the heap
+
+get_network_tree_string() malloc'd a fixed EM_LONG_IO_BUFF_SZ (16KB) buffer and
+get_network_tree_node_string() appends into it with several mis-bounded
+strncat()s (bounded by the source length, or by sizeof(char*)=4, rather than the
+remaining buffer). A tree larger than 16KB therefore overflowed the heap and
+aborted the next malloc/free with "corrupted top size" / "double free". A
+3-device get_sta tree exceeds 16KB, which is what aborted steer_sta before it
+could send (it worked on smaller meshes). Size the buffer to the subdoc buffer
+the string is ultimately copied into (EM_MAX_EVENT_DATA_LEN).
+
+diff --git a/src/em/em_net_node.cpp b/src/em/em_net_node.cpp
+index eb3c29c8..a00de540 100644
+--- a/src/em/em_net_node.cpp
++++ b/src/em/em_net_node.cpp
+@@ -351,7 +351,13 @@ void em_net_node_t::get_network_tree_node_string(char *str, em_network_node_t *n
+ char *em_net_node_t::get_network_tree_string(em_network_node_t *node)
+ {
+     unsigned int ident = 0;
+-    unsigned int size = EM_LONG_IO_BUFF_SZ;
++    /* get_network_tree_node_string() serializes the whole tree into this buffer
++       with several mis-bounded strncat()s (bounded by the source length or by
++       sizeof(char*)=4), so a tree larger than the buffer overflows the heap and
++       aborts the next allocation/free. EM_LONG_IO_BUFF_SZ (16KB) is exceeded by a
++       multi-device get_sta tree, which is what crashed steer_sta before it could
++       send. Size the buffer to the subdoc buffer this string is copied into. */
++    unsigned int size = EM_MAX_EVENT_DATA_LEN;
+     char *str;
+ 
+     str = static_cast<char *> (malloc(size));
