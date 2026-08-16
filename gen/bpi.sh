@@ -220,13 +220,14 @@ containername="${base}${extraindex}"
 
 # Profile replacement and instance creation are one transaction from this
 # script's point of view, but separate asynchronous operations inside LXD. Two
-# concurrent deploys of the same name can otherwise rewrite the profile while
-# the first `lxc init` is unpacking its image. Serialize per container and fail
-# immediately with an actionable error instead of producing a partial instance.
-deploy_lock="/tmp/meta-cmf-bpi-${containername}.lock"
-exec {deploy_lock_fd}>"${deploy_lock}" || exit 1
+# concurrent deploys can otherwise rewrite profiles or mutate the shared image
+# store while an earlier `lxc init` is unpacking. Lock the script inode itself:
+# unlike a writable file in sticky /tmp, this remains usable when provisioning
+# alternates between an unprivileged LXD user and root. The checkout-wide lock
+# deliberately serializes every BPI deployment made by this tool.
+exec {deploy_lock_fd}<"${BASH_SOURCE[0]}" || exit 1
 if ! flock -n "${deploy_lock_fd}"; then
-    echo "Error: another bpi.sh deployment is already running for ${containername}" >&2
+    echo "Error: another bpi.sh deployment is already running" >&2
     exit 1
 fi
 
