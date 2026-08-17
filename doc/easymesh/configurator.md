@@ -143,6 +143,35 @@ before applying a complete generation atomically.
 Editing the startup configuration does not change a running daemon. Scenario
 ramps use the control socket and leave the PID unchanged.
 
+The socket deliberately replaces the file for live scenario state, but not yet
+for daemon bootstrap. The startup file supplies the initial registered-radio
+set and default matrix. `HELLO`, `APPLY`, `GET_LINK` and `DUMP_LINKS` then carry
+all timed SNR generations without a restart. Adding or removing an hwsim radio
+still requires regenerating the bootstrap list and restarting wmediumd. Removing
+that last restart would require explicit add/remove-radio and atomic
+replace-matrix protocol operations; it should not be simulated as a sequence of
+partially visible link updates.
+
+## Why a WLAN client cannot emit RSSI
+
+RSSI belongs to the receiver and to one direction of a link. A station can
+change its transmit power, which changes the AP's uplink observation, but it
+cannot declare the RSSI of frames it receives from an AP. Patching a client
+driver or supplicant to report a synthetic value would only falsify selected
+measurements; carrier sensing, loss, scanning, rate control and roaming would
+still experience a different medium.
+
+wmediumd is therefore the actuator for both directed link values:
+
+```text
+AP -> STA SNR     what the station receives
+STA -> AP SNR     what the AP receives
+```
+
+The two values may be driven together for a symmetric path or independently to
+model asymmetry. Association is feedback for observation and assertions, not a
+reason to swap AP identities or rewrite a movement trajectory.
+
 ## Runner safety and artifacts
 
 Preflight requires a complete topology and all expected clients active. The
@@ -189,4 +218,3 @@ An experiment is not complete unless `summary.json` reports `passed` and
 - Parameters, loops, trace import, geometry, random models and conditional waits
   are not language features yet.
 - The configurator is a CLI/library, not a long-running authenticated service.
-

@@ -173,6 +173,84 @@ EXTENDER_IMAGE
 Pin all paths and the expected revision when testing an alternate checkout. Do
 not remove provenance checks to make a deployment proceed.
 
+### rev130 recovery after a host reboot
+
+LXD node and client profiles deliberately use `boot.autostart=false`; Docker's
+Boardfarm WAN/DHCP containers also use `restart: "no"`. A host reboot therefore
+does not reconstruct the lab merely by starting LXD. Preserve the existing BPI
+containers and `/nvram` identities, but recreate the host medium and clients in
+this order.
+
+From the rev130 host:
+
+```sh
+cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex/gen
+
+# Boardfarm CPE-5 supplies DHCP, IPv4/IPv6 and Internet on br-wan105.
+docker start wan-cpe5 dhcp-cpe5
+
+# Load the already-installed patched module. Kernel headers are needed to build
+# it, not to recover with the installed updates/mac80211_hwsim.ko.
+sudo modprobe mac80211_hwsim radios=24 channels=3 regtest=5
+
+# Recreate host bridges and rename wlanN pool devices to stable virt-wlanN.
+bash -c 'source ./gen-util.sh'
+
+# Preserve the controller identity and persistent database.
+lxc start bpibroadband
+```
+
+Wait for controller OneWifi to be active. Its persistent database may still
+contain the pre-reboot five-device inventory, so `1/3/10` is not a valid
+identity-preserving recovery gate.
+
+For each extender, in order `bpiap`, `bpiap-001`, `bpiap-002`, `bpiap-003`:
+
+```sh
+lxc start EXTENDER
+
+# Wait for this to report active before regenerating the active-radio matrix.
+lxc exec EXTENDER -- systemctl is-active onewifi
+
+SNR=40 ./wmediumd/wmediumd-up.sh up
+
+# Both must pass before adding the next extender.
+lxc exec EXTENDER -- systemctl is-active em_agent
+lxc exec EXTENDER -- iw dev wifi1.3 link
+```
+
+Never run two `wmediumd-up.sh` instances concurrently; the second registration
+can fail with `EBUSY` and leave no daemon running. If an extender is stopped
+during recovery, first remove the VAPs which its returned hwsim phy still owns,
+then rebuild the medium without it:
+
+```sh
+bash -c 'source ./gen-util.sh; hwsim_reclaim_dirty_phys'
+SNR=40 ./wmediumd/wmediumd-up.sh up
+```
+
+After all extenders reach `5/15/50`, recreate clients sequentially. The helper
+refreshes wmediumd before starting each supplicant, then gates association,
+DHCP and controller export:
+
+```sh
+./wlan-client.sh up private_ssid test-fronthaul
+for i in 1 2 3 4 5 6 7 8 9; do
+    ./wlan-client.sh -i "$i" up private_ssid test-fronthaul
+done
+```
+
+Finish with the normal acceptance gate:
+
+```sh
+./tests/health-audit.sh
+```
+
+The expected operational result remains `5/15/50/14`, API `10/10`, ten working
+WLAN data paths and a running wmediumd. Nonzero restart counters mean the
+recovery is usable but is not a clean onboarding acceptance result; inspect the
+corresponding boot journal rather than clearing the counters.
+
 ## Health gates
 
 ### Model
