@@ -29,12 +29,20 @@ def snapshot(plan: dict) -> dict:
 
 
 def mesh_health() -> dict:
-    clients = json.loads(_run("curl", "-fsS", "http://127.0.0.1:8888/api/v1/clients"))
     topology = json.loads(_run("curl", "-fsS", "http://127.0.0.1:8888/api/v1/topology"))
     nodes = topology.get("nodes", [])
+    clients = {
+        station.get("staMAC")
+        for node in nodes
+        for station in node.get("STAList", [])
+        if station.get("staMAC")
+    }
     return {
-        "api_active": clients.get("active"),
-        "api_total": clients.get("total"),
+        # Retain the public keys for compatibility. Both now represent the
+        # unique live associations in the topology; /api/v1/clients is a
+        # packaged WebUI demonstration inventory, not controller state.
+        "api_active": len(clients),
+        "api_total": len(clients),
         "topology_nodes": len(nodes),
         "complete_nodes": sum(
             1 for node in nodes

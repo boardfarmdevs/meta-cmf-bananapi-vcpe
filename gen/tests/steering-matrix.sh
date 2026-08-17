@@ -24,7 +24,7 @@ if [ "${#clients[@]}" -ne 10 ] || [ "${#target_rows[@]}" -ne 5 ]; then
     exit 1
 fi
 
-printf '%s\n' 'round,client,sta,target_name,source_bssid,target_bssid,command_rc,link_ms,db_ms,api_ms,packet_loss,result' > "$results"
+printf '%s\n' 'round,client,sta,target_name,source_bssid,target_bssid,command_rc,link_ms,db_ms,topology_ms,packet_loss,result' > "$results"
 failures=0
 
 for ((round=1; round <= rounds; round++)); do
@@ -61,7 +61,7 @@ for ((round=1; round <= rounds; round++)); do
         done
 
         db_ms=-1
-        api_ms=-1
+        topology_ms=-1
         for _ in $(seq 1 100); do
             if [ "$db_ms" -lt 0 ]; then
                 db_bssid=$(lxc exec bpibroadband -- mysql -N -ubpi -proot \
@@ -70,13 +70,17 @@ for ((round=1; round <= rounds; round++)); do
                 [ "$db_bssid" = "$target" ] \
                     && db_ms=$(( $(date +%s%3N) - start_ms ))
             fi
-            if [ "$api_ms" -lt 0 ]; then
-                api_bssid=$(curl -fsS http://127.0.0.1:8888/api/v1/clients \
-                    | jq -r --arg sta "$sta" '.clients[] | select(.mac == $sta) | .connected_bssid')
-                [ "$api_bssid" = "$target" ] \
-                    && api_ms=$(( $(date +%s%3N) - start_ms ))
+            if [ "$topology_ms" -lt 0 ] \
+                && curl -fsS http://127.0.0.1:8888/api/v1/topology \
+                    | jq -e --arg sta "$sta" --arg target "$target" '
+                        ([.nodes[]
+                          | select(any(.haulTypes[]?.BSSList[]?; .BSSID == $target))
+                          | .id][0]) as $target_node
+                        | any(.nodes[] | select(.id == $target_node) | .STAList[]?;
+                              .staMAC == $sta)' >/dev/null; then
+                topology_ms=$(( $(date +%s%3N) - start_ms ))
             fi
-            [ "$db_ms" -ge 0 ] && [ "$api_ms" -ge 0 ] && break
+            [ "$db_ms" -ge 0 ] && [ "$topology_ms" -ge 0 ] && break
             sleep 0.1
         done
 
@@ -85,14 +89,14 @@ for ((round=1; round <= rounds; round++)); do
         rm -f "$ping_file"
         result=PASS
         if [ "$command_rc" -ne 0 ] || [ "$link_ms" -lt 0 ] \
-            || [ "$db_ms" -lt 0 ] || [ "$api_ms" -lt 0 ] \
+            || [ "$db_ms" -lt 0 ] || [ "$topology_ms" -lt 0 ] \
             || [ -z "$loss" ]; then
             result=FAIL
             failures=$((failures + 1))
         fi
         printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "$round" "$client" "$sta" "$target_name" "$source" "$target" \
-            "$command_rc" "$link_ms" "$db_ms" "$api_ms" "${loss:-unknown}" "$result" \
+            "$command_rc" "$link_ms" "$db_ms" "$topology_ms" "${loss:-unknown}" "$result" \
             | tee -a "$results"
         sleep 1
     done
@@ -101,9 +105,8 @@ done
 # Return to the known all-strong baseline after the test.
 SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null
 
-api=$(curl -fsS http://127.0.0.1:8888/api/v1/clients)
-[ "$(jq -r .total <<<"$api")" -eq 10 ]
-[ "$(jq -r .active <<<"$api")" -eq 10 ]
+topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
+[ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" -eq 10 ]
 echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
 echo "results: $results"
 exit "$failures"

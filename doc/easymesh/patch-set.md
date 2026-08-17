@@ -58,7 +58,12 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - size association-frame SQL encoding for maximum input; and
 - complete cancelled orchestrator commands independently; and
 - size AP Metrics Responses for the reporting model instead of a 1024-byte
-  stack-buffer assumption.
+  stack-buffer assumption;
+- release CLI response trees, temporary C strings and JSON print buffers at
+  their native ownership boundaries;
+- drain MariaDB result sets before successful early returns; and
+- rebuild the nested topology snapshot after association capability handling
+  and before publishing it.
 
 ### hwsim and single-phy adaptations
 
@@ -116,8 +121,15 @@ authority. Its dependency order is:
 7. bounded WSC M1 recovery;
 8. topology leader, registrar and association notification fixes; and
 9. generic command cancellation/completion; and
-10. scale-safe AP Metrics Response construction; and
-11. browser-only topology layout and JSON/SVG/PNG export.
+10. scale-safe AP Metrics Response construction;
+11. browser-only topology layout and JSON/SVG/PNG export;
+12. CLI native-allocation ownership;
+13. MariaDB result-set lifetime; and
+14. association-to-topology publication ordering;
+15. reassociation capability decoding and preservation;
+16. serialized CLI native-command lifetime and removal of its unused command
+    data model; and
+17. controller JSON ownership.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -175,12 +187,62 @@ All five images contain the same `onewifi_em_agent` binary
 The earlier deterministic fourth-extender/four-associated-STA stack-protector
 failure remained absent through clean deployment and cold-boot reconstruction.
 
-Both rev130 and the rev150 VM reached `5/15/50`, exported 10/10 clients and
+Both rev130 and the rev150 VM reached `5/15/50`, exposed ten live clients in
+the topology and
 recorded zero service restarts. The VM reconstructed all four extenders and ten
 clients after a forced-power-off boot, held the complete state for 120 seconds,
 and recorded its model, topology, restart counts, traffic and journal under the
 boot-ID acceptance directory. Earlier accepted runs passed 10/10 commanded
 steering and a 30/30 extended steering matrix.
+
+Post-image diagnosis added three source fixes that were rebuilt and exercised
+as targeted runtime binaries before the next full image roll-up:
+
+| Fix | Runtime artifact | SHA-256 |
+| --- | --- | --- |
+| CLI C/C++ ownership (`0029`) | `onewifi_em_cli` | `54f92b0c41bb798da3cdf6b99d095665299803c57c91a8dead13f9e067e75628` |
+| DB result lifetime (`0030`) and topology publish (`0031`) | `onewifi_em_ctrl` | `d2dd39e03c9b4d39b16019898aa0391f4c4a16b2dba280d52d66204e244134fc` |
+| DB result lifetime (`0030`) | `onewifi_em_agent` | `9214a28e9222b93060d54f287f26996ae8db0456d582f6632ebab7cf4755a0ab` |
+| serialized HTTP/native command bridge (`0034`) | `onewifi_em_cli` | `d5f8e97a24679eadbe01e40a0d89ac7a109528a1114bacd6b722a8c71f637a02` |
+| remove unused CLI command data model (`0035`) | `libemcli.so.0.0.0` | `e4cc60152c490f9f3ca0fbfdb9eaecb7b30258bbcddf02c969bb08e76f51b995` |
+| release controller JSON output (`0036`) | `onewifi_em_ctrl` | `4b5cc2688671cd1993a2c9a8e3fb1c7334ebc20440edf1d884e2238580203e06` |
+
+Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
+in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
+KiB for more than two minutes, then at 22,412 KiB for a further two minutes.
+That initial CLI result removed response-tree ownership leaks but did not close
+the failure. A longer run showed virtual memory still increasing by about
+2.23 MiB per topology request and exhausting the helper's 32-bit address space
+at roughly 1,500 requests while RSS remained near 100 MiB. `strace` isolated an
+unreleased 2,281,472-byte mapping per native call. The source was an unused
+automatic `dm_easy_mesh_t` in both CLI implementations followed by
+`get_cmd()->init(dm)`. Under Go/cgo, the expanded C++ stack remained mapped;
+the initialization also allocated command maps and a queue not owned by the
+command destructor. Patch `0035` removes that dead initialization.
+
+The controller had a separate real heap leak of about 82 KiB per topology
+request. Its Network JSON path neither freed the string returned by
+`cJSON_Print()` nor recursively deleted the generated tree; `cJSON_free()` on
+the root alone orphaned all children. Patch `0036` corrects that path and the
+same ownership mistakes in device-test, link-metrics and topology publication.
+A temporary experiment disabling the TLS session cache did not change the
+growth rate and was discarded.
+
+With `0034`-`0036` deployed, 3,000 concurrent topology requests returned HTTP
+200 with unchanged PIDs and zero restarts. After allocator warm-up,
+`onewifi_em_ctrl` stayed at 601,844 KiB VmSize, 194,784-194,800 KiB RSS and
+582,920 KiB VmData for the entire run. `onewifi_em_cli` stayed bounded: it
+settled at 714,576 KiB VmSize, acquired one 8 MiB arena at request 2,500, then
+remained flat at 722,772 KiB through request 3,000. Subsequent idle reclamation
+reduced controller RSS to 57,660 KiB and CLI RSS to 84,208 KiB.
+
+A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
+topology reconstruction and restart activity. Controller RSS/anonymous memory
+moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
+92,580/78,940 KiB to 92,468/78,828 KiB. The controller briefly reached
+79,448 KiB RSS during reconstruction and returned to 37,028 KiB within forty
+seconds. Both PIDs and zero-restart counters were unchanged. This is bounded
+working-set expansion, not retained per-report or per-request growth.
 
 ## Remaining engineering debt
 
@@ -189,6 +251,14 @@ steering and a 30/30 extended steering matrix.
 - Consolidate authorized WDS creation into one implementation owner.
 - Make FULL versus DELTA associated-client inputs explicit.
 - Root-cause the rare RBUS raw-frame provider delivery miss.
+- Add positive reconciliation for a lost, unacknowledged 1905 Client
+  Association Event. One AP-loss run delivered five of six agent topology
+  notifications and left one controller STA row stale until a later event;
+  the next identical AP-loss run converged normally.
+- Make a controller-service-only restart re-query every already-running agent.
+  A diagnostic controller restart temporarily reconstructed only `5/15/36`;
+  re-onboarding the absent agent restored the required `5/15/50`. Full VM boot
+  reconstruction remains a separate, previously accepted path.
 - Decode and eliminate the repeated netlink command-2 `EINVAL` diagnostics
   emitted by wmediumd during normal WLAN activity. They occur on both labs and
   have not correlated with registration, traffic, steering or restore failure.

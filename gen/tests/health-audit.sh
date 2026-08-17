@@ -15,9 +15,9 @@ lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
     (select count(*) from RadioList),
     (select count(*) from BSSList),
     (select count(*) from STAList where Associated=1)' 2>/dev/null
-echo API
-curl -fsS http://127.0.0.1:8888/api/v1/clients \
-    | jq -r '"active=\(.active) total=\(.total)"'
+echo LIVE_CLIENTS
+curl -fsS http://127.0.0.1:8888/api/v1/topology \
+    | jq -r '[.nodes[].STAList[]?.staMAC] | unique | length'
 
 echo RESTARTS
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do

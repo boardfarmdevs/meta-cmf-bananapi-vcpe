@@ -161,7 +161,7 @@ know local protocol state, but neither selects the target for this experiment.
 | RF generation | `wmdcfg` | wmediumd | Atomic radio-pair SNR generations with verified restore |
 | RF transport | wmediumd | hwsim | Frequency-isolated simulated frame delivery |
 | live topology | controller/WebUI | external observer | `/api/v1/topology` with current devices, radios and BSSs |
-| live association | controller/WebUI | external observer/verifier | `/api/v1/clients` and current connected BSSID |
+| live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` |
 | real metrics | EasyMesh reports/queries | external observer | Required adapter; current WebUI metric handlers are not valid |
 | policy baseline | operator/external setup | controller and agents | Reporting/exclusion configuration; local agent steering set to mode 0 |
 | steer action | external actuator | controller | `steer.sh STA TARGET_BSSID` at the current implementation stage |
@@ -172,10 +172,10 @@ know local protocol state, but neither selects the target for this experiment.
 
 ### Observation boundary
 
-The accepted WebUI endpoints for topology and association are live. Its metric
-endpoints are not an optimizer input at this stage:
+Only the topology endpoint is accepted as live topology and association state.
+The other WebUI endpoints below are not optimizer inputs at this stage:
 
-- `/api/v1/clients` reports the real hwsim clients, but metric fields are zero;
+- `/api/v1/clients` reads packaged `static/clients.json` demonstration data;
 - `/api/v1/metrics/clients` returns canned demonstration clients and values;
 - performance and interference endpoints also contain demonstration data.
 

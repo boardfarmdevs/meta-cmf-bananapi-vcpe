@@ -30,6 +30,14 @@ EASYMESH_CORE_PATCHES = " \
     file://0026-orch-complete-cancelled-commands-independently.patch \
     file://0027-metrics-size-ap-response-for-model.patch \
     file://0028-cli-topology-layout-and-export.patch \
+    file://0029-cli-release-native-tree-allocations.patch \
+    file://0030-db-drain-result-sets-before-early-return.patch \
+    file://0031-association-refresh-topology-before-publish.patch \
+    file://0032-sta-decode-reassociation-capabilities.patch \
+    file://0033-sta-retain-capability-on-empty-roam-report.patch \
+    file://0034-cli-serialize-native-command-execution.patch \
+    file://0035-cli-remove-unused-command-data-model-init.patch \
+    file://0036-controller-release-json-output.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

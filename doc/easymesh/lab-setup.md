@@ -280,14 +280,17 @@ a clean-onboarding result.
 ### Clients and traffic
 
 ```sh
-curl -fsS http://127.0.0.1:8888/api/v1/clients | jq '{total,active}'
+curl -fsS http://127.0.0.1:8888/api/v1/topology \
+  | jq '[.nodes[].STAList[]?.staMAC] | unique | length'
 lxc exec wlan-client -- iw dev wlan0 link
 lxc exec wlan-client -- ip -4 -o addr show wlan0
 lxc exec wlan-client -- ping -I wlan0 -c 3 10.0.0.1
 ```
 
-Expected API result is ten total and ten active. Bind traffic to `wlan0`; client
-`eth0` is not the WLAN data path.
+Expected live topology result is ten. The WebUI `/api/v1/clients` handler reads
+the packaged `static/clients.json` demonstration inventory and is not a live
+association source. Bind traffic to `wlan0`; client `eth0` is not the WLAN data
+path.
 
 ### Backhaul
 
@@ -310,6 +313,60 @@ cat /run/meta-cmf-wmediumd/wmediumd.pid
 Every launch runs the nine internal multichannel/Linux-7 tests. Do not accept a
 daemon that logs registration failure, unknown senders or cross-frequency
 delivery.
+
+## AP loss and recovery
+
+Run the bounded recovery test with the container and its 5 GHz private BSSID:
+
+```sh
+gen/tests/ap-recovery.sh bpiap-003 02:00:00:69:29:b6
+```
+
+The test distinguishes an AP process/container failure from station-side link
+failure detection. This distinction matters in hwsim: stopping an LXD container
+returns its wiphy and OneWifi-created VAP interfaces to the host, but
+mac80211_hwsim does not synthesize the beacon-loss indication that physical STA
+firmware would normally deliver. `iw link` can therefore remain stale while
+traffic to the stopped AP fails. The test records that raw behavior, toggles
+only the affected client WLAN interfaces to inject the missing link-loss event,
+and then verifies reassociation, traffic, controller database convergence, AP
+restart, backhaul, complete tri-band configuration, and that the returned AP's
+BSSID is visible in the WebUI topology. If any assertion fails after the AP is
+stopped, an exit trap restarts it before reporting failure.
+
+Accepted VM samples on 2026-08-17 were:
+
+| AP cycle | Affected clients | Client links recovered | Controller DB | Services | Backhaul | Tri-band ready | WebUI-visible |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bpiap-001` | 1 | 3.47 s | 0.49 s | 7.52 s | 18.71 s | 53.47 s | 54.91 s |
+| `bpiap-003` | 2 | 1.47 s | 0.97 s | 7.45 s | 17.03 s | 49.03 s | 49.44 s |
+
+Both cycles retained the wmediumd PID, all ten WLAN data paths and zero
+EasyMesh service restarts. A ten-client commanded-steering matrix immediately
+after the first cycle passed 10/10 link, database and WebUI assertions. Link
+movement ranged from 0.66 to 1.65 seconds. Nine controller updates completed in
+2.4-3.8 seconds; one took 21.4 seconds. The present matrix records packet loss
+but does not impose a performance threshold, so its PASS result is functional,
+not a latency/loss acceptance claim.
+
+Do not delete the returned AP VAPs during a single-AP recovery test. That is a
+whole-lab reconstruction operation performed by `easymesh-lab-runtime` only
+after every managed container is stopped. Deleting them under a live mesh can
+change the projected radio inventory and leave the restarted extender with an
+incomplete band.
+
+The controller currently retains an offline extender in its device, radio and
+BSS model. There is no reliable liveness/aging field in the WebUI topology yet,
+so presence in `/api/v1/topology` must not be interpreted as proof that the AP
+is online. Use container/service state, backhaul link, and traffic as the
+recovery oracle.
+
+A controller-process restart is intentionally not used as an AP recovery
+action. In one diagnostic restart, four already-running agents were restored
+but one agent's BSS inventory was absent (`5/15/36`) until that AP re-onboarded,
+after which the model returned to `5/15/50`. Always run the model gate after a
+controller-only restart; process liveness and ten working client links alone do
+not prove the controller has all steering targets.
 
 ## WebUI access
 
@@ -345,7 +402,8 @@ git rev-parse HEAD
 uname -r
 lxc config get bpibroadband user.image
 lxc config get bpibroadband user.build
-curl -fsS http://127.0.0.1:8888/api/v1/clients | jq '{total,active}'
+curl -fsS http://127.0.0.1:8888/api/v1/topology \
+  | jq '[.nodes[].STAList[]?.staMAC] | unique | length'
 ```
 
 Then run the same health audit, steering rounds and RF scenario. Store the CSV
@@ -362,7 +420,7 @@ Parity established on 2026-08-16:
 | --- | --- | --- |
 | kernel | `7.0.0-28-generic` | `7.0.0-28-generic` |
 | controller/extender images | accepted 20260816 pair | accepted 20260816 pair |
-| model and clients | `5/15/50`, API 10/10 | `5/15/50`, API 10/10 |
+| model and clients | `5/15/50`, live topology 10 | `5/15/50`, live topology 10 |
 | service restarts | zero | zero |
 | final steering sample | 10/10 | 10/10 |
 | two-AP crossover | passive and commanded pass; restored | passive and commanded pass; restored |
