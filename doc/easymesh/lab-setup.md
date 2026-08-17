@@ -2,7 +2,9 @@
 
 > The reproducible VirtualBox/Vagrant appliance, including Docker and the full
 > Boardfarm installation, is maintained under `gen/vm/`. Its README is the
-> canonical VM build, packaging, and reboot procedure.
+> canonical VM lifecycle and navigation guide. `gen/vm/thin/` documents the
+> recommended Ubuntu 24.04 + Linux 7 image and one-time online installer;
+> `gen/vm/precooked/` retains the complete offline appliance.
 
 ## Supported labs
 

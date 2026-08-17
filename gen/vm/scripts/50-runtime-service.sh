@@ -14,6 +14,10 @@ install -m 0644 /home/vagrant/easymesh-assets/easymesh-hwsim-pool.service \
 install -d /etc/systemd/system/snap.lxd.daemon.service.d
 install -m 0644 /home/vagrant/easymesh-assets/lxd-easymesh-ordering.conf \
     /etc/systemd/system/snap.lxd.daemon.service.d/easymesh-ordering.conf
+install -m 0755 /home/vagrant/easymesh-assets/easymesh-labctl \
+    /usr/local/sbin/easymesh-labctl
+install -m 0755 /home/vagrant/easymesh-assets/easymesh-health-audit \
+    /usr/local/sbin/easymesh-health-audit
 
 # Boardfarm reconstructs its Docker lab and br-wan105 first. The EasyMesh
 # runtime then starts LXD nodes in dependency order.

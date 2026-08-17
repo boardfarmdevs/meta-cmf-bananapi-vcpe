@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-vm_dir="$root/gen/vm"
-assets="$vm_dir/assets"
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+precooked_dir="$root/gen/vm/precooked"
+assets="$precooked_dir/assets"
 boardfarm_workspace=${BOARDFARM_WORKSPACE:-/home/rev/git/boardfarm-open-0406}
 binary_assets=${EASYMESH_VM_BINARY_ASSETS:-/home/rev/easymesh-vagrant-lab/assets}
 
 install -d "$assets"
 
 locked_revision() {
-    awk -v name="$1" '$1 == name {print $3}' "$vm_dir/assets.lock"
+    awk -v name="$1" '$1 == name {print $3}' "$precooked_dir/assets.lock"
 }
 
 bundle_repo() {
