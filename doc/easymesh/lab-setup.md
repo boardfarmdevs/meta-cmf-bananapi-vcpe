@@ -15,11 +15,11 @@ kernel, topology, clients, wmediumd and test parameters match.
 ## Accepted inputs
 
 ```text
-image runtime revision    73e7c1e3dac94b91bd2e9c84c6183cd234258d93
-host tooling              current codex/0815-clean head
+image EasyMesh content    through 0088993 (scale-safe AP Metrics Response)
+host tooling              796cd5eed332c4cf383f8a3e6f21b289ac8eef21
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
 ```
 
 Verify the images before use:
@@ -31,8 +31,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 Expected hashes:
 
 ```text
-9b9809d71c916a199682556d850cecf365c9d8c8fa7f1d062d600e0d56c4d432  controller
-62f143df46e7526c4b6af3cfe89e0454cb184daf09e70a265c65280a9e6efa92  extender
+32f9edc1983d81c3acd3f6c324447f811a36eabbe377a59648f03aaf280a2383  controller
+88eb66c0cff613aae471a4917ba838b558f0ec141eb4d8e02b4e8cf19356671f  extender
 ```
 
 Artifacts are built on rev140 under
@@ -112,13 +112,13 @@ From `gen/` on a prepared runtime:
 
 ```sh
 # controller; -F creates one coherent new AL-MAC/RUID identity set
-./bpi.sh -F -b br-wan105 /path/to/X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2
+./bpi.sh -F -b br-wan105 /path/to/X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2
 
 # four wireless-only extenders
-./bpi.sh -F /path/to/X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 1 /path/to/X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 2 /path/to/X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 3 /path/to/X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2
+./bpi.sh -F /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 1 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 2 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 3 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
 
 # start the medium after mesh radios exist
 SNR=40 ./wmediumd/wmediumd-up.sh up
@@ -148,6 +148,17 @@ cd /home/rev/easymesh-vagrant-lab
 vagrant up
 vagrant status
 ```
+
+The provisioned appliance declares the full four-extender/ten-client scale step
+and installs an enabled `easymesh-lab.service`. On every boot that service stops
+any LXD-restored instances, removes stale OneWifi VAPs from the hwsim wiphys
+returned to the host, then starts controller, extenders and clients in gated
+order before rebuilding wmediumd. The VAP cleanup is required for in-place
+service restarts; without it nl80211 reaches its interface-combination limit and
+reports `ENFILE`. A PASS requires `5/15/50/14`, API
+`10/10`, zero OneWifi/EasyMesh restarts, ten-client gateway traffic and a
+120-second stable hold. Evidence is stored by boot ID under
+`~/.local/state/easymesh-vagrant/reboot-acceptance/`.
 
 Its gated `40-deploy-easymesh.sh` and `55-scale-topology.sh` accept:
 

@@ -175,8 +175,8 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
 
 ## Current boundaries
 
-- Clean deployment and commanded steering are validated; unattended VM reboot
-  reconstruction still needs a persistence audit.
+- Clean deployment, commanded steering and unattended VM cold-boot
+  reconstruction are validated at four extenders and ten WLAN clients.
 - The wmediumd configurator safely controls radio-pair SNR; frequency-keyed
   same-wiphy band steering is not implemented.
 - One rare RBUS raw-frame provider delivery miss was observed after a long

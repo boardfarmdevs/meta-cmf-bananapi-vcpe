@@ -28,6 +28,8 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `73e7c1e` | full bounded model-reconciliation interval |
 | `6f30c90` | replacement of legacy pre-control-socket lab daemons |
 | `fdf7d13` | portable steering and health acceptance harness |
+| `0088993` | heap-size AP Metrics Response construction from model scale |
+| `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 
 The accepted images contain runtime source through `73e7c1e`. Later host-side
 commits refine lifecycle management, tests and documentation without changing
@@ -54,7 +56,9 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - publish association changes, including returning clients;
 - enforce one current association in the controller model;
 - size association-frame SQL encoding for maximum input; and
-- complete cancelled orchestrator commands independently.
+- complete cancelled orchestrator commands independently; and
+- size AP Metrics Responses for the reporting model instead of a 1024-byte
+  stack-buffer assumption.
 
 ### hwsim and single-phy adaptations
 
@@ -111,7 +115,8 @@ authority. Its dependency order is:
 6. startup and disabled-radio lifecycle;
 7. bounded WSC M1 recovery;
 8. topology leader, registrar and association notification fixes; and
-9. generic command cancellation/completion.
+9. generic command cancellation/completion; and
+10. scale-safe AP Metrics Response construction.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -161,13 +166,20 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2` | `9b9809d71c916a199682556d850cecf365c9d8c8fa7f1d062d600e0d56c4d432` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2` | `62f143df46e7526c4b6af3cfe89e0454cb184daf09e70a265c65280a9e6efa92` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2` | `32f9edc1983d81c3acd3f6c324447f811a36eabbe377a59648f03aaf280a2383` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2` | `88eb66c0cff613aae471a4917ba838b558f0ec141eb4d8e02b4e8cf19356671f` |
 
-Both rev130 and the rev150 VM reached `5/15/50`, exported 10/10 clients,
-recorded zero service restarts, passed 10/10 final commanded steering and
-completed/restored a dynamic RF crossover without changing the wmediumd PID.
-The VM additionally passed an earlier 30/30 extended steering matrix.
+All five images contain the same `onewifi_em_agent` binary
+(`ff23b56982d6124dd0fd3dc7450c5c394963a6a24c46ec3684c7f4a50bcbe706`).
+The earlier deterministic fourth-extender/four-associated-STA stack-protector
+failure remained absent through clean deployment and cold-boot reconstruction.
+
+Both rev130 and the rev150 VM reached `5/15/50`, exported 10/10 clients and
+recorded zero service restarts. The VM reconstructed all four extenders and ten
+clients after a forced-power-off boot, held the complete state for 120 seconds,
+and recorded its model, topology, restart counts, traffic and journal under the
+boot-ID acceptance directory. Earlier accepted runs passed 10/10 commanded
+steering and a 30/30 extended steering matrix.
 
 ## Remaining engineering debt
 
@@ -179,4 +191,3 @@ The VM additionally passed an earlier 30/30 extended steering matrix.
 - Decode and eliminate the repeated netlink command-2 `EINVAL` diagnostics
   emitted by wmediumd during normal WLAN activity. They occur on both labs and
   have not correlated with registration, traffic, steering or restore failure.
-- Complete VM reboot/persistent topology reconstruction acceptance.
