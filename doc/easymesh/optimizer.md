@@ -161,7 +161,7 @@ know local protocol state, but neither selects the target for this experiment.
 | RF generation | `wmdcfg` | wmediumd | Atomic radio-pair SNR generations with verified restore |
 | RF transport | wmediumd | hwsim | Frequency-isolated simulated frame delivery |
 | live topology | controller/WebUI | external observer | `/api/v1/topology` with current devices, radios and BSSs |
-| live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` |
+| live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` and `/api/v1/clients` |
 | real metrics | EasyMesh reports/queries | external observer | Required adapter; current WebUI metric handlers are not valid |
 | policy baseline | operator/external setup | controller and agents | Reporting/exclusion configuration; local agent steering set to mode 0 |
 | steer action | external actuator | controller | `steer.sh STA TARGET_BSSID` at the current implementation stage |
@@ -172,12 +172,13 @@ know local protocol state, but neither selects the target for this experiment.
 
 ### Observation boundary
 
-Only the topology endpoint is accepted as live topology and association state.
-The other WebUI endpoints below are not optimizer inputs at this stage:
-
-- `/api/v1/clients` reads packaged `static/clients.json` demonstration data;
-- `/api/v1/metrics/clients` returns canned demonstration clients and values;
-- performance and interference endpoints also contain demonstration data.
+`/api/v1/topology`, `/api/v1/devices` and `/api/v1/clients` now derive identity
+and association placement from the current controller tree. WebSocket initial
+state uses the same live inventory. They expose no invented RSSI, throughput,
+CPU, IP or uptime values. The device/client metric endpoints are keyed by the
+live identities, but their zero values mean unavailable, not observations.
+Performance and interference endpoints still contain demonstration data and
+must not be optimizer inputs.
 
 The first implementation task is therefore a read-only observation adapter for
 real EasyMesh Associated STA Link Metrics, AP Metrics and candidate-link

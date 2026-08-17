@@ -287,10 +287,13 @@ lxc exec wlan-client -- ip -4 -o addr show wlan0
 lxc exec wlan-client -- ping -I wlan0 -c 3 10.0.0.1
 ```
 
-Expected live topology result is ten. The WebUI `/api/v1/clients` handler reads
-the packaged `static/clients.json` demonstration inventory and is not a live
-association source. Bind traffic to `wlan0`; client `eth0` is not the WLAN data
-path.
+Expected live topology result is ten. `/api/v1/devices` and
+`/api/v1/clients` are also derived from the current controller tree: the device
+list contains the controller, colocated agent and four extenders, while each
+client record contains its observed STA MAC, parent agent and BSSID. Fields not
+supplied by EasyMesh, including IP address, RSSI, rate and traffic counters,
+display as `N/A`; they are not synthesized from the packaged demonstration
+JSON. Bind traffic to `wlan0`; client `eth0` is not the WLAN data path.
 
 ### Backhaul
 

@@ -195,8 +195,8 @@ and recorded its model, topology, restart counts, traffic and journal under the
 boot-ID acceptance directory. Earlier accepted runs passed 10/10 commanded
 steering and a 30/30 extended steering matrix.
 
-Post-image diagnosis added three source fixes that were rebuilt and exercised
-as targeted runtime binaries before the next full image roll-up:
+Post-image diagnosis added source fixes that were rebuilt and exercised as
+targeted runtime binaries before the next full image roll-up:
 
 | Fix | Runtime artifact | SHA-256 |
 | --- | --- | --- |
@@ -206,6 +206,7 @@ as targeted runtime binaries before the next full image roll-up:
 | serialized HTTP/native command bridge (`0034`) | `onewifi_em_cli` | `d5f8e97a24679eadbe01e40a0d89ac7a109528a1114bacd6b722a8c71f637a02` |
 | remove unused CLI command data model (`0035`) | `libemcli.so.0.0.0` | `e4cc60152c490f9f3ca0fbfdb9eaecb7b30258bbcddf02c969bb08e76f51b995` |
 | release controller JSON output (`0036`) | `onewifi_em_ctrl` | `4b5cc2688671cd1993a2c9a8e3fb1c7334ebc20440edf1d884e2238580203e06` |
+| live device/client inventory (`0037`) | `onewifi_em_cli` | `3cf06dabb4294440d47ebd1ac2a36b957ead61489cfe03c2460c800695fe992f` |
 
 Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
 in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
@@ -235,6 +236,14 @@ With `0034`-`0036` deployed, 3,000 concurrent topology requests returned HTTP
 settled at 714,576 KiB VmSize, acquired one 8 MiB arena at request 2,500, then
 remained flat at 722,772 KiB through request 3,000. Subsequent idle reclamation
 reduced controller RSS to 57,660 KiB and CLI RSS to 84,208 KiB.
+
+Patch `0037` replaces the packaged Devices and Clients demonstration records
+with a leak-safe mapping of the serialized controller tree. REST detail/list
+routes, metric keys and WebSocket initial state all use the same live snapshot;
+unknown telemetry renders as `N/A`. Both labs returned 6 live UI nodes and 10
+associated clients with no canned MACs. After warm-up, a further 4,000 requests
+left CLI VmData fixed at 168,964 KiB (6,000 requests total), with an unchanged
+PID and zero restarts.
 
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory

@@ -38,6 +38,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0034-cli-serialize-native-command-execution.patch \
     file://0035-cli-remove-unused-command-data-model-init.patch \
     file://0036-controller-release-json-output.patch \
+    file://0037-cli-serve-live-device-client-inventory.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
