@@ -131,6 +131,11 @@ up)
     _lxc_remove_clean "$CT"
     lxc profile delete "$PROFILE" 2>/dev/null
     lxc profile create "$PROFILE" >/dev/null
+    # A lab-level runtime service owns cold-boot order. Explicitly prevent LXD
+    # from restoring clients before the controller and extenders have completed
+    # onboarding; the OpenRC local.d hook still reconnects whenever this
+    # container is deliberately started.
+    lxc profile set "$PROFILE" boot.autostart=false >/dev/null
     lxc profile set "$PROFILE" limits.memory=128MB >/dev/null
     lxc profile set "$PROFILE" limits.cpu=1 >/dev/null
     lxc profile device add "$PROFILE" root disk path=/ pool="$LAB_POOL" >/dev/null
