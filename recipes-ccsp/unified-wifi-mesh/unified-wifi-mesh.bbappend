@@ -28,6 +28,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0024-agent-send-sta-topology-notify-synchronously.patch \
     file://0025-controller-size-sta-frame-body-hex-buffer.patch \
     file://0026-orch-complete-cancelled-commands-independently.patch \
+    file://0027-metrics-size-ap-response-for-model.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
