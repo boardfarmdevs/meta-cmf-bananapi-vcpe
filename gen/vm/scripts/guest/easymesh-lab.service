@@ -1,0 +1,16 @@
+[Unit]
+Description=EasyMesh steering laboratory runtime
+Wants=network-online.target
+After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service
+Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easymesh-lab-runtime start
+ExecStop=/usr/local/sbin/easymesh-lab-runtime stop
+RemainAfterExit=yes
+TimeoutStartSec=1800
+TimeoutStopSec=240
+
+[Install]
+WantedBy=multi-user.target

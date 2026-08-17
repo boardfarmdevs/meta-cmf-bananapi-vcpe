@@ -1,0 +1,161 @@
+# frozen_string_literal: true
+
+VM_NAME = ENV.fetch("EASYMESH_VM_NAME", "easymesh-lab")
+VM_MEMORY = ENV.fetch("EASYMESH_VM_MEMORY", "6144").to_i
+VM_CPUS = ENV.fetch("EASYMESH_VM_CPUS", "6").to_i
+WEBUI_HOST_PORT = ENV.fetch("EASYMESH_WEBUI_PORT", "18888").to_i
+WEBUI_HOST_IP = ENV.fetch("EASYMESH_WEBUI_HOST_IP", "127.0.0.1")
+
+Vagrant.configure("2") do |config|
+  # Pin both the publisher and image version. The appliance must not change
+  # underneath a steering experiment.
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_version = "202510.26.0"
+  config.vm.hostname = VM_NAME
+
+  # The completed appliance must be self-contained. Provisioners copy explicit
+  # artifacts into the guest; it never depends on a live /vagrant mount.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # Vagrant supplies SSH over the first NAT adapter. Keep the EasyMesh WebUI
+  # separate from rev150's native instance, which already owns host port 8888.
+  config.vm.network "forwarded_port",
+                    guest: 8888,
+                    host: WEBUI_HOST_PORT,
+                    host_ip: WEBUI_HOST_IP,
+                    id: "easymesh-webui",
+                    auto_correct: false
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = VM_NAME
+    vb.gui = false
+    vb.memory = VM_MEMORY
+    vb.cpus = VM_CPUS
+    vb.customize ["modifyvm", :id, "--audio-enabled", "off"]
+    vb.customize ["modifyvm", :id, "--clipboard-mode", "disabled"]
+    vb.customize ["modifyvm", :id, "--drag-and-drop", "disabled"]
+  end
+
+  config.ssh.keep_alive = true
+  # The runtime stops 15 LXC instances and wmediumd in dependency order. Give
+  # that orderly shutdown time to finish before Vagrant escalates to power-off.
+  config.vm.graceful_halt_timeout = 240
+
+  config.vm.provision "asset-directory", type: "shell", inline: <<~SHELL
+    install -d -o vagrant -g vagrant /home/vagrant/easymesh-assets
+  SHELL
+
+  %w[
+    SHA256SUMS
+    linux-7.0.0-28-hwsim.tar.zst
+    astral-uv_1662.assert
+    astral-uv_1662.snap
+    lxd_38768.assert
+    lxd_38768.snap
+    meta-cmf-bananapi-vcpe.bundle
+    boardfarm.bundle
+    pytest-boardfarm.bundle
+    boardfarm-docsis.bundle
+    boardfarm-charter.bundle
+    boardfarm-lab-staging.bundle
+    X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2
+    X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2
+    alpine-3.19-amd64-meta.tar.xz
+    alpine-3.19-amd64-rootfs.tar.xz
+  ].each do |asset|
+    config.vm.provision "asset-#{asset}",
+                        type: "file",
+                        source: "assets/#{asset}",
+                        destination: "/home/vagrant/easymesh-assets/#{asset}"
+  end
+
+  config.vm.provision "boardfarm-config",
+                      type: "file",
+                      source: "config/boardfarm-easymesh.json",
+                      destination: "/home/vagrant/easymesh-assets/boardfarm-easymesh.json"
+  config.vm.provision "boardfarm-inventory",
+                      type: "file",
+                      source: "config/boardfarm-easymesh-inventory.json",
+                      destination: "/home/vagrant/easymesh-assets/boardfarm-easymesh-inventory.json"
+  config.vm.provision "boardfarm-python-lock",
+                      type: "file",
+                      source: "config/boardfarm-requirements.lock",
+                      destination: "/home/vagrant/easymesh-assets/boardfarm-requirements.lock"
+  config.vm.provision "forward-helper",
+                      type: "file",
+                      source: "scripts/guest/easymesh-lxd-docker-forward",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-lxd-docker-forward"
+  config.vm.provision "forward-unit",
+                      type: "file",
+                      source: "scripts/guest/easymesh-lxd-docker-forward.service",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-lxd-docker-forward.service"
+  config.vm.provision "runtime-helper",
+                      type: "file",
+                      source: "scripts/guest/easymesh-lab-runtime",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-lab-runtime"
+  config.vm.provision "runtime-unit",
+                      type: "file",
+                      source: "scripts/guest/easymesh-lab.service",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-lab.service"
+  config.vm.provision "boardfarm-runtime-helper",
+                      type: "file",
+                      source: "scripts/guest/boardfarm-lab-rebuild",
+                      destination: "/home/vagrant/easymesh-assets/boardfarm-lab-rebuild"
+  config.vm.provision "boardfarm-runtime-unit",
+                      type: "file",
+                      source: "scripts/guest/boardfarm-lab.service",
+                      destination: "/home/vagrant/easymesh-assets/boardfarm-lab.service"
+  config.vm.provision "scale-test",
+                      type: "file",
+                      source: "scripts/60-scale-steering-test.sh",
+                      destination: "/home/vagrant/scale-steering-test.sh"
+  config.vm.provision "scale-topology",
+                      type: "file",
+                      source: "scripts/55-scale-topology.sh",
+                      destination: "/home/vagrant/scale-topology.sh"
+  config.vm.provision "return-steering-test",
+                      type: "file",
+                      source: "scripts/61-return-steering-regression.sh",
+                      destination: "/home/vagrant/return-steering-test.sh"
+  config.vm.provision "health-audit",
+                      type: "file",
+                      source: "scripts/70-health-audit.sh",
+                      destination: "/home/vagrant/health-audit.sh"
+  config.vm.provision "hwsim-pool-helper",
+                      type: "file",
+                      source: "scripts/guest/easymesh-hwsim-pool",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-hwsim-pool"
+  config.vm.provision "hwsim-pool-unit",
+                      type: "file",
+                      source: "scripts/guest/easymesh-hwsim-pool.service",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-hwsim-pool.service"
+  config.vm.provision "lxd-ordering",
+                      type: "file",
+                      source: "scripts/guest/lxd-easymesh-ordering.conf",
+                      destination: "/home/vagrant/easymesh-assets/lxd-easymesh-ordering.conf"
+
+  config.vm.provision "base-software",
+                      type: "shell",
+                      path: "scripts/00-base.sh"
+  config.vm.provision "linux-7",
+                      type: "shell",
+                      path: "scripts/10-install-linux-7.sh",
+                      reboot: true
+  config.vm.provision "lab-host",
+                      type: "shell",
+                      path: "scripts/20-prepare-lab-host.sh"
+  config.vm.provision "boardfarm-wan",
+                      type: "shell",
+                      path: "scripts/30-boardfarm-wan.sh"
+  config.vm.provision "deploy-easymesh",
+                      type: "shell",
+                      path: "scripts/40-deploy-easymesh.sh",
+                      privileged: false
+  config.vm.provision "scale-easymesh",
+                      type: "shell",
+                      path: "scripts/55-scale-topology.sh",
+                      privileged: false
+  config.vm.provision "runtime-service",
+                      type: "shell",
+                      path: "scripts/50-runtime-service.sh"
+end

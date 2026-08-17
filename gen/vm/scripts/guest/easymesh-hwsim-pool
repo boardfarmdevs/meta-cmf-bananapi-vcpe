@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = 24
+test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = 3
+test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
+
+# A reboot recreates the pool as wlan0..wlan23. LXD profiles refer to stable
+# virt-wlanN parents, so establish those names before LXD starts instances.
+for phy in /sys/class/ieee80211/phy*; do
+    netdev=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n' | head -1)
+    case "$netdev" in
+    wlan[0-9]*)
+        ip link set "$netdev" down
+        ip link set "$netdev" name "virt-$netdev"
+        ip link set "virt-$netdev" up
+        ;;
+    virt-wlan[0-9]*)
+        ip link set "$netdev" up
+        ;;
+    *)
+        echo "unexpected hwsim pool interface on ${phy##*/}: $netdev" >&2
+        exit 1
+        ;;
+    esac
+done
+
+test "$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)" -eq 24

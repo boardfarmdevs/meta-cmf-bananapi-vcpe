@@ -1,0 +1,11 @@
+.vagrant/
+assets/*.box
+assets/*.bundle
+assets/*.tar.zst
+assets/*.tar.bz2
+assets/*.tar.xz
+assets/*.deb
+assets/*.snap
+assets/*.assert
+assets/SHA256SUMS
+artifacts/

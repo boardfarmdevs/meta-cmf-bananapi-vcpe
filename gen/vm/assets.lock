@@ -1,0 +1,10 @@
+# name kind revision
+meta-cmf-bananapi-vcpe git e07a3691fed72a687946a47563d1e931b1564dda
+boardfarm git 58501f4b86baf045a2a43d9aba7b69a717377f94
+pytest-boardfarm git 2eb81e271f1846b2255f31dfb724540fdfdb8316
+boardfarm-docsis git 7235bc320bce2ac2f8da5f9f477a5f4749960229
+boardfarm-charter git 92de47717f787701f14fefa9280525218ea69c84
+boardfarm-lab-staging git 510c65fc4a880471e344a88d824fd0bc07a342d8
+astral-uv snap 1662
+python cpython 3.13.15
+lxd snap 38768

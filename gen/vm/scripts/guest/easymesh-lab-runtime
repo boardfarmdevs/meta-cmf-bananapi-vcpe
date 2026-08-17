@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec </dev/null
+
+gen=/home/vagrant/git/meta-cmf-bananapi-vcpe/gen
+mesh='bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003'
+extenders='bpiap bpiap-001 bpiap-002 bpiap-003'
+clients='wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009'
+state=/home/vagrant/.local/state/easymesh-vagrant/reboot-acceptance
+
+instance_state() {
+    lxc info "$1" 2>/dev/null | sed -n 's/^Status: //p'
+}
+
+start_instance() {
+    local container=$1 attempt poll
+    lxc info "$container" >/dev/null 2>&1
+    [ "$(instance_state "$container")" = RUNNING ] && return 0
+    for attempt in 1 2 3; do
+        lxc start "$container" >/dev/null 2>&1 || true
+        for poll in $(seq 1 15); do
+            [ "$(instance_state "$container")" = RUNNING ] && return 0
+            sleep 1
+        done
+    done
+    echo "$container did not start after three attempts" >&2
+    return 1
+}
+
+stop_instance() {
+    local container=$1
+    [ "$(instance_state "$container")" = RUNNING ] || return 0
+    lxc stop "$container" --timeout 20 >/dev/null 2>&1 \
+        || lxc stop "$container" --force >/dev/null 2>&1 \
+        || true
+}
+
+reclaim_hwsim_vifs() {
+    local phy netdevs pool_dev netdev
+    # A stopped physical-NIC container returns its complete hwsim wiphy to the
+    # host. OneWifi-created VAPs survive that move and exhaust the wiphy's
+    # interface combinations on the next start (iw reports ENFILE). With every
+    # managed instance stopped, retain only the stable virt-wlanN pool device.
+    for phy in /sys/class/ieee80211/phy*; do
+        netdevs=$(ls "$phy/device/net" 2>/dev/null || true)
+        pool_dev=$(printf '%s\n' "$netdevs" | grep -m1 '^virt-wlan[0-9]\+$' || true)
+        [ -n "$pool_dev" ] || continue
+        while read -r netdev; do
+            [ -n "$netdev" ] || continue
+            [ "$netdev" = "$pool_dev" ] && continue
+            iw dev "$netdev" del
+        done <<< "$netdevs"
+    done
+}
+
+wait_wan_provider() {
+    local attempt
+    for attempt in $(seq 1 60); do
+        if [ "$(docker inspect -f '{{.State.Running}}' dhcp-cpe5 2>/dev/null || true)" = true ] \
+            && [ "$(docker inspect -f '{{.State.Running}}' wan-cpe5 2>/dev/null || true)" = true ] \
+            && docker exec dhcp-cpe5 ip -4 address show eth1 2>/dev/null \
+                | grep -q '10\.105\.0\.10/24' \
+            && docker exec dhcp-cpe5 ss -lun 2>/dev/null | grep -q ':67 ' \
+            && docker exec wan-cpe5 ip -4 address show eth1 2>/dev/null \
+                | grep -q '10\.105\.0\.20/24'; then
+            echo "WAN provider ready after ${attempt}s"
+            return 0
+        fi
+        sleep 1
+    done
+    echo 'Boardfarm WAN provider is not serving DHCP after 60 seconds' >&2
+    return 1
+}
+
+al_mac_for() {
+    local container=$1 base prefix octet value
+    if [ "$container" = bpibroadband ]; then
+        # The colocated agent derives its interface MAC from the controller's
+        # deterministic WAN MAC and does not create em_al_base_mac.
+        base=$(lxc profile get bpibroadband environment.STORED_MAC1 \
+            | tr '[:upper:]' '[:lower:]')
+    else
+        base=$(lxc exec "$container" -- cat /nvram/em_al_base_mac 2>/dev/null)
+    fi
+    [[ "$base" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || return 1
+    prefix=${base%:*}
+    octet=${base##*:}
+    value=$((0x$octet + 0x20))
+    printf '%s:%02x\n' "$prefix" "$value"
+}
+
+model_bss_for() {
+    local container=$1 al_mac
+    al_mac=$(al_mac_for "$container") || return 0
+    lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+        "select count(*) from BSSList where ID like 'OneWifiMesh@${al_mac}@%';" \
+        2>/dev/null || true
+}
+
+wait_controller() {
+    local attempt private_count iot_count bss_count
+    for attempt in $(seq 1 48); do
+        private_count=$(lxc exec bpibroadband -- iw dev 2>/dev/null \
+            | grep -c 'ssid private_ssid' || true)
+        iot_count=$(lxc exec bpibroadband -- iw dev 2>/dev/null \
+            | grep -c 'ssid iot_ssid' || true)
+        bss_count=$(model_bss_for bpibroadband)
+        if lxc exec bpibroadband -- systemctl is-active --quiet \
+                onewifi ieee1905_em_ctrl em_ctrl ieee1905_em_agent em_agent em_cli \
+                2>/dev/null \
+            && lxc exec bpibroadband -- sh -c \
+                "ip -4 -o address show erouter0 | grep -q 'inet '" \
+            && [ "$private_count" -eq 3 ] \
+            && [ "$iot_count" -eq 3 ] \
+            && [ "${bss_count:-0}" -eq 10 ] \
+            && curl -fsS http://127.0.0.1:8888/api/v1/topology >/dev/null; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo 'controller did not become ready after boot' >&2
+    return 1
+}
+
+wait_extender_live() {
+    local container=$1 attempt private_count iot_count bss_count
+    for attempt in $(seq 1 48); do
+        private_count=$(lxc exec "$container" -- iw dev 2>/dev/null \
+            | grep -c 'ssid private_ssid' || true)
+        iot_count=$(lxc exec "$container" -- iw dev 2>/dev/null \
+            | grep -c 'ssid iot_ssid' || true)
+        bss_count=$(model_bss_for "$container")
+        if [ "$private_count" -eq 3 ] && [ "$iot_count" -eq 3 ] \
+            && [ "${bss_count:-0}" -eq 10 ] \
+            && lxc exec "$container" -- systemctl is-active --quiet \
+                onewifi ieee1905_em_agent em_agent 2>/dev/null \
+            && lxc exec "$container" -- sh -c \
+                "iw dev wifi1.3 link | grep -q 'Connected to'"; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "$container did not receive its complete tri-band configuration" >&2
+    return 1
+}
+
+wait_mesh_model() {
+    local attempt counts complete container
+    for attempt in $(seq 1 48); do
+        counts=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+            'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList))' \
+            2>/dev/null || true)
+        complete=1
+        for container in $mesh; do
+            [ "$(model_bss_for "$container")" = 10 ] || complete=0
+        done
+        if [ "$counts" = 5/15/50 ] && [ "$complete" -eq 1 ]; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "mesh did not converge after boot (model=${counts:-unavailable})" >&2
+    return 1
+}
+
+wait_client_live() {
+    local client=$1 attempt
+    for attempt in $(seq 1 36); do
+        if lxc exec "$client" -- sh -c \
+                "iw dev wlan0 link | grep -q 'Connected to' && ip -4 -o address show wlan0 | grep -q 'inet '" \
+                2>/dev/null; then
+            return 0
+        fi
+        if lxc exec "$client" -- sh -c \
+                "iw dev wlan0 link | grep -q 'Connected to'" 2>/dev/null; then
+            lxc exec "$client" -- udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true
+        fi
+        sleep 5
+    done
+    echo "$client did not associate and obtain DHCP after boot" >&2
+    return 1
+}
+
+live_client_count() {
+    curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null \
+        | jq -r '[.nodes[]?.STAList[]?.staMAC | select(. != null and . != "")] | unique | length' \
+        2>/dev/null
+}
+
+wait_clients() {
+    local attempt topology_clients associated
+    for attempt in $(seq 1 48); do
+        topology_clients=$(live_client_count || true)
+        associated=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
+            -e 'select count(*) from STAList where Associated=1' 2>/dev/null || true)
+        if [ "$topology_clients" = 10 ] && [ "$associated" = 14 ]; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "client model did not converge (live topology=${topology_clients:-?}, associated=${associated:-?})" >&2
+    return 1
+}
+
+restart_report() {
+    local container units
+    for container in $mesh; do
+        units='onewifi em_agent'
+        [ "$container" = bpibroadband ] && units="$units em_ctrl em_cli"
+        # One namespace crossing per container is materially faster than one
+        # lxc exec per unit, especially while the VM is under Docker I/O load.
+        lxc exec "$container" -- sh -c '
+            container=$1
+            shift
+            for unit do
+                restarts=$(systemctl show "$unit" -p NRestarts --value) || exit 1
+                printf "%s %s=%s\n" "$container" "$unit" "$restarts"
+            done
+        ' sh "$container" $units 2>/dev/null || return 1
+    done
+}
+
+assert_zero_restarts() {
+    local report
+    report=$(restart_report) || return 1
+    printf '%s\n' "$report"
+    if printf '%s\n' "$report" | grep -Ev '=0$'; then
+        echo 'an EasyMesh or OneWifi service restarted during reconstruction' >&2
+        return 1
+    fi
+}
+
+verify_stability_window() {
+    local deadline model topology_clients
+    deadline=$((SECONDS + 120))
+    while :; do
+        model=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+            'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
+            2>/dev/null || true)
+        topology_clients=$(live_client_count || true)
+        [ "$model" = 5/15/50/14 ] && [ "$topology_clients" = 10 ]
+        assert_zero_restarts >/dev/null
+        [ "$SECONDS" -ge "$deadline" ] && break
+        sleep 5
+    done
+    echo 'topology and zero-restart state held for 120 seconds'
+}
+
+client_traffic_report() {
+    local client output loss
+    for client in $clients; do
+        output=$(lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 2>&1 || true)
+        loss=$(printf '%s\n' "$output" \
+            | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
+        printf '%s packet_loss=%s\n' "$client" "${loss:-FAIL}"
+    done
+}
+
+verify_client_traffic() {
+    local client attempt passed
+    for client in $clients; do
+        passed=0
+        for attempt in 1 2 3; do
+            if lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 \
+                >/dev/null 2>&1; then
+                passed=1
+                break
+            fi
+            sleep 2
+        done
+        if [ "$passed" -ne 1 ]; then
+            echo "$client cannot reach the WLAN gateway after three retries" >&2
+            return 1
+        fi
+    done
+    echo 'all ten WLAN clients reach 10.0.0.1'
+}
+
+capture_result() {
+    local result=$1 boot_id run
+    boot_id=$(cat /proc/sys/kernel/random/boot_id)
+    run="$state/$boot_id"
+    install -d -o vagrant -g vagrant "$run"
+    date -Ins > "$run/completed-at.txt"
+    printf '%s\n' "$result" > "$run/result.txt"
+    lxc list -c ns4t > "$run/lxc-list.txt" 2>&1 || true
+    curl -fsS http://127.0.0.1:8888/api/v1/topology > "$run/topology.json" 2>/dev/null || true
+    curl -fsS http://127.0.0.1:8888/api/v1/clients > "$run/clients.json" 2>/dev/null || true
+    lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+        'select count(*) from DeviceList; select count(*) from RadioList; select count(*) from BSSList; select count(*) from STAList where Associated=1;' \
+        > "$run/model-counts.txt" 2>&1 || true
+    restart_report > "$run/restarts.txt" 2>&1 || true
+    client_traffic_report > "$run/client-traffic.txt" 2>&1 || true
+    if [ -f /run/meta-cmf-wmediumd/wmediumd.log ]; then
+        cp /run/meta-cmf-wmediumd/wmediumd.log "$run/wmediumd.log"
+    elif [ -f /tmp/wmediumd.log ]; then
+        cp /tmp/wmediumd.log "$run/wmediumd.log"
+    fi
+    journalctl -b -u easymesh-lab.service -o short-iso > "$run/easymesh-lab-journal.txt" 2>&1 || true
+    chown -R vagrant:vagrant "$run"
+}
+
+case "${1:-start}" in
+start)
+    result=FAIL
+    trap 'capture_result "$result"' EXIT
+    systemctl start docker.service snap.lxd.daemon.service
+    for attempt in $(seq 1 30); do
+        ip link show br-wan105 >/dev/null 2>&1 \
+            && docker inspect dhcp-cpe5 wan-cpe5 >/dev/null 2>&1 \
+            && break
+        sleep 1
+    done
+    ip link show br-wan105 >/dev/null
+    docker start dhcp-cpe5 wan-cpe5 >/dev/null
+    wait_wan_provider
+
+    # A pre-fix appliance may let LXD restore clients from its previous-power
+    # state. Quiesce every managed node so this service still establishes the
+    # same controller -> extenders -> clients order on its first corrected boot.
+    sudo -H -u vagrant "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    for container in $(printf '%s\n' $clients | sort -Vr) \
+        bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
+        stop_instance "$container"
+        lxc config set "$container" boot.autostart false
+    done
+    reclaim_hwsim_vifs
+
+    start_instance bpibroadband
+    wait_controller
+    for container in $extenders; do
+        start_instance "$container"
+        wait_extender_live "$container"
+    done
+    wait_mesh_model
+    for client in $clients; do
+        start_instance "$client"
+        wait_client_live "$client"
+    done
+
+    sudo -H -u vagrant env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
+    wait_clients
+    wait_mesh_model
+    verify_stability_window
+    assert_zero_restarts
+    verify_client_traffic
+    result=PASS
+    echo 'EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=10/10 associated=14 restarts=0'
+    ;;
+stop)
+    sudo -H -u vagrant "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    for container in wlan-client-009 wlan-client-008 wlan-client-007 wlan-client-006 wlan-client-005 \
+        wlan-client-004 wlan-client-003 wlan-client-002 wlan-client-001 wlan-client \
+        bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
+        stop_instance "$container"
+    done
+    ;;
+status)
+    wmediumd_status=''
+    systemctl is-active --quiet docker.service snap.lxd.daemon.service
+    docker inspect -f '{{.State.Running}}' dhcp-cpe5 wan-cpe5 | grep -vx true && exit 1 || true
+    for container in $mesh $clients; do
+        [ "$(instance_state "$container")" = RUNNING ] || exit 1
+    done
+    wmediumd_status=$(sudo -H -u vagrant "$gen/wmediumd/wmediumd-up.sh" status)
+    [[ "$wmediumd_status" == *'wmediumd running'* ]]
+    [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+        'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
+        2>/dev/null)" = 5/15/50/14 ]
+    [ "$(live_client_count)" = 10 ]
+    assert_zero_restarts >/dev/null
+    verify_client_traffic >/dev/null
+    ;;
+*)
+    echo "usage: $0 {start|stop|status}" >&2
+    exit 2
+    ;;
+esac

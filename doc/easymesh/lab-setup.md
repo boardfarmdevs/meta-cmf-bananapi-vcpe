@@ -1,5 +1,9 @@
 # Lab setup and operation
 
+> The reproducible VirtualBox/Vagrant appliance, including Docker and the full
+> Boardfarm installation, is maintained under `gen/vm/`. Its README is the
+> canonical VM build, packaging, and reboot procedure.
+
 ## Supported labs
 
 | System | Role |

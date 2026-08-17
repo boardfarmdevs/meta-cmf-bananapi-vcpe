@@ -1,0 +1,24 @@
+{
+  "base": "base.json",
+  "lab_name": "easymesh-vagrant",
+  "physical_network": {
+    "host_interface": ""
+  },
+  "switch": {
+    "mgmt_ip": "",
+    "username": "",
+    "password": ""
+  },
+  "services": [],
+  "deployment": {
+    "num_cpes": 5,
+    "auto_start_containers": true,
+    "cpes": [
+      {"name": "unused-cpe1"},
+      {"name": "unused-cpe2"},
+      {"name": "unused-cpe3"},
+      {"name": "unused-cpe4"},
+      {"name": "easymesh-controller"}
+    ]
+  }
+}
