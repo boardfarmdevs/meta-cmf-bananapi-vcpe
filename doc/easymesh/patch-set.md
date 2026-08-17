@@ -116,7 +116,8 @@ authority. Its dependency order is:
 7. bounded WSC M1 recovery;
 8. topology leader, registrar and association notification fixes; and
 9. generic command cancellation/completion; and
-10. scale-safe AP Metrics Response construction.
+10. scale-safe AP Metrics Response construction; and
+11. browser-only topology layout and JSON/SVG/PNG export.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.

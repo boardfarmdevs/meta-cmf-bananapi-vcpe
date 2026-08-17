@@ -1,0 +1,441 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: add visual auto-layout and topology exports
+
+Make the two topology toolbar placeholders functional without changing the
+EasyMesh network.  Auto-layout releases the displayed nodes, runs a bounded
+D3 force/collision layout, caches the result, and fits it into the viewport.
+Export downloads the current topology as structured JSON or the visible
+diagram as standalone SVG or PNG; raster/vector exports embed their icons so
+the files remain portable.
+
+All behavior is browser-side.  It does not submit steering, policy, channel,
+or wmediumd commands.
+
+---
+ src/rdkb-cli/static/index.html |  22 +++-
+ src/rdkb-cli/static/script.js  | 299 +++++++++++++++++++++++++++++++++++++++--
+ src/rdkb-cli/static/style.css  |  42 ++++++
+ 3 files changed, 355 insertions(+), 8 deletions(-)
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -357,9 +357,25 @@
+                     <div class="page-header">
+                         <h1><i class="fas fa-sitemap"></i> Network Topology</h1>
+                         <div class="page-actions">
+-                            <button class="btn btn-secondary">
+-                                <i class="fas fa-download"></i> Export
+-                            </button>
++                            <div class="topology-export">
++                                <button class="btn btn-secondary" id="export-topology"
++                                        type="button" aria-haspopup="menu" aria-expanded="false">
++                                    <i class="fas fa-download"></i> Export
++                                    <i class="fas fa-caret-down"></i>
++                                </button>
++                                <div class="topology-export-menu" id="topology-export-menu"
++                                     role="menu" hidden>
++                                    <button type="button" role="menuitem" data-topology-export="json">
++                                        <i class="fas fa-code"></i> JSON data
++                                    </button>
++                                    <button type="button" role="menuitem" data-topology-export="png">
++                                        <i class="fas fa-image"></i> PNG image
++                                    </button>
++                                    <button type="button" role="menuitem" data-topology-export="svg">
++                                        <i class="fas fa-project-diagram"></i> SVG image
++                                    </button>
++                                </div>
++                            </div>
+                             <button class="btn btn-primary" id="optimize-topology">
+                                 <i class="fas fa-magic"></i> Optimize Layout
+                             </button>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -219,6 +219,35 @@
+     document.getElementById('optimize-network')?.addEventListener('click', () => {
+       this.optimizeNetwork();
+     });
++
++    document.getElementById('optimize-topology')?.addEventListener('click', () => {
++      this.optimizeTopologyLayout();
++    });
++
++    const exportTopologyButton = document.getElementById('export-topology');
++    const exportTopologyMenu = document.getElementById('topology-export-menu');
++    exportTopologyButton?.addEventListener('click', (event) => {
++      event.stopPropagation();
++      const opening = exportTopologyMenu.hidden;
++      exportTopologyMenu.hidden = !opening;
++      exportTopologyButton.setAttribute('aria-expanded', String(opening));
++      if (opening) exportTopologyMenu.querySelector('button')?.focus();
++    });
++
++    exportTopologyMenu?.addEventListener('click', (event) => {
++      const item = event.target.closest('[data-topology-export]');
++      if (!item) return;
++      exportTopologyMenu.hidden = true;
++      exportTopologyButton?.setAttribute('aria-expanded', 'false');
++      this.exportTopology(item.dataset.topologyExport);
++    });
++
++    document.addEventListener('click', () => {
++      if (!exportTopologyMenu?.hidden) {
++        exportTopologyMenu.hidden = true;
++        exportTopologyButton?.setAttribute('aria-expanded', 'false');
++      }
++    });
+      
+     // Performance tab refresh
+     document.getElementById('refresh-performance')?.addEventListener('click', () => {
+@@ -2298,6 +2327,259 @@
+   }
+ 
+   /**
++   * Re-run D3's force model to improve only the on-screen graph layout.
++   * This never sends an EasyMesh command or changes the actual network.
++   */
++  optimizeTopologyLayout() {
++    const nodes = this.topology?.nodes;
++    const simulation = this.topologySimulation;
++    if (!simulation || !Array.isArray(nodes) || nodes.length === 0) {
++      this.showNotification('No topology is available to lay out', 'warning');
++      return;
++    }
++
++    const button = document.getElementById('optimize-topology');
++    const generation = (this.topologyLayoutGeneration || 0) + 1;
++    this.topologyLayoutGeneration = generation;
++    if (button) button.disabled = true;
++
++    this.nodePositionCache?.clear();
++    nodes.forEach(node => {
++      node.fx = null;
++      node.fy = null;
++      node.vx = 0;
++      node.vy = 0;
++    });
++
++    this.showNotification('Arranging the topology diagram…', 'info');
++    simulation.on('end.autoLayout', () => {
++      if (generation !== this.topologyLayoutGeneration) return;
++
++      nodes.forEach(node => {
++        if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
++        node.fx = node.x;
++        node.fy = node.y;
++        this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
++      });
++
++      this.fitTopologyToView();
++      if (button) button.disabled = false;
++      this.showNotification('Topology diagram arranged', 'success');
++    });
++
++    simulation.alpha(1).alphaTarget(0).restart();
++  }
++
++  /**
++   * Fit the rendered graph into the current topology viewport.
++   */
++  fitTopologyToView() {
++    const view = this.topologyView;
++    const group = view?.group?.node();
++    if (!group || !view.svg || !view.zoom) return;
++
++    let bounds;
++    try {
++      bounds = group.getBBox();
++    } catch (error) {
++      console.warn('Unable to measure topology for fit-to-view:', error);
++      return;
++    }
++
++    if (!bounds.width || !bounds.height) return;
++    const padding = 40;
++    const availableWidth = Math.max(1, view.width - padding * 2);
++    const availableHeight = Math.max(1, view.height - padding * 2);
++    const scale = Math.max(0.1, Math.min(1.5,
++      availableWidth / bounds.width,
++      availableHeight / bounds.height));
++    const centerX = bounds.x + bounds.width / 2;
++    const centerY = bounds.y + bounds.height / 2;
++    const transform = d3.zoomIdentity
++      .translate(view.width / 2 - scale * centerX,
++                 view.height / 2 - scale * centerY)
++      .scale(scale);
++
++    view.svg.transition().duration(350).call(view.zoom.transform, transform);
++  }
++
++  /**
++   * Export the current topology as structured data or as the visible diagram.
++   */
++  async exportTopology(format) {
++    const supported = new Set(['json', 'png', 'svg']);
++    if (!supported.has(format)) {
++      this.showNotification(`Unsupported topology export format: ${format}`, 'error');
++      return;
++    }
++    if (!this.topology?.nodes?.length) {
++      this.showNotification('No topology is available to export', 'warning');
++      return;
++    }
++
++    const exportButton = document.getElementById('export-topology');
++    if (exportButton) exportButton.disabled = true;
++
++    try {
++      const baseName = `easymesh-topology-${this.topologyExportTimestamp()}`;
++      if (format === 'json') {
++        const payload = this.topologyExportPayload();
++        const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
++          type: 'application/json;charset=utf-8'
++        });
++        this.downloadBlob(blob, `${baseName}.json`);
++      } else {
++        const svgBlob = await this.topologySvgBlob();
++        if (format === 'svg') {
++          this.downloadBlob(svgBlob, `${baseName}.svg`);
++        } else {
++          const pngBlob = await this.topologyPngBlob(svgBlob);
++          this.downloadBlob(pngBlob, `${baseName}.png`);
++        }
++      }
++      this.showNotification(`Topology exported as ${format.toUpperCase()}`, 'success');
++    } catch (error) {
++      console.error(`Topology ${format} export failed:`, error);
++      this.showNotification(`Topology export failed: ${error.message}`, 'error');
++    } finally {
++      if (exportButton) exportButton.disabled = false;
++    }
++  }
++
++  topologyExportTimestamp() {
++    return new Date().toISOString().replace(/[:.]/g, '-');
++  }
++
++  topologyExportPayload() {
++    const transientFields = new Set(['index', 'vx', 'vy', 'fx', 'fy']);
++    const topology = JSON.parse(JSON.stringify(this.topology));
++    topology.nodes = this.topology.nodes.map(node => {
++      const exportedNode = {};
++      Object.entries(node).forEach(([key, value]) => {
++        if (!transientFields.has(key)) exportedNode[key] = value;
++      });
++      return JSON.parse(JSON.stringify(exportedNode));
++    });
++
++    return {
++      schema: 'rdk-easymesh-topology-export/v1',
++      exportedAt: new Date().toISOString(),
++      source: window.location.origin,
++      topology
++    };
++  }
++
++  async topologySvgBlob() {
++    const sourceSvg = this.topologyView?.svg?.node()
++      || document.querySelector('#topology-visualization svg');
++    if (!sourceSvg) throw new Error('topology diagram is not rendered');
++
++    const clone = sourceSvg.cloneNode(true);
++    const width = Number(sourceSvg.getAttribute('width')) || sourceSvg.clientWidth;
++    const height = Number(sourceSvg.getAttribute('height')) || sourceSvg.clientHeight;
++    if (!width || !height) throw new Error('topology diagram has no drawable size');
++
++    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
++    clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
++    clone.setAttribute('viewBox', `0 0 ${width} ${height}`);
++    clone.setAttribute('width', width);
++    clone.setAttribute('height', height);
++
++    const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
++    background.setAttribute('x', '0');
++    background.setAttribute('y', '0');
++    background.setAttribute('width', '100%');
++    background.setAttribute('height', '100%');
++    background.setAttribute('fill', '#ffffff');
++    clone.insertBefore(background, clone.firstChild);
++
++    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
++    style.textContent = 'text { font-family: Arial, Helvetica, sans-serif; }';
++    clone.insertBefore(style, background.nextSibling);
++
++    await Promise.all(Array.from(clone.querySelectorAll('image')).map(async image => {
++      const href = image.getAttribute('href')
++        || image.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
++        || image.getAttribute('xlink:href');
++      if (!href || href.startsWith('data:')) return;
++
++      const response = await fetch(new URL(href, window.location.href));
++      if (!response.ok) throw new Error(`could not embed image ${href}`);
++      const dataUrl = await this.blobToDataUrl(await response.blob());
++      image.setAttribute('href', dataUrl);
++      image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', dataUrl);
++    }));
++
++    const xml = new XMLSerializer().serializeToString(clone);
++    return new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${xml}\n`], {
++      type: 'image/svg+xml;charset=utf-8'
++    });
++  }
++
++  blobToDataUrl(blob) {
++    return new Promise((resolve, reject) => {
++      const reader = new FileReader();
++      reader.onload = () => resolve(reader.result);
++      reader.onerror = () => reject(reader.error || new Error('failed to read image'));
++      reader.readAsDataURL(blob);
++    });
++  }
++
++  topologyPngBlob(svgBlob) {
++    return new Promise((resolve, reject) => {
++      const sourceSvg = this.topologyView?.svg?.node();
++      const width = Number(sourceSvg?.getAttribute('width')) || sourceSvg?.clientWidth;
++      const height = Number(sourceSvg?.getAttribute('height')) || sourceSvg?.clientHeight;
++      if (!width || !height) {
++        reject(new Error('topology diagram has no drawable size'));
++        return;
++      }
++
++      const url = URL.createObjectURL(svgBlob);
++      const image = new Image();
++      image.onload = () => {
++        try {
++          const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
++          const canvas = document.createElement('canvas');
++          canvas.width = Math.round(width * pixelRatio);
++          canvas.height = Math.round(height * pixelRatio);
++          const context = canvas.getContext('2d');
++          if (!context) throw new Error('browser does not provide a canvas context');
++          context.scale(pixelRatio, pixelRatio);
++          context.fillStyle = '#ffffff';
++          context.fillRect(0, 0, width, height);
++          context.drawImage(image, 0, 0, width, height);
++          canvas.toBlob(blob => {
++            URL.revokeObjectURL(url);
++            if (blob) resolve(blob);
++            else reject(new Error('browser could not encode PNG data'));
++          }, 'image/png');
++        } catch (error) {
++          URL.revokeObjectURL(url);
++          reject(error);
++        }
++      };
++      image.onerror = () => {
++        URL.revokeObjectURL(url);
++        reject(new Error('browser could not render the SVG export'));
++      };
++      image.src = url;
++    });
++  }
++
++  downloadBlob(blob, filename) {
++    const url = URL.createObjectURL(blob);
++    const link = document.createElement('a');
++    link.href = url;
++    link.download = filename;
++    link.style.display = 'none';
++    document.body.appendChild(link);
++    link.click();
++    link.remove();
++    setTimeout(() => URL.revokeObjectURL(url), 1000);
++  }
++
++  /**
+    * Update topology visualization
+    */
+   updateTopologyVisualization() {
+@@ -2327,7 +2609,11 @@
+       }
+     }
+ 
+-    // Clear previous content
++    // Clear previous content and stop a simulation owned by the old SVG.
++    if (this.topologySimulation) this.topologySimulation.stop();
++    this.topologyLayoutGeneration = (this.topologyLayoutGeneration || 0) + 1;
++    const optimizeButton = document.getElementById('optimize-topology');
++    if (optimizeButton) optimizeButton.disabled = false;
+     container.selectAll('*').remove();
+ 
+     // Create SVG and zoom behavior
+@@ -2344,6 +2630,7 @@
+ 
+     svg.call(zoom);
+     svg.call(zoom.transform, this.zoomTransformCache);
++    this.topologyView = { svg, group: svgGroup, zoom, width, height };
+ 
+     // Normalize node and edge IDs to strings
+     this.topology.nodes.forEach(n => n.id = String(n.id));
+@@ -2418,9 +2705,12 @@
+ 
+     // Create simulation
+     const simulation = d3.forceSimulation(this.topology.nodes)
+-    .force('link', d3.forceLink(edges).id(d => d.id))
+-    .force('charge', d3.forceManyBody().strength(-500))
+-    .force('center', d3.forceCenter(width / 2, height / 2));
++    .force('link', d3.forceLink(edges).id(d => d.id).distance(390).strength(0.12))
++    .force('charge', d3.forceManyBody().strength(-1600))
++    .force('collision', d3.forceCollide().radius(175).strength(1).iterations(2))
++    .force('center', d3.forceCenter(width / 2, height / 2))
++    .alphaDecay(0.08);
++    this.topologySimulation = simulation;
+ 
+     const nodeGroup = svgGroup.append('g').attr('class', 'nodes');
+     const edgeGroup = svgGroup.append('g').attr('class', 'edges');
+@@ -5246,4 +5536,3 @@
+ if (typeof module !== 'undefined' && module.exports) {
+   module.exports = EasyMeshController;
+ }
+-
+--- a/src/rdkb-cli/static/style.css
++++ b/src/rdkb-cli/static/style.css
+@@ -880,6 +880,48 @@
+ 
+ /* ===== TOPOLOGY COMPONENTS ===== */
+ 
++.topology-export {
++    position: relative;
++}
++
++.topology-export-menu {
++    position: absolute;
++    top: calc(100% + var(--spacing-xs));
++    right: 0;
++    min-width: 170px;
++    padding: var(--spacing-xs);
++    background: var(--bg-card);
++    border: 1px solid var(--border-light);
++    border-radius: var(--radius-md);
++    box-shadow: var(--shadow-lg);
++    z-index: 1000;
++}
++
++.topology-export-menu[hidden] {
++    display: none;
++}
++
++.topology-export-menu button {
++    display: flex;
++    align-items: center;
++    gap: var(--spacing-sm);
++    width: 100%;
++    padding: var(--spacing-sm);
++    border: 0;
++    border-radius: var(--radius-sm);
++    background: transparent;
++    color: var(--text-primary);
++    font: inherit;
++    text-align: left;
++    cursor: pointer;
++}
++
++.topology-export-menu button:hover,
++.topology-export-menu button:focus-visible {
++    background: var(--bg-tertiary);
++    outline: none;
++}
++
+ .topology-container {
+     display: flex;
+     height: 100vh;

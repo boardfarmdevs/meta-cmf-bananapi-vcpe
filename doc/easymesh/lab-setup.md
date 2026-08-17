@@ -251,6 +251,13 @@ rev150 forwards the VM without reloading it:
 The user socket is `easymesh-vm-webui-forward.socket`; `rev` user lingering is
 enabled so it remains available without an interactive login.
 
+On the Network Topology page, **Optimize Layout** only rearranges the rendered
+graph, caches the positions across topology refreshes and fits the result into
+the viewport. It does not issue an EasyMesh, steering, policy or wmediumd
+command. **Export** downloads the current topology as JSON data or the visible
+diagram as a portable SVG or PNG; SVG and PNG exports embed the displayed node
+icons.
+
 ## Parity procedure
 
 Before comparing rev130 and the VM, record on both:
