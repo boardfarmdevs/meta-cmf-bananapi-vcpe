@@ -8,21 +8,26 @@ Export downloads the current topology as structured JSON or the visible
 diagram as standalone SVG or PNG; raster/vector exports embed their icons so
 the files remain portable.
 
+Size the SVG to its containing topology pane rather than the full browser
+viewport, apply fit-to-view atomically, and defer topology redraws which arrive
+while auto-layout is running until positions are committed. Cache-bust the
+changed assets. This keeps links visible after layout/refresh and prevents
+hosts serving the same feature revision from looking different because of
+clipped content, refresh races, or stale browser assets.
+
 All behavior is browser-side.  It does not submit steering, policy, channel,
 or wmediumd commands.
 
 ---
- src/rdkb-cli/static/index.html |  22 +++-
- src/rdkb-cli/static/script.js  | 299 +++++++++++++++++++++++++++++++++++++++--
- src/rdkb-cli/static/style.css  |  42 ++++++
- 3 files changed, 355 insertions(+), 8 deletions(-)
-
 --- a/src/rdkb-cli/static/index.html
 +++ b/src/rdkb-cli/static/index.html
-@@ -357,9 +357,25 @@
-                     <div class="page-header">
-                         <h1><i class="fas fa-sitemap"></i> Network Topology</h1>
-                         <div class="page-actions">
+@@ -27 +27,4 @@
+-    <link rel="stylesheet" href="static/style.css">
++    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
++    <meta http-equiv="Pragma" content="no-cache">
++    <meta http-equiv="Expires" content="0">
++    <link rel="stylesheet" href="static/style.css?v=topology-tools-2">
+@@ -360,3 +363,19 @@
 -                            <button class="btn btn-secondary">
 -                                <i class="fas fa-download"></i> Export
 -                            </button>
@@ -45,15 +50,12 @@ or wmediumd commands.
 +                                    </button>
 +                                </div>
 +                            </div>
-                             <button class="btn btn-primary" id="optimize-topology">
-                                 <i class="fas fa-magic"></i> Optimize Layout
-                             </button>
+@@ -2016 +2035 @@
+-    <script src="static/script.js"></script>
++    <script src="static/script.js?v=topology-tools-2"></script>
 --- a/src/rdkb-cli/static/script.js
 +++ b/src/rdkb-cli/static/script.js
-@@ -219,6 +219,35 @@
-     document.getElementById('optimize-network')?.addEventListener('click', () => {
-       this.optimizeNetwork();
-     });
+@@ -221,0 +222,29 @@
 +
 +    document.getElementById('optimize-topology')?.addEventListener('click', () => {
 +      this.optimizeTopologyLayout();
@@ -83,13 +85,7 @@ or wmediumd commands.
 +        exportTopologyButton?.setAttribute('aria-expanded', 'false');
 +      }
 +    });
-      
-     // Performance tab refresh
-     document.getElementById('refresh-performance')?.addEventListener('click', () => {
-@@ -2298,6 +2327,259 @@
-   }
- 
-   /**
+@@ -2300,0 +2330,262 @@
 +   * Re-run D3's force model to improve only the on-screen graph layout.
 +   * This never sends an EasyMesh command or changes the actual network.
 +   */
@@ -104,6 +100,8 @@ or wmediumd commands.
 +    const button = document.getElementById('optimize-topology');
 +    const generation = (this.topologyLayoutGeneration || 0) + 1;
 +    this.topologyLayoutGeneration = generation;
++    this.topologyLayoutInProgress = true;
++    this.topologyRenderPending = false;
 +    if (button) button.disabled = true;
 +
 +    this.nodePositionCache?.clear();
@@ -125,6 +123,11 @@ or wmediumd commands.
 +        this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
 +      });
 +
++      this.topologyLayoutInProgress = false;
++      if (this.topologyRenderPending) {
++        this.topologyRenderPending = false;
++        this.updateTopologyVisualization();
++      }
 +      this.fitTopologyToView();
 +      if (button) button.disabled = false;
 +      this.showNotification('Topology diagram arranged', 'success');
@@ -163,7 +166,9 @@ or wmediumd commands.
 +                 view.height / 2 - scale * centerY)
 +      .scale(scale);
 +
-+    view.svg.transition().duration(350).call(view.zoom.transform, transform);
++    // Apply synchronously so a refresh or export immediately after layout
++    // cannot capture a half-finished transition or stale zoom cache.
++    view.svg.call(view.zoom.transform, transform);
 +  }
 +
 +  /**
@@ -343,34 +348,25 @@ or wmediumd commands.
 +  }
 +
 +  /**
-    * Update topology visualization
-    */
-   updateTopologyVisualization() {
-@@ -2327,7 +2609,11 @@
-       }
-     }
- 
+@@ -2312,0 +2605,8 @@
++
++    // WebSocket and polling updates can arrive while the force layout is
++    // running. Keep the current SVG alive until its positions are committed,
++    // then render the newest topology once using that position cache.
++    if (this.topologyLayoutInProgress) {
++      this.topologyRenderPending = true;
++      return;
++    }
+@@ -2330 +2629,5 @@
 -    // Clear previous content
 +    // Clear previous content and stop a simulation owned by the old SVG.
 +    if (this.topologySimulation) this.topologySimulation.stop();
 +    this.topologyLayoutGeneration = (this.topologyLayoutGeneration || 0) + 1;
 +    const optimizeButton = document.getElementById('optimize-topology');
 +    if (optimizeButton) optimizeButton.disabled = false;
-     container.selectAll('*').remove();
- 
-     // Create SVG and zoom behavior
-@@ -2344,6 +2630,7 @@
- 
-     svg.call(zoom);
-     svg.call(zoom.transform, this.zoomTransformCache);
+@@ -2346,0 +2650 @@
 +    this.topologyView = { svg, group: svgGroup, zoom, width, height };
- 
-     // Normalize node and edge IDs to strings
-     this.topology.nodes.forEach(n => n.id = String(n.id));
-@@ -2418,9 +2705,12 @@
- 
-     // Create simulation
-     const simulation = d3.forceSimulation(this.topology.nodes)
+@@ -2421,3 +2725,6 @@
 -    .force('link', d3.forceLink(edges).id(d => d.id))
 -    .force('charge', d3.forceManyBody().strength(-500))
 -    .force('center', d3.forceCenter(width / 2, height / 2));
@@ -380,20 +376,11 @@ or wmediumd commands.
 +    .force('center', d3.forceCenter(width / 2, height / 2))
 +    .alphaDecay(0.08);
 +    this.topologySimulation = simulation;
- 
-     const nodeGroup = svgGroup.append('g').attr('class', 'nodes');
-     const edgeGroup = svgGroup.append('g').attr('class', 'edges');
-@@ -5246,4 +5536,3 @@
- if (typeof module !== 'undefined' && module.exports) {
-   module.exports = EasyMeshController;
- }
+@@ -5249 +5555,0 @@
 -
 --- a/src/rdkb-cli/static/style.css
 +++ b/src/rdkb-cli/static/style.css
-@@ -880,6 +880,48 @@
- 
- /* ===== TOPOLOGY COMPONENTS ===== */
- 
+@@ -882,0 +883,42 @@
 +.topology-export {
 +    position: relative;
 +}
@@ -436,6 +423,16 @@ or wmediumd commands.
 +    outline: none;
 +}
 +
- .topology-container {
-     display: flex;
-     height: 100vh;
+@@ -891,0 +934,6 @@
++.topology-main {
++    flex: 1;
++    min-width: 0;
++    position: relative;
++}
++
+@@ -902 +950 @@
+-    width: 100vw;
++    width: 100%;
+@@ -906 +954 @@
+-    overflow: visible;
++    overflow: hidden;
