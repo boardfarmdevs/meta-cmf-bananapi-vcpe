@@ -30,12 +30,43 @@ controller connects `erouter0` to the guest-local Boardfarm `br-wan105` bridge.
 The EasyMesh WebUI is forwarded to `http://127.0.0.1:18888` on the host so it
 does not collide with rev150's native lab on port 8888.
 
-## Host requirements
+## Host installation and sizing
+
+On an Ubuntu 22.04 or 24.04 host, install the VM tools from their upstream
+repositories:
+
+```sh
+. /etc/os-release
+case "$VERSION_ID:$VERSION_CODENAME" in
+  22.04:jammy|24.04:noble) host_suite=$VERSION_CODENAME ;;
+  *) echo 'Ubuntu 22.04 or 24.04 is required.' >&2; exit 1 ;;
+esac
+
+sudo apt update
+sudo apt install -y ca-certificates curl gpg
+
+curl -fsSL https://www.virtualbox.org/download/oracle_vbox_2016.asc \
+  | sudo gpg --dearmor --yes \
+      -o /usr/share/keyrings/oracle-virtualbox-2016.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/oracle-virtualbox-2016.gpg] https://download.virtualbox.org/virtualbox/debian $host_suite contrib" \
+  | sudo tee /etc/apt/sources.list.d/virtualbox.list
+
+curl -fsSL https://apt.releases.hashicorp.com/gpg \
+  | sudo gpg --dearmor --yes \
+      -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $host_suite main" \
+  | sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+sudo apt update
+sudo apt install -y virtualbox-7.2 vagrant
+VBoxManage --version
+vagrant --version
+```
+
+The remaining host requirements are:
 
 - x86-64 CPU with VT-x or AMD-V
-- VirtualBox 7.2
-- Vagrant 2.4
-- 6 CPU threads
+- at least 8 logical CPU threads; the VM uses 6 by default
 - 6 GiB RAM recommended (the accepted rev150 run also fits in 4 GiB)
 - approximately 30 GiB free disk while preparing the appliance
 
@@ -189,3 +220,10 @@ The current acceptance requires Boardfarm `60/60`, model `5/15/50/14`, six
 topology nodes, 50 BSSs, 10/10 clients, ten-client WLAN traffic and zero
 EasyMesh service restarts. The captured evidence and defects found during the
 accepted run are in `docs/acceptance-2026-08-17.md`.
+
+## Uninstall
+
+The package-preserving and optional lab-data removal procedures for an Ubuntu
+host are documented in [`../thin/README.md`](../thin/README.md#uninstall-from-the-ubuntu-host).
+The same procedure applies to the precooked distribution; use its registered
+box name, normally `cmf/easymesh-lab`, when removing the Vagrant box.

@@ -84,8 +84,10 @@ Do not begin steering work until `sudo easymesh-labctl check` passes:
 
 ## Operational details that must be decided before handoff
 
-- The host needs hardware virtualization, VirtualBox, Vagrant, at least 8 GiB
-  allocatable VM memory and enough disk for a dynamically allocated 64 GB VM.
+- Host compatibility means x86-64 hardware virtualization, at least 8 logical
+  CPU threads, at least 8 GiB allocatable VM memory and enough disk for a
+  dynamically allocated 64 GB VM. Installation of VirtualBox and Vagrant is
+  part of the thin workflow, not an assumed prerequisite.
 - The thin installer needs Internet/DNS/time synchronization, access to the
   private GitHub repositories, and authenticated or signed URLs for four
   checksum-pinned runtime artifacts. The fifth artifact, the custom kernel, is
