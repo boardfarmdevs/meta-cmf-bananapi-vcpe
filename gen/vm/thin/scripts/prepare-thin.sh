@@ -19,6 +19,16 @@ else
 fi
 update-grub
 
+# The Linux 7 archive already provides the in-tree VirtualBox guest modules.
+# Bento also enables the ISO Guest Additions module-builder, which cannot rebuild
+# without matching kernel headers and consequently leaves vboxadd.service failed
+# on every boot. Keep vboxadd-service enabled for VBoxService, but let the kernel
+# supply vboxguest/vboxsf/vboxvideo.
+if modinfo -k "$kernel" vboxguest >/dev/null 2>&1 \
+    && modinfo -k "$kernel" vboxsf >/dev/null 2>&1; then
+    systemctl disable vboxadd.service
+fi
+
 # Bento's virtual disk is already 64 GB, but its root logical volume initially
 # uses only half of the volume group. Give the online installation the rest.
 root_lv=$(findmnt -n -o SOURCE /)

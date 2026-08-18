@@ -34,6 +34,19 @@ Every station/AP pair declared by the scenario must be initialized in its first
 phase. Bindings are frozen to hwsim transmitter identities (`permanent | 0x40`)
 and never follow the client's association.
 
+For a two-minute visual check of live RCPI reporting, the wrapper discovers the
+selected client's current serving AP, oscillates only that RF link, samples
+`/api/v1/clients`, and restores the captured medium state:
+
+```sh
+./run-rcpi-monitor.sh wlan-client
+```
+
+Keep the WebUI **Connected Clients** tab open during the run. Its Signal column
+refreshes every two seconds and shows both dBm and raw RCPI. The wrapper keeps
+traffic flowing to `10.0.0.1` so hwsim reports each current phase; set
+`WMD_TRAFFIC_TARGET` to use a different reachable address.
+
 The runner requires a complete EasyMesh topology and all expected WLAN clients
 to be active at preflight and postflight. Run artifacts contain the frozen plan,
 every applied generation and observation, health snapshots, verified restore,

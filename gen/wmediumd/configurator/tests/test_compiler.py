@@ -46,6 +46,24 @@ class CompilerTests(unittest.TestCase):
              ("client", "ap_b"), ("ap_b", "client")},
         )
 
+    def test_rcpi_monitor_oscillates_one_live_link(self):
+        source = (ROOT / "scenarios/client-rcpi-monitor.wmd").read_text()
+        plan = compile_scenario(
+            parse(source), source, INVENTORY,
+            {"client": "wlan-client", "ap": "bpibroadband"},
+        )
+        self.assertEqual(plan["duration_ms"], 130_000)
+        values = [
+            update["value"]
+            for event in plan["events"]
+            for update in event["updates"]
+            if update["source_role"] == "client"
+        ]
+        self.assertEqual(min(values), 25)
+        self.assertEqual(max(values), 45)
+        self.assertGreaterEqual(values.count(25), 6)
+        self.assertGreaterEqual(values.count(45), 7)
+
     def test_missing_baseline_pair_is_rejected(self):
         source = """
 scenario bad {

@@ -131,7 +131,13 @@ authority. Its dependency order is:
     data model; and
 17. controller JSON ownership;
 18. live device and client inventory; and
-19. two-second change-aware topology refresh for RF and steering experiments.
+19. two-second change-aware topology refresh for RF and steering experiments;
+20. complete metrics policy activation, Profile-3 validation and STA/BSS/radio
+    report persistence; and
+21. serialize WebUI policy changes across the controller's one-device policy
+    state machine; and
+22. join detailed live STA metrics to the client inventory and refresh the
+    Connected Clients signal presentation every two seconds.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -209,6 +215,7 @@ targeted runtime binaries before the next full image roll-up:
 | remove unused CLI command data model (`0035`) | `libemcli.so.0.0.0` | `e4cc60152c490f9f3ca0fbfdb9eaecb7b30258bbcddf02c969bb08e76f51b995` |
 | release controller JSON output (`0036`) | `onewifi_em_ctrl` | `4b5cc2688671cd1993a2c9a8e3fb1c7334ebc20440edf1d884e2238580203e06` |
 | live device/client inventory (`0037`) | `onewifi_em_cli` | `3cf06dabb4294440d47ebd1ac2a36b957ead61489cfe03c2460c800695fe992f` |
+| live client RCPI presentation (`0044`) | `onewifi_em_cli` | `68cd5937a2f0d256b1b96d5113fa75582066bc9a8eed48050db615a44f5de4f2` |
 
 Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
 in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
@@ -246,6 +253,14 @@ unknown telemetry renders as `N/A`. Both labs returned 6 live UI nodes and 10
 associated clients with no canned MACs. After warm-up, a further 4,000 requests
 left CLI VmData fixed at 168,964 KiB (6,000 requests total), with an unchanged
 PID and zero restarts.
+
+Patch `0044` keeps topology identity and metrics ownership distinct. The
+compact `get_network` model remains the client inventory source; a detailed
+`get_sta` query supplies reported RCPI and the CLI joins the two by STA MAC.
+`/api/v1/clients` exposes raw RCPI plus its derived dBm value, and the visible
+Connected Clients page refreshes every two seconds without overlapping native
+queries. The reversible wmediumd RCPI-monitor scenario exercises that path
+without injecting values into the controller.
 
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory

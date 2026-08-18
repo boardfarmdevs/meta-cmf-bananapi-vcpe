@@ -1,0 +1,209 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Tue, 18 Aug 2026 15:15:00 -0700
+Subject: [PATCH] cli: expose and refresh reported client RCPI
+
+The controller already persists RCPI from periodic AP Metrics Responses, but
+get_network intentionally emits only topology STA fields.  The WebUI adapter
+used that summary for /api/v1/clients, so every ClientMetrics object contained
+a zero RSSI and Connected Clients rendered N/A.
+
+Read metrics from the controller's detailed get_sta model, join them to the
+live topology inventory by STA MAC, expose the standard's raw 0..220 value as
+client_metrics.rcpi, and derive the existing rssi_dbm presentation value using
+RCPI / 2 - 110.  Show both values under Signal.  Refresh /clients every two
+seconds while Connected Clients is visible, with an in-flight guard so a slow
+native query cannot create an overlapping request backlog.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/main.go          | 77 +++++++++++++++++++++++++++++++++++--
+ src/rdkb-cli/static/script.js | 27 ++++++++++++-
+ 2 files changed, 101 insertions(+), 3 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -196,6 +196,7 @@ type Client struct {
+ }
+ 
+ type ClientMetrics struct {
++        RCPI        int       `json:"rcpi"`
+         RSSI        int       `json:"rssi_dbm"`
+         SNR         int       `json:"snr_db"`
+         TxRate      int       `json:"tx_rate_mbps"`
+@@ -3151,6 +3152,82 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 	return inventoryDevices, inventoryClients, nil
+ }
+ 
++// loadLiveClientMetrics uses the detailed STA command because the topology
++// form returned by get_network intentionally omits periodic metric fields.
++func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
++	cmd := C.CString("get_sta OneWifiMesh")
++	defer C.free(unsafe.Pointer(cmd))
++
++	var tree *C.em_network_node_t
++	for attempt := 0; attempt < 3; attempt++ {
++		tree = execEMCommand(cmd, nil)
++		if tree != nil {
++			break
++		}
++		time.Sleep(200 * time.Millisecond)
++	}
++	if tree == nil {
++		return nil, fmt.Errorf("controller returned no STA metrics data")
++	}
++	defer C.free_network_tree(tree)
++
++	observedAt := time.Now()
++	metricsByMAC := make(map[string]ClientMetrics)
++	directChild := func(node *C.em_network_node_t, key string) *C.em_network_node_t {
++		if node == nil {
++			return nil
++		}
++		for i := 0; i < int(node.num_children); i++ {
++			child := node.child[i]
++			if child != nil && C.GoString(&child.key[0]) == key {
++				return child
++			}
++		}
++		return nil
++	}
++	var walk func(*C.em_network_node_t)
++	walk = func(node *C.em_network_node_t) {
++		if node == nil {
++			return
++		}
++		macNode := directChild(node, "MACAddress")
++		rcpiNode := directChild(node, "RCPI")
++		if macNode != nil && rcpiNode != nil &&
++			C.get_node_type(macNode) == C.em_network_node_data_type_string &&
++			C.get_node_type(rcpiNode) == C.em_network_node_data_type_number {
++			mac := strings.ToLower(C.GoString(&macNode.value_str[0]))
++			rcpi := int(rcpiNode.value_int)
++			if mac != "" && rcpi > 0 && rcpi <= 220 {
++				metricsByMAC[mac] = ClientMetrics{
++					RCPI: rcpi, RSSI: rcpi/2 - 110, LastUpdated: observedAt,
++				}
++			}
++		}
++		for i := 0; i < int(node.num_children); i++ {
++			walk(node.child[i])
++		}
++	}
++	walk(tree)
++	return metricsByMAC, nil
++}
++
++func getLiveClientsWithMetrics() ([]Client, error) {
++	_, clientList, err := getLiveInventory()
++	if err != nil {
++		return nil, err
++	}
++	metricsByMAC, err := loadLiveClientMetrics()
++	if err != nil {
++		return nil, err
++	}
++	for i := range clientList {
++		if metrics, found := metricsByMAC[strings.ToLower(clientList[i].MAC)]; found {
++			clientList[i].ClientMetrics = metrics
++		}
++	}
++	return clientList, nil
++}
++
+ // getLiveInventory falls back only to the last successful live snapshot.
+ func getLiveInventory() ([]Device, []Client, error) {
+ 	inventoryDevices, inventoryClients, err := buildLiveInventory()
+@@ -3248,7 +3325,7 @@ func getDeviceHandler(w http.ResponseWriter, r *http.Request) {
+ 
+ func getClientsHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
+-	_, liveClientList, err := getLiveInventory()
++	liveClientList, err := getLiveClientsWithMetrics()
+ 	if err != nil {
+ 		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
+ 		return
+@@ -3274,7 +3351,7 @@ func getClientsHandler(w http.ResponseWriter, r *http.Request) {
+ func getClientHandler(w http.ResponseWriter, r *http.Request) {
+ 	vars := mux.Vars(r)
+ 	mac := vars["mac"]
+-	_, liveClientList, err := getLiveInventory()
++	liveClientList, err := getLiveClientsWithMetrics()
+ 	if err != nil {
+ 		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
+ 		return
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -31,6 +31,7 @@ class EasyMeshController {
+     this.currentTab = 'dashboard';
+     this.devices = [];
+     this.clients = [];
++    this.clientsRefreshInFlight = false;
+     this.topology = {};
+     this.charts = {};
+     this.refreshIntervals = {};
+@@ -2021,11 +2022,12 @@ class EasyMeshController {
+     const deviceIcon = this.getDeviceTypeIcon(client.device_type);
+     const metrics = client.client_metrics || {};
+     const hasRSSI = Number.isFinite(metrics.rssi_dbm) && metrics.rssi_dbm !== 0;
++    const hasRCPI = Number.isInteger(metrics.rcpi) && metrics.rcpi > 0;
+     const hasTxRate = Number.isFinite(metrics.tx_rate_mbps) && metrics.tx_rate_mbps > 0;
+     const hasRxRate = Number.isFinite(metrics.rx_rate_mbps) && metrics.rx_rate_mbps > 0;
+     const hasUsage = Number.isFinite(metrics.data_usage_bytes) && metrics.data_usage_bytes > 0;
+     const signalDisplay = hasRSSI
+-      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm</span>`
++      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm${hasRCPI ? ` (RCPI ${metrics.rcpi})` : ''}</span>`
+       : '<span>N/A</span>';
+     const connectionInfo = this.getClientConnectionInfo(client);
+ 
+@@ -3299,6 +3301,9 @@ class EasyMeshController {
+    */
+   async loadTabData(tabName) {
+     switch (tabName) {
++      case 'clients':
++        await this.refreshClients();
++        break;
+       case 'topology':
+         const freshTopology = await this.apiCall('/topology');
+         await this.updateTopology(freshTopology);
+@@ -3754,6 +3759,21 @@ class EasyMeshController {
+ 
+   // ---------- Timers & lifecycle ----------
+ 
++  async refreshClients() {
++    if (this.clientsRefreshInFlight) return;
++    this.clientsRefreshInFlight = true;
++    try {
++      const response = await this.apiCall('/clients');
++      this.clients = response.clients || [];
++      this.updateClientsList();
++      this.updateCountBadges();
++    } catch (error) {
++      console.error('Failed to refresh connected clients:', error);
++    } finally {
++      this.clientsRefreshInFlight = false;
++    }
++  }
++
+   startRefreshTimers() {
+     // Refresh dashboard every 10 seconds
+     this.refreshIntervals.dashboard = setInterval(() => {
+@@ -3765,6 +3785,13 @@ class EasyMeshController {
+       this.updateAllCharts();
+     }, 30000);
+ 
++    // Client signal comes from periodic EasyMesh AP Metrics Responses. Poll
++    // only while the Connected Clients tab is visible and prevent overlap if
++    // a native controller query takes longer than the two-second interval.
++    this.refreshIntervals.clients = setInterval(() => {
++      if (this.currentTab === 'clients') this.refreshClients();
++    }, 2000);
++
+     // Keep steering and RF-loss experiments visible without a page reload.
+     // Do not overlap native/API requests and redraw only on a real change.
+     this.refreshIntervals.topology = setInterval(async () => {
+-- 
+2.43.0

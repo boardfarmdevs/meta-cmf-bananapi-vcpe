@@ -43,6 +43,9 @@ EASYMESH_CORE_PATCHES = " \
     file://0039-cli-identify-and-enlarge-topology-stas.patch \
     file://0040-cli-preserve-active-topology-drag.patch \
     file://0041-cli-enlarge-topology-network-labels.patch \
+    file://0042-metrics-enable-policy-ack-profile-and-persistence.patch \
+    file://0043-cli-apply-policies-per-device.patch \
+    file://0044-cli-expose-live-client-rcpi.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

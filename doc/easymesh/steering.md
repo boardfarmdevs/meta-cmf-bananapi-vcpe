@@ -14,13 +14,15 @@ The accepted crossover test used an independent RF gradient and an explicit
 roam. Therefore the result proves commanded steering under RF stimulus, not an
 optimizer detecting the crossover.
 
-Live controller inspection after the accepted run showed:
+Metrics policy activation is now complete. Live controller inspection shows 70
+persisted policy rows, five per-device AP reporting policies, and metrics and
+steering entries for all 15 radios. All ten fronthaul clients have live RCPI
+and traffic counters. See [metrics-reporting.md](metrics-reporting.md).
 
-- `PolicyList` had zero rows;
-- `/api/v1/wifipolicy` returned per-device metric-reporting defaults and empty
-  exclusion lists;
-- no per-radio RCPI steering entries were returned; and
-- no verified OneWifi evaluator consumed thresholds and selected a target.
+This does not change the optimizer boundary: no verified OneWifi evaluator
+consumes those thresholds and selects a target, and the passive crossover still
+does not roam. The values configure observation and permitted agent behavior;
+they are not the external optimizer's candidate-selection algorithm.
 
 ## Commanded steering path
 

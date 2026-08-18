@@ -77,6 +77,12 @@ for file in \
 done
 install -m 0644 "$vm_dir/scripts/70-health-audit.sh" \
     "$assets/easymesh-health-audit"
+install -o "$lab_user" -g "$lab_user" -m 0755 \
+    "$vm_dir/scripts/60-scale-steering-test.sh" \
+    /home/vagrant/scale-steering-test.sh
+install -o "$lab_user" -g "$lab_user" -m 0755 \
+    "$vm_dir/scripts/61-return-steering-regression.sh" \
+    /home/vagrant/return-steering-test.sh
 
 (cd "$assets" && sha256sum \
     "$controller" "$ap" "$alpine_meta" "$alpine_rootfs" \
