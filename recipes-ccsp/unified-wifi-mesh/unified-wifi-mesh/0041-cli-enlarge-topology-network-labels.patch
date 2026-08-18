@@ -1,0 +1,30 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: enlarge topology network labels
+
+The private_ssid, iot_ssid and mesh_backhaul labels are difficult to read in
+the live topology diagram. Increase their SVG font size from 12 to 16 pixels
+and bump the static asset revision so existing browsers receive the change.
+
+---
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2032,7 +2032,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-drag-safe-1"></script>
++    <script src="static/script.js?v=topology-label-size-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2905,7 +2905,7 @@
+           .attr('y', offset.y)
+           .attr('text-anchor', 'middle')
+           .attr('dominant-baseline', 'middle')
+-          .attr('font-size', '12px')
++          .attr('font-size', '16px')
+           .attr('fill', '#9b9a9aff')
+           .attr('font-weight', 'bold')
+           .text(ssid);

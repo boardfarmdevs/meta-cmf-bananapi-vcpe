@@ -40,6 +40,9 @@ EASYMESH_CORE_PATCHES = " \
     file://0036-controller-release-json-output.patch \
     file://0037-cli-serve-live-device-client-inventory.patch \
     file://0038-cli-refresh-topology-on-live-change.patch \
+    file://0039-cli-identify-and-enlarge-topology-stas.patch \
+    file://0040-cli-preserve-active-topology-drag.patch \
+    file://0041-cli-enlarge-topology-network-labels.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
