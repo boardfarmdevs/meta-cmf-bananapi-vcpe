@@ -34,7 +34,7 @@ def mesh_health() -> dict:
     clients = {
         station.get("staMAC")
         for node in nodes
-        for station in node.get("STAList", [])
+        for station in (node.get("STAList") or [])
         if station.get("staMAC")
     }
     return {
@@ -47,6 +47,9 @@ def mesh_health() -> dict:
         "complete_nodes": sum(
             1 for node in nodes
             if node.get("name") == "Controller"
-            or sum(len(haul.get("BSSList", [])) for haul in node.get("haulTypes", [])) == 10
+            or sum(
+                len(haul.get("BSSList") or [])
+                for haul in (node.get("haulTypes") or [])
+            ) == 10
         ),
     }
