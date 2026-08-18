@@ -129,7 +129,9 @@ authority. Its dependency order is:
 15. reassociation capability decoding and preservation;
 16. serialized CLI native-command lifetime and removal of its unused command
     data model; and
-17. controller JSON ownership.
+17. controller JSON ownership;
+18. live device and client inventory; and
+19. two-second change-aware topology refresh for RF and steering experiments.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
