@@ -10,7 +10,7 @@ assets=/home/vagrant/easymesh-assets
 meta_workspace=/home/vagrant/git
 boardfarm_workspace=/home/vagrant/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
-expected_meta_head=92b7646cde25450ad7d4d4f3b1b62e53f2d4ab66
+expected_meta_head=beef6311cec68bf4276b9f54905cdea84ba70ea1
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2

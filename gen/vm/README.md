@@ -12,6 +12,11 @@ recovery use.
 Shared Boardfarm configuration and lifecycle scripts live in `config/` and
 `scripts/`. `consumer/Vagrantfile` runs either packaged box.
 
+The thin handoff is one dated Dropbox tarball such as
+`em-artifacts-0817.tar.bz2`. It contains the thin box, four runtime images,
+checksums, local installer configuration and the consumer Vagrantfile.
+`thin/package-artifacts.sh` creates this tarball for manual upload.
+
 ## End-to-end lifecycle
 
 ```text

@@ -83,33 +83,52 @@ EASYMESH_VM_CPUS=8 vagrant up
 
 ## 2. Import and start the thin VM
 
-Obtain these two files from the lab artifact handoff or build them using the
-maintainer procedure at the end of this document:
-
-```text
-easymesh-ubuntu24-linux7-<timestamp>.box
-easymesh-ubuntu24-linux7-<timestamp>.box.sha256
-```
-
-The thin box is a binary artifact and is not stored in this Git repository.
-Verify it from the directory containing both files, then register that exact
-file with Vagrant. Do not use a wildcard if the directory contains multiple
-builds.
+Obtain the dated Dropbox bundle URL from the maintainer. A bundle is named
+`em-artifacts-0817.tar.bz2`, `em-artifacts-0818.tar.bz2`, and so on. Create a
+new lab directory, download exactly one version, and extract it:
 
 ```sh
-cd /path/to/thin-artifact-directory
-thin_box=easymesh-ubuntu24-linux7-YYYYMMDDTHHMMSSZ.box
-sha256sum -c "$thin_box.sha256"
-vagrant box add --name cmf/easymesh-thin "./$thin_box"
+cd
+mkdir -p easymesh-lab/artifacts
+cd easymesh-lab
+
+artifact_stamp=0817
+curl --fail --location --retry 3 \
+  'https://www.dropbox.com/scl/fi/dnbx8889mmndu9z03c5eo/em-artifacts-0817.tar.bz2?rlkey=bwxqhu4v9nj94a5ne1qmc141k&dl=1' \
+  --output "artifacts/em-artifacts-$artifact_stamp.tar.bz2"
+tar -xjf "artifacts/em-artifacts-$artifact_stamp.tar.bz2"
+sha256sum -c "artifacts/SHA256SUMS-$artifact_stamp"
+```
+
+The accepted 0817 tarball is 1,209,103,460 bytes and has SHA-256
+`cb0a6e62b9218ad8dd36d1f83ac96ba52d5b2466a072f442e88f30c9b5dc61f7`.
+Its optional Dropbox checksum sidecar is:
+
+```text
+https://www.dropbox.com/scl/fi/809w5sv2c6n8nnrn7p3bn/em-artifacts-0817.tar.bz2.sha256?rlkey=d8uhmywq4pihwy7ekgj7dy8qh&dl=1
+```
+
+The archive supplies a `Vagrantfile` plus timestamped, clearly named files
+under `artifacts/`. It is a binary handoff and is not stored in Git. Register
+the box, then load the host's GitHub key into an SSH agent. The five private
+Boardfarm repositories use agent forwarding so no private key is copied into
+the VM.
+
+```sh
+vagrant box add --name cmf/easymesh-thin \
+  "artifacts/easymesh-thin-$artifact_stamp.box"
 vagrant box list | grep '^cmf/easymesh-thin '
 
-mkdir easymesh-lab
-cd easymesh-lab
-cp /path/to/gen/vm/consumer/Vagrantfile Vagrantfile
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_rsa
+ssh-add -l
 
 EASYMESH_BOX_NAME=cmf/easymesh-thin vagrant up
 vagrant ssh
 ```
+
+If an agent is already running, only `ssh-add` is required. Keep that terminal
+for `vagrant up`, `vagrant ssh`, and the one-time installer.
 
 For LAN WebUI access, add `EASYMESH_WEBUI_HOST_IP=0.0.0.0` and the desired
 `EASYMESH_WEBUI_PORT` to every Vagrant invocation.
@@ -124,22 +143,18 @@ git clone --branch codex/0815-clean \
 cd meta-cmf-bananapi-vcpe
 ```
 
-Create the root-owned download configuration:
+Install the generated root-owned configuration. It points to the bundle's four
+runtime images through the read-only `/vagrant-artifacts` mount:
 
 ```sh
-sudo install -m 0600 gen/vm/thin/online.env.example \
+artifact_stamp=0817
+sudo install -m 0600 "/vagrant-artifacts/easymesh-local-$artifact_stamp.env" \
   /etc/easymesh-online.env
-sudo editor /etc/easymesh-online.env
 ```
 
-The four URLs are for the controller rootfs, AP rootfs, and the Alpine 3.19
-metadata/rootfs pair. They must be accessible from inside the VM. The custom
-Linux archive was already verified while building the thin box. Public URLs,
-time-limited signed URLs, or an authenticated corporate artifact service are
-suitable. Every downloaded file is checked against its accepted SHA-256 value.
-
-The five Boardfarm repositories are private. Vagrant enables SSH agent
-forwarding so no private key is copied into the box.
+The four local URLs cover the controller rootfs, AP rootfs and Alpine 3.19
+metadata/rootfs pair. The thin box already contains the verified custom Linux
+kernel. The installer checks every bundled input against its accepted SHA-256.
 
 ## 4. Run the one-time full installation
 
@@ -231,6 +246,19 @@ EASYMESH_KERNEL_URL=https://artifacts.example/linux-7.0.0-28-hwsim.tar.zst \
 `EASYMESH_KERNEL_ARCHIVE` may select a local archive instead. The builder
 verifies the kernel after reboot and ensures the root filesystem is at least
 60 GB before writing the box and checksum under `thin/artifacts/`.
+
+Package the box and accepted runtime images into the dated Dropbox handoff:
+
+```sh
+cd gen/vm/thin
+./package-artifacts.sh 0817 \
+  artifacts/easymesh-ubuntu24-linux7-YYYYMMDDTHHMMSSZ.box
+```
+
+The optional third argument selects a different runtime-asset directory and
+the fourth selects a different output directory. The script validates every
+input, creates `artifacts/em-artifacts-0817.tar.bz2`, and writes an adjacent
+tarball checksum for the maintainer. Upload the tarball to Dropbox manually.
 
 ## Uninstall from the Ubuntu host
 

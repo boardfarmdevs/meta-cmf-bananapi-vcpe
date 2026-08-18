@@ -1,14 +1,23 @@
 # frozen_string_literal: true
 
 VM_NAME = ENV.fetch("EASYMESH_VM_NAME", "easymesh-lab")
-BOX_NAME = ENV.fetch("EASYMESH_BOX_NAME", "cmf/easymesh-lab")
 WEBUI_HOST_PORT = ENV.fetch("EASYMESH_WEBUI_PORT", "18888").to_i
 WEBUI_HOST_IP = ENV.fetch("EASYMESH_WEBUI_HOST_IP", "127.0.0.1")
+ARTIFACTS_DIR = File.expand_path(ENV.fetch("EASYMESH_ARTIFACTS_DIR", "artifacts"), __dir__)
+DEFAULT_BOX_NAME = Dir.glob(File.join(ARTIFACTS_DIR, "easymesh-thin-*.box")).empty? ?
+                   "cmf/easymesh-lab" : "cmf/easymesh-thin"
+BOX_NAME = ENV.fetch("EASYMESH_BOX_NAME", DEFAULT_BOX_NAME)
 
 Vagrant.configure("2") do |config|
   config.vm.box = BOX_NAME
   config.vm.hostname = VM_NAME
   config.ssh.forward_agent = true
+  if Dir.exist?(ARTIFACTS_DIR)
+    config.vm.synced_folder ARTIFACTS_DIR,
+                            "/vagrant-artifacts",
+                            type: "virtualbox",
+                            mount_options: ["ro"]
+  end
   config.vm.network "forwarded_port",
                     guest: 8888,
                     host: WEBUI_HOST_PORT,

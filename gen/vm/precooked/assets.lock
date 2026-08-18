@@ -1,5 +1,5 @@
 # name kind revision
-meta-cmf-bananapi-vcpe git 92b7646cde25450ad7d4d4f3b1b62e53f2d4ab66
+meta-cmf-bananapi-vcpe git beef6311cec68bf4276b9f54905cdea84ba70ea1
 boardfarm git 58501f4b86baf045a2a43d9aba7b69a717377f94
 pytest-boardfarm git 2eb81e271f1846b2255f31dfb724540fdfdb8316
 boardfarm-docsis git 7235bc320bce2ac2f8da5f9f477a5f4749960229

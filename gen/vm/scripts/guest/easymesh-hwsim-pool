@@ -7,6 +7,11 @@ test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
 
 # A reboot recreates the pool as wlan0..wlan23. LXD profiles refer to stable
 # virt-wlanN parents, so establish those names before LXD starts instances.
+#
+# During first installation the lab is already running and LXD has moved some
+# PHYs into container network namespaces. Only the interfaces still present in
+# the host namespace are visible below. Rename and validate that subset; the
+# module parameters above validate the size of the complete persistent pool.
 for phy in /sys/class/ieee80211/phy*; do
     netdev=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n' | head -1)
     case "$netdev" in
@@ -25,4 +30,6 @@ for phy in /sys/class/ieee80211/phy*; do
     esac
 done
 
-test "$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)" -eq 24
+host_phys=$(find /sys/class/ieee80211 -mindepth 1 -maxdepth 1 -name 'phy*' | wc -l)
+host_radios=$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)
+test "$host_radios" -eq "$host_phys"

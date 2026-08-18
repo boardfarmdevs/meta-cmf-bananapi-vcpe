@@ -56,10 +56,11 @@ download "$EASYMESH_ALPINE_ROOTFS_URL" "$assets/$alpine_rootfs" \
     "$EASYMESH_ALPINE_ROOTFS_SHA256"
 
 if [ ! -f "$assets/astral-uv_1662.snap" ]; then
-    snap download astral-uv --revision=1662 --basename="$assets/astral-uv_1662"
+    (cd "$assets" && \
+        snap download astral-uv --revision=1662 --basename=astral-uv_1662)
 fi
 if [ ! -f "$assets/lxd_38768.snap" ]; then
-    snap download lxd --revision=38768 --basename="$assets/lxd_38768"
+    (cd "$assets" && snap download lxd --revision=38768 --basename=lxd_38768)
 fi
 
 install -m 0644 "$vm_dir/config/boardfarm-requirements.lock" "$assets/"
@@ -108,7 +109,7 @@ if [ ! -d "$runtime_repo/.git" ]; then
     as_lab_user git clone "$source_root" "$runtime_repo"
 fi
 as_lab_user git -C "$runtime_repo" checkout --detach \
-    92b7646cde25450ad7d4d4f3b1b62e53f2d4ab66
+    beef6311cec68bf4276b9f54905cdea84ba70ea1
 
 clone_exact "${BOARDFARM_URL:-git@github.com:robvogelaar/boardfarm.git}" \
     "$bf_workspace/boardfarm" 58501f4b86baf045a2a43d9aba7b69a717377f94
