@@ -14,6 +14,7 @@ gradients that are independent from the steering decision being evaluated.
 | [architecture.md](architecture.md) | What runs where, how the control and data planes work, and how nodes onboard |
 | [patch-set.md](patch-set.md) | Which 0815 patches are retained, why they exist, and what was removed from 0814 |
 | [lab-setup.md](lab-setup.md) | How to build, deploy, scale, access and validate the rev130 and rev150-VM labs |
+| [packet-capture.md](packet-capture.md) | How to capture plaintext EasyMesh, agent/client traffic and safely handle the raw 802.11 boundary |
 | [wmediumd.md](wmediumd.md) | What the medium can simulate, how radios and frames are resolved, and which static and live controls remain |
 | [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
 | [metrics-reporting.md](metrics-reporting.md) | Why STA/AP metrics were inactive, how they are configured, and how to verify the live observation path |
@@ -22,7 +23,7 @@ gradients that are independent from the steering decision being evaluated.
 | [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
 | [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
 
-These eleven files, including this index, are the complete current documentation
+These twelve files, including this index, are the complete current documentation
 set. Historical bring-up notes and superseded 6.8-era decisions remain in Git
 history rather than beside current operating instructions.
 
