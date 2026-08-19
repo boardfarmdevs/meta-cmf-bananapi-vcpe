@@ -303,7 +303,7 @@ class Carousel:
 
         containers = sorted({"bpibroadband", *(item["container"] for item in aps)})
         log_files = (
-            "/tmp/em_agent.log", "/tmp/em_ctrl.log",
+            "/tmp/em_agent.log",
             "/tmp/ieee1905_agent_log.txt", "/tmp/ieee1905_ctrl_log.txt",
             "/rdklogs/logs/wifiEM.txt",
         )
@@ -311,6 +311,18 @@ class Carousel:
             re.escape(value) for value in sorted(identities | set(LOG_MARKERS))
         )
         for container in containers:
+            if container == "bpibroadband":
+                content = lxc(
+                    container,
+                    "journalctl -u em_ctrl.service --since '-30 minutes' "
+                    "--no-pager 2>/dev/null | "
+                    f"grep -i -E {shlex.quote(expression)} || true",
+                )
+                filtered = relevant_log_lines(content, identities)
+                if filtered:
+                    (evidence / f"{container}-em_ctrl-journal.txt").write_text(
+                        filtered
+                    )
             status = lxc(
                 container,
                 "systemctl --no-pager --full status "

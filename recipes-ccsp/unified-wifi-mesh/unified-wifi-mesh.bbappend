@@ -211,6 +211,39 @@ do_install_append() {
     fi
 }
 
+# The upstream controller unit backgrounds the real process from a shell and
+# appends stdout forever to /tmp/em_ctrl.log. /tmp is tmpfs in the LXC image,
+# so normal topology publication grew that file by about 39 KiB/s and charged
+# the entire file to the container memory cgroup. A 1 GiB controller eventually
+# OOM-killed MariaDB and em_ctrl; increasing the limit only delayed recurrence.
+#
+# Keep stdout available, but make systemd own the foreground process and route
+# both streams through the already-bounded volatile journal (16 MiB in this
+# image). Per-unit rate limiting also prevents verbose topology dumps from
+# spending unbounded CPU in journald while retaining useful protocol context.
+do_install_append() {
+    u="${D}${systemd_unitdir}/system/em_ctrl.service"
+    if [ -f "$u" ]; then
+        if grep -q '^ExecStart=.*onewifi_em_ctrl.*em_ctrl\.log' "$u"; then
+            sed -i 's|^ExecStart=.*onewifi_em_ctrl.*$|ExecStart=/usr/bin/onewifi_em_ctrl bpi@root|' "$u"
+        elif ! grep -q '^ExecStart=/usr/bin/onewifi_em_ctrl bpi@root$' "$u"; then
+            bbfatal "meta-cmf-bananapi-vcpe: unexpected em_ctrl.service ExecStart"
+        fi
+
+        sed -i 's/^Type=forking$/Type=simple/' "$u"
+        sed -i '/^StandardOutput=/d; /^StandardError=/d; /^SyslogIdentifier=/d; /^LogRateLimitIntervalSec=/d; /^LogRateLimitBurst=/d' "$u"
+        sed -i '/^ExecStart=\/usr\/bin\/onewifi_em_ctrl bpi@root$/a StandardOutput=journal\
+StandardError=journal\
+SyslogIdentifier=onewifi_em_ctrl\
+LogRateLimitIntervalSec=30s\
+LogRateLimitBurst=1000' "$u"
+
+        grep -q '^Type=simple$' "$u" || bbfatal "meta-cmf-bananapi-vcpe: failed to make em_ctrl foreground"
+        ! grep -q '/tmp/em_ctrl\.log' "$u" || bbfatal "meta-cmf-bananapi-vcpe: unbounded em_ctrl log remains"
+        bbnote "meta-cmf-bananapi-vcpe: em_ctrl stdout/stderr now use bounded journald"
+    fi
+}
+
 # setup_mysql_db_post.sh seeds every haul in NetworkSSIDList as AuthType 'WPA3 Personal'
 # with MFPConfig 'Required'. em_ctrl pushes that to OneWifi, so the controller's VAPs come
 # up as SAE with management frame protection required:
