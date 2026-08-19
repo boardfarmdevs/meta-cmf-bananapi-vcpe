@@ -22,16 +22,18 @@ gradients that are independent from the steering decision being evaluated.
 | [wmediumd-client-carousel.md](wmediumd-client-carousel.md) | Visual client disconnect/reconnect rotation across every AP |
 | [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
 | [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
+| [next-steps.md](next-steps.md) | Prioritized stability, integration, scale and novel-policy research plan |
+| [lab-presentation.md](lab-presentation.md) | Presentation-ready lab introduction, current demos and policy roadmap |
 
-These twelve files, including this index, are the complete current documentation
-set. Historical bring-up notes and superseded 6.8-era decisions remain in Git
-history rather than beside current operating instructions.
+These documents are the complete current documentation set. Historical
+bring-up notes and superseded 6.8-era decisions remain in Git history rather
+than beside current operating instructions.
 
 ## Current accepted baseline
 
 ```text
 source             codex/0815-clean
-image runtime code 73e7c1e
+image runtime code c2e8ce7
 host tooling       current codex/0815-clean head
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
@@ -44,8 +46,8 @@ Accepted images:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260816060433.rootfs.lxc.tar.bz2` | `9b9809d71c916a199682556d850cecf365c9d8c8fa7f1d062d600e0d56c4d432` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260816061331.rootfs.lxc.tar.bz2` | `62f143df46e7526c4b6af3cfe89e0454cb184daf09e70a265c65280a9e6efa92` |
+| controller | `easymesh-controller-rootfs-0818.tar.bz2` | `0425fda2a96434fd9c59150e037141c8569208f2bc25fc1e27ce4f7dceef9cd3` |
+| extender | `easymesh-extender-rootfs-0818.tar.bz2` | `a4491eec0116d2bc0b2f6f0b438c43e77ec0ca95214d36ac7f80d039e818e6cd` |
 
 rev130 and the rev150 VM are on the same source, kernel, accepted images and
 `5/15/50` topology with 10/10 active clients and zero service restarts. Both
