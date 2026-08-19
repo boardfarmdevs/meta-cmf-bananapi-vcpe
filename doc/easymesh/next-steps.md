@@ -27,11 +27,14 @@ be used to claim policy quality until the preceding acceptance gates pass.
      post-fix carousel arrivals without physical/controller/API disagreement.
    - Keep phased carousel restoration as useful load shaping and retain the
      strict paired burst as a regression for the fixed transport boundary.
-2. Root-cause the rare successful command/1905 ACK with no OneWifi provider
-   callback and no transmitted BTM. The same AL-SAP framing defect is a strong
-   candidate, but confirm that with a long steering soak and transaction-level
-   evidence before closing it. Add transaction IDs and observed-completion
-   logging before considering retries.
+2. **Bounded acceptance complete; recurrence trigger retained:** 143 post-fix
+   commanded steers (33 earlier targeted operations, a 100-operation soak and
+   a ten-operation journal acceptance) produced the BTM, physical roam and
+   matching controller/API completion without the historical provider miss.
+   This supports—but cannot retrospectively prove—the AL-SAP framing defect as
+   the shared cause. Both matrix runners now assign a run/transaction ID and
+   persist command output plus observed completion. Do not add blind retries;
+   use that evidence to root-cause any recurrence.
 3. Define controller liveness/aging behavior for a fully RF-isolated extender.
    The current controller retains the node. Decide the expected timeout from
    the EasyMesh profile, implement it if required, and test disappearance,
@@ -219,8 +222,8 @@ costs.
 
 ## Immediate two-sprint backlog
 
-1. Run a long steering/churn soak and close or further localize the remaining
-   rare raw-frame-provider delivery report.
+1. Define and test controller liveness/aging for a fully RF-isolated extender,
+   including disappearance, re-onboarding and affected-client recovery.
 2. Write the EasyMesh measurement capability/exposure matrix.
 3. Implement optimizer `observer`, normalized snapshot and recorder.
 4. Run a passive crossover and prove reported RCPI follows RF without reading

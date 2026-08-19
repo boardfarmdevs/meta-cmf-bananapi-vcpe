@@ -312,6 +312,15 @@ ten restores and exact medium restoration with zero command-2 diagnostics. An
 unrelated command-3 diagnostic remained visible, proving the handling is not a
 blanket netlink-error suppression.
 
+A subsequent ten-round commanded-steering soak passed 100/100 end-to-end
+transactions. Link convergence averaged 1,228 ms (1,848 ms maximum), database
+convergence averaged 4,153 ms (5,946 ms maximum), and topology API convergence
+averaged 4,176 ms (5,979 ms maximum). All ten clients then passed traffic,
+topology remained complete, and every OneWifi, agent, controller and CLI
+restart counter remained zero. A further 10/10 run validated the new journal:
+ten unique transaction IDs, ten start records, ten completion records and
+transaction-prefixed command output.
+
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory
 moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
@@ -326,10 +335,9 @@ working-set expansion, not retained per-report or per-request growth.
 - Generalize steering ACK routing into an outstanding-transaction table.
 - Consolidate authorized WDS creation into one implementation owner.
 - Make FULL versus DELTA associated-client inputs explicit.
-- Run a long commanded-steering soak to determine whether the earlier RBUS
-  raw-frame provider miss shared the fixed AL-SAP stream-boundary cause. The
-  post-fix targeted matrices completed 33 observed steering transactions, but
-  that is not yet enough to retire a rare-event defect.
+- Retain the historical RBUS raw-frame provider miss as a transaction-journal
+  trigger. It did not recur in 143 post-fix commanded steers, but that result
+  cannot retrospectively prove it shared the AL-SAP stream-boundary cause.
 - Add positive model reconciliation as defense in depth for a genuinely lost,
   unacknowledged 1905 Client Association Event. The fixed framing path had no
   association loss across 80 post-fix carousel arrivals; reconciliation should

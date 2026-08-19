@@ -179,9 +179,10 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
   reconstruction are validated at four extenders and ten WLAN clients.
 - The wmediumd configurator safely controls radio-pair SNR; frequency-keyed
   same-wiphy band steering is not implemented.
-- One rare RBUS raw-frame provider delivery miss was observed after a long
-  steering sequence and succeeded on immediate retry; it is not hidden by a
-  duplicate-BTM workaround.
+- One historical RBUS raw-frame provider delivery miss succeeded on immediate
+  retry. It has not recurred across 143 post-AL-SAP-fix commanded steers and is
+  now covered by transaction-level command/completion journals; no duplicate
+  BTM workaround is present.
 - No autonomous steering evaluator is currently proven. The planned decision
   engine is completely external to the BPI containers; see
   [optimizer.md](optimizer.md) and [steering.md](steering.md).

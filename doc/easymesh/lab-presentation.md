@@ -278,11 +278,11 @@ screenshot.
 Highest-priority open items:
 
 1. association/model consistency under simultaneous client events;
-2. rare raw-frame provider delivery miss after successful 1905 ACK;
+2. historical raw-frame provider delivery miss, retained as a journal trigger
+   after 143 clean post-fix steers;
 3. missing controller liveness/aging for isolated extenders;
-4. recurring wmediumd command-2 `EINVAL` diagnostic;
-5. long-run controller/CLI memory and CPU envelopes; and
-6. reproducible scale limits for the VM profiles.
+4. long-run controller/CLI memory and CPU envelopes; and
+5. reproducible scale limits for the VM profiles.
 
 Bad observations produce bad policy conclusions. These are experimental
 validity tasks, not peripheral cleanup.

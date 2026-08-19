@@ -71,11 +71,14 @@ The final scaled sample passed 10/10 operations. An earlier three-round matrix
 passed 30/30. Link convergence averaged about 1.1 seconds in the final sample;
 DB/API convergence averaged about 2.5 seconds.
 
-One later immediate-return request exposed a rare residual: the controller
-request and 1905 ACK succeeded and the raw-frame setter returned success, but
-the OneWifi provider callback did not occur, so no BTM was transmitted. The
-identical command succeeded on retry without a restart. This requires a
-transaction-aware observed-completion/root fix, not blind duplicate BTM frames.
+One historical immediate-return request exposed a rare residual: the
+controller request and 1905 ACK succeeded and the raw-frame setter returned
+success, but the OneWifi provider callback did not occur, so no BTM was
+transmitted. After the AL-SAP framing fix, 143 commanded steers completed
+without recurrence. That supports but does not retrospectively prove a shared
+cause. The portable and packaged matrix runners now persist unique transaction
+IDs, command output and observed link/database/API completion. Any recurrence
+must be diagnosed from that journal; blind duplicate BTM retries remain wrong.
 
 ## What EasyMesh standardizes
 
