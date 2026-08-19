@@ -13,7 +13,7 @@ state=${EASYMESH_STATE:-/home/vagrant/.local/state/easymesh-vagrant}
 boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-vagrant/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2"}
-expected_repo_head=${EXPECTED_REPO_HEAD:-beef6311cec68bf4276b9f54905cdea84ba70ea1}
+expected_repo_head=${EXPECTED_REPO_HEAD:-5f8cd4b60398d96812b03466d10223307ec3a58f}
 
 mkdir -p "$state"
 test -f "$boardfarm_status"

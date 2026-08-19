@@ -132,7 +132,10 @@ clone_exact "${BOARDFARM_LAB_URL:-git@github.com:robvogelaar/boardfarm-lab-stagi
 env EASYMESH_RUNTIME_COMMIT="$runtime_commit" \
     bash "$vm_dir/scripts/20-prepare-lab-host.sh"
 bash "$vm_dir/scripts/30-boardfarm-wan.sh"
-as_lab_user env EASYMESH_REPO="$runtime_repo" bash "$vm_dir/scripts/40-deploy-easymesh.sh"
+as_lab_user env \
+    EASYMESH_REPO="$runtime_repo" \
+    EXPECTED_REPO_HEAD="$runtime_commit" \
+    bash "$vm_dir/scripts/40-deploy-easymesh.sh"
 as_lab_user env EASYMESH_REPO="$runtime_repo" bash "$vm_dir/scripts/55-scale-topology.sh"
 bash "$vm_dir/scripts/50-runtime-service.sh"
 systemctl start easymesh-lab.service
