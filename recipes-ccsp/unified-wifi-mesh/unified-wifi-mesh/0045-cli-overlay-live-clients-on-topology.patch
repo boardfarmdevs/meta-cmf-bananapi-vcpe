@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Wed, 19 Aug 2026 01:15:00 +0000
+Subject: [PATCH] cli: overlay authoritative clients on topology
+
+The topology endpoint and the clients endpoint independently walk the native
+get_network tree. The topology-specific traversal can omit a station even
+while the controller STAList and the clients endpoint contain it. This was
+reproduced on a clean packaged-VM deployment: five stations were associated
+and present in both the controller database and /api/v1/clients, but the
+topology endpoint retained only four indefinitely.
+
+Keep the topology traversal for device, haul and layout data, but replace each
+node's STAList with the successful live-inventory snapshot used by /clients.
+Carry the topology-only band, SSID and MLD fields in the internal Client value
+so the graph retains its existing presentation metadata. getLiveInventory()
+already falls back to its last successful snapshot on a transient native read
+failure, preventing a momentary provider miss from erasing visible stations.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/main.go | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -193,6 +193,10 @@
+ 	LastActivity   time.Time     `json:"last_activity"`
+ 	ClientMetrics  ClientMetrics `json:"client_metrics"`
+ 	Location       ClientLocation `json:"location"`
++	// These fields are used by the topology overlay but are not API fields.
++	TopologyBand    int           `json:"-"`
++	TopologySSID    string        `json:"-"`
++	TopologyMLDAddr string        `json:"-"`
+ }
+ 
+ type ClientMetrics struct {
+@@ -3132,6 +3136,8 @@
+ 						MAC: sta.MACAddress, Hostname: sta.MACAddress,
+ 						ConnectedAP: deviceID, ConnectedBSSID: bss.BSSID,
+ 						DeviceType: "Wi-Fi Client", LastActivity: observedAt,
++						TopologyBand: radio.Band, TopologySSID: bss.SSID,
++						TopologyMLDAddr: sta.MLDAddr,
+ 					})
+ 				}
+ 			}
+@@ -3248,6 +3254,40 @@
+ 	return nil, nil, err
+ }
+ 
++// overlayLiveTopologyClients makes topology and /clients consume one
++// authoritative ownership snapshot.  The topology-specific native traversal
++// remains responsible for nodes, hauls and coordinates only.
++func overlayLiveTopologyClients(nodes []map[string]interface{}) {
++	_, clientList, err := getLiveInventory()
++	if err != nil {
++		log.Printf("topology client overlay unavailable: %v", err)
++		return
++	}
++
++	clientsByDevice := make(map[string][]map[string]interface{})
++	for _, client := range clientList {
++		clientsByDevice[client.ConnectedAP] = append(
++			clientsByDevice[client.ConnectedAP],
++			map[string]interface{}{
++				"staMAC":     client.MAC,
++				"clientType": client.DeviceType,
++				"MLDAddr":    client.TopologyMLDAddr,
++				"band":       client.TopologyBand,
++				"ssid":       client.TopologySSID,
++			},
++		)
++	}
++
++	for _, node := range nodes {
++		deviceID, _ := node["id"].(string)
++		staList := clientsByDevice[deviceID]
++		if staList == nil {
++			staList = []map[string]interface{}{}
++		}
++		node["STAList"] = staList
++	}
++}
++
+ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
+ 	liveDeviceList, _, err := getLiveInventory()
+@@ -4335,6 +4375,7 @@
+     }
+ 
+     traverse(topoDeviceTree, 0, 0, 0, 0)
++    overlayLiveTopologyClients(nodes)
+ 
+     // Send the response to frontend
+     w.Header().Set("Content-Type", "application/json")
+-- 
+2.43.0

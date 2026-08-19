@@ -137,7 +137,9 @@ authority. Its dependency order is:
 21. serialize WebUI policy changes across the controller's one-device policy
     state machine; and
 22. join detailed live STA metrics to the client inventory and refresh the
-    Connected Clients signal presentation every two seconds.
+    Connected Clients signal presentation every two seconds; and
+23. overlay topology station ownership from that same authoritative live
+    inventory instead of a second, lossy native-tree traversal.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -216,6 +218,7 @@ targeted runtime binaries before the next full image roll-up:
 | release controller JSON output (`0036`) | `onewifi_em_ctrl` | `4b5cc2688671cd1993a2c9a8e3fb1c7334ebc20440edf1d884e2238580203e06` |
 | live device/client inventory (`0037`) | `onewifi_em_cli` | `3cf06dabb4294440d47ebd1ac2a36b957ead61489cfe03c2460c800695fe992f` |
 | live client RCPI presentation (`0044`) | `onewifi_em_cli` | `68cd5937a2f0d256b1b96d5113fa75582066bc9a8eed48050db615a44f5de4f2` |
+| authoritative topology client overlay (`0045`) | `onewifi_em_cli` | `c4b7055b160bd061d3d08324c9e933f7924b9b3625fbbaaf984a862d8b88ec70` |
 
 Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
 in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
@@ -261,6 +264,16 @@ compact `get_network` model remains the client inventory source; a detailed
 Connected Clients page refreshes every two seconds without overlapping native
 queries. The reversible wmediumd RCPI-monitor scenario exercises that path
 without injecting values into the controller.
+
+Patch `0045` closes a packaging regression found during a clean 0818 VM
+deployment. Five stations were associated and present in both controller
+`STAList` and `/api/v1/clients`, while `/api/v1/topology` retained only four
+for the full five-minute gate. The topology handler's independent native-tree
+walk was the lossy boundary. It now retains device, haul and layout data from
+that walk but atomically replaces every node's `STAList` from the successful
+live inventory already used by `/clients`. The fix is in the ordered recipe
+series and in the separately cross-built `em-cli.tar.gz`; changing patched Go
+source alone does not replace that prebuilt helper.
 
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory

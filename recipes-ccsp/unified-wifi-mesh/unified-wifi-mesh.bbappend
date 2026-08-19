@@ -46,6 +46,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0042-metrics-enable-policy-ack-profile-and-persistence.patch \
     file://0043-cli-apply-policies-per-device.patch \
     file://0044-cli-expose-live-client-rcpi.patch \
+    file://0045-cli-overlay-live-clients-on-topology.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
