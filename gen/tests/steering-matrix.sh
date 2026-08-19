@@ -10,6 +10,11 @@ rounds=${1:-1}
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
 mkdir -p "$(dirname "$results")"
+run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%S.%3NZ)-$$}
+events=${EVENTS_FILE:-${results%.csv}.events.log}
+commands=${COMMANDS_FILE:-${results%.csv}.commands.log}
+: > "$events"
+: > "$commands"
 
 medium_restored=0
 restore_medium() {
@@ -78,7 +83,7 @@ if [ "${#clients[@]}" -ne 10 ] || [ "${#target_rows[@]}" -ne 5 ]; then
     exit 1
 fi
 
-printf '%s\n' 'round,client,sta,target_name,source_bssid,target_bssid,command_rc,link_ms,db_ms,topology_ms,packet_loss,result' > "$results"
+printf '%s\n' 'round,client,sta,target_name,source_bssid,target_bssid,command_rc,link_ms,db_ms,topology_ms,packet_loss,result,run_id,transaction_id,started_at_utc' > "$results"
 failures=0
 
 for ((round=1; round <= rounds; round++)); do
@@ -92,6 +97,11 @@ for ((round=1; round <= rounds; round++)); do
             target_index=$(( (target_index + 1) % ${#target_rows[@]} ))
             IFS=$'\t' read -r target_name target <<< "${target_rows[$target_index]}"
         fi
+        transaction_id=$(printf '%s-r%03d-c%03d' "$run_id" "$round" "$index")
+        started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+        printf '%s transaction=%s event=start client=%s sta=%s source=%s target=%s\n' \
+            "$started_at" "$transaction_id" "$client" "$sta" "$source" "$target" \
+            | tee -a "$events"
 
         ping_file=$(mktemp)
         lxc exec "$client" -- ping -q -i 0.1 -c 100 -W 2 10.0.0.1 \
@@ -99,8 +109,9 @@ for ((round=1; round <= rounds; round++)); do
         ping_pid=$!
         start_ms=$(date +%s%3N)
         set +e
-        lxc exec bpibroadband -- /usr/bin/steer.sh "$sta" "$target"
-        command_rc=$?
+        lxc exec bpibroadband -- /usr/bin/steer.sh "$sta" "$target" 2>&1 \
+            | sed "s/^/$transaction_id /" | tee -a "$commands"
+        command_rc=${PIPESTATUS[0]}
         set -e
 
         link_ms=-1
@@ -147,9 +158,14 @@ for ((round=1; round <= rounds; round++)); do
             result=FAIL
             failures=$((failures + 1))
         fi
-        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+        printf '%s transaction=%s event=complete command_rc=%s link_ms=%s db_ms=%s topology_ms=%s packet_loss=%s result=%s\n' \
+            "$completed_at" "$transaction_id" "$command_rc" "$link_ms" "$db_ms" \
+            "$topology_ms" "${loss:-unknown}" "$result" | tee -a "$events"
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "$round" "$client" "$sta" "$target_name" "$source" "$target" \
             "$command_rc" "$link_ms" "$db_ms" "$topology_ms" "${loss:-unknown}" "$result" \
+            "$run_id" "$transaction_id" "$started_at" \
             | tee -a "$results"
         sleep 1
     done
@@ -163,4 +179,6 @@ topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" -eq 10 ]
 echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
 echo "results: $results"
+echo "events: $events"
+echo "commands: $commands"
 exit "$failures"
