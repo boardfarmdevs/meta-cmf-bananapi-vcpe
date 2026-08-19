@@ -183,6 +183,14 @@ has to query/reconcile the changed neighbor set and own reachable/last-seen
 state before an expired extender can disappear truthfully from the controller
 API and WebUI.
 
+The controller service runs `onewifi_em_ctrl` directly as a foreground systemd
+process and sends stdout and stderr to the volatile journal. The image caps
+that journal at 16 MiB, and the unit applies a 1,000-message-per-30-second rate
+limit. This replaces the upstream append-only `/tmp/em_ctrl.log`, which grew at
+about 39 KiB/s and reached 815 MiB in tmpfs before causing memory-cgroup OOM
+kills. The controller therefore retains its 1 GiB deployment limit; increasing
+the limit would only defer recurrence of the unbounded log defect.
+
 ## hwsim and wmediumd series
 
 Kernel-side hwsim patches:

@@ -225,7 +225,7 @@ Use each interface for its intended plane:
 | WebUI **Policy Settings** | interactive policy editing and application | proving that the agent sent reports |
 | `/api/v1/wifipolicy` | repeatable policy backup, transformation and deployment | changing RF conditions |
 | controller MySQL tables | read-only inspection of persisted policy and metrics | editing policy rows directly |
-| `/tmp/em_ctrl.log` and `/tmp/em_agent.log` | protocol and reporting evidence | configuration persistence |
+| `journalctl -u em_ctrl.service` and `/tmp/em_agent.log` | protocol and reporting evidence | configuration persistence |
 | wmediumd configurator/control socket | RF stimulus such as an SNR ramp | inserting a synthetic RCPI into EasyMesh |
 | `steer.sh` or a future optimizer | issuing a steering action | enabling metrics collection |
 
@@ -254,8 +254,8 @@ for node in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     | tail -1
 done
 
-lxc exec bpibroadband -- grep 'Handling 1905 ACK for Policy Cfg' \
-  /tmp/em_ctrl.log | tail
+lxc exec bpibroadband -- journalctl -u em_ctrl.service --no-pager \
+  | grep 'Handling 1905 ACK for Policy Cfg' | tail
 ```
 
 Run the API readback after applying a policy and use the database and log
