@@ -25,6 +25,7 @@ apt-get install -y --no-install-recommends \
     rsync \
     sqlite3 \
     sshpass \
+    tcpdump \
     uidmap \
     zstd
 

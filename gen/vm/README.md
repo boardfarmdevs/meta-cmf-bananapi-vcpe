@@ -6,6 +6,7 @@ recovery use.
 
 | Distribution | Contents | Use case |
 | --- | --- | --- |
+| [`packaged/`](packaged/) | New-user manual for an already-installed, shareable Vagrant box | Import, operate, test, monitor, recover and repackage the complete lab |
 | [`thin/`](thin/) | Ubuntu 24.04, Linux 7.0 and sizing; installs the lab once from GitHub and an artifact server | Normal engineering handoff |
 | [`precooked/`](precooked/) | Complete installed lab and all build assets; currently an 11.1 GB box | Offline demonstration, recovery and appliance-builder acceptance |
 
@@ -104,6 +105,7 @@ Do not begin steering work until `sudo easymesh-labctl check` passes:
 - Use `vagrant halt` for orderly shutdown. A forced host power-off is recovered
   by the boot service, but is not the normal workflow.
 
-See [`thin/README.md`](thin/README.md) for installation and first use, and
-[`precooked/README.md`](precooked/README.md) for building or consuming the
-complete offline appliance.
+See [`packaged/README.md`](packaged/README.md) when receiving a complete box,
+[`thin/README.md`](thin/README.md) for installation from the small base image,
+and [`precooked/README.md`](precooked/README.md) for building the complete
+offline appliance.
