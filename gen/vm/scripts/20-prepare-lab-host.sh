@@ -46,7 +46,11 @@ clone_pinned_repo() {
         sudo -u vagrant git clone "$assets/$name.bundle" "$destination"
     fi
     sudo -u vagrant git -C "$destination" checkout -B "$branch" "$expected"
-    test -z "$(sudo -u vagrant git -C "$destination" status --porcelain)"
+    # Generated lab configuration is installed below these checkouts. Preserve
+    # tracked-source integrity without rejecting those intentional untracked
+    # runtime files when the thin installer is resumed.
+    test -z "$(sudo -u vagrant git -C "$destination" \
+        status --porcelain --untracked-files=no)"
     test "$(sudo -u vagrant git -C "$destination" rev-parse HEAD)" = "$expected"
 }
 
