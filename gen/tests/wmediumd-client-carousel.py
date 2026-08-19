@@ -490,16 +490,39 @@ class Carousel:
                 error_text = str(error)
                 failure = error
             finally:
-                # First force clients back to their actual preflight APs. Then
-                # restore every touched SNR to the exact captured baseline.
+                # Return one group at a time.  Releasing all ten stations in
+                # one atomic generation creates a synthetic association burst
+                # that can overrun the controller's event path even though the
+                # actual links recover.  Phased restoration also makes a
+                # failed group explicit in the evidence.
                 try:
                     set_client_link(clients, "up")
-                    generation += 1
-                    control.apply(
-                        generation,
-                        matrix_updates(clients, aps, original_targets,
-                                       args.strong_snr, args.outage_snr),
-                    )
+                    for group_index, group in enumerate(groups):
+                        targets = {
+                            client["container"]: original_targets[client["container"]]
+                            for client in group
+                        }
+                        generation += 1
+                        control.apply(
+                            generation,
+                            matrix_updates(group, aps, targets,
+                                           args.strong_snr, args.outage_snr),
+                        )
+                        elapsed, returned = self.wait_for(
+                            args.return_timeout,
+                            lambda group=group, targets=targets: (
+                                assignment_reached(
+                                    (value := observe(group, bssid_to_ap, node_to_ap,
+                                                      args.topology_url)), targets
+                                ), value
+                            ),
+                            f"preflight placement for group {group_index + 1}",
+                            allow_stop=False,
+                        )
+                        self.recorder.write(
+                            "placement_group_restored", group=group_index + 1,
+                            elapsed_ms=elapsed, observation=returned,
+                        )
                     elapsed, returned = self.wait_for(
                         args.return_timeout,
                         lambda: (

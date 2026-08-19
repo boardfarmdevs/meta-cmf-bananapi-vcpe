@@ -7,7 +7,7 @@ ap=${1:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
 target=${2:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
 clients='wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009'
 wpid=$(cat /run/meta-cmf-wmediumd/wmediumd.pid)
-topology_url=${TOPOLOGY_URL:-http://10.105.0.101:8888/api/v1/topology}
+topology_url=${TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
 ap_stopped=0
 
 restore_ap() {
@@ -31,8 +31,11 @@ done
 [ "${#impacted[@]}" -gt 0 ]
 
 start=$(date +%s%3N)
-lxc stop "$ap" --timeout 30 >/dev/null
+# This is an abrupt AP-loss test, so use LXD's forced stop. A graceful init
+# shutdown can spend more than a minute in the RDK service chain and report a
+# context deadline after the caller has already lost control of cleanup.
 ap_stopped=1
+lxc stop "$ap" --force >/dev/null
 echo "ap_stopped_ms=$(( $(date +%s%3N) - start ))"
 
 # mac80211_hwsim does not synthesize beacon-loss/link-loss when LXD returns a
