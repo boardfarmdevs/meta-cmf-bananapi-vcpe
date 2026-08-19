@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -31,6 +32,11 @@ from wmdcfg.inventory import discover  # noqa: E402
 REQUIRED_CAPABILITIES = {
     "radio_pair_snr", "atomic_generations", "readback", "dump_links"
 }
+LOG_MARKERS = (
+    "topology notification", "topo notification", "send_topology_notification",
+    "analyze_sta_list", "orch_execute", "client cap", "sta not found",
+    "failed to send cmdu", "no destination_mac", "sap", "error", "warn",
+)
 
 
 def run(*args: str, check: bool = True) -> str:
@@ -197,6 +203,18 @@ def set_client_link(clients: list[dict], state: str) -> None:
             "ip", "link", "set", "wlan0", state)
 
 
+def relevant_log_lines(text: str, identities: set[str]) -> str:
+    """Retain association-path records without copying multi-megabyte subdocs."""
+    selected = []
+    for line in text.splitlines():
+        lowered = line.lower()
+        if any(value in lowered for value in identities) or any(
+            marker in lowered for marker in LOG_MARKERS
+        ):
+            selected.append(line)
+    return "\n".join(selected) + ("\n" if selected else "")
+
+
 class Recorder:
     def __init__(self, path: Path):
         self.path = path
@@ -213,6 +231,8 @@ class Carousel:
         self.args = args
         self.stop_requested = False
         self.recorder: Recorder | None = None
+        self.last_wait_description = ""
+        self.last_observation: dict = {}
 
     def request_stop(self, signum, frame) -> None:
         self.stop_requested = True
@@ -227,10 +247,93 @@ class Carousel:
             if allow_stop and self.stop_requested:
                 raise InterruptedError("carousel interrupted")
             complete, last = predicate()
+            self.last_wait_description = description
+            self.last_observation = last
             if complete:
                 return round((time.monotonic() - started) * 1000), last
             time.sleep(0.5)
         raise RuntimeError(f"timed out waiting for {description}; last={last}")
+
+    def collect_failure_evidence(
+        self, output: Path, clients: list[dict], aps: list[dict],
+        bssid_to_ap: dict[str, str], node_to_ap: dict[str, str], topology_url: str,
+    ) -> None:
+        """Capture the event path at failure before cleanup changes the state."""
+        evidence = output / "failure-evidence"
+        evidence.mkdir(exist_ok=True)
+        failed_names = {
+            item.get("client") for item in self.last_observation.get("stations", [])
+        }
+        failed_clients = [
+            item for item in clients if not failed_names or item["container"] in failed_names
+        ]
+        identities = {
+            str(value).lower()
+            for item in failed_clients
+            for value in (
+                item.get("mac"), item.get("tx_mac"),
+            )
+            if value
+        }
+        identities.update(
+            str(item.get("bssid")).lower()
+            for observation in (
+                self.last_observation,
+                observe(clients, bssid_to_ap, node_to_ap, topology_url),
+            )
+            for item in observation.get("stations", [])
+            if item.get("client") in failed_names and item.get("bssid")
+        )
+        snapshot = {
+            "at": now(),
+            "wait_description": self.last_wait_description,
+            "last_observation": self.last_observation,
+            "current_observation": observe(
+                clients, bssid_to_ap, node_to_ap, topology_url
+            ),
+        }
+        (evidence / "association-state.json").write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+        )
+        document = fetch_topology(topology_url)
+        if document:
+            (evidence / "topology.json").write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n"
+            )
+
+        containers = sorted({"bpibroadband", *(item["container"] for item in aps)})
+        log_files = (
+            "/tmp/em_agent.log", "/tmp/em_ctrl.log",
+            "/tmp/ieee1905_agent_log.txt", "/tmp/ieee1905_ctrl_log.txt",
+            "/rdklogs/logs/wifiEM.txt",
+        )
+        expression = "|".join(
+            re.escape(value) for value in sorted(identities | set(LOG_MARKERS))
+        )
+        for container in containers:
+            status = lxc(
+                container,
+                "systemctl --no-pager --full status "
+                "em_agent.service em_ctrl.service ieee1905_em_agent.service "
+                "ieee1905_em_ctrl.service 2>&1",
+            )
+            (evidence / f"{container}-services.txt").write_text(status + "\n")
+            for log_file in log_files:
+                content = lxc(
+                    container,
+                    f"test -r {shlex.quote(log_file)} && "
+                    f"grep -i -E {shlex.quote(expression)} {shlex.quote(log_file)} "
+                    "2>/dev/null || true",
+                )
+                filtered = relevant_log_lines(content, identities)
+                if filtered:
+                    name = log_file.strip("/").replace("/", "-")
+                    (evidence / f"{container}-{name}").write_text(filtered)
+        if self.recorder:
+            self.recorder.write(
+                "failure_evidence_collected", directory=str(evidence),
+                wait_description=self.last_wait_description,
+            )
 
     def hold(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
@@ -514,6 +617,15 @@ class Carousel:
             except Exception as error:
                 error_text = str(error)
                 failure = error
+                try:
+                    self.collect_failure_evidence(
+                        output, clients, aps, bssid_to_ap, node_to_ap,
+                        args.topology_url,
+                    )
+                except Exception as evidence_error:
+                    self.recorder.write(
+                        "failure_evidence_error", error=str(evidence_error)
+                    )
             finally:
                 # Return one group at a time.  Releasing all ten stations in
                 # one atomic generation creates a synthetic association burst
