@@ -20,14 +20,17 @@ be used to claim policy quality until the preceding acceptance gates pass.
 ### P0 — Make experiment results trustworthy
 
 1. Close remaining controller-state consistency defects.
-   - Reproduce the stale parent records seen after a simultaneous ten-client
-     carousel restoration.
-   - Confirm whether loss is at association notification, agent-to-controller
-     1905 delivery, RBUS raw-frame delivery, model update or API projection.
-   - Keep phased carousel restoration as correct load shaping, but also retain
-     a burst test that exposes the underlying capacity limit.
+   - **Closed for the reproduced carousel miss:** packet capture showed both
+     Topology Notifications at the controller, 88 microseconds apart. The
+     AL-SAP stream receiver discarded a coalesced second length-delimited SDU.
+     Patch `0046` preserves message boundaries and passed 80 individual
+     post-fix carousel arrivals without physical/controller/API disagreement.
+   - Keep phased carousel restoration as useful load shaping and retain the
+     strict paired burst as a regression for the fixed transport boundary.
 2. Root-cause the rare successful command/1905 ACK with no OneWifi provider
-   callback and no transmitted BTM. Add transaction IDs and observed-completion
+   callback and no transmitted BTM. The same AL-SAP framing defect is a strong
+   candidate, but confirm that with a long steering soak and transaction-level
+   evidence before closing it. Add transaction IDs and observed-completion
    logging before considering retries.
 3. Define controller liveness/aging behavior for a fully RF-isolated extender.
    The current controller retains the node. Decide the expected timeout from
@@ -212,7 +215,8 @@ costs.
 
 ## Immediate two-sprint backlog
 
-1. Instrument and reproduce burst association/model disagreement.
+1. Run a long steering/churn soak and close or further localize the remaining
+   rare raw-frame-provider delivery report.
 2. Write the EasyMesh measurement capability/exposure matrix.
 3. Implement optimizer `observer`, normalized snapshot and recorder.
 4. Run a passive crossover and prove reported RCPI follows RF without reading

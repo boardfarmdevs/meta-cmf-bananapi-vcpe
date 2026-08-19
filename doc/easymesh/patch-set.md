@@ -30,10 +30,12 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `fdf7d13` | portable steering and health acceptance harness |
 | `0088993` | heap-size AP Metrics Response construction from model scale |
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
+| `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The accepted images contain runtime source through `73e7c1e`. Later host-side
-commits refine lifecycle management, tests and documentation without changing
-those image contents.
+The current engineering images contain the ordered EasyMesh series through
+`0046`, defined by repository commit `ca17171`. The Dropbox-packaged 0818
+appliance remains an older, separately accepted distribution until its binary
+artifacts are deliberately rolled forward.
 
 ## Patch boundaries
 
@@ -63,7 +65,9 @@ These are not hwsim policy and are candidates for their owning upstreams:
   their native ownership boundaries;
 - drain MariaDB result sets before successful early returns; and
 - rebuild the nested topology snapshot after association capability handling
-  and before publishing it.
+  and before publishing it; and
+- preserve every length-delimited AL-SAP SDU when a stream read fragments or
+  coalesces messages.
 
 ### hwsim and single-phy adaptations
 
@@ -139,7 +143,9 @@ authority. Its dependency order is:
 22. join detailed live STA metrics to the client inventory and refresh the
     Connected Clients signal presentation every two seconds; and
 23. overlay topology station ownership from that same authoritative live
-    inventory instead of a second, lossy native-tree traversal.
+    inventory instead of a second, lossy native-tree traversal; and
+24. consume exactly one length-delimited AL-SAP SDU at a time, leaving any
+    coalesced successor queued for the next dispatch.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -189,11 +195,11 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2` | `32f9edc1983d81c3acd3f6c324447f811a36eabbe377a59648f03aaf280a2383` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2` | `88eb66c0cff613aae471a4917ba838b558f0ec141eb4d8e02b4e8cf19356671f` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `e5314430402513823c86c3a29823b4d2fbc9e826f381d0bb9c342364f52b8a9f` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `716ef80633e4b3097f2e77e885b828f195778d457d15090db7d00dc62ddc2449` |
 
 All five images contain the same `onewifi_em_agent` binary
-(`ff23b56982d6124dd0fd3dc7450c5c394963a6a24c46ec3684c7f4a50bcbe706`).
+(`3128ed3c2d25bfaf1af6835fd551aa634ed273d3fb0aa8c6872e6627f01f3dd9`).
 The earlier deterministic fourth-extender/four-associated-STA stack-protector
 failure remained absent through clean deployment and cold-boot reconstruction.
 
@@ -275,6 +281,26 @@ live inventory already used by `/clients`. The fix is in the ordered recipe
 series and in the separately cross-built `em-cli.tar.gz`; changing patched Go
 source alone does not replace that prebuilt helper.
 
+Patch `0046` closes the rare controller association-delivery miss exposed by
+the strict two-client carousel. Packet captures proved that two distinct
+Topology Notification CMDUs reached the controller bridge 88 microseconds
+apart, while `em_ctrl` received only the first. The Rust IEEE1905 endpoint
+frames AL-SAP traffic with a four-byte length prefix over a Unix stream. The
+C++ receiver previously treated one `recv(64 KiB)` result as one SDU, so a
+coalesced second SDU became trailing bytes and was discarded. It now reads the
+prefix and exactly the declared body, handles short reads and `EINTR`, and
+leaves the next frame queued.
+
+Fresh deployment of the `20260819032857` image pair reached `5/15/50`, ten
+live clients, zero service restarts and zero client traffic loss. Three strict
+carousel runs (2, 2 and 4 rounds) completed 40 paired group arrivals, or 80
+individual client association updates, with physical link, controller parent
+and topology API agreement plus verified medium restoration. A clean
+commanded-steering matrix passed 10/10. Abrupt loss of `bpiap-003` moved all
+four affected clients, restored traffic in 1.842 seconds, restored backhaul in
+17.806 seconds and returned the extender to controller-visible ready state in
+49.639 seconds without restarting `em_ctrl` or `em_cli`.
+
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory
 moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
@@ -289,11 +315,14 @@ working-set expansion, not retained per-report or per-request growth.
 - Generalize steering ACK routing into an outstanding-transaction table.
 - Consolidate authorized WDS creation into one implementation owner.
 - Make FULL versus DELTA associated-client inputs explicit.
-- Root-cause the rare RBUS raw-frame provider delivery miss.
-- Add positive reconciliation for a lost, unacknowledged 1905 Client
-  Association Event. One AP-loss run delivered five of six agent topology
-  notifications and left one controller STA row stale until a later event;
-  the next identical AP-loss run converged normally.
+- Run a long commanded-steering soak to determine whether the earlier RBUS
+  raw-frame provider miss shared the fixed AL-SAP stream-boundary cause. The
+  post-fix targeted matrices completed 33 observed steering transactions, but
+  that is not yet enough to retire a rare-event defect.
+- Add positive model reconciliation as defense in depth for a genuinely lost,
+  unacknowledged 1905 Client Association Event. The fixed framing path had no
+  association loss across 80 post-fix carousel arrivals; reconciliation should
+  protect against transport/process failure rather than mask framing loss.
 - Make a controller-service-only restart re-query every already-running agent.
   A diagnostic controller restart temporarily reconstructed only `5/15/36`;
   re-onboarding the absent agent restored the required `5/15/50`. Full VM boot
