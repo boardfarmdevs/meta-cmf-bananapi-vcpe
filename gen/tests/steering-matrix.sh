@@ -11,6 +11,31 @@ repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
 mkdir -p "$(dirname "$results")"
 
+medium_restored=0
+restore_medium() {
+    if [ "$medium_restored" -eq 1 ]; then
+        return 0
+    fi
+    if SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null; then
+        medium_restored=1
+        return 0
+    fi
+    echo "failed to restore the all-strong wmediumd matrix" >&2
+    return 1
+}
+cleanup() {
+    rc=$?
+    trap - EXIT
+    set +e
+    restore_medium
+    cleanup_rc=$?
+    if [ "$rc" -eq 0 ] && [ "$cleanup_rc" -ne 0 ]; then
+        rc=$cleanup_rc
+    fi
+    exit "$rc"
+}
+trap cleanup EXIT
+
 mapfile -t clients < <(lxc list -c n --format csv \
     | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 mapfile -t target_rows < <(curl -fsS http://127.0.0.1:8888/api/v1/topology \
@@ -102,8 +127,9 @@ for ((round=1; round <= rounds; round++)); do
     done
 done
 
-# Return to the known all-strong baseline after the test.
-SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null
+# Return to the known all-strong baseline before checking final topology. The
+# EXIT trap provides the same guarantee when any earlier command fails.
+restore_medium
 
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" -eq 10 ]

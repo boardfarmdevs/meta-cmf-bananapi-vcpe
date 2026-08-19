@@ -13,6 +13,31 @@ repo=${EASYMESH_REPO:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
 results=/home/vagrant/.local/state/easymesh-vagrant/steering-scale.csv
 mkdir -p "$(dirname "$results")"
 
+medium_restored=0
+restore_medium() {
+    if [ "$medium_restored" -eq 1 ]; then
+        return 0
+    fi
+    if SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null; then
+        medium_restored=1
+        return 0
+    fi
+    echo "failed to restore the all-strong wmediumd matrix" >&2
+    return 1
+}
+cleanup() {
+    rc=$?
+    trap - EXIT
+    set +e
+    restore_medium
+    cleanup_rc=$?
+    if [ "$rc" -eq 0 ] && [ "$cleanup_rc" -ne 0 ]; then
+        rc=$cleanup_rc
+    fi
+    exit "$rc"
+}
+trap cleanup EXIT
+
 mapfile -t clients < <(lxc list -c n --format csv \
     | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 mapfile -t target_rows < <(curl -fsS http://127.0.0.1:8888/api/v1/topology \
@@ -104,10 +129,9 @@ for ((round=1; round <= rounds; round++)); do
     done
 done
 
-# Rebuild the current-home overrides once after the matrix. The all-strong
-# default makes this unnecessary for connectivity during the run, and avoiding
-# a daemon restart per steer keeps wmediumd refresh loss out of the measurement.
-SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null
+# Rebuild the current-home overrides once after the matrix. The EXIT trap also
+# restores this all-strong state if a command or observation fails mid-run.
+restore_medium
 
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" -eq 10 ]
