@@ -132,13 +132,14 @@ The client-side experiment works as intended: dropped beacons cause natural
 link loss, clients reassociate, and the controller publishes the new parent.
 No `ip link` toggle is necessary.
 
-The complete-isolation experiment establishes a current implementation limit:
+The complete-isolation experiment establishes the remaining controller limit:
 the controller retains the known extender, radios, and BSSs after its wireless
-backhaul is genuinely disconnected. The WebUI therefore cannot truthfully make
-the extender disappear. It has no reliable device-liveness/aging value to use.
-The node's presence means *known to the controller*, not *currently reachable*.
-Restoration reconnects the real backhaul; it does not represent a visible node
-being newly created.
+backhaul is genuinely disconnected. The IEEE 1905 transport now detects and
+publishes neighbor expiry, but Unified Wi-Fi Mesh does not yet reconcile that
+protocol change into controller-owned reachability. The WebUI therefore cannot
+truthfully make the extender disappear. The node's presence means *known to the
+controller*, not *currently reachable*. Restoration reconnects the real
+backhaul; it does not yet represent a visible node being newly created.
 
 Do not hide the node using LXD state, wmediumd truth, or browser timers. Those
 are lab-only facts and would make the WebUI claim behavior that the EasyMesh
@@ -159,11 +160,12 @@ The built `ieee1905-em` v0.6 source at commit
 - removes a node from its private topology map after 60 seconds without an
   update.
 
-However, that garbage-collection path only removes the internal Rust map entry
-and writes a debug message. It does not emit the topology-change event required
-by its own accepted `0014-topology-aging.md` architecture decision, does not
-send a Topology Notification, and does not tell the EasyMesh HLE which neighbor
-expired.
+Patch `0002-topology-gc-notify-expired-neighbors.patch` now closes the first
+boundary. Garbage collection removes the established neighbor, releases the
+database write lock, publishes a typed `NeighborExpired` event and consumes it
+through the existing Topology Notification transmitter. Temporary nodes that
+never converged are still removed silently. A lagged event receiver emits one
+convergence notification rather than losing the topology change.
 
 At the next boundary, Unified Wi-Fi Mesh accepts Topology Notifications, but
 its handler only acts on a Client Association Event TLV. A notification caused
@@ -173,10 +175,10 @@ The existing `RemoveDevice` command is an explicit destructive operation over
 runtime objects, MariaDB and the data model; calling it directly from a timer
 would conflate transient reachability with administrative removal.
 
-The implementation should therefore be staged in bounded changes:
+The remaining implementation should continue in bounded changes:
 
-1. make `ieee1905-em` topology GC publish an expired-neighbor event and emit a
-   Topology Notification through its normal transmitter;
+1. **Complete:** make `ieee1905-em` topology GC publish an expired-neighbor
+   event and emit a Topology Notification through its normal transmitter;
 2. make the EasyMesh controller query the notifying parent and reconcile the
    returned neighbor set, checking for re-parenting before declaring a child
    unreachable;
@@ -186,8 +188,27 @@ The implementation should therefore be staged in bounded changes:
 4. accept a returning AL-MAC as the same logical device, refresh its subordinate
    radio/BSS/client state, and reject duplicates before publishing recovery.
 
-The first code change belongs in `ieee1905-em`; a WebUI-only filter or direct
-call to `RemoveDevice` would bypass the missing protocol contract.
+The first code change is now in `ieee1905-em`. A WebUI-only filter or direct
+call to `RemoveDevice` would still bypass the remaining controller contract.
+
+### IEEE 1905 publication acceptance
+
+A targeted rev130 run on 2026-08-19 isolated every directed wmediumd pair for
+`bpiap-003` while capturing inside the controller network namespace. The exact
+baseline matrix was restored and verified through the control socket. The
+relevant sequence was:
+
+```text
+14:54:49.667  remove expired neighbor 02:00:00:00:04:20 (61.9 s)
+14:54:49.668  publish NeighborExpired and invoke normal notification worker
+14:54:49.670  Topology Notification sent on eth0_virt_peer, message ID 132
+```
+
+The packet capture independently decoded frame 92 as message type `0x0001`,
+source `00:60:2f:da:68:d4`, destination `01:80:c2:00:00:13`, message ID
+`0x0084`. The controller API retained the extender, as expected until stages
+2-4 above are implemented; this result must not be reported as end-to-end
+topology aging yet.
 
 ## Automatic WebUI refresh
 

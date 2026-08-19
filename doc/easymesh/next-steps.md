@@ -35,10 +35,14 @@ be used to claim policy quality until the preceding acceptance gates pass.
    the shared cause. Both matrix runners now assign a run/transaction ID and
    persist command output plus observed completion. Do not add blind retries;
    use that evidence to root-cause any recurrence.
-3. Define controller liveness/aging behavior for a fully RF-isolated extender.
-   The current controller retains the node. Decide the expected timeout from
-   the EasyMesh profile, implement it if required, and test disappearance,
-   re-onboarding and client recovery separately.
+3. Complete controller liveness/aging behavior for a fully RF-isolated
+   extender.
+   - **IEEE 1905 publication boundary closed:** transport GC now publishes a
+     typed expiry event and emits a captured multicast Topology Notification
+     after the 60-second neighbor timeout.
+   - Next, make Unified Wi-Fi Mesh query/reconcile the changed neighbor set,
+     distinguish transient reachability from administrative removal, and test
+     disappearance, re-onboarding and client recovery separately.
 4. Keep reboot reconstruction, zero service restarts, medium restoration,
    topology agreement and client traffic as mandatory pre/postflight gates.
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
@@ -222,8 +226,9 @@ costs.
 
 ## Immediate two-sprint backlog
 
-1. Define and test controller liveness/aging for a fully RF-isolated extender,
-   including disappearance, re-onboarding and affected-client recovery.
+1. Implement controller reconciliation and reachability after the now-working
+   IEEE 1905 expiry notification, including disappearance, re-onboarding and
+   affected-client recovery.
 2. Write the EasyMesh measurement capability/exposure matrix.
 3. Implement optimizer `observer`, normalized snapshot and recorder.
 4. Run a passive crossover and prove reported RCPI follows RF without reading

@@ -106,7 +106,7 @@ copying a list from documentation:
 | OneWifi | `recipes-ccsp/ccsp/ccsp-one-wifi.bbappend` | hwsim defaults, tri-band configuration, association deltas |
 | libwebconfig | `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig.bbappend` | EasyMesh/OneWifi translation and client snapshots |
 | EasyMesh core | `recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend` | onboarding, model, steering, crypto, CLI |
-| 1905 | `recipes-ccsp/ieee1905/ieee1905-em.bbappend` | build/startup and AL-SAP transport integration |
+| 1905 | `recipes-ccsp/ieee1905/ieee1905-em.bbappend` | build/startup, AL-SAP transport and topology-change notification |
 
 Patch headers contain the failure trace, packet/log evidence and ownership
 rationale. Patch number gaps intentionally preserve comparison with 0814.
@@ -149,6 +149,39 @@ authority. Its dependency order is:
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
+
+## IEEE 1905 ordering
+
+The small `ieee1905-em` series is ordered directly in
+`recipes-ccsp/ieee1905/ieee1905-em.bbappend`:
+
+1. use the target tuple, rather than the build-host tuple, for the RBUS bindgen
+   clang argument; and
+2. publish established-neighbor expiry from topology garbage collection and
+   feed it to the existing multicast Topology Notification transmitter.
+
+Patch `0002` deliberately separates transport truth from controller policy. A
+neighbor that has not refreshed the private IEEE 1905 topology for 60 seconds
+is removed, after which a typed `NeighborExpired` event is published outside
+the database write lock. The event consumer uses the normal notification path,
+including the existing multicast destination, message-ID allocator and
+notification-sent state transition. Temporary nodes that never completed
+topology convergence do not produce expiry events.
+
+The expiry unit test was cross-compiled with the target test harness and passed
+inside `bpibroadband`. Clean component builds passed for both
+`qemux86bpibroadband` and `qemux86bpiap`. A rev130 wmediumd test then isolated
+all 28 directed RF pairs of `bpiap-003`. The transport expired AL-MAC
+`02:00:00:00:04:20` after 61.9 seconds and packet capture on
+`eth0_virt_peer` recorded the resulting IEEE 1905 Topology Notification
+(`0x0001`, message ID 132) from `00:60:2f:da:68:d4` to
+`01:80:c2:00:00:13`. The control-socket generation restored every modified RF
+pair by verified readback.
+
+This closes only the IEEE 1905 publication boundary. Unified Wi-Fi Mesh still
+has to query/reconcile the changed neighbor set and own reachable/last-seen
+state before an expired extender can disappear truthfully from the controller
+API and WebUI.
 
 ## hwsim and wmediumd series
 
