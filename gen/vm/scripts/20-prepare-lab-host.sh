@@ -10,7 +10,7 @@ assets=/home/vagrant/easymesh-assets
 meta_workspace=/home/vagrant/git
 boardfarm_workspace=/home/vagrant/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
-expected_meta_head=beef6311cec68bf4276b9f54905cdea84ba70ea1
+expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-5f8cd4b60398d96812b03466d10223307ec3a58f}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2
@@ -20,14 +20,19 @@ fi
 install -d -o vagrant -g vagrant "$meta_workspace" "$boardfarm_workspace"
 
 if [ ! -d "$meta_workspace/meta-cmf-bananapi-vcpe/.git" ]; then
+    test -f "$meta_bundle"
     sudo -u vagrant git clone "$meta_bundle" \
         "$meta_workspace/meta-cmf-bananapi-vcpe"
 fi
 if [ "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" != \
     "$expected_meta_head" ]; then
     test -z "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" status --porcelain)"
-    sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch \
-        "$meta_bundle" 'refs/heads/*:refs/remotes/bundle/*'
+    if [ -f "$meta_bundle" ]; then
+        sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch \
+            "$meta_bundle" 'refs/heads/*:refs/remotes/bundle/*'
+    else
+        sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch origin
+    fi
     sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" checkout -B \
         codex/0815-clean "$expected_meta_head"
 fi

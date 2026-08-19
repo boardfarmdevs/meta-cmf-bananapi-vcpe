@@ -129,7 +129,8 @@ clone_exact "${BOARDFARM_CHARTER_URL:-git@github.com:robvogelaar/boardfarm-chart
 clone_exact "${BOARDFARM_LAB_URL:-git@github.com:robvogelaar/boardfarm-lab-staging.git}" \
     "$bf_workspace/boardfarm-lab-staging" 510c65fc4a880471e344a88d824fd0bc07a342d8
 
-bash "$vm_dir/scripts/20-prepare-lab-host.sh"
+env EASYMESH_RUNTIME_COMMIT="$runtime_commit" \
+    bash "$vm_dir/scripts/20-prepare-lab-host.sh"
 bash "$vm_dir/scripts/30-boardfarm-wan.sh"
 as_lab_user env EASYMESH_REPO="$runtime_repo" bash "$vm_dir/scripts/40-deploy-easymesh.sh"
 as_lab_user env EASYMESH_REPO="$runtime_repo" bash "$vm_dir/scripts/55-scale-topology.sh"
