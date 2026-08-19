@@ -378,7 +378,11 @@ sudo gen/tests/wmediumd-client-carousel.py --rounds 2
 The console announces each blackout and arrival using the same stable client
 labels shown in the UI. Use `--rounds 0` for a continuous demonstration and
 press Ctrl-C once to stop cleanly. This is an RF/reassociation scenario, not an
-autonomous optimizer test.
+autonomous optimizer test. A nonzero exit can expose the known residual in
+which the real client reaches its requested BSSID but the controller retains
+the previous parent. The test preserves that disagreement and restores the
+medium; retain its artifact and use the managed restart procedure rather than
+retrying until it happens to pass.
 
 ### Simulate an extender RF outage and recovery
 

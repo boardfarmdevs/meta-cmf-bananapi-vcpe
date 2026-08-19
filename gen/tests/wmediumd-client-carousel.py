@@ -371,14 +371,39 @@ class Carousel:
                 for source, destination in sorted(touched)
             ]
             try:
-                generation += 1
-                control.apply(
-                    generation,
-                    matrix_updates(clients, aps, formation_targets,
-                                   args.strong_snr, args.outage_snr),
-                )
-                self.recorder.write("formation_applied", generation=generation,
-                                    targets=formation_targets)
+                # Establish the visual formation in the same two-client
+                # phases used by the carousel. Releasing all ten clients at
+                # once is a separate association-burst stress case and can
+                # obscure this scenario with controller event-path overload.
+                for group_index, group in enumerate(groups):
+                    targets = {
+                        client["container"]: formation_targets[client["container"]]
+                        for client in group
+                    }
+                    generation += 1
+                    control.apply(
+                        generation,
+                        matrix_updates(group, aps, targets,
+                                       args.strong_snr, args.outage_snr),
+                    )
+                    self.recorder.write(
+                        "formation_group_applied", generation=generation,
+                        group=group_index + 1, targets=targets,
+                    )
+                    elapsed, formed = self.wait_for(
+                        args.connect_timeout,
+                        lambda group=group, targets=targets: (
+                            assignment_reached(
+                                (value := observe(group, bssid_to_ap, node_to_ap,
+                                                  args.topology_url)), targets
+                            ), value
+                        ),
+                        f"carousel formation for group {group_index + 1}",
+                    )
+                    self.recorder.write(
+                        "formation_group_converged", elapsed_ms=elapsed,
+                        group=group_index + 1, observation=formed,
+                    )
 
                 elapsed, formed = self.wait_for(
                     args.connect_timeout,
@@ -388,7 +413,7 @@ class Carousel:
                                               args.topology_url)), formation_targets
                         ), value
                     ),
-                    "initial carousel formation",
+                    "complete carousel formation",
                 )
                 self.recorder.write("formation_converged", elapsed_ms=elapsed,
                                     observation=formed)
