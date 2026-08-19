@@ -99,7 +99,8 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 - Service stability: zero OneWifi, agent, controller or CLI restarts.
 - Traffic baseline: all ten clients reach the WLAN gateway.
 - Commanded return steering: **4/4** passed.
-- Scaled commanded steering: **30/30** passed across ten clients/five agents.
+- Scaled commanded steering: **100/100** passed across ten clients/five agents;
+  a further **10/10** validated transaction-level evidence journaling.
 - Live RCPI experiment: reported values tracked the applied RF phases.
 - Extender RF outage: client movement, backhaul loss, restoration and rejoin passed.
 - IEEE 1905 capture: live decapsulated traffic verified on controller `brlan0`.

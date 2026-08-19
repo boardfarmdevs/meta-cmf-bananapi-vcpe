@@ -145,6 +145,50 @@ are lab-only facts and would make the WebUI claim behavior that the EasyMesh
 controller has not reported. Extender disappearance requires a separate
 controller liveness/aging design and should be tested independently.
 
+## Root localization in the current stack
+
+The missing behavior is now localized across two implementation boundaries;
+it is not an absence of all IEEE 1905 discovery support.
+
+The built `ieee1905-em` v0.6 source at commit
+`9eb6127c05250f0174a113688d7e577e1af35732` already:
+
+- transmits Topology Discovery every 30 seconds;
+- timestamps topology nodes with monotonic `last_seen` state;
+- runs topology garbage collection every five seconds; and
+- removes a node from its private topology map after 60 seconds without an
+  update.
+
+However, that garbage-collection path only removes the internal Rust map entry
+and writes a debug message. It does not emit the topology-change event required
+by its own accepted `0014-topology-aging.md` architecture decision, does not
+send a Topology Notification, and does not tell the EasyMesh HLE which neighbor
+expired.
+
+At the next boundary, Unified Wi-Fi Mesh accepts Topology Notifications, but
+its handler only acts on a Client Association Event TLV. A notification caused
+by a 1905-neighbor change does not trigger a Topology Query, and the controller
+does not parse/reconcile 1905 Neighbor Device TLVs from the resulting response.
+The existing `RemoveDevice` command is an explicit destructive operation over
+runtime objects, MariaDB and the data model; calling it directly from a timer
+would conflate transient reachability with administrative removal.
+
+The implementation should therefore be staged in bounded changes:
+
+1. make `ieee1905-em` topology GC publish an expired-neighbor event and emit a
+   Topology Notification through its normal transmitter;
+2. make the EasyMesh controller query the notifying parent and reconcile the
+   returned neighbor set, checking for re-parenting before declaring a child
+   unreachable;
+3. add controller-owned `Reachable`/`LastSeen` state and remove an unreachable
+   node from the active topology without immediately erasing persistent device
+   identity; and
+4. accept a returning AL-MAC as the same logical device, refresh its subordinate
+   radio/BSS/client state, and reject duplicates before publishing recovery.
+
+The first code change belongs in `ieee1905-em`; a WebUI-only filter or direct
+call to `RemoveDevice` would bypass the missing protocol contract.
+
 ## Automatic WebUI refresh
 
 Patch `0038-cli-refresh-topology-on-live-change.patch` changes the visible
