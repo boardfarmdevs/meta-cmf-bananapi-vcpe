@@ -16,7 +16,7 @@ vm_dir=$(cd "$thin_dir/.." && pwd)
 source_root=$(cd "$vm_dir/../.." && pwd)
 assets=/home/vagrant/easymesh-assets
 runtime_repo=/home/vagrant/git/meta-cmf-bananapi-vcpe
-runtime_commit=${EASYMESH_RUNTIME_COMMIT:-5f8cd4b60398d96812b03466d10223307ec3a58f}
+runtime_commit=${EASYMESH_RUNTIME_COMMIT:-c2e8ce74385d64c788ac750c18342e373d35e878}
 bf_workspace=/home/vagrant/boardfarm-open-0406
 lab_user=vagrant
 
