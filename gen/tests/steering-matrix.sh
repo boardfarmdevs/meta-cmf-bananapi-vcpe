@@ -36,6 +36,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+client_mac() {
+    local client=$1 value
+    for _ in $(seq 1 5); do
+        value=$(lxc exec "$client" -- iw dev wlan0 info 2>/dev/null \
+            | awk '/addr/{print $2}' || true)
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "unable to read station MAC from $client" >&2
+    return 1
+}
+
+client_bssid() {
+    local client=$1 attempts=${2:-5} value
+    for _ in $(seq 1 "$attempts"); do
+        value=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
+            | awk '/Connected to/{print $3}' || true)
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
 mapfile -t clients < <(lxc list -c n --format csv \
     | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 mapfile -t target_rows < <(curl -fsS http://127.0.0.1:8888/api/v1/topology \
@@ -55,8 +84,8 @@ failures=0
 for ((round=1; round <= rounds; round++)); do
     for ((index=0; index < ${#clients[@]}; index++)); do
         client=${clients[$index]}
-        sta=$(lxc exec "$client" -- iw dev wlan0 info | awk '/addr/{print $2}')
-        source=$(lxc exec "$client" -- iw dev wlan0 link | awk '/Connected to/{print $3}')
+        sta=$(client_mac "$client")
+        source=$(client_bssid "$client")
         target_index=$(( (index + round) % ${#target_rows[@]} ))
         IFS=$'\t' read -r target_name target <<< "${target_rows[$target_index]}"
         if [ "$target" = "$source" ]; then
@@ -76,8 +105,7 @@ for ((round=1; round <= rounds; round++)); do
 
         link_ms=-1
         for _ in $(seq 1 100); do
-            actual=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
-                | awk '/Connected to/{print $3}')
+            actual=$(client_bssid "$client" 1 || true)
             if [ "$actual" = "$target" ]; then
                 link_ms=$(( $(date +%s%3N) - start_ms ))
                 break
