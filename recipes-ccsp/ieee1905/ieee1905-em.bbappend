@@ -8,6 +8,7 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
 # (qemux86bpiap), so this recipe -- and this fix -- never applies to the plain
 # broadband container build.
 SRC_URI += "file://0001-rbus-sys-use-TARGET-not-HOST-for-bindgen-clang-arg.patch"
+SRC_URI += "file://0002-topology-gc-notify-expired-neighbors.patch"
 
 # ieee1905_em_ctrl.service must wait for the interface it actually uses, not the
 # nominal WAN. In the LXD/hwsim controller syscfg reports wan_physical_ifname=erouter0,
