@@ -38,8 +38,12 @@ be used to claim policy quality until the preceding acceptance gates pass.
    re-onboarding and client recovery separately.
 4. Keep reboot reconstruction, zero service restarts, medium restoration,
    topology agreement and client traffic as mandatory pre/postflight gates.
-5. Decode the recurring wmediumd command-2 `EINVAL` message and either fix it
-   or downgrade it to an identified benign diagnostic with a regression test.
+5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
+   unsupported startup clones and valid cloned frames rejected during normal
+   scan/channel receive-state gaps. wmediumd now requires current frequency
+   evidence and downgrades only its own tracked transient clone rejection.
+   A two-round paired carousel converged and restored with zero command-2
+   diagnostics while an unrelated command-3 error remained visible.
 6. Continue bounded `em_ctrl`/`em_cli` memory and CPU sampling during long RF,
    reporting and churn runs. Set numeric soak limits instead of relying on a
    visual impression.

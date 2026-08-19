@@ -172,6 +172,8 @@ wmediumd patches, in order:
 | `0007` | enlarge the netlink receive buffer |
 | `0008` | add the atomic scenario-control socket |
 | `0009` | honor configured default SNR |
+| `0010` | require current transmit-learned frequency evidence before cloning to a receiver |
+| `0011` | classify tracked clones rejected during transient receive states without hiding other netlink faults |
 
 `gen/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
 `wmediumd-up.sh` runs its nine-test internal acceptance suite before launch.
@@ -185,7 +187,7 @@ wmediumd patches, in order:
 | forced controller transition out of `wsc_m2_sent` | removed; it could fire after valid M2 and hid command cancellation deadlock |
 | forced `wsc_m1_pending` recovery | not imported; previous capability is not proof of current configuration |
 | passive returning-client cache update | replaced by refresh, insertion verification and explicit delta publication |
-| one historical wmediumd patch | replaced by the tested nine-patch multichannel/control protocol series |
+| one historical wmediumd patch | replaced by the tested eleven-patch multichannel/control protocol series |
 
 The replacement for forced WSC state is EasyMesh patch `0026`: cancelled
 commands become terminal, and completion is evaluated per command. Duplicate M1
@@ -301,6 +303,15 @@ four affected clients, restored traffic in 1.842 seconds, restored backhaul in
 17.806 seconds and returned the extender to controller-visible ready state in
 49.639 seconds without restarting `em_ctrl` or `em_cli`.
 
+Sequence-correlated wmediumd tracing separated the recurring command-2
+`EINVAL` output into unknown-frequency startup clones and normal receive-state
+drops while stations scan or change channel. Patches `0010` and `0011` prevent
+unsupported clones where possible and classify only a tracked clone rejection
+as debug-level RF loss. A two-round paired carousel completed ten group moves,
+ten restores and exact medium restoration with zero command-2 diagnostics. An
+unrelated command-3 diagnostic remained visible, proving the handling is not a
+blanket netlink-error suppression.
+
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory
 moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
@@ -327,6 +338,3 @@ working-set expansion, not retained per-report or per-request growth.
   A diagnostic controller restart temporarily reconstructed only `5/15/36`;
   re-onboarding the absent agent restored the required `5/15/50`. Full VM boot
   reconstruction remains a separate, previously accepted path.
-- Decode and eliminate the repeated netlink command-2 `EINVAL` diagnostics
-  emitted by wmediumd during normal WLAN activity. They occur on both labs and
-  have not correlated with registration, traffic, steering or restore failure.

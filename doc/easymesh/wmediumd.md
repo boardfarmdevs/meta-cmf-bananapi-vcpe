@@ -445,7 +445,7 @@ modify the file.
 
 The lab pins upstream commit
 `717e5d7fcc23eecbc8e32bd897a8fd4b1e3ba640` (the source reports v0.3.1) and
-applies nine patches in `gen/wmediumd/patches/`:
+applies eleven patches in `gen/wmediumd/patches/`:
 
 | Patch | Operational effect |
 | --- | --- |
@@ -454,10 +454,12 @@ applies nine patches in `gen/wmediumd/patches/`:
 | `0003` | Removes synchronous per-frame ACK debug-file writes |
 | `0004` | Gives each center frequency an independent scheduler tail |
 | `0005` | Parses Linux 7 HT/VHT rate flags and maps them to usable PER curves |
-| `0006` | Sends multicast only to radios on the learned matching frequency; unknown radios remain permissive during bootstrap |
+| `0006` | Sends multicast only to radios on the learned matching frequency |
 | `0007` | Requests a 4 MiB netlink receive buffer to reduce burst loss |
 | `0008` | Adds the atomic scenario-control socket |
 | `0009` | Makes generated `model.default_snr` effective and validates its range |
+| `0010` | Requires transmit-learned receive-frequency evidence and rechecks directed delivery after scan/channel changes |
+| `0011` | Distinguishes a tracked clone rejected during a transient radio receive state from an untracked netlink/protocol error |
 
 The launcher executes `wmediumd.patched -T` before every start. That suite
 checks multichannel interference isolation, ownership/filter invariants,
@@ -503,11 +505,21 @@ sudo gen/wmediumd/wmediumd.patched -T
 | WLAN works after `down` | Expected hwsim fallback; the experiment is no longer using modeled RF |
 | Topology does not remove an RF-isolated extender | Controller liveness/aging limitation, not proof that frames crossed the modeled outage |
 
-Repeated `nl: cmd 2 ... Invalid argument` lines are a known diagnostic debt on
-both accepted labs. They have not correlated with registration, onboarding,
-traffic, steering or matrix restoration failure, but should not be silently
-reclassified as success. Preserve them in failure evidence until their exact
-kernel rejection path is decoded.
+The former repeated `nl: cmd 2 ... Invalid argument` output was decoded with
+outbound-netlink sequence correlation. The startup class was multicast beacon
+delivery to radios whose frequency had not yet been learned. The transition
+class was primarily beacons, plus a few probe responses and multicast data
+frames, submitted while a client was between scan/channel receive states.
+`mac80211_hwsim` returns the same `EINVAL` for those normal receive drops that
+it uses for malformed command-2 input.
+
+Patch `0010` prevents clones when current receive-frequency evidence is absent
+or stale. Patch `0011` records the sequence of each clone constructed by this
+process and downgrades only a matching command-2 `EINVAL` to debug-level RF
+loss. Untracked command-2 errors and every other command/error remain visible.
+A two-round, ten-client paired blackout/arrival carousel converged and restored
+with zero command-2 diagnostics; an unrelated command-3 failure remained in
+the same log, confirming that error reporting was not globally suppressed.
 
 ## Source and design references
 
