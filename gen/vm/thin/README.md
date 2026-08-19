@@ -168,6 +168,11 @@ wmediumd. It creates four extenders and ten clients, performs the complete
 acceptance audit, and leaves the accepted lab running. Re-running the installer
 reuses valid downloads and exact Git checkouts.
 
+The installer defaults the runtime checkout to the accepted `5f8cd4b` 0818
+revision. A maintainer can select another full commit explicitly with
+`EASYMESH_RUNTIME_COMMIT`, but an unqualified branch tip is never used as an
+installation input.
+
 Do not proceed unless it ends with:
 
 ```text

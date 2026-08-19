@@ -16,6 +16,7 @@ vm_dir=$(cd "$thin_dir/.." && pwd)
 source_root=$(cd "$vm_dir/../.." && pwd)
 assets=/home/vagrant/easymesh-assets
 runtime_repo=/home/vagrant/git/meta-cmf-bananapi-vcpe
+runtime_commit=${EASYMESH_RUNTIME_COMMIT:-5f8cd4b60398d96812b03466d10223307ec3a58f}
 bf_workspace=/home/vagrant/boardfarm-open-0406
 lab_user=vagrant
 
@@ -114,8 +115,8 @@ clone_exact() {
 if [ ! -d "$runtime_repo/.git" ]; then
     as_lab_user git clone "$source_root" "$runtime_repo"
 fi
-as_lab_user git -C "$runtime_repo" checkout --detach \
-    beef6311cec68bf4276b9f54905cdea84ba70ea1
+as_lab_user git -C "$runtime_repo" checkout --detach "$runtime_commit"
+test "$(git -C "$runtime_repo" rev-parse HEAD)" = "$runtime_commit"
 
 clone_exact "${BOARDFARM_URL:-git@github.com:robvogelaar/boardfarm.git}" \
     "$bf_workspace/boardfarm" 58501f4b86baf045a2a43d9aba7b69a717377f94
