@@ -47,6 +47,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0043-cli-apply-policies-per-device.patch \
     file://0044-cli-expose-live-client-rcpi.patch \
     file://0045-cli-overlay-live-clients-on-topology.patch \
+    file://0046-al-sap-preserve-stream-message-boundaries.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -75,6 +76,11 @@ SRC_URI += "${EASYMESH_CORE_PATCHES}"
 # capability/topology synchronization.  Permit this fire-and-forget STA-list
 # command during onboarding, send it synchronously, and restore the prior radio
 # state so the event cannot expire or disrupt the onboarding exchange.
+
+# AL-SAP is a length-delimited protocol carried over SOCK_STREAM.  Read one
+# complete framed SDU at a time; a plain recv() can coalesce adjacent topology
+# notifications and the old deserializer silently discarded every SDU after
+# the first one in that read.
 
 # A 512-byte association frame needs 1025 bytes when stored as hexadecimal plus
 # NUL.  The old 1024-byte scratch buffer made hex() reject the maximum-sized
