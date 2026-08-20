@@ -20,8 +20,8 @@ runtime_commit=${EASYMESH_RUNTIME_COMMIT:-c2e8ce74385d64c788ac750c18342e373d35e8
 bf_workspace=/home/vagrant/boardfarm-open-0406
 lab_user=vagrant
 
-controller=X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2
-ap=X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2
+controller=${EASYMESH_CONTROLLER_IMAGE_NAME:-X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2}
+ap=${EASYMESH_AP_IMAGE_NAME:-X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2}
 alpine_meta=alpine-3.19-amd64-meta.tar.xz
 alpine_rootfs=alpine-3.19-amd64-rootfs.tar.xz
 : "${EASYMESH_CONTROLLER_IMAGE_URL:?set it in /etc/easymesh-online.env}"
@@ -32,6 +32,7 @@ alpine_rootfs=alpine-3.19-amd64-rootfs.tar.xz
 : "${EASYMESH_AP_IMAGE_SHA256:=a4491eec0116d2bc0b2f6f0b438c43e77ec0ca95214d36ac7f80d039e818e6cd}"
 : "${EASYMESH_ALPINE_META_SHA256:=c04158f82707f34cfca17bf01367b8330b0d53aaf6a801c4852c3a2bf3bcabac}"
 : "${EASYMESH_ALPINE_ROOTFS_SHA256:=16d0b946436bd42ba43ace0b9b075a2f15b9fbc31393ecccfe45694db8653ac4}"
+: "${EASYMESH_WMEDIUMD_SHA256:=b7fdaf23c5c490dcfc42f1459cb31b78ab2c801f58c86bbbb7a12eca2a7f2ca9}"
 
 test "$(uname -r)" = 7.0.0-28-generic
 test -d "$source_root/.git"
@@ -134,9 +135,15 @@ env EASYMESH_RUNTIME_COMMIT="$runtime_commit" \
 bash "$vm_dir/scripts/30-boardfarm-wan.sh"
 as_lab_user env \
     EASYMESH_REPO="$runtime_repo" \
+    CONTROLLER_IMAGE="$assets/$controller" \
+    EXTENDER_IMAGE="$assets/$ap" \
     EXPECTED_REPO_HEAD="$runtime_commit" \
+    EXPECTED_WMEDIUMD_SHA256="$EASYMESH_WMEDIUMD_SHA256" \
     bash "$vm_dir/scripts/40-deploy-easymesh.sh"
-as_lab_user env EASYMESH_REPO="$runtime_repo" bash "$vm_dir/scripts/55-scale-topology.sh"
+as_lab_user env \
+    EASYMESH_REPO="$runtime_repo" \
+    EXTENDER_IMAGE="$assets/$ap" \
+    bash "$vm_dir/scripts/55-scale-topology.sh"
 bash "$vm_dir/scripts/50-runtime-service.sh"
 systemctl start easymesh-lab.service
 bash "$vm_dir/scripts/70-health-audit.sh"

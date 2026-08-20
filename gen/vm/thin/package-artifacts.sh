@@ -27,8 +27,20 @@ output_dir=${4:-$script_dir/artifacts}
 }
 test -f "$thin_box"
 
-controller_source="$binary_assets/X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2"
-extender_source="$binary_assets/X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2"
+mapfile -t controller_candidates < <(find "$binary_assets" -maxdepth 1 -type f \
+    -name 'X86EMLTRBPIBB_rdk-next_*.rootfs.lxc.tar.bz2' | sort)
+mapfile -t extender_candidates < <(find "$binary_assets" -maxdepth 1 -type f \
+    -name 'X86EMLTRBPIAP_rdk-next_*.rootfs.lxc.tar.bz2' | sort)
+[ "${#controller_candidates[@]}" -eq 1 ] || {
+    echo "expected exactly one controller image in $binary_assets; found ${#controller_candidates[@]}" >&2
+    exit 1
+}
+[ "${#extender_candidates[@]}" -eq 1 ] || {
+    echo "expected exactly one extender image in $binary_assets; found ${#extender_candidates[@]}" >&2
+    exit 1
+}
+controller_source=${controller_candidates[0]}
+extender_source=${extender_candidates[0]}
 alpine_meta_source="$binary_assets/alpine-3.19-amd64-meta.tar.xz"
 alpine_rootfs_source="$binary_assets/alpine-3.19-amd64-rootfs.tar.xz"
 for source_file in \
@@ -45,8 +57,9 @@ trap 'rm -rf -- "$staging"' EXIT
 install -d "$staging/artifacts" "$output_dir"
 
 box_name="easymesh-thin-$stamp.box"
-controller_name="easymesh-controller-rootfs-$stamp.tar.bz2"
-extender_name="easymesh-extender-rootfs-$stamp.tar.bz2"
+# Retain the BPIBB/BPIAP tokens: bpi.sh uses them to select the product role.
+controller_name=$(basename "$controller_source")
+extender_name=$(basename "$extender_source")
 alpine_meta_name="easymesh-alpine-meta-$stamp.tar.xz"
 alpine_rootfs_name="easymesh-alpine-rootfs-$stamp.tar.xz"
 environment_name="easymesh-local-$stamp.env"
@@ -64,16 +77,22 @@ controller_sha=$(sha256sum "$controller_source" | awk '{print $1}')
 extender_sha=$(sha256sum "$extender_source" | awk '{print $1}')
 alpine_meta_sha=$(sha256sum "$alpine_meta_source" | awk '{print $1}')
 alpine_rootfs_sha=$(sha256sum "$alpine_rootfs_source" | awk '{print $1}')
+runtime_commit=$(git -C "$vm_dir/../.." rev-parse HEAD)
+wmediumd_sha=$(sha256sum "$vm_dir/../wmediumd/wmediumd.patched" | awk '{print $1}')
 
 cat >"$staging/artifacts/$environment_name" <<EOF
 EASYMESH_CONTROLLER_IMAGE_URL=file:///vagrant-artifacts/$controller_name
 EASYMESH_AP_IMAGE_URL=file:///vagrant-artifacts/$extender_name
+EASYMESH_CONTROLLER_IMAGE_NAME=$controller_name
+EASYMESH_AP_IMAGE_NAME=$extender_name
 EASYMESH_ALPINE_META_URL=file:///vagrant-artifacts/$alpine_meta_name
 EASYMESH_ALPINE_ROOTFS_URL=file:///vagrant-artifacts/$alpine_rootfs_name
 EASYMESH_CONTROLLER_IMAGE_SHA256=$controller_sha
 EASYMESH_AP_IMAGE_SHA256=$extender_sha
 EASYMESH_ALPINE_META_SHA256=$alpine_meta_sha
 EASYMESH_ALPINE_ROOTFS_SHA256=$alpine_rootfs_sha
+EASYMESH_WMEDIUMD_SHA256=$wmediumd_sha
+EASYMESH_RUNTIME_COMMIT=$runtime_commit
 EOF
 
 cat >"$staging/ARTIFACTS-$stamp.md" <<EOF
