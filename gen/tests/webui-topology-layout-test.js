@@ -2,8 +2,8 @@
 
 'use strict';
 
-const assert = require('node:assert/strict');
-const path = require('node:path');
+const assert = require('assert').strict;
+const path = require('path');
 
 if (process.argv.length !== 3) {
   console.error(`Usage: ${path.basename(process.argv[1])} SCRIPT_JS`);
