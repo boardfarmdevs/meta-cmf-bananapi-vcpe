@@ -57,6 +57,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0053-manager-service-timers-under-event-load.patch \
     file://0054-controller-serialize-command-result-sessions.patch \
     file://0055-topology-response-do-not-overwrite-conflicting-owner.patch \
+    file://0056-radio-service-protocol-timers-under-frame-load.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
