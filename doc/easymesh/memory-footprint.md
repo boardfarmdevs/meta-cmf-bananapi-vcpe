@@ -25,6 +25,13 @@ radio and BSS records are configured. The pulse is released after convergence.
 This run found no retained bring-up growth. It is not, however, a substitute for
 the deferred 12-hour stability run.
 
+A later multi-day observation found an independent 15-minute SNMP self-heal
+process-multiplication defect. The bounded profile below ended with one
+`snmp_subagent` after reconstructing the container and therefore remains a
+valid short-run EasyMesh measurement, but it did not exercise the failure for
+multiple health intervals. The defect, its measured cost and the staged fix
+are recorded below.
+
 ## Measured configuration
 
 The measurement was made on rev130 on 2026-08-19/20 UTC using the 0815-codex
@@ -124,6 +131,63 @@ The directly involved Wi-Fi/EasyMesh processes are OneWifi, `em_ctrl`,
 The direct Wi-Fi/EasyMesh processes plus their MariaDB model therefore account
 for 198.10 MiB, or 70.3% of converged process PSS.
 
+## Long-running SNMP self-heal defect
+
+On 2026-08-20 the continuously running rev130 controller contained 53
+`snmp_subagent` processes and 52 retained `run_subagent.sh` wrappers. New pairs
+had appeared approximately every 15 minutes. The same multiplication was
+observed independently on the rev120 and rev150 VM labs.
+
+The launch path is:
+
+```text
+CcspTandDSsp.service
+  -> resource_monitor.sh             15-minute interval
+  -> task_health_monitor.sh
+  -> corrective_action.sh resetNeeded
+  -> run_subagent.sh
+  -> snmp_subagent                   changes from root to non-root
+```
+
+Both process tests were scoped incorrectly:
+
+- `task_health_monitor.sh` used `ps ww`, which selected root processes with a
+  controlling terminal and could not see the non-root daemon;
+- `run_subagent.sh` used `ps -ww`, whose default effective-UID selection also
+  excluded the non-root daemon.
+
+Both exact deployed predicates returned zero PIDs, while `pidof snmp_subagent`
+returned all 53 live processes. The monitor therefore requested a recovery
+every interval, and the launcher failed to replace any prior copy. The
+accumulated wrappers were adopted into `CcspTandDSsp.service` when their callers
+exited.
+
+| Live rev130 measurement | Result |
+| --- | ---: |
+| `snmp_subagent` count | 53 |
+| `snmp_subagent` aggregate RSS / PSS / private | 573.4 / 94.7 / 87.4 MiB |
+| retained wrapper count | 52 |
+| wrapper aggregate RSS / PSS / private | 127.0 / 10.2 / 9.2 MiB |
+| `CcspTandDSsp.service` memory charge | 116.9 MiB |
+| whole-container current / peak memory | 442.5 / 506.4 MiB |
+
+The approximately 700 MiB summed RSS for the two process groups is not their
+physical-memory cost because it counts their common executable and library
+pages once per process. Aggregate PSS and cgroup memory expose the real cost.
+
+Commit `798ad21` changes both owners to `pidof snmp_subagent`. The launcher
+also guards an empty result before `kill`, preserving a normal first start.
+Both recipes and a complete controller image compiled successfully on rev140;
+the generated rootfs passed shell syntax and content checks. The staged image
+is `X86EMLTRBPIBB_rdk-next_20260820171311.rootfs.lxc.tar.bz2`, SHA-256
+`2951cbb76caf018978d498ee8454f5e4e208a03479f10c42051a6f5a04e926a1`.
+
+This image has intentionally not been deployed. Existing labs therefore still
+contain the old process tests and must not be used to claim runtime acceptance
+of the fix. Deployment acceptance should reconstruct one controller, verify
+one daemon and no retained wrapper across at least three health intervals, and
+confirm that an explicit recovery still leaves exactly one daemon.
+
 ## Bring-up allocation behavior
 
 The largest bring-up change was in `em_ctrl`:
@@ -202,7 +266,9 @@ retention and failure recovery active.
    allocator arenas and cgo/native allocations.
 5. Move immutable WebUI assets out of `/nvram` in the production filesystem
    layout.
-6. Run the explicitly deferred 12-hour churn/steady-state test when authorized
+6. Deploy and validate the staged SNMP fix across at least three 15-minute
+   health intervals before repeating the memory baseline.
+7. Run the explicitly deferred 12-hour churn/steady-state test when authorized
    and compare start, post-churn and final PSS by service.
 
 ## Reproducing the profile

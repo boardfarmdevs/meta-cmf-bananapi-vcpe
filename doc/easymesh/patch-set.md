@@ -84,7 +84,9 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - bound and serialize TLS command/result sessions so a failed or overlapping
   WebUI request cannot block every observer route; and
 - serialize log4c category creation so concurrent component startup cannot
-  corrupt the shared category factory and force a OneWifi restart.
+  corrupt the shared category factory and force a OneWifi restart; and
+- detect the non-root SNMP subagent from the root self-heal path so the
+  15-minute monitor cannot multiply daemon and wrapper processes.
 
 ### hwsim and single-phy adaptations
 
@@ -125,6 +127,8 @@ copying a list from documentation:
 | log4c | `recipes-common/log4c/log4c_1.2.3.bbappend` | thread-safe shared category creation during concurrent startup |
 | EasyMesh core | `recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend` | onboarding, model, steering, crypto, CLI |
 | 1905 | `recipes-ccsp/ieee1905/ieee1905-em.bbappend` | build/startup, AL-SAP transport and topology-change notification |
+| BPI system integration | `recipes-rdkb/sysint-broadband/sysint-broadband.bbappend` | self-heal process detection and installed-script corrections |
+| SNMP protocol agent | `recipes-ccsp/ccsp/ccsp-snmp-pa.bbappend` | idempotent cross-user subagent replacement |
 
 Patch headers contain the failure trace, packet/log evidence and ownership
 rationale. Patch number gaps intentionally preserve comparison with 0814.
@@ -300,6 +304,30 @@ Fresh deployment of the exact pair on both rev130 and the rev150 VM reached
 recorded zero monitored service restarts, and passed a fresh 10/10 commanded
 steering matrix. Their current controller, CLI, OneWifi and log4c binaries also
 match by SHA-256.
+
+### Staged SNMP self-heal build—not deployed
+
+Commit `798ad21` fixes a separate long-running RDK-B defect found after the
+accepted image pair above. The root `CcspTandDSsp` health monitor used `ps ww`
+and the root SNMP launcher used `ps -ww`; neither default process selection
+could see `snmp_subagent` after it changed to the `non-root` account. Each
+15-minute health pass consequently launched another daemon and retained its
+wrapper. Rev130 reached 53 daemons and 52 wrappers; the same periodic pattern
+was present on both VM labs.
+
+The fix uses `pidof snmp_subagent` at both ownership boundaries and guards the
+launcher's empty first-start result. The pinned source patches applied, the
+`sysint-broadband` and `ccsp-snmp-pa` recipes compiled, and a complete
+`qemux86bpibroadband` image built successfully on rev140. Inspection of the
+generated rootfs found the corrected predicate in both installed scripts and
+the regression checker passed:
+
+| Role | Artifact | SHA-256 |
+| --- | --- | --- |
+| staged controller | `X86EMLTRBPIBB_rdk-next_20260820171311.rootfs.lxc.tar.bz2` | `2951cbb76caf018978d498ee8454f5e4e208a03479f10c42051a6f5a04e926a1` |
+
+No running lab has received this artifact. Runtime acceptance across multiple
+health intervals remains deliberately pending.
 
 During P0 development, the following fixes were first rebuilt and exercised as
 targeted runtime binaries. The table is retained as diagnostic provenance;
