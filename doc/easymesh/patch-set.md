@@ -32,10 +32,10 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0056`, IEEE1905
-patches through `0005`, libwebconfig patches through `0005`, and the OneWifi
-live-association patch `0011`, plus the log4c category-factory serialization
-fix. The Dropbox-packaged 0818 appliance remains an
+The current source series contains EasyMesh patches through `0059`, IEEE1905
+patches through `0005`, libwebconfig patches through `0005`, and OneWifi
+patches through `0012`, plus the log4c category-factory serialization fix. The
+Dropbox-packaged 0818 appliance remains an
 older, separately accepted distribution until its binary artifacts are
 deliberately rolled forward. Never infer image content from the host checkout;
 record the image filename/hash and the source revision used to build it.
@@ -86,7 +86,9 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - serialize log4c category creation so concurrent component startup cannot
   corrupt the shared category factory and force a OneWifi restart; and
 - detect the non-root SNMP subagent from the root self-heal path so the
-  15-minute monitor cannot multiply daemon and wrapper processes.
+  15-minute monitor cannot multiply daemon and wrapper processes; and
+- resolve a duplicate extender AL MAC to its Wi-Fi STA interface instead of
+  rejecting DML initialization after `getifaddrs()` returns the bridge first.
 
 ### hwsim and single-phy adaptations
 
@@ -122,7 +124,7 @@ copying a list from documentation:
 | --- | --- | --- |
 | Wi-Fi HAL | `recipes-ccsp/hal/rdk-wifi-hal.bbappend` | nl80211, VAP/interface mapping, WDS, management frames |
 | hostap integration | `recipes-ccsp/rdk-wifi-libhostap/rdk-wifi-libhostap_2.11.bbappend` | embedded AP/STA state-machine safety |
-| OneWifi | `recipes-ccsp/ccsp/ccsp-one-wifi.bbappend` | hwsim defaults, tri-band configuration, association deltas |
+| OneWifi | `recipes-ccsp/ccsp/ccsp-one-wifi.bbappend` | hwsim defaults, tri-band configuration, association deltas, duplicate-AL-MAC interface resolution |
 | libwebconfig | `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig.bbappend` | EasyMesh/OneWifi translation and client snapshots |
 | log4c | `recipes-common/log4c/log4c_1.2.3.bbappend` | thread-safe shared category creation during concurrent startup |
 | EasyMesh core | `recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend` | onboarding, model, steering, crypto, CLI |
@@ -182,11 +184,14 @@ authority. Its dependency order is:
 32. prevent an unordered conflicting Topology Response snapshot from
     overwriting a newer association-event owner; and
 33. service each radio's protocol timer from a monotonic deadline even while
-    normal frame and command events keep that radio queue non-empty.
+    normal frame and command events keep that radio queue non-empty;
+34. keep fallback BSS-label formatting out of the fetched topology model; and
+35. clone that model before D3 adds coordinates and resolved link objects; and
+36. run explicit layout optimization against those cloned simulation nodes.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current full images stop at `0055`; the targeted
-`0056` validation is recorded separately below.
+component or image build. The current images contain the complete ordered
+series through `0059`.
 
 ## IEEE 1905 ordering
 
@@ -285,27 +290,30 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 ## Build and acceptance
 
-The current pair is a clean full roll-up through EasyMesh `0055`, IEEE1905
-`0005`, and the generic log4c category-factory serialization fix. It was built
-from source revision `9a9bd454c5c466a21b8bc44b7e83d279597c4e99`:
+The current deployment is a clean role-specific roll-up through EasyMesh
+`0059`, IEEE1905 `0005`, the generic log4c category-factory serialization fix,
+and the SNMP self-heal process fix. The extender additionally contains OneWifi
+`0012`. Each role retains its own source revision and artifact hash:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260820022527.rootfs.lxc.tar.bz2` | `af446b9610a9d030c6a642903a65b770a3fe49295f813788f32398ab13eed090` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260820023708.rootfs.lxc.tar.bz2` | `fd731d207cf2bc5139d62bade5ee73f2f4ee9de33f452b7848c3844f6bce248e` |
+| controller (`3c8a41f1fc868cd3ec823ea722430b152e20e4e7`) | `X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2` | `da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e` |
+| extender (`a50a008152c7c3860af73b58af4bb8b944c777e7`) | `X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2` | `5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29` |
 
 All five deployed device images contain the same `onewifi_em_agent` binary
-(`c9c2ba73441b18cf38c60aeb4e5ed60d3e19587101ce54738af0efdf83494f34`).
+(`ad859de12e6b667c7d7698e53b30658316a7db99c612f322bafe1894534679bb`).
 The earlier deterministic fourth-extender/four-associated-STA stack-protector
 failure remained absent through clean deployment and cold-boot reconstruction.
 
-Fresh deployment of the exact pair on both rev130 and the rev150 VM reached
-`5/15/50/14`, exposed ten live clients in the topology, passed 10/10 traffic,
-recorded zero monitored service restarts, and passed a fresh 10/10 commanded
-steering matrix. Their current controller, CLI, OneWifi and log4c binaries also
-match by SHA-256.
+Fresh deployment of the exact pair on rev130 reached `5/15/50/14`, exposed ten
+live clients, passed 10/10 traffic, held a 120-second stability window, and
+recorded zero monitored service restarts. Three live topology responses across
+two refresh intervals had the same SHA-256. The rendered model is
+`Controller`, colocated `Agent-1`, and `Extender-1` through `Extender-4`.
+The deployed asset is `topology-layout-optimized-1`; its live source passed
+the layout-model isolation and optimization regression.
 
-### Staged SNMP self-heal build—not deployed
+### SNMP self-heal correction
 
 Commit `798ad21` fixes a separate long-running RDK-B defect found after the
 accepted image pair above. The root `CcspTandDSsp` health monitor used `ps ww`
@@ -316,18 +324,10 @@ wrapper. Rev130 reached 53 daemons and 52 wrappers; the same periodic pattern
 was present on both VM labs.
 
 The fix uses `pidof snmp_subagent` at both ownership boundaries and guards the
-launcher's empty first-start result. The pinned source patches applied, the
-`sysint-broadband` and `ccsp-snmp-pa` recipes compiled, and a complete
-`qemux86bpibroadband` image built successfully on rev140. Inspection of the
-generated rootfs found the corrected predicate in both installed scripts and
-the regression checker passed:
-
-| Role | Artifact | SHA-256 |
-| --- | --- | --- |
-| staged controller | `X86EMLTRBPIBB_rdk-next_20260820171311.rootfs.lxc.tar.bz2` | `2951cbb76caf018978d498ee8454f5e4e208a03479f10c42051a6f5a04e926a1` |
-
-No running lab has received this artifact. Runtime acceptance across multiple
-health intervals remains deliberately pending.
+launcher's empty first-start result. The pinned source patches applied, both
+recipes compiled, and the generated rootfs passed shell syntax and predicate
+checks. It is included in the current controller artifact above; the earlier
+`20260820171311` staged image is superseded and must not be deployed.
 
 During P0 development, the following fixes were first rebuilt and exercised as
 targeted runtime binaries. The table is retained as diagnostic provenance;
@@ -345,12 +345,10 @@ all listed source changes are now included in the current full image pair:
 | live client RCPI presentation (`0044`) | `onewifi_em_cli` | `68cd5937a2f0d256b1b96d5113fa75582066bc9a8eed48050db615a44f5de4f2` |
 | authoritative topology client overlay (`0045`) | `onewifi_em_cli` | `c4b7055b160bd061d3d08324c9e933f7924b9b3625fbbaaf984a862d8b88ec70` |
 
-EasyMesh `0056` was diagnosed after this full image pair. Its targeted, stripped
-`onewifi_em_agent` is
-`ad859de12e6b667c7d7698e53b30658316a7db99c612f322bafe1894534679bb`.
-It is deliberately recorded separately because the current image hash above
-still contains the pre-`0056` agent; a future full-image roll-up must establish
-new image and binary hashes.
+EasyMesh `0056` was first diagnosed with a targeted stripped agent before the
+full roll-up. Its binary hash,
+`ad859de12e6b667c7d7698e53b30658316a7db99c612f322bafe1894534679bb`,
+is now the same binary present in the current controller and extender images.
 
 Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
 in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
@@ -417,8 +415,8 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
-Patches `0047` through `0056` close the follow-on P0 state and service
-boundaries:
+Patches `0047` through `0059` close the follow-on P0 state, service, and
+presentation boundaries:
 
 | Patch | Root-cause boundary |
 | --- | --- |
@@ -432,6 +430,25 @@ boundaries:
 | `0054` | serialize the controller's shared asynchronous command/result session |
 | `0055` | retain the newer association-event owner when an old AP returns an ambiguous snapshot |
 | `0056` | service per-radio protocol timers under continuous frame/command load so bounded WSC M1 recovery can execute |
+| `0057` | render fallback IEEE labels without mutating the fetched topology model, so an unchanged two-second poll does not recreate an optimized graph |
+| `0058` | clone the fetched topology before D3 mutates render nodes and links, eliminating the remaining one-time post-optimize redraw |
+| `0059` | release and settle D3's cloned simulation nodes during Optimize Layout instead of changing only viewport scale around still-fixed nodes |
+
+The controller service drop-in also copies packaged WebUI assets over the
+persistent `/nvram/static` files on every start. The earlier no-clobber copy
+made a correct new image continue serving the previous image's JavaScript after
+an identity-preserving redeploy.
+
+OneWifi `0012` closes the matching extender convergence defect. The extender
+uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
+could therefore return the bridge first. The old DML lookup rejected that
+non-Wi-Fi interface and never published complete VAP/backhaul metadata, so the
+WebUI temporarily rendered generic green `Agent-*` links before later state
+repaired the graph. If the first match is unusable, `0012` searches the
+OneWifi interface map for the same MAC on a STA VAP. A live experiment changing
+only the bridge MAC made the old lookup succeed immediately, proving the
+duplicate-address selection boundary. The rebuilt four extenders all returned
+DML success and published their three fronthaul plus backhaul records.
 
 The supporting OneWifi/libwebconfig changes distinguish a live FULL
 association snapshot from retained driver history. IEEE1905 `0003`-`0005`
@@ -509,8 +526,6 @@ is explicitly deferred and is not implied by these bounded results.
 
 ## Remaining engineering debt
 
-- Roll EasyMesh `0056` into a new complete controller/extender image pair and
-  repeat direct/VM parity with the resulting image hashes.
 - Replace fixed CLI tree storage with a length-tracked serializer.
 - Generalize steering ACK routing into an outstanding-transaction table.
 - Consolidate authorized WDS creation into one implementation owner.

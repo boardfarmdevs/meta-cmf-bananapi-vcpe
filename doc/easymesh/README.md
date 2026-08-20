@@ -35,7 +35,7 @@ than beside current operating instructions.
 
 ```text
 source             codex/0815-clean
-patch series       EasyMesh through 0056, IEEE1905 through 0005
+patch series       EasyMesh through 0059, IEEE1905 through 0005
 image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
@@ -44,28 +44,31 @@ clients            10 active WLAN clients
 medium             patched multichannel wmediumd
 ```
 
-The current fully rebuilt image pair contains the complete P0 source patch set
-through EasyMesh `0055`, IEEE1905 `0005`, and the serialized log4c category
-factory fix. It was built from source revision
-`9a9bd454c5c466a21b8bc44b7e83d279597c4e99`:
+The current deployment deliberately records each role independently. The
+controller contains EasyMesh through `0059`, IEEE1905 through `0005`, the
+serialized log4c category-factory fix, and the cross-user SNMP self-heal fix.
+The extenders add OneWifi `0012`, which resolves an extender AL MAC shared by
+its bridge and backhaul STA without delaying DML and backhaul publication.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260820022527.rootfs.lxc.tar.bz2` | `af446b9610a9d030c6a642903a65b770a3fe49295f813788f32398ab13eed090` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260820023708.rootfs.lxc.tar.bz2` | `fd731d207cf2bc5139d62bade5ee73f2f4ee9de33f452b7848c3844f6bce248e` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2` | `da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2` | `5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29` |
 
-Fresh deployments of this exact pair on rev130 and the rev150 VM reached the
-complete `5/15/50/14` model and ten live clients, held zero monitored service
-restarts, passed 10/10 traffic and a fresh 10/10 steering matrix. The rev130
-demo rehearsal additionally passed client carousel, RF-only extender
-expiry/return, live RCPI cycling, and a complete identity-preserving
-reconstruction.
+The controller was built at `3c8a41f1fc868cd3ec823ea722430b152e20e4e7`;
+the extender was built at `a50a008152c7c3860af73b58af4bb8b944c777e7`.
+The different revisions are intentional because `0012` changes only the
+extender's OneWifi discovery path. The controller also refreshes packaged
+WebUI assets into persistent `/nvram/static` on every service start, so a
+same-identity upgrade cannot continue serving an older UI. Never infer image
+contents from a newer host checkout.
 
-EasyMesh `0056` is newer than that image pair. Its targeted extender agent was
-built from revision `7536d8c`, deployed to a clean rev120 VM, and passed two
-consecutive identity-preserving cold reconstructions. The next full image
-roll-up must include `0056`; image contents are never inferred from the newer
-host checkout.
+A fresh 2026-08-20 deployment of this exact pair on rev130 passed
+`5/15/50/14`, ten-client topology and traffic, a 120-second stable window, and
+zero monitored service restarts. Three two-second topology polls were
+byte-identical after convergence. The controller served
+`topology-layout-optimized-1`, and the live JavaScript regression verified
+that optimization changes D3's render nodes without mutating the API model.
 
 ## Runtime access
 

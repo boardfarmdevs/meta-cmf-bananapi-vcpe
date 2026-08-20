@@ -15,6 +15,11 @@ deleting device identities. Do not run two RF scenarios at once: each is a
 writer to the same wmediumd control socket. All clean test exits restore the
 medium they captured.
 
+Run steering, RF scenarios, audits, and Docker commands as the `rev` user. The
+lab grants that user access through the LXD, Docker, and wmediumd control-socket
+groups. `sudo` is reserved for the complete lifecycle command because that
+runtime changes host networking, services, and container ownership state.
+
 These demonstrations show mechanisms and observability. The manual steer is a
 real EasyMesh Client Steering Request and 802.11v BTM exchange, but no current
 demo proves an autonomous optimizer or a novel steering policy.
@@ -174,7 +179,7 @@ controller/WebUI convergence at scale.
 Return to **Network Topology** and run one complete rotation:
 
 ```sh
-sudo gen/tests/wmediumd-client-carousel.py --rounds 1
+gen/tests/wmediumd-client-carousel.py --rounds 1
 ```
 
 The terminal announces each group with the same labels shown in the WebUI:
@@ -216,7 +221,7 @@ extender without restarting its container or controller processes.
 Keep **Network Topology** open and run:
 
 ```sh
-sudo gen/tests/wmediumd-extender-outage.py --extender bpiap-003
+gen/tests/wmediumd-extender-outage.py --extender bpiap-003
 ```
 
 `bpiap-003` is the node labelled `Extender-4` in the current five-AP lab.
@@ -269,7 +274,7 @@ sudo env \
   bash "$demo_runtime" stop
 
 # Optional: include the Boardfarm CPE-5 WAN and DHCP providers in the outage.
-sudo docker stop dhcp-cpe5 wan-cpe5
+docker stop dhcp-cpe5 wan-cpe5
 ```
 
 Check the stopped state:

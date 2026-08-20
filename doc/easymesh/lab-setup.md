@@ -22,15 +22,16 @@ topology, clients, wmediumd and test parameters match.
 ## Image provenance
 
 Every deployment must record the exact image filenames and hashes. The current
-fully rebuilt P0 pair is:
+fully rebuilt pair is:
 
 ```text
-image source revision     9a9bd454c5c466a21b8bc44b7e83d279597c4e99
-image EasyMesh content    through EasyMesh 0055 and IEEE1905 0005
-host tooling              codex/0815-clean at e01c5ca or later
+controller source         3c8a41f1fc868cd3ec823ea722430b152e20e4e7
+extender source           a50a008152c7c3860af73b58af4bb8b944c777e7
+image EasyMesh content    through EasyMesh 0059 and IEEE1905 0005
+host tooling              codex/0815-clean at 3c8a41f or later
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260820022527.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260820023708.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -40,8 +41,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-af446b9610a9d030c6a642903a65b770a3fe49295f813788f32398ab13eed090  controller
-fd731d207cf2bc5139d62bade5ee73f2f4ee9de33f452b7848c3844f6bce248e  extender
+da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e  controller
+5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -434,6 +435,18 @@ command. **Export** downloads the current topology as JSON data or the visible
 diagram as a portable SVG or PNG; SVG and PNG exports embed the displayed node
 icons.
 
+The accepted graph has one synthetic green edge from `Controller` to the
+colocated `Agent-1`; the four remote nodes are `Extender-1` through
+`Extender-4` and use wireless-backhaul edges. Several green `Agent-*` links
+that later turn into extenders indicate incomplete backhaul metadata, not a
+real topology change. OneWifi `0012` fixes the duplicate-AL-MAC lookup that
+caused that transient in the previous extender image. With the current pair,
+an unchanged two-second poll also leaves an optimized or manually positioned
+graph untouched. EasyMesh `0059` makes **Optimize Layout** release and settle
+D3's cloned render nodes; operating on the immutable API nodes only changed
+the viewport scale and left the graph itself fixed. The current controller
+serves asset revision `topology-layout-optimized-1`.
+
 ## Parity procedure
 
 Before comparing rev130 and the VM, record on both:
@@ -479,6 +492,22 @@ After deploying the targeted EasyMesh `0056` extender agent, two consecutive
 cold reconstructions passed `5/15/50/14`, 10/10 topology clients, the 120-second
 stable window, zero monitored restarts and 10/10 traffic. The external WebUI
 returned six rendered mesh nodes and ten clients on port `18889`.
+
+On 2026-08-20, rev130, the rev150 VM and the rev120 VM were redeployed with the
+earlier `20260820193228` controller and the same extender artifact. Each
+runtime reached the complete `5/15/50/14` model, ten clients and 10/10 traffic
+with zero monitored service restarts. The hwsim profile audit found 15 unique
+radio parents on every host. Repeated topology responses remained
+byte-identical across two-second polls, with `Controller`, colocated
+`Agent-1`, and four `Extender-*` identities. Those controllers served the
+then-current `topology-layout-isolated-1` asset.
+
+The subsequent `20260820210038` controller above was deployed and accepted on
+rev130 only. It passed a complete identity-preserving reconstruction,
+`5/15/50/14`, ten-client topology and traffic, a 120-second stable window, and
+zero monitored restarts. Three topology responses spanning two refresh
+intervals had the same SHA-256, and the live
+`topology-layout-optimized-1` asset passed its JavaScript regression.
 
 ## Troubleshooting order
 

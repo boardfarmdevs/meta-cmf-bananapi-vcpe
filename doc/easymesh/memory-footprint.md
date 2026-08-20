@@ -29,8 +29,8 @@ A later multi-day observation found an independent 15-minute SNMP self-heal
 process-multiplication defect. The bounded profile below ended with one
 `snmp_subagent` after reconstructing the container and therefore remains a
 valid short-run EasyMesh measurement, but it did not exercise the failure for
-multiple health intervals. The defect, its measured cost and the staged fix
-are recorded below.
+multiple health intervals. The defect, its measured cost and the bounded
+rev130 runtime acceptance of its fix are recorded below.
 
 ## Measured configuration
 
@@ -178,15 +178,16 @@ pages once per process. Aggregate PSS and cgroup memory expose the real cost.
 Commit `798ad21` changes both owners to `pidof snmp_subagent`. The launcher
 also guards an empty result before `kill`, preserving a normal first start.
 Both recipes and a complete controller image compiled successfully on rev140;
-the generated rootfs passed shell syntax and content checks. The staged image
-is `X86EMLTRBPIBB_rdk-next_20260820171311.rootfs.lxc.tar.bz2`, SHA-256
-`2951cbb76caf018978d498ee8454f5e4e208a03479f10c42051a6f5a04e926a1`.
+the generated rootfs passed shell syntax and content checks. The original
+`20260820171311` staged image is superseded by the current controller artifact
+recorded in [lab-setup.md](lab-setup.md).
 
-This image has intentionally not been deployed. Existing labs therefore still
-contain the old process tests and must not be used to claim runtime acceptance
-of the fix. Deployment acceptance should reconstruct one controller, verify
-one daemon and no retained wrapper across at least three health intervals, and
-confirm that an explicit recovery still leaves exactly one daemon.
+Runtime acceptance on rev130 held one `snmp_subagent` PID and no retained
+wrapper for 31 minutes, spanning two natural 15-minute health-monitor
+intervals. A subsequent fresh reconstruction with controller
+`20260820210038` again started with one daemon and no wrapper. This bounded
+acceptance demonstrates that the periodic multiplication is fixed; it is not
+a long-duration leak or explicit forced-recovery test.
 
 ## Bring-up allocation behavior
 
@@ -266,8 +267,8 @@ retention and failure recovery active.
    allocator arenas and cgo/native allocations.
 5. Move immutable WebUI assets out of `/nvram` in the production filesystem
    layout.
-6. Deploy and validate the staged SNMP fix across at least three 15-minute
-   health intervals before repeating the memory baseline.
+6. Extend the accepted two-interval SNMP check with an explicit forced recovery
+   and verify that it still leaves exactly one daemon and no wrapper.
 7. Run the explicitly deferred 12-hour churn/steady-state test when authorized
    and compare start, post-churn and final PSS by service.
 

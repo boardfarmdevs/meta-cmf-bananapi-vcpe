@@ -2,7 +2,7 @@
 
 Initial comparison: 2026-08-18
 
-Current 0815 status updated: 2026-08-19
+Current 0815 status updated: 2026-08-20
 
 Status: engineering assessment; not a certification claim
 
@@ -51,7 +51,7 @@ The compared versions are:
 | --- | --- |
 | original 0815-codex comparison | `b939a03`, branch `codex/0815-clean` |
 | RDK Unified Wi-Fi Mesh base | `c0e72a31c96cc63cc366fcf2b628132185985d2a`, 2026-07-21 |
-| current 0815 EasyMesh modifications | ordered patches through `0055`; IEEE1905 through `0005` |
+| current 0815 EasyMesh modifications | ordered patches through `0059`; IEEE1905 through `0005`; OneWifi through `0012` |
 | prplMesh | release `6.0.1`, `8ceef1b0f70a90c4b30b9ce57a99d064283f9638`, 2026-06-25 |
 
 The terms used in the tables are deliberate:

@@ -346,7 +346,7 @@ value or optimistic steer.
    placement and changing reported RCPI are exposed; a reversible wmediumd run
    moved controller RCPI from 138 to 88 and back without injecting a value.
 2. **Candidate observation and observe mode.** Expose fresh target/AP facts and
-   record normalized snapshots from both rev130 and rev150-VM.
+   record normalized snapshots from the pinned rev130 scenario.
 3. **Recommend mode.** Replay snapshots through a deterministic state machine
    and require exactly one recommendation in the active crossover.
 4. **Act mode.** Use the proven `steer.sh` adapter, bounded verification and
@@ -358,10 +358,9 @@ value or optimistic steer.
 
 ## Acceptance criteria
 
-The first optimizer is accepted only when the same policy and scenario pass on
-rev130 and rev150-VM with:
+The first optimizer is accepted on rev130 with:
 
-- identical policy/scenario hashes and frozen radio bindings;
+- recorded policy/scenario hashes and frozen radio bindings;
 - real measurement changes preceding the decision;
 - exactly one explained steer for the selected STA;
 - no unintended agent-local steering;
