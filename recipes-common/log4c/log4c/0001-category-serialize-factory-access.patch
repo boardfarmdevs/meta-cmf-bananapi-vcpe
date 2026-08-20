@@ -1,0 +1,70 @@
+From 3f0e052e3dd5cf55e42c39f988bbcc50a3a0f78a Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Wed, 19 Aug 2026 17:00:00 -0700
+Subject: [PATCH] category: serialize factory access
+
+The category factory is a process-global hash table, but category lookup and
+lazy creation are not thread safe. OneWifi registers RBUS schemas from
+multiple threads during startup, and those registration paths can create log
+categories concurrently. A captured startup failure showed sd_hash_lookup()
+following a corrupt hash-chain pointer while another thread was creating a
+category. The resulting SIGSEGV left the service in breakpad until systemd
+timed out and restarted it.
+
+Serialize category factory lookup, insertion, lazy initialization and list
+access. The mutex must be recursive because sd_factory_get() invokes
+log4c_category_new(), which obtains the parent through log4c_category_get().
+
+Upstream-Status: Pending
+
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/log4c/category.c | 35 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/src/log4c/category.c b/src/log4c/category.c
+index a88a856..9dde866 100644
+--- a/src/log4c/category.c
++++ b/src/log4c/category.c
+@@ -14,0 +15 @@
++#include <pthread.h>
+@@ -41,0 +43,20 @@
++static pthread_once_t log4c_category_mutex_once = PTHREAD_ONCE_INIT;
++static pthread_mutex_t log4c_category_mutex;
++
++/*******************************************************************************/
++static void log4c_category_mutex_init(void)
++{
++  pthread_mutexattr_t attr;
++
++  pthread_mutexattr_init(&attr);
++  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
++  pthread_mutex_init(&log4c_category_mutex, &attr);
++  pthread_mutexattr_destroy(&attr);
++}
++
++/*******************************************************************************/
++static void log4c_category_lock(void)
++{
++  pthread_once(&log4c_category_mutex_once, log4c_category_mutex_init);
++  pthread_mutex_lock(&log4c_category_mutex);
++}
+@@ -54,0 +76,3 @@
++  log4c_category_t* category;
++
++  log4c_category_lock();
+@@ -61 +85,3 @@
+-  return sd_factory_get(log4c_category_factory, a_name);
++  category = sd_factory_get(log4c_category_factory, a_name);
++  pthread_mutex_unlock(&log4c_category_mutex);
++  return category;
+@@ -67 +93,6 @@
+-  return sd_factory_list(log4c_category_factory, (void**) a_cats, a_ncats);
++  int count;
++
++  log4c_category_lock();
++  count = sd_factory_list(log4c_category_factory, (void**) a_cats, a_ncats);
++  pthread_mutex_unlock(&log4c_category_mutex);
++  return count;
+--
+2.43.0

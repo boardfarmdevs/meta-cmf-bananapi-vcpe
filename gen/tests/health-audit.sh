@@ -20,17 +20,20 @@ curl -fsS http://127.0.0.1:8888/api/v1/topology \
     | jq -r '[.nodes[].STAList[]?.staMAC] | unique | length'
 
 echo RESTARTS
+restart_fail=0
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     for unit in onewifi em_agent; do
         restarts=$(lxc exec "$container" -- systemctl show "$unit" \
             -p NRestarts --value)
         echo "$container $unit=$restarts"
+        [ "$restarts" = 0 ] || restart_fail=1
     done
 done
 for unit in em_ctrl em_cli; do
     restarts=$(lxc exec bpibroadband -- systemctl show "$unit" \
         -p NRestarts --value)
     echo "bpibroadband $unit=$restarts"
+    [ "$restarts" = 0 ] || restart_fail=1
 done
 
 echo CONNECTIVITY
@@ -62,3 +65,8 @@ fi
 
 echo MEMORY
 free -h | sed -n '1,2p'
+
+[ "$restart_fail" = 0 ] || {
+    echo "FAIL: one or more monitored services restarted" >&2
+    exit 1
+}
