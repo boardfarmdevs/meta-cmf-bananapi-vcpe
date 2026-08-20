@@ -727,6 +727,26 @@ hwsim_free_radios() {
     done | sort -V
 }
 
+# A host-resident radio is not necessarily available for a new profile. When
+# every lab container is stopped, every phy returns to the host namespace, but
+# existing LXD profiles still reserve their parent=virt-wlanN assignment for
+# the next start. Treat those profile references as allocations too; otherwise
+# an image redeploy can give a stopped controller's radio to an extender and
+# both instances then fail to coexist.
+hwsim_reserved_radios() {
+    local profile device parent
+    while read -r profile; do
+        [ -n "$profile" ] || continue
+        while read -r device; do
+            [ -n "$device" ] || continue
+            parent=$(lxc profile device get "$profile" "$device" parent 2>/dev/null || true)
+            case "$parent" in
+                virt-wlan[0-9]*) echo "$parent" ;;
+            esac
+        done < <(lxc profile device list "$profile" 2>/dev/null)
+    done < <(lxc profile list --format csv -c n 2>/dev/null)
+}
+
 # Reclaim "dirty" pool phys: when a container is deleted, its wiphy returns to the
 # host with the VAPs it created (wifi0, wifi0.1, ... wifi1.3) still attached, so
 # hwsim_free_radios skips it and the radio drains from the pool. Those leftover
@@ -748,13 +768,20 @@ hwsim_reclaim_dirty_phys() {
 
 # attach N free hwsim radios to a profile as physical NICs (named wlan0..N-1).
 hwsim_attach_radios() {
-    local profile="$1" count="${2:-3}"
+    local profile="$1" count="${2:-3}" candidate reserved_radio
     [ "$count" -gt 0 ] || return 0
     check_and_create_virt_wlan
     hwsim_reclaim_dirty_phys           # return stale-VAP radios to the pool first
-    local free=($(hwsim_free_radios)) i=0
+    local reserved=($(hwsim_reserved_radios)) free=() i=0
+    while read -r candidate; do
+        [ -n "$candidate" ] || continue
+        for reserved_radio in "${reserved[@]}"; do
+            [ "$candidate" != "$reserved_radio" ] || continue 2
+        done
+        free+=("$candidate")
+    done < <(hwsim_free_radios)
     if [ "${#free[@]}" -lt "$count" ]; then
-        echo "WARN hwsim: only ${#free[@]} free radios, need $count (raise HWSIM_POOL_SIZE, reload at idle)"
+        echo "WARN hwsim: only ${#free[@]} unreserved free radios, need $count (raise HWSIM_POOL_SIZE, reload at idle)"
     fi
     while [ "$i" -lt "$count" ] && [ "$i" -lt "${#free[@]}" ]; do
         lxc profile device add "$profile" "wlan${i}" nic \
