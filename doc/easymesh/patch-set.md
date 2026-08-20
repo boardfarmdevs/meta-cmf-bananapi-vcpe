@@ -32,9 +32,10 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0055`, IEEE1905
+The current source series contains EasyMesh patches through `0056`, IEEE1905
 patches through `0005`, libwebconfig patches through `0005`, and the OneWifi
-live-association patch `0011`. The Dropbox-packaged 0818 appliance remains an
+live-association patch `0011`, plus the log4c category-factory serialization
+fix. The Dropbox-packaged 0818 appliance remains an
 older, separately accepted distribution until its binary artifacts are
 deliberately rolled forward. Never infer image content from the host checkout;
 record the image filename/hash and the source revision used to build it.
@@ -77,10 +78,13 @@ These are not hwsim policy and are candidates for their owning upstreams:
   enrichment and repair missed multicast events from Associated Clients TLVs;
 - prevent stale Agent metrics or ambiguous old-AP snapshots from changing the
   current STA owner;
-- service manager timers even while the event queue remains continuously busy;
+- service manager and per-radio protocol timers even while their event queues
+  remain continuously busy;
   and
 - bound and serialize TLS command/result sessions so a failed or overlapping
-  WebUI request cannot block every observer route.
+  WebUI request cannot block every observer route; and
+- serialize log4c category creation so concurrent component startup cannot
+  corrupt the shared category factory and force a OneWifi restart.
 
 ### hwsim and single-phy adaptations
 
@@ -118,6 +122,7 @@ copying a list from documentation:
 | hostap integration | `recipes-ccsp/rdk-wifi-libhostap/rdk-wifi-libhostap_2.11.bbappend` | embedded AP/STA state-machine safety |
 | OneWifi | `recipes-ccsp/ccsp/ccsp-one-wifi.bbappend` | hwsim defaults, tri-band configuration, association deltas |
 | libwebconfig | `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig.bbappend` | EasyMesh/OneWifi translation and client snapshots |
+| log4c | `recipes-common/log4c/log4c_1.2.3.bbappend` | thread-safe shared category creation during concurrent startup |
 | EasyMesh core | `recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend` | onboarding, model, steering, crypto, CLI |
 | 1905 | `recipes-ccsp/ieee1905/ieee1905-em.bbappend` | build/startup, AL-SAP transport and topology-change notification |
 
@@ -171,10 +176,13 @@ authority. Its dependency order is:
 31. serialize controller command result sessions and close abandoned sessions;
     and
 32. prevent an unordered conflicting Topology Response snapshot from
-    overwriting a newer association-event owner.
+    overwriting a newer association-event owner; and
+33. service each radio's protocol timer from a monotonic deadline even while
+    normal frame and command events keep that radio queue non-empty.
 
-The complete ordered series was replayed against pristine pinned source before
-the Yocto image build.
+The ordered series is replayed against pristine pinned source before each Yocto
+component or image build. The current full images stop at `0055`; the targeted
+`0056` validation is recorded separately below.
 
 ## IEEE 1905 ordering
 
@@ -273,30 +281,29 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 ## Build and acceptance
 
-The following is the last fully rebuilt pair before the liveness/association
-P0 roll-up. It is retained as provenance, not as a claim that it contains
-patches `0047` through `0055`:
+The current pair is a clean full roll-up through EasyMesh `0055`, IEEE1905
+`0005`, and the generic log4c category-factory serialization fix. It was built
+from source revision `9a9bd454c5c466a21b8bc44b7e83d279597c4e99`:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `e5314430402513823c86c3a29823b4d2fbc9e826f381d0bb9c342364f52b8a9f` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `716ef80633e4b3097f2e77e885b828f195778d457d15090db7d00dc62ddc2449` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260820022527.rootfs.lxc.tar.bz2` | `af446b9610a9d030c6a642903a65b770a3fe49295f813788f32398ab13eed090` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260820023708.rootfs.lxc.tar.bz2` | `fd731d207cf2bc5139d62bade5ee73f2f4ee9de33f452b7848c3844f6bce248e` |
 
-All five images contain the same `onewifi_em_agent` binary
-(`3128ed3c2d25bfaf1af6835fd551aa634ed273d3fb0aa8c6872e6627f01f3dd9`).
+All five deployed device images contain the same `onewifi_em_agent` binary
+(`c9c2ba73441b18cf38c60aeb4e5ed60d3e19587101ce54738af0efdf83494f34`).
 The earlier deterministic fourth-extender/four-associated-STA stack-protector
 failure remained absent through clean deployment and cold-boot reconstruction.
 
-Both rev130 and the rev150 VM reached `5/15/50`, exposed ten live clients in
-the topology and
-recorded zero service restarts. The VM reconstructed all four extenders and ten
-clients after a forced-power-off boot, held the complete state for 120 seconds,
-and recorded its model, topology, restart counts, traffic and journal under the
-boot-ID acceptance directory. Earlier accepted runs passed 10/10 commanded
-steering and a 30/30 extended steering matrix.
+Fresh deployment of the exact pair on both rev130 and the rev150 VM reached
+`5/15/50/14`, exposed ten live clients in the topology, passed 10/10 traffic,
+recorded zero monitored service restarts, and passed a fresh 10/10 commanded
+steering matrix. Their current controller, CLI, OneWifi and log4c binaries also
+match by SHA-256.
 
-Post-image diagnosis added source fixes that were rebuilt and exercised as
-targeted runtime binaries before the next full image roll-up:
+During P0 development, the following fixes were first rebuilt and exercised as
+targeted runtime binaries. The table is retained as diagnostic provenance;
+all listed source changes are now included in the current full image pair:
 
 | Fix | Runtime artifact | SHA-256 |
 | --- | --- | --- |
@@ -309,6 +316,13 @@ targeted runtime binaries before the next full image roll-up:
 | live device/client inventory (`0037`) | `onewifi_em_cli` | `3cf06dabb4294440d47ebd1ac2a36b957ead61489cfe03c2460c800695fe992f` |
 | live client RCPI presentation (`0044`) | `onewifi_em_cli` | `68cd5937a2f0d256b1b96d5113fa75582066bc9a8eed48050db615a44f5de4f2` |
 | authoritative topology client overlay (`0045`) | `onewifi_em_cli` | `c4b7055b160bd061d3d08324c9e933f7924b9b3625fbbaaf984a862d8b88ec70` |
+
+EasyMesh `0056` was diagnosed after this full image pair. Its targeted, stripped
+`onewifi_em_agent` is
+`ad859de12e6b667c7d7698e53b30658316a7db99c612f322bafe1894534679bb`.
+It is deliberately recorded separately because the current image hash above
+still contains the pre-`0056` agent; a future full-image roll-up must establish
+new image and binary hashes.
 
 Before `0030`, the controller's anonymous RSS rose from 49,204 to 51,568 KiB
 in 70 seconds under normal AP-metrics traffic. After the fix it held at 21,096
@@ -375,7 +389,7 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
-Patches `0047` through `0055` close the follow-on P0 state and service
+Patches `0047` through `0056` close the follow-on P0 state and service
 boundaries:
 
 | Patch | Root-cause boundary |
@@ -389,6 +403,7 @@ boundaries:
 | `0053` | service manager timers under continuous event-queue load |
 | `0054` | serialize the controller's shared asynchronous command/result session |
 | `0055` | retain the newer association-event owner when an old AP returns an ambiguous snapshot |
+| `0056` | service per-radio protocol timers under continuous frame/command load so bounded WSC M1 recovery can execute |
 
 The supporting OneWifi/libwebconfig changes distinguish a live FULL
 association snapshot from retained driver history. IEEE1905 `0003`-`0005`
@@ -396,8 +411,8 @@ make locally detected expiry and reappearance visible to the controller through
 the normal Topology Notification path and ensure only received evidence extends
 a neighbor lifetime.
 
-Fresh deployment of the `20260819032857` image pair reached `5/15/50`, ten
-live clients, zero service restarts and zero client traffic loss. Three strict
+P0 development deployments reached `5/15/50`, ten live clients, zero service
+restarts and zero client traffic loss. Three strict
 carousel runs (2, 2 and 4 rounds) completed 40 paired group arrivals, or 80
 individual client association updates, with physical link, controller parent
 and topology API agreement plus verified medium restoration. A clean
@@ -424,6 +439,23 @@ restart counter remained zero. A further 10/10 run validated the new journal:
 ten unique transaction IDs, ten start records, ten completion records and
 transaction-prefixed command output.
 
+After the full `20260820022527`/`20260820023708` roll-up, an operator demo
+rehearsal on rev130 passed a named manual steer, one full ten-client carousel,
+RF-only expiry and return of `bpiap-003`, dynamic RCPI cycling, and a complete
+identity-preserving stop/start. The final independent audit reported
+`5/15/50/14`, 10/10 topology clients, 10/10 traffic and zero monitored
+restarts.
+
+A clean artifact-only rev120 VM then failed two cold reconstructions on the same
+boundary: `bpiap-001` transmitted all three initial M1 messages, received M2 on
+5 and 6 GHz, but never retried the lost 2.4 GHz exchange while normal events
+kept that radio queue busy. Patch `0056` moves the per-radio timeout to a
+monotonic deadline serviced between queued events, allowing the bounded M1
+recovery in `0021` to run. With the targeted `0056` agent in all four extenders,
+two consecutive identity-preserving cold reconstructions passed
+`5/15/50/14`, 10/10 topology clients, a 120-second stable window, zero
+monitored restarts and 10/10 traffic.
+
 A subsequent 31-sample, ten-minute hold covered AP shutdown, failed traffic,
 topology reconstruction and restart activity. Controller RSS/anonymous memory
 moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
@@ -449,6 +481,8 @@ is explicitly deferred and is not implied by these bounded results.
 
 ## Remaining engineering debt
 
+- Roll EasyMesh `0056` into a new complete controller/extender image pair and
+  repeat direct/VM parity with the resulting image hashes.
 - Replace fixed CLI tree storage with a length-tracked serializer.
 - Generalize steering ACK routing into an outstanding-transaction table.
 - Consolidate authorized WDS creation into one implementation owner.

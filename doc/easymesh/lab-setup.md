@@ -12,35 +12,36 @@
 | --- | --- |
 | rev140 | Yocto build host; does not run the lab |
 | rev130 | direct Linux 7.0/LXD runtime |
-| rev150 Vagrant VM | portable Linux 7.0/LXD runtime; preferred reference result |
+| rev150 Vagrant VM | portable Linux 7.0/LXD runtime; accepted peer result |
+| rev120 Vagrant VM | clean-install/portability acceptance runtime |
 
-0815-codex is authoritative on all three. rev130 and the rev150 VM are peer
-runtimes: results are comparable only when source revision, image hashes,
-kernel, topology, clients, wmediumd and test parameters match.
+0815-codex is authoritative on all four systems. The three runtime labs are
+peers: results are comparable only when source revision, image hashes, kernel,
+topology, clients, wmediumd and test parameters match.
 
 ## Image provenance
 
-Every deployment must record the exact image filenames and hashes. The last
-fully rebuilt pair before the current P0 roll-up was:
+Every deployment must record the exact image filenames and hashes. The current
+fully rebuilt P0 pair is:
 
 ```text
-image EasyMesh content    20260819032857 rebuild through EasyMesh 0046
-host tooling              codex/0815-clean at the matching deployment commit
+image source revision     9a9bd454c5c466a21b8bc44b7e83d279597c4e99
+image EasyMesh content    through EasyMesh 0055 and IEEE1905 0005
+host tooling              codex/0815-clean at e01c5ca or later
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260819032857.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260819032857.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260820022527.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260820023708.rootfs.lxc.tar.bz2
 ```
 
-These hashes identify that historical accepted pair; do not apply them to a
-newer rebuild:
+These hashes identify this pair; do not apply them to a newer rebuild:
 
 ```sh
 sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-e5314430402513823c86c3a29823b4d2fbc9e826f381d0bb9c342364f52b8a9f  controller
-716ef80633e4b3097f2e77e885b828f195778d457d15090db7d00dc62ddc2449  extender
+af446b9610a9d030c6a642903a65b770a3fe49295f813788f32398ab13eed090  controller
+fd731d207cf2bc5139d62bade5ee73f2f4ee9de33f452b7848c3844f6bce248e  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -404,6 +405,7 @@ From the lab LAN:
 ```text
 http://192.168.2.130:8888    rev130
 http://192.168.2.150:18889   rev150 VM
+http://192.168.2.120:18889   rev120 VM
 ```
 
 rev150 forwards the VM without reloading it:
@@ -414,6 +416,16 @@ rev150 forwards the VM without reloading it:
 
 The user socket is `easymesh-vm-webui-forward.socket`; `rev` user lingering is
 enabled so it remains available without an interactive login.
+
+The clean-install rev120 VM uses Vagrant's direct host forwarding instead:
+
+```text
+192.168.2.120:18889 -> VM:8888
+```
+
+Its working directory is `/home/rev/easymesh-lab/0820`; Vagrant selected host
+SSH port `2201`. Use `vagrant ssh` from that directory rather than treating the
+forwarded SSH port as a stable lab interface.
 
 On the Network Topology page, **Optimize Layout** only rearranges the rendered
 graph, caches the positions across topology refreshes and fits the result into
@@ -459,6 +471,14 @@ seconds to the controller database and 3.29 seconds to the API. Follow-up
 traffic checks reported 0% loss on all ten clients. The commanded crossover
 delivered 1,399/1,400 probes while retaining the same wmediumd PID. LXD itself
 is an intentional platform variance: 6.9 on rev130 and 6.7 in the VM.
+
+Current portability acceptance on 2026-08-19 used a new rev120 VM populated
+only from the external thin artifacts. The first two reconstructions exposed a
+lost-WSC-M2 recovery timer that was starved by continuous per-radio events.
+After deploying the targeted EasyMesh `0056` extender agent, two consecutive
+cold reconstructions passed `5/15/50/14`, 10/10 topology clients, the 120-second
+stable window, zero monitored restarts and 10/10 traffic. The external WebUI
+returned six rendered mesh nodes and ten clients on port `18889`.
 
 ## Troubleshooting order
 
