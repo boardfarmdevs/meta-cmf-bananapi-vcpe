@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 14:00:00 -0700
+Subject: [PATCH] cli: optimize the rendered topology nodes
+
+Patch 0058 correctly isolated D3's mutable render model from the fetched API
+snapshot, but Optimize Layout still released and cached nodes from the API
+snapshot.  The running D3 simulation owns the cloned render nodes, so all of
+its nodes remained fixed.  The force model did no layout work and fit-to-view
+merely enlarged the unchanged graph.
+
+Obtain the optimization set from simulation.nodes().  This lets link, charge
+and collision forces spread the rendered graph while preserving the immutable
+snapshot used by two-second change detection.  Bump the asset revision so a
+browser cannot retain the broken optimizer.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/static/index.html | 2 +-
+ src/rdkb-cli/static/script.js  | 9 +++++++--
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2032,7 +2032,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-layout-isolated-1"></script>
++    <script src="static/script.js?v=topology-layout-optimized-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2341,8 +2341,8 @@ class EasyMeshController {
+    * This never sends an EasyMesh command or changes the actual network.
+    */
+   optimizeTopologyLayout() {
+-    const nodes = this.topology?.nodes;
+     const simulation = this.topologySimulation;
++    const nodes = this.topologySimulationNodes(simulation);
+     if (!simulation || !Array.isArray(nodes) || nodes.length === 0) {
+       this.showNotification('No topology is available to lay out', 'warning');
+       return;
+@@ -2609,6 +2609,11 @@ class EasyMeshController {
+     return JSON.parse(JSON.stringify(value || { nodes: [], edges: [] }));
+   }
+ 
++  topologySimulationNodes(simulation) {
++    const nodes = simulation?.nodes?.();
++    return Array.isArray(nodes) ? nodes : [];
++  }
++
+   topologySignature(value) {
+     return JSON.stringify(value || {}, (key, item) =>
+       ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
+-- 
+2.43.0

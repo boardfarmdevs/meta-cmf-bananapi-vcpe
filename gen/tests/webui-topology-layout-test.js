@@ -49,10 +49,17 @@ renderTopology.edges[0]._midpoint = [10, 20];
 assert.deepEqual(topology, original, 'D3 render state changed the topology API model');
 assert.equal(controller.topologySignature(topology), before);
 
+const simulation = { nodes: () => renderTopology.nodes };
+assert.strictEqual(controller.topologySimulationNodes(simulation), renderTopology.nodes);
+assert.deepEqual(controller.topologySimulationNodes(null), []);
+assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNodes\(simulation\)/,
+  'Optimize Layout does not operate on the D3 render-node set');
+assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
+
 let redraws = 0;
 controller.topology = topology;
 controller.updateTopologyVisualization = () => { redraws += 1; };
 assert.equal(controller.applyTopologyRefresh(structuredClone(topology)), false);
 assert.equal(redraws, 0, 'an unchanged two-second refresh redrew the graph');
 
-console.log('PASS: formatting and D3 rendering leave the polled topology model unchanged');
+console.log('PASS: formatting, D3 rendering and optimization preserve the polled topology model');
