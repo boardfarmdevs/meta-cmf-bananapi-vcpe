@@ -10,7 +10,7 @@ if (process.argv.length !== 3) {
   process.exit(2);
 }
 
-global.document = { addEventListener() {} };
+global.document = { addEventListener() {}, getElementById() { return null; } };
 global.window = { addEventListener() {} };
 
 const Controller = require(path.resolve(process.argv[2]));
@@ -55,6 +55,43 @@ assert.deepEqual(controller.topologySimulationNodes(null), []);
 assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNodes\(simulation\)/,
   'Optimize Layout does not operate on the D3 render-node set');
 assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
+
+let layoutEnd;
+let fitted = false;
+const layoutNodes = structuredClone(renderTopology.nodes);
+layoutNodes.forEach(node => { node.fx = node.x ?? 0; node.fy = node.y ?? 0; });
+const fakeSimulation = {
+  nodes: () => layoutNodes,
+  on(name, handler) {
+    assert.equal(name, 'end.autoLayout');
+    layoutEnd = handler;
+    return this;
+  },
+  alpha(value) { assert.equal(value, 1); return this; },
+  alphaTarget(value) { assert.equal(value, 0); return this; },
+  restart() {
+    assert.ok(layoutNodes.every(node => node.fx === null && node.fy === null),
+      'Optimize Layout did not release every rendered node');
+    layoutNodes.forEach((node, index) => {
+      node.x = 300 + index * 400;
+      node.y = 200 + index * 250;
+    });
+    layoutEnd();
+    return this;
+  }
+};
+controller.topologySimulation = fakeSimulation;
+controller.nodePositionCache = new Map();
+controller.topologyLayoutGeneration = 0;
+controller.topologyRenderPending = false;
+controller.showNotification = () => {};
+controller.fitTopologyToView = () => { fitted = true; };
+controller.optimizeTopologyLayout();
+assert.equal(controller.nodePositionCache.size, layoutNodes.length);
+assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
+  'optimized render positions were not fixed and cached');
+assert.equal(fitted, true, 'optimized graph was not fitted to the viewport');
+assert.deepEqual(topology, original, 'Optimize Layout changed the API model');
 
 let redraws = 0;
 controller.topology = topology;
