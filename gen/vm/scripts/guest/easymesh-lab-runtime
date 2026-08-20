@@ -167,6 +167,22 @@ wait_mesh_model() {
     return 1
 }
 
+enable_metrics_reporting() {
+    local attempt response
+    for attempt in $(seq 1 12); do
+        response=$(curl -fsS --max-time 45 -X POST \
+            http://127.0.0.1:8888/api/v1/metricsreporting/enable 2>/dev/null || true)
+        if jq -e '.success == true and .devices == 5 and .radios == 15' \
+                >/dev/null 2>&1 <<< "$response"; then
+            echo 'metrics policy active on 5 devices / 15 radios'
+            return 0
+        fi
+        sleep 5
+    done
+    echo "metrics reporting could not be activated: ${response:-no API response}" >&2
+    return 1
+}
+
 wait_client_live() {
     local client=$1 attempt
     for attempt in $(seq 1 36); do
@@ -189,6 +205,38 @@ live_client_count() {
     curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null \
         | jq -r '[.nodes[]?.STAList[]?.staMAC | select(. != null and . != "")] | unique | length' \
         2>/dev/null
+}
+
+live_client_metrics_count() {
+    curl -fsS http://127.0.0.1:8888/api/v1/clients 2>/dev/null \
+        | jq -r '[.clients[]? | select((.client_metrics.rcpi // 0) > 0)] | length' \
+        2>/dev/null
+}
+
+trigger_client_metric_frames() {
+    local client
+    for client in $clients; do
+        lxc exec "$client" -- ping -I wlan0 -q -c 1 -W 2 10.0.0.1 \
+            >/dev/null 2>&1 &
+    done
+    wait || true
+}
+
+wait_client_metrics() {
+    local attempt reporting
+    for attempt in $(seq 1 24); do
+        if [ "$attempt" -eq 1 ] || [ $((attempt % 4)) -eq 0 ]; then
+            trigger_client_metric_frames
+        fi
+        reporting=$(live_client_metrics_count || true)
+        if [ "$reporting" = 10 ]; then
+            echo 'all ten WLAN clients report non-zero RCPI'
+            return 0
+        fi
+        sleep 5
+    done
+    echo "client metrics did not converge (non-zero RCPI=${reporting:-?}/10)" >&2
+    return 1
 }
 
 wait_clients() {
@@ -338,6 +386,7 @@ start)
         wait_extender_live "$container"
     done
     wait_mesh_model
+    enable_metrics_reporting
     for client in $clients; do
         start_instance "$client"
         wait_client_live "$client"
@@ -346,11 +395,12 @@ start)
     sudo -H -u "$lab_user" env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
     wait_clients
     wait_mesh_model
+    wait_client_metrics
     verify_stability_window
     assert_zero_restarts
     verify_client_traffic
     result=PASS
-    echo 'EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=10/10 associated=14 restarts=0'
+    echo 'EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=10/10 metrics=10/10 associated=14 restarts=0'
     ;;
 stop)
     sudo -H -u "$lab_user" "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
@@ -373,6 +423,7 @@ status)
         'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
         2>/dev/null)" = 5/15/50/14 ]
     [ "$(live_client_count)" = 10 ]
+    [ "$(live_client_metrics_count)" = 10 ]
     assert_zero_restarts >/dev/null
     verify_client_traffic >/dev/null
     ;;
