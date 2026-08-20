@@ -45,6 +45,23 @@ The controller image ships:
 - `steer.sh STA_MAC TARGET_BSSID [op_class] [channel]`, which resolves current
   placement, validates the target and builds the command payload.
 
+The host checkout also provides a name-aware adapter. It resolves both operands
+from the live topology and, unless overridden, selects the target fronthaul BSS
+on the client's current SSID and band:
+
+```sh
+gen/steer.sh sta-03 extender-2
+gen/steer.sh sta-03 agent-1       # colocated agent in bpibroadband
+gen/steer.sh --band 6 sta-03 extender-2
+```
+
+The `STA-xx` suffix is hexadecimal and is the same stable identity shown under
+the client icon in the WebUI. `Controller` is the control-plane node and has no
+WLAN BSS; `agent-1`, not `controller`, is the valid colocated radio target. The
+adapter prints its resolved STA MAC, target BSSID, SSID and band before it calls
+the controller's MAC-level `/usr/bin/steer.sh`. Use `--dry-run` to resolve and
+display the command without sending a steering request.
+
 Example, using live MACs from the current deployment:
 
 ```sh
