@@ -62,6 +62,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0058-cli-isolate-d3-topology-render-state.patch \
     file://0059-cli-optimize-rendered-topology-nodes.patch \
     file://0060-metrics-create-defaults-for-reloaded-radios.patch \
+    file://0061-cli-enable-all-metrics-reporting.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
