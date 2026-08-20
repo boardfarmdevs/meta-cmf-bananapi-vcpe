@@ -86,7 +86,8 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 3. Inspect associated-client RCPI updating every two seconds.
 4. Command a client steer through the real EasyMesh/BTM path.
 5. Move ten clients visibly around five agents using live wmediumd control.
-6. Isolate an extender over RF; watch clients move and the backhaul recover.
+6. Isolate an extender over RF; watch clients move, the node age out, and the
+   same extender return after restoration.
 7. Stop/restart an AP and verify service, WLAN and controller recovery.
 8. Capture IEEE 1905/EasyMesh traffic for offline Wireshark analysis.
 
@@ -102,7 +103,13 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 - Scaled commanded steering: **100/100** passed across ten clients/five agents;
   a further **10/10** validated transaction-level evidence journaling.
 - Live RCPI experiment: reported values tracked the applied RF phases.
-- Extender RF outage: client movement, backhaul loss, restoration and rejoin passed.
+- Extender RF outage: client movement in 5.464 s, node removal in 59.181 s,
+  exact 210-link restoration, same-node return in 15.198 s and 75 seconds of
+  10/10 association agreement passed.
+- Cold reconstruction: three consecutive `5/15/50/14` runs passed in
+  805, 800 and 802 seconds with zero service restarts.
+- Controller-container memory: 311.57 MiB cgroup peak and 266.10 MiB after
+  convergence, with no swap or memory-pressure events.
 - IEEE 1905 capture: live decapsulated traffic verified on controller `brlan0`.
 
 These are transport and lab-capability results—not yet an autonomous optimizer.
@@ -276,14 +283,15 @@ screenshot.
 
 # Stability work directly supports policy research
 
-Highest-priority open items:
+The P0 root causes now closed are AL-SAP message-boundary loss, client-owner
+repair, timer starvation under event load, command-session races and complete
+extender liveness/return. Highest-priority open items are:
 
-1. association/model consistency under simultaneous client events;
-2. historical raw-frame provider delivery miss, retained as a journal trigger
-   after 143 clean post-fix steers;
-3. missing controller liveness/aging for isolated extenders;
-4. long-run controller/CLI memory and CPU envelopes; and
-5. reproducible scale limits for the VM profiles.
+1. the historical raw-frame provider delivery miss, retained as a journal
+   trigger after 143 clean post-fix steers;
+2. the deliberately deferred 12-hour memory/churn envelope;
+3. trustworthy candidate-link measurement exposure for the optimizer; and
+4. reproducible scale limits for the VM profiles.
 
 Bad observations produce bad policy conclusions. These are experimental
 validity tasks, not peripheral cleanup.

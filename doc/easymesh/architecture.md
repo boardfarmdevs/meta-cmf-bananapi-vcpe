@@ -177,6 +177,9 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
 
 - Clean deployment, commanded steering and unattended VM cold-boot
   reconstruction are validated at four extenders and ten WLAN clients.
+- Complete RF isolation now ages a remote IEEE1905 neighbor, probes it through
+  a bounded standard Topology Query, removes only its active publication and
+  restores the same identity when valid traffic returns.
 - The wmediumd configurator safely controls radio-pair SNR; frequency-keyed
   same-wiphy band steering is not implemented.
 - One historical RBUS raw-frame provider delivery miss succeeded on immediate

@@ -209,14 +209,14 @@ Finally, the lab configuration and device inventory are separate documents;
 the suggested `co/ca-desk/lab5.json` is not present in the pinned staging
 repository. The supplied `boardfarm-easymesh.json` pair replaces it.
 
-## Current status
+## Frozen 2026-08-17 status
 
 The accepted images are the `20260817135730` controller and `20260817140053`
 extender pair. Their
 scale-safe EasyMesh agent fixes the deterministic AP Metrics Response stack
 overflow exposed by the fourth extender and associated stations.
 
-The current acceptance requires Boardfarm `60/60`, model `5/15/50/14`, six
+That dated acceptance requires Boardfarm `60/60`, model `5/15/50/14`, six
 topology nodes, 50 BSSs, 10/10 clients, ten-client WLAN traffic and zero
 EasyMesh service restarts. The captured evidence and defects found during the
 accepted run are in `docs/acceptance-2026-08-17.md`.

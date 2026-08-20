@@ -1,6 +1,8 @@
 # RDK-B Unified Wi-Fi Mesh and prplMesh evaluation
 
-Date: 2026-08-18
+Initial comparison: 2026-08-18
+
+Current 0815 status updated: 2026-08-19
 
 Status: engineering assessment; not a certification claim
 
@@ -27,18 +29,19 @@ prplMesh 6.0.1 demonstrates the expected division of responsibility:
    check, while internal Agent process and Controller-connectivity heartbeats
    cover different failure domains.
 
-The exact RDK-B Unified Wi-Fi Mesh source used by 0815-codex can construct a
-Topology Discovery CMDU, but `em_discovery_t::process_msg()` and
-`process_state()` are empty. It has an externally invoked `RemoveDevice`
-operation, not an automatic liveness-to-removal path. None of the 0815 patches
-adds such a lifecycle. That source finding agrees with the wmediumd tests: a
-backhaul became disconnected in 1.4 seconds, clients moved in 6-11 seconds,
-but the controller retained the extender for the complete 60- and 90-second
-observation windows.
+The original 2026-08-18 assessment found the same gap in the pinned RDK-B
+source: it had topology messages and an administrative `RemoveDevice`, but no
+automatic liveness-to-active-topology lifecycle. The first RF tests confirmed
+that an isolated extender remained visible for 60-90 seconds.
 
-The conclusion is not that the WebUI should invent a timeout. The missing work
-belongs in the 1905/Agent topology and Controller model layers; the WebUI must
-render the resulting state.
+That gap is now closed by the 0815 patch set, without placing a timeout in the
+WebUI. IEEE1905 ages only from received evidence and publishes normal Topology
+Notifications for expiry and reappearance. Unified Wi-Fi Mesh probes the
+affected Agent with a bounded standard Topology Query, suppresses only active
+publication when it receives no answer, retains persistent identity, and
+restores the same device on valid returning traffic. The accepted RF test
+removed the node in 59.181 seconds and restored it 15.198 seconds after exact
+medium restoration.
 
 ## Scope and evidence levels
 
@@ -46,9 +49,9 @@ The compared versions are:
 
 | Item | Version examined |
 | --- | --- |
-| 0815-codex layer | `b939a03`, branch `codex/0815-clean` |
+| original 0815-codex comparison | `b939a03`, branch `codex/0815-clean` |
 | RDK Unified Wi-Fi Mesh base | `c0e72a31c96cc63cc366fcf2b628132185985d2a`, 2026-07-21 |
-| 0815 EasyMesh modifications | ordered patches `0001` through `0038` in the layer bbappend |
+| current 0815 EasyMesh modifications | ordered patches through `0055`; IEEE1905 through `0005` |
 | prplMesh | release `6.0.1`, `8ceef1b0f70a90c4b30b9ce57a99d064283f9638`, 2026-06-25 |
 
 The terms used in the tables are deliberate:
@@ -163,12 +166,10 @@ topology truth, and long-term health are not confused with one another.
 
 ### Current RDK-B path
 
-Unified Wi-Fi Mesh has the protocol types and can construct a Topology
-Discovery message. Its current discovery state and receive functions are
-empty. The Controller handles Topology Responses and Notifications received
-through AL-SAP, and it has a complete explicit `RemoveDevice` command that
-deletes the device from runtime objects, MariaDB, and the data model. It does
-not connect silence or a missing 1905 neighbor to that command.
+The pinned base Unified Wi-Fi Mesh discovery state/receive functions remain
+empty, and the explicit `RemoveDevice` command remains an administrative
+deprovisioning operation. The 0815 implementation adds liveness at the correct
+existing boundaries rather than calling that destructive command:
 
 ```text
 extender RF/backhaul loss
@@ -176,12 +177,16 @@ extender RF/backhaul loss
         +--> clients detect beacon loss and reassociate       [works]
         +--> OneWifi/Agent publish new client association     [works]
         +--> Controller and WebUI move client parent          [works]
-        `--> Controller expires unreachable Agent             [missing]
+        +--> IEEE1905 expires received-neighbor evidence       [works]
+        +--> normal Topology Notification reaches AL-SAP       [works]
+        +--> Controller probes and suppresses active Agent     [works]
+        `--> returning traffic republishes same identity       [works]
 ```
 
-The manual remove operation is useful for administrative deprovisioning, but
-it is not a liveness mechanism. Calling it from a browser timeout or from
-wmediumd would be incorrect: neither is an authoritative EasyMesh observation.
+The manual remove operation is still useful for administrative deprovisioning,
+but it is not used for liveness. Neither the browser nor wmediumd declares a
+device dead; received IEEE1905 evidence and the controller probe own that
+decision.
 
 ### What “full implementation” should mean here
 
@@ -206,10 +211,11 @@ Any valid message / successful re-onboarding with the same AL-MAC
 reconciles identity and returns the device to ONLINE.
 ```
 
-For the experiment UI, `DISCONNECTED` should initially render as a visible but
-grey/unreachable node. `REMOVED` should make it disappear from the active
-topology. That two-stage presentation is more informative than immediate
-deletion and avoids treating a short RF fade as deprovisioning.
+The current implementation publishes only the active view: the device remains
+visible during the IEEE1905 aging/probe interval, then disappears without its
+persistent identity being deleted. A future northbound `SUSPECT`/`DISCONNECTED`
+state could render a grey intermediate node, but that presentation is not
+required to truthfully remove and restore the active topology today.
 
 ## General stack comparison
 
@@ -232,12 +238,12 @@ deletion and avoids treating a short RF fade as deprovisioning.
 | --- | --- | --- |
 | WSC M1/M2 onboarding | **Lab-proven** at four tri-band extenders; 0815 fixes lost M2, registrar reuse, disabled-radio, and concurrent onboarding defects | **Present** and extensively exercised by certification/Boardfarm infrastructure; includes burst coalescing and controller-restart renewal |
 | Credential/BSS synchronization | **Lab-proven** for 2.4/5/6 GHz fronthaul and 5 GHz backhaul | **Present**, including BSS configuration reporting and current security modes |
-| Topology query/response/notification | **Lab-proven** for onboarding, associations, and returns; topology-discovery lifecycle incomplete | **Present**, including neighbor discovery, re-parent filtering, disconnect events, and Agent removal |
+| Topology query/response/notification | **Lab-proven** for onboarding, associations, expiry and same-identity return; 0815 adds received-evidence aging plus bounded controller probe/suppression | **Present**, including neighbor discovery, re-parent filtering, disconnect events, and Agent removal |
 | Explicit device removal | **Present** through `RemoveDevice` command and DB/model orchestration | **Present** internally through topology reconciliation and NBAPI event/model handling |
 | Wired backhaul | Controller WAN/LAN and wired platform paths exist; remote-Agent wired onboarding is **not proven** in this lab | **Present/claimed**, including explicit wired-parent inference |
 | Wireless backhaul | **Lab-proven**, 4-address/WDS over 5 GHz | **Present**, with backhaul manager, wired preference/fallback, and optimization tasks |
 | Multi-hop/daisy chain | Source model can represent topology; 0815 acceptance is a star topology, so **not proven** | **Present** as a hierarchy with daisy-chain controls and IRE optimization; not reproduced here |
-| Failed Agent recovery | Backhaul and onboarding recovery are **lab-proven** after RF restore, but stale device never leaves topology | Topology aging/removal and renewed onboarding are **present** |
+| Failed Agent recovery | **Lab-proven**: clients move, isolated Agent leaves active topology, exact RF restore returns the same identity, and client ownership reconverges | Topology aging/removal and renewed onboarding are **present** |
 | DPP/EasyConnect onboarding | Substantial configurator/enrollee, chirp, encapsulated DPP, GAS, and 1905-security source exists; **not proven** in 0815 | DPP infrastructure and flows are **present**; not reproduced here |
 | R5/R6 scope | Repository describes R5; current source also contains MLD, DPP, and newer message/data-model work. The BPI profile is not certified by this report | Foundation claims R1-R5 support with R6 in development; 6.0.1 contains significant R6 certification and MLO work, but this report does not claim full R6 completion |
 
@@ -251,7 +257,7 @@ deletion and avoids treating a short RF fade as deprovisioning.
 | Channel scan | Message, model, command, and result paths are **present**; not a core 0815 acceptance item | **Present** with Agent scan task, cached results, NBAPI trigger, and certification tests |
 | Commanded client steering | **Lab-proven** through EasyMesh Steering Mandate, source-VAP BTM, ACK/report, reassociation, DB/API, and traffic verification | **Present** through client-steering and BTM tasks, CLI/NBAPI triggers, and steering history/statistics |
 | Autonomous client selection | **Not implemented/proven**. Passive RF crossover does not steer; `src/network_optimiser` builds only `test_tr181.cpp` | Built-in `optimal_path_task`, association handling, band/client roaming, and measurement-based ranking are **present**, but steering defaults are off |
-| Agent steering policy TLV | Storage/UI and protocol primitives exist; end-to-end deployment and consumption are **not proven** and current lab `PolicyList` is empty | Policy configuration and thresholds are **present** in Controller configuration and Agent reporting paths |
+| Agent steering policy TLV | Storage/UI, per-device deployment, ACK handling and metrics-policy consumption are **lab-proven**; no autonomous evaluator has been proven | Policy configuration and thresholds are **present** in Controller configuration and Agent reporting paths |
 | Load balancing | No operational evaluator in the current BPI path | A load-balancer task exists, but prplMesh's own 6.0.1 documentation says the actual steering call remains commented/TODO; do not count it as complete |
 | Backhaul optimization | External design only in this lab | IRE/backhaul optimal-path tasks are **present** and enabled/disabled through Controller configuration |
 | External optimizer integration | Intended through live topology/metrics plus command APIs; current clean approach is the documented external optimizer | NBAPI and task controls allow external management; official material also describes proprietary/third-party algorithm integration |
@@ -313,37 +319,36 @@ experiments in favor of redoing platform integration. It should be used as a
 behavioral and architectural comparison, not treated as an immediate stack
 replacement.
 
-### Add liveness before calling outage topology complete
+### Retain the completed liveness boundary
 
-The RDK implementation should add the smallest coherent topology lifecycle,
-not a lab-specific removal hook:
+The current 0815 implementation deliberately chose the smallest coherent
+topology lifecycle, not a lab-specific removal hook:
 
-1. transmit Topology Discovery on every 1905 interface at the standard cadence;
-2. record monotonic last-seen state keyed by local interface, neighbor AL-MAC,
-   and observed source interface;
-3. expire the neighbor with a grace interval and send Topology Notification;
-4. have the Controller query and reconcile the reporting parent's neighbor
-   list;
-5. detect re-parenting before disconnecting or deleting an Agent;
-6. publish `Reachable`, `LastSeen`, and/or a connected-state value northbound;
-7. cascade radio/BSS/client state transactionally, without deleting a client
-   already observed under another Agent;
-8. allow a returning Agent with the same AL-MAC and RUID set to re-onboard and
-   replace stale subordinate state; and
-9. separate active-topology removal from long-term event/history retention.
+1. the existing IEEE1905 process transmits Topology Discovery every 30 seconds;
+2. its monotonic neighbor time is refreshed only by received evidence;
+3. the 60-second garbage collector publishes normal Topology Notification for
+   expiry and reappearance through multicast and local AL-SAP;
+4. the Controller probes the affected AL-MAC once with a standard Topology
+   Query and suppresses an unanswered device from active publication;
+5. any valid return clears suppression without deleting/recreating persistent
+   identity; and
+6. association events remain authoritative while periodic Associated Clients
+   TLVs repair a missing event and reject ambiguous competing ownership.
 
-The 0815 wmediumd outage test then becomes the right acceptance test. It should
-require:
+A northbound `SUSPECT`/`LastSeen` state and parent-neighbor-list comparison are
+still useful product refinements, especially for multi-hop topology. The
+current star lab instead uses direct query response as its re-parenting guard.
+
+The 0815 wmediumd outage acceptance now requires and passes:
 
 ```text
 backhaul link loss
 -> clients leave and appear under surviving APs
--> Agent becomes SUSPECT/DISCONNECTED within the defined bound
--> WebUI automatically renders the state
--> Agent leaves active topology after the defined retention rule
+-> Agent leaves active topology after IEEE1905 aging plus controller probe
+-> WebUI automatically renders the change
 -> RF restore causes real backhaul association and onboarding
 -> the same logical Agent returns without duplicate radios/BSSs/clients
--> traffic, PIDs, memory, and restart counters remain healthy
+-> traffic, PIDs and restart counters remain healthy
 ```
 
 ### Do not copy prplMesh code directly into the RDK component without review
@@ -361,9 +366,9 @@ standard lifecycle is likely easier to review and upstream.
 | Should a full implementation detect a vanished extender? | **Yes.** At minimum it must expose authoritative disconnected/stale state and reconcile active topology. |
 | Does EasyMesh prescribe the exact WebUI timeout and deletion policy? | **No.** The protocol provides topology/liveness primitives; presentation and retained history are product choices. |
 | Does prplMesh implement the required lifecycle? | **Yes, materially.** It has periodic discovery, neighbor aging, notification/query reconciliation, Agent removal, disconnect events, and optional health checks. |
-| Does the current BPI RDK stack implement it? | **No.** It has topology messaging and manual removal but no automatic liveness-to-model lifecycle; the RF tests confirm the gap. |
+| Does the current BPI RDK stack implement it? | **Yes, in the 0815 layer.** Received-evidence aging, normal notification, bounded controller probing, active-topology suppression and same-identity restoration are lab-proven. The pinned upstream base alone still lacks this complete lifecycle. |
 | Is prplMesh generally more feature-complete? | **Yes at the Controller/reference-stack level**, especially lifecycle, NBAPI, built-in optimization tasks, platform abstractions, and certification infrastructure. It still contains disabled-by-default and explicitly partial features. |
-| Should the lab migrate to prplMesh now? | **No.** Continue with the stable 0815 platform, implement the missing generic RDK topology lifecycle, and use prplMesh as a design and behavior reference. |
+| Should the lab migrate to prplMesh now? | **No.** Continue with the stable 0815 platform and external optimizer work, upstream/refine the new generic lifecycle, and use prplMesh as a design and behavior reference. |
 
 ## Primary sources
 

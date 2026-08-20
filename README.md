@@ -8,9 +8,10 @@ hal-generic, rbus, sysevent, syscfg, telemetry, …) on x86 with no kernel modul
 
 Wi-Fi is provided by `mac80211_hwsim` radios moved into the container as
 `nictype: physical` NICs instead of real hardware. That is what the
-`HWSIM_RADIO`-gated patches exist for — hwsim implements no MLO, exposes a single
-channel context, and advertises no MAC ACL capability, none of which the Banana Pi
-defaults expect. Patches that are not gated fix defects that are real on hardware
+`HWSIM_RADIO`-gated patches exist for — hwsim implements no MLO, requires
+explicit multichannel adaptation for the three concurrent channel contexts,
+and advertises no MAC ACL capability, none of which the Banana Pi defaults
+expect. Patches that are not gated fix defects that are real on hardware
 too but only get exercised here; each patch header carries the trace it was
 root-caused from.
 
@@ -30,7 +31,7 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 | [doc/easymesh/lab-setup.md](doc/easymesh/lab-setup.md) | deploy, scale, access and validate both runtime labs |
 | [doc/easymesh/configurator.md](doc/easymesh/configurator.md) | deterministic RF scenarios and dynamic wmediumd control |
 | [doc/easymesh/steering.md](doc/easymesh/steering.md) | commanded steering, policy boundaries and optimizer experiments |
-| [doc/easymesh/optimizer.md](doc/easymesh/optimizer.md) ([PDF](doc/easymesh/optimizer.pdf)) | completely external optimizer architecture and interfaces |
+| [doc/easymesh/optimizer.md](doc/easymesh/optimizer.md) | completely external optimizer architecture and interfaces |
 | [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
 
 ## layout
@@ -40,9 +41,9 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 | `conf/machine/` | the two x86 container machines, `qemux86bpibroadband` and `qemux86bpiap` |
 | `recipes-ccsp/hal/rdk-wifi-hal` | Wi-Fi HAL patches — `HWSIM_RADIO`-gated adaptations plus ungated defect fixes |
 | `recipes-ccsp/ccsp/ccsp-one-wifi` | OneWifi radio/security defaults for hwsim |
-| `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig` | the EasyMesh translator — report clients from the full associate-status list |
+| `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig` | EasyMesh translation, security/policy decode and live association snapshots |
 | `recipes-ccsp/unified-wifi-mesh` | EasyMesh controller/agent fixes, DB bootstrap, and the `steer_drv`/`steer.sh` + em-cli tooling |
-| `recipes-ccsp/ieee1905` | 1905 service startup ordering |
+| `recipes-ccsp/ieee1905` | 1905 service lifecycle and topology-change publication |
 | `recipes-ccsp/rdk-wifi-libhostap` | hostapd/supplicant fixes |
 | `recipes-core/images` | image customisations for the container |
 

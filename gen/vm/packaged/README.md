@@ -12,6 +12,12 @@ patched hwsim module, multichannel wmediumd, LXD, Docker, Boardfarm, the
 controller, four extenders, ten WLAN clients and the test checkout. A new user
 imports the box and starts it; they do not run the one-time installer.
 
+Always inspect the box's recorded source revision and image hashes. The dated
+0818 box predates the `0047`-`0055` liveness/association P0 roll-up; the outage
+and strict-carousel behavior described below requires a package rebuilt from
+the current series. Older boxes remain usable for their dated acceptance but
+must not be used to claim the newer results.
+
 ## 1. Understand the lab
 
 ```text
@@ -378,11 +384,10 @@ sudo gen/tests/wmediumd-client-carousel.py --rounds 2
 The console announces each blackout and arrival using the same stable client
 labels shown in the UI. Use `--rounds 0` for a continuous demonstration and
 press Ctrl-C once to stop cleanly. This is an RF/reassociation scenario, not an
-autonomous optimizer test. A nonzero exit can expose the known residual in
-which the real client reaches its requested BSSID but the controller retains
-the previous parent. The test preserves that disagreement and restores the
-medium; retain its artifact and use the managed restart procedure rather than
-retrying until it happens to pass.
+autonomous optimizer test. A pass requires the real client and controller/API
+parent to agree after every arrival and after final restoration. A nonzero exit
+preserves the disagreement and still attempts exact medium restoration; retain
+that artifact rather than retrying until it happens to pass.
 
 ### Simulate an extender RF outage and recovery
 
@@ -393,11 +398,12 @@ sudo gen/tests/wmediumd-extender-outage.py --extender bpiap-003
 ```
 
 The test first removes client links to that extender, verifies real and
-controller-visible client movement, then isolates the extender backhaul and
-restores every touched SNR pair. A known RDK implementation limitation is that
-the controller retains a completely isolated extender as known topology; it
-does not age the node out during the observation window. Clients move and the
-backhaul recovers, but the WebUI should not be expected to remove that node.
+controller-visible client movement, then completely isolates the extender.
+The controller must remove the unreachable node from active topology after the
+IEEE1905 aging/probe interval. The test restores every touched SNR pair,
+requires the same logical extender to return, and holds physical/API placement
+agreement for all ten clients for 75 seconds. Node retention is now a failure;
+`--allow-stale-node` exists only for diagnosis.
 
 For only the client movement portion:
 

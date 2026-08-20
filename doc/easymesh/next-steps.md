@@ -35,29 +35,44 @@ be used to claim policy quality until the preceding acceptance gates pass.
    the shared cause. Both matrix runners now assign a run/transaction ID and
    persist command output plus observed completion. Do not add blind retries;
    use that evidence to root-cause any recurrence.
-3. Complete controller liveness/aging behavior for a fully RF-isolated
-   extender.
-   - **IEEE 1905 publication boundary closed:** transport GC now publishes a
-     typed expiry event and emits a captured multicast Topology Notification
-     after the 60-second neighbor timeout.
-   - Next, make Unified Wi-Fi Mesh query/reconcile the changed neighbor set,
-     distinguish transient reachability from administrative removal, and test
-     disappearance, re-onboarding and client recovery separately.
+3. **Closed:** complete controller liveness/aging behavior for a fully
+   RF-isolated extender.
+   - IEEE 1905 ages only from received evidence, publishes typed expiry and
+     reappearance events, and emits the normal Topology Notification through
+     Ethernet and the local AL-SAP path.
+   - Unified Wi-Fi Mesh performs a bounded standard Topology Query probe,
+     suppresses only active publication while retaining identity, and restores
+     the same device on valid returning traffic.
+   - A rev130 RF test moved the affected client in 5.464 s, removed the isolated
+     extender from the API in 59.181 s, restored the exact 210-link medium,
+     republished the extender in 15.198 s, and held 10/10 physical/API client
+     agreement for 75 s with no restart or traffic failure.
 4. Keep reboot reconstruction, zero service restarts, medium restoration,
    topology agreement and client traffic as mandatory pre/postflight gates.
+   - **Three-run reconstruction gate closed on 2026-08-19:** consecutive runs
+     passed in 805, 800 and 802 seconds with `5/15/50/14`, 10/10 live clients,
+     a 120-second stable window, zero monitored restarts and 10/10 traffic.
+   - The 12-hour alternating carousel/outage soak remains deliberately
+     deferred; do not treat the three cold runs as a substitute.
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
    unsupported startup clones and valid cloned frames rejected during normal
    scan/channel receive-state gaps. wmediumd now requires current frequency
    evidence and downgrades only its own tracked transient clone rejection.
    A two-round paired carousel converged and restored with zero command-2
    diagnostics while an unrelated command-3 error remained visible.
-6. Continue bounded `em_ctrl`/`em_cli` memory and CPU sampling during long RF,
-   reporting and churn runs. Set numeric soak limits instead of relying on a
-   visual impression.
+6. **Cold-reconstruction footprint closed; long-growth gate deferred:** the
+   15-minute whole-container profile sampled one complete cold reconstruction.
+   The 1 GiB `bpibroadband` cgroup peaked at 311.57 MiB and converged at
+   266.10 MiB with no swap, pressure, limit or OOM events. Converged aggregate
+   process PSS was 281.95 MiB; `em_ctrl`/`em_cli` were 22.92/81.03 MiB PSS.
+   Bring-up allocator pulses were released. See
+   [memory-footprint.md](memory-footprint.md). PSS growth from hour 1 to hour 12
+   remains intentionally unmeasured until the deferred soak is authorized.
 
-Exit gate: three consecutive cold/reboot runs and a 12-hour churn soak finish
-with complete topology, no unexplained restarts, exact medium restoration and
-no unresolved observation disagreement.
+Exit gate status: the three consecutive cold/reboot runs are complete. The P0
+exit gate remains open solely for the deferred 12-hour churn result, which must
+finish with complete topology, no unexplained restart, exact medium restoration
+and no unresolved observation disagreement.
 
 ### P1 — Freeze the optimizer integration contract
 
@@ -226,17 +241,14 @@ costs.
 
 ## Immediate two-sprint backlog
 
-1. Implement controller reconciliation and reachability after the now-working
-   IEEE 1905 expiry notification, including disappearance, re-onboarding and
-   affected-client recovery.
-2. Write the EasyMesh measurement capability/exposure matrix.
-3. Implement optimizer `observer`, normalized snapshot and recorder.
-4. Run a passive crossover and prove reported RCPI follows RF without reading
+1. Write the EasyMesh measurement capability/exposure matrix.
+2. Implement optimizer `observer`, normalized snapshot and recorder.
+3. Run a passive crossover and prove reported RCPI follows RF without reading
    wmediumd from the optimizer.
-5. Implement the threshold/hysteresis policy in replay and recommend modes.
-6. Wrap `steer.sh` in the actuator/verifier transaction.
-7. Add the first topology manifest and measure 4/10 versus 8/20 resource use.
-8. Automate a result bundle containing configuration, observations, packet
+4. Implement the threshold/hysteresis policy in replay and recommend modes.
+5. Wrap `steer.sh` in the actuator/verifier transaction.
+6. Add the first topology manifest and measure 4/10 versus 8/20 resource use.
+7. Automate a result bundle containing configuration, observations, packet
    capture indexes, service health, actions, outcomes and medium restoration.
 
-The first policy decision should follow item 5, not precede items 1–4.
+The first policy decision should follow item 4, not precede items 1–3.

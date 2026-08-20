@@ -143,10 +143,13 @@ converge in the topology. It also requires verified medium restoration and
 preflight client placement restoration. Backhaul pairs are never touched,
 wmediumd is never restarted, and cleanup leaves every client interface up.
 
-There is a current residual defect: occasionally both clients have associated
-with the requested BSSID while the controller retains one client's previous
-parent. The strict test exits nonzero after its timeout, records both truths and
-still restores the medium. Do not rerun until it happens to pass or weaken the
-gate. Preserve the artifact and reset with the managed lab restart; root-causing
-this association-notification/model delivery miss is P0 in
-[next-steps.md](next-steps.md).
+The former paired-arrival disagreement is fixed. Its root cause was the AL-SAP
+stream receiver discarding a second length-delimited notification when two
+SDUs arrived in one `recv()`. Follow-on fixes commit association ownership
+before the optional capability query, poll the standard Associated Clients TLV
+as a bounded repair path, and prevent an ambiguous old-AP snapshot from
+overwriting a newer association event. Three strict post-fix carousel runs
+completed 80 individual arrivals with physical link, controller and API
+agreement, followed by a full extender-outage/recovery run that held 10/10
+agreement for 75 seconds. Any recurrence remains a hard test failure and must
+be preserved for diagnosis; it is no longer an accepted residual.

@@ -18,27 +18,35 @@
 runtimes: results are comparable only when source revision, image hashes,
 kernel, topology, clients, wmediumd and test parameters match.
 
-## Accepted inputs
+## Image provenance
+
+Every deployment must record the exact image filenames and hashes. The last
+fully rebuilt pair before the current P0 roll-up was:
 
 ```text
-image EasyMesh content    through 0088993 (scale-safe AP Metrics Response)
-host tooling              796cd5eed332c4cf383f8a3e6f21b289ac8eef21
+image EasyMesh content    20260819032857 rebuild through EasyMesh 0046
+host tooling              codex/0815-clean at the matching deployment commit
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260819032857.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260819032857.rootfs.lxc.tar.bz2
 ```
 
-Verify the images before use:
+These hashes identify that historical accepted pair; do not apply them to a
+newer rebuild:
 
 ```sh
 sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
-Expected hashes:
-
 ```text
-32f9edc1983d81c3acd3f6c324447f811a36eabbe377a59648f03aaf280a2383  controller
-88eb66c0cff613aae471a4917ba838b558f0ec141eb4d8e02b4e8cf19356671f  extender
+e5314430402513823c86c3a29823b4d2fbc9e826f381d0bb9c342364f52b8a9f  controller
+716ef80633e4b3097f2e77e885b828f195778d457d15090db7d00dc62ddc2449  extender
+```
+
+For any current pair, verify and retain its hashes before use:
+
+```sh
+sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 Artifacts are built on rev140 under
@@ -85,10 +93,14 @@ gen/wmediumd/configurator/         compile and run RF scenarios
 gen/steer.sh                       host-side steering convenience wrapper
 gen/tests/steering-matrix.sh       portable ten-client steering acceptance
 gen/tests/health-audit.sh          topology, restart and traffic audit
+gen/tests/p0-cold-reconstruction.sh repeatable managed cold-reconstruction gate
+gen/tests/bpibroadband-memory-profile.py whole-container PSS/RSS/storage profile
+gen/tests/p0-churn-soak.py          deferred long-duration P0 gate; not routine
 ```
 
-The rev150 VM source is
-`/home/vagrant/git/meta-cmf-bananapi-vcpe-0815-codex`. Enter it with:
+The packaged rev150 VM normally installs its runtime source at
+`/home/vagrant/git/meta-cmf-bananapi-vcpe`; an engineering VM may use an
+explicit suffixed checkout. Enter it with:
 
 ```sh
 ssh -tt rev@192.168.2.150 \
@@ -118,13 +130,13 @@ From `gen/` on a prepared runtime:
 
 ```sh
 # controller; -F creates one coherent new AL-MAC/RUID identity set
-./bpi.sh -F -b br-wan105 /path/to/X86EMLTRBPIBB_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+./bpi.sh -F -b br-wan105 /path/to/controller.rootfs.lxc.tar.bz2
 
 # four wireless-only extenders
-./bpi.sh -F /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 1 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 2 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 3 /path/to/X86EMLTRBPIAP_rdk-next_20260817000406.rootfs.lxc.tar.bz2
+./bpi.sh -F /path/to/extender.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 1 /path/to/extender.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 2 /path/to/extender.rootfs.lxc.tar.bz2
+./bpi.sh -F -i 3 /path/to/extender.rootfs.lxc.tar.bz2
 
 # start the medium after mesh radios exist
 SNR=40 ./wmediumd/wmediumd-up.sh up
@@ -296,10 +308,12 @@ lxc exec wlan-client -- ping -I wlan0 -c 3 10.0.0.1
 Expected live topology result is ten. `/api/v1/devices` and
 `/api/v1/clients` are also derived from the current controller tree: the device
 list contains the controller, colocated agent and four extenders, while each
-client record contains its observed STA MAC, parent agent and BSSID. Fields not
-supplied by EasyMesh, including IP address, RSSI, rate and traffic counters,
-display as `N/A`; they are not synthesized from the packaged demonstration
-JSON. Bind traffic to `wlan0`; client `eth0` is not the WLAN data path.
+client record contains its observed STA MAC, parent agent and BSSID. The client
+adapter joins detailed associated-STA metrics by MAC and exposes live RCPI,
+derived dBm, rates and traffic counters when reported. Unsupported fields such
+as a client IP address display as `N/A`; none are synthesized from packaged
+demonstration JSON. Bind traffic to `wlan0`; client `eth0` is not the WLAN data
+path.
 
 ### Backhaul
 
@@ -364,11 +378,15 @@ after every managed container is stopped. Deleting them under a live mesh can
 change the projected radio inventory and leave the restarted extender with an
 incomplete band.
 
-The controller currently retains an offline extender in its device, radio and
-BSS model. There is no reliable liveness/aging field in the WebUI topology yet,
-so presence in `/api/v1/topology` must not be interpreted as proof that the AP
-is online. Use container/service state, backhaul link, and traffic as the
-recovery oracle.
+Administrative container stop and RF isolation are different fault models.
+For complete RF isolation, IEEE1905 neighbor aging now triggers a bounded
+controller Topology Query; an unanswered extender is suppressed from active
+API/WebUI topology while its persistent identity is retained, and the same
+node returns after valid traffic resumes. The dedicated
+[wmediumd-extender-outage.md](wmediumd-extender-outage.md) test is the accepted
+liveness oracle. During an abrupt container-stop test, continue to use
+container/service state, backhaul link and traffic alongside the API because
+hwsim may retain station link state until a real link-loss event is delivered.
 
 A controller-process restart is intentionally not used as an AP recovery
 action. In one diagnostic restart, four already-running agents were restored
@@ -423,7 +441,7 @@ gen/tests/steering-matrix.sh 1
 gen/tests/health-audit.sh
 ```
 
-Parity established on 2026-08-16:
+Historical parity established on 2026-08-16, before the current P0 roll-up:
 
 | Gate | rev130 | rev150 VM |
 | --- | --- | --- |

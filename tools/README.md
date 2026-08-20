@@ -2,10 +2,11 @@
 
 ## em_cmd.c — a driver for `em_ctrl`
 
-The image ships `libemcli.so` but no executable that uses it, so the wiki's
-RDKB-CLI flow is unavailable (see [../doc/easymesh](../doc/easymesh)). This is a
-~50-line non-interactive driver that talks to `em_ctrl` over its TLS socket via
-that library.
+The image ships `libemcli.so` and the narrow `steer_drv`/`steer.sh` steering
+adapter, but no general interactive RDKB-CLI executable. This is a small
+developer driver that talks to `em_ctrl` over its TLS socket through that
+library. Normal steering tests should use `steer.sh`; use this tool for native
+command diagnosis.
 
 `src/cli/main.c` upstream is an interactive `readline` REPL and, more
 importantly, calls an `init()` that the **shipped** library — built from

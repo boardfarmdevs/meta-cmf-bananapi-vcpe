@@ -425,7 +425,7 @@ tests do. They still use the same generation, readback and restore contract.
 | Path or artifact | Required? | Owner and lifetime |
 | --- | --- | --- |
 | `gen/wmediumd/wmediumd.patched` | Yes, unless rebuilt | Proven patched daemon binary committed with the lab |
-| `gen/wmediumd/patches/*.patch` | Required to rebuild | Nine-patch delta over pinned upstream |
+| `gen/wmediumd/patches/*.patch` | Required to rebuild | Eleven-patch delta over pinned upstream |
 | `/run/meta-cmf-wmediumd/wmediumd.cfg` | Yes at every start | Generated static radio inventory and initial model |
 | `/run/wmediumd-control.sock` | Yes for dynamic scenarios | Runtime socket; disappears with daemon |
 | `/run/meta-cmf-wmediumd/wmediumd.pid` | Lifecycle state | Launcher-created runtime PID |
@@ -503,7 +503,7 @@ sudo gen/wmediumd/wmediumd.patched -T
 | Scenario reports unknown identity | Plan was compiled for another deployment, or the radio inventory changed |
 | Generation error | Another writer advanced state or the client used a stale generation |
 | WLAN works after `down` | Expected hwsim fallback; the experiment is no longer using modeled RF |
-| Topology does not remove an RF-isolated extender | Controller liveness/aging limitation, not proof that frames crossed the modeled outage |
+| Topology does not remove an RF-isolated extender within the accepted bound | liveness publication/probe regression; preserve the outage artifact and IEEE1905/controller logs |
 
 The former repeated `nl: cmd 2 ... Invalid argument` output was decoded with
 outbound-netlink sequence correlation. The startup class was multicast beacon

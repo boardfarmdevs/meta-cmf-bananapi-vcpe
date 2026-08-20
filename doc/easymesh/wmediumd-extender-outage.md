@@ -53,9 +53,11 @@ cd /home/vagrant/git/meta-cmf-bananapi-vcpe
 sudo gen/tests/wmediumd-extender-outage.py --extender bpiap-003
 ```
 
-Choose an extender that currently owns at least one client. The test discovers
-the active hwsim transmitter identities and the extender's private BSSIDs; no
-MAC address is hard-coded.
+The test discovers the active hwsim transmitter identities and the extender's
+private BSSIDs; no MAC address is hard-coded. If the selected extender owns no
+client, the test first uses one temporary atomic RF generation to place a
+client there, requires the physical and API owners to agree, and restores the
+original matrix before starting the measured outage.
 
 The sequence is:
 
@@ -84,6 +86,8 @@ Useful options are:
 ```text
 --skip-full-outage       run only the client movement test
 --outage-snr -20         unreachable link value
+--prepare-snr 55         temporary advantage when the extender owns no client
+--prepare-timeout 90     preconditioning convergence deadline
 --client-timeout 120     client/API convergence deadline
 --node-timeout 90        controller aging observation interval
 --recovery-timeout 150   restored-backhaul deadline
@@ -132,24 +136,30 @@ The client-side experiment works as intended: dropped beacons cause natural
 link loss, clients reassociate, and the controller publishes the new parent.
 No `ip link` toggle is necessary.
 
-The complete-isolation experiment establishes the remaining controller limit:
-the controller retains the known extender, radios, and BSSs after its wireless
-backhaul is genuinely disconnected. The IEEE 1905 transport now detects and
-publishes neighbor expiry, but Unified Wi-Fi Mesh does not yet reconcile that
-protocol change into controller-owned reachability. The WebUI therefore cannot
-truthfully make the extender disappear. The node's presence means *known to the
-controller*, not *currently reachable*. Restoration reconnects the real
-backhaul; it does not yet represent a visible node being newly created.
+Those runs established the original controller limitation; they are retained
+as boundary evidence rather than the current result. The end-to-end liveness
+path was completed and tested on rev130 on 2026-08-19. A full `bpiap-003` RF
+outage produced:
 
-Do not hide the node using LXD state, wmediumd truth, or browser timers. Those
-are lab-only facts and would make the WebUI claim behavior that the EasyMesh
-controller has not reported. Extender disappearance requires a separate
-controller liveness/aging design and should be tested independently.
+| Observation | Result |
+| --- | --- |
+| affected client selected another AP | 5.464 s; physical and API parents agreed |
+| extender wireless backhaul loss | 2.011 s |
+| extender removed from active API/WebUI topology | 59.181 s after full isolation |
+| exact 210-link medium restoration | verified through control-socket readback |
+| same extender returned to active topology | 15.198 s after restoration |
+| all ten physical/API client parents | agreed continuously for 75 s |
+| client traffic and controller processes | 10/10 pass; same PIDs and zero restarts |
+
+The device identity and database records remain persistent while the node is
+unreachable. Only its active topology publication is suppressed. A returning
+AL-MAC is therefore the same logical extender rather than a newly provisioned
+device.
 
 ## Root localization in the current stack
 
-The missing behavior is now localized across two implementation boundaries;
-it is not an absence of all IEEE 1905 discovery support.
+The behavior spans two implementation boundaries; it is not a WebUI timer and
+not a direct administrative `RemoveDevice` operation.
 
 The built `ieee1905-em` v0.6 source at commit
 `9eb6127c05250f0174a113688d7e577e1af35732` already:
@@ -160,36 +170,31 @@ The built `ieee1905-em` v0.6 source at commit
 - removes a node from its private topology map after 60 seconds without an
   update.
 
-Patch `0002-topology-gc-notify-expired-neighbors.patch` now closes the first
-boundary. Garbage collection removes the established neighbor, releases the
-database write lock, publishes a typed `NeighborExpired` event and consumes it
-through the existing Topology Notification transmitter. Temporary nodes that
-never converged are still removed silently. A lagged event receiver emits one
-convergence notification rather than losing the topology change.
+The completed chain is:
 
-At the next boundary, Unified Wi-Fi Mesh accepts Topology Notifications, but
-its handler only acts on a Client Association Event TLV. A notification caused
-by a 1905-neighbor change does not trigger a Topology Query, and the controller
-does not parse/reconcile 1905 Neighbor Device TLVs from the resulting response.
-The existing `RemoveDevice` command is an explicit destructive operation over
-runtime objects, MariaDB and the data model; calling it directly from a timer
-would conflate transient reachability with administrative removal.
+1. IEEE 1905 refreshes `last_seen` only from received remote evidence. Local
+   query/response/notification state no longer keeps an isolated neighbor
+   alive.
+2. Garbage collection publishes a typed `NeighborExpired` event after 60
+   seconds and sends the normal multicast Topology Notification.
+3. Because the local IEEE 1905 transmitter does not receive its own multicast,
+   it also delivers the same standard notification through its normal AL-SAP
+   indication. Endpoint metadata identifies the changed neighbor; no private
+   TLV is placed on the network.
+4. Unified Wi-Fi Mesh starts one bounded standard Topology Query probe. If the
+   agent does not answer within ten seconds, controller-owned reachability is
+   false and the device is omitted from active topology without deleting
+   runtime or MariaDB identity.
+5. IEEE 1905 publishes `NeighborAdded` when received evidence recreates a
+   neighbor. Any valid returning EasyMesh frame clears the probe, restores
+   reachability, and republishes the same logical device.
+6. Periodic Topology Responses repair association placement through the
+   standard Associated Clients TLV. An ambiguous old-AP snapshot cannot
+   overwrite a newer association notification, preventing a recovered
+   extender from replaying a stale client owner.
 
-The remaining implementation should continue in bounded changes:
-
-1. **Complete:** make `ieee1905-em` topology GC publish an expired-neighbor
-   event and emit a Topology Notification through its normal transmitter;
-2. make the EasyMesh controller query the notifying parent and reconcile the
-   returned neighbor set, checking for re-parenting before declaring a child
-   unreachable;
-3. add controller-owned `Reachable`/`LastSeen` state and remove an unreachable
-   node from the active topology without immediately erasing persistent device
-   identity; and
-4. accept a returning AL-MAC as the same logical device, refresh its subordinate
-   radio/BSS/client state, and reject duplicates before publishing recovery.
-
-The first code change is now in `ieee1905-em`. A WebUI-only filter or direct
-call to `RemoveDevice` would still bypass the remaining controller contract.
+A WebUI-only filter or direct call to `RemoveDevice` would bypass this
+controller contract and is intentionally not used.
 
 ### IEEE 1905 publication acceptance
 
@@ -206,9 +211,10 @@ relevant sequence was:
 
 The packet capture independently decoded frame 92 as message type `0x0001`,
 source `00:60:2f:da:68:d4`, destination `01:80:c2:00:00:13`, message ID
-`0x0084`. The controller API retained the extender, as expected until stages
-2-4 above are implemented; this result must not be reported as end-to-end
-topology aging yet.
+`0x0084`. That capture proved the IEEE 1905 publication boundary. The later
+full-path run above separately proved controller suppression and restoration:
+the node count changed from six to five after 59.181 seconds and returned to
+six 15.198 seconds after exact RF restoration.
 
 ## Automatic WebUI refresh
 

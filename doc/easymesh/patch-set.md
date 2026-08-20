@@ -32,10 +32,12 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current engineering images contain the ordered EasyMesh series through
-`0046`, defined by repository commit `ca17171`. The Dropbox-packaged 0818
-appliance remains an older, separately accepted distribution until its binary
-artifacts are deliberately rolled forward.
+The current source series contains EasyMesh patches through `0055`, IEEE1905
+patches through `0005`, libwebconfig patches through `0005`, and the OneWifi
+live-association patch `0011`. The Dropbox-packaged 0818 appliance remains an
+older, separately accepted distribution until its binary artifacts are
+deliberately rolled forward. Never infer image content from the host checkout;
+record the image filename/hash and the source revision used to build it.
 
 ## Patch boundaries
 
@@ -67,7 +69,18 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - rebuild the nested topology snapshot after association capability handling
   and before publishing it; and
 - preserve every length-delimited AL-SAP SDU when a stream read fragments or
-  coalesces messages.
+  coalesces messages;
+- separate IEEE1905 neighbor evidence from locally generated state, publish
+  expiry/reappearance through the normal notification path, and reconcile
+  controller reachability with a bounded standard Topology Query;
+- commit authoritative Client Association Events before optional capability
+  enrichment and repair missed multicast events from Associated Clients TLVs;
+- prevent stale Agent metrics or ambiguous old-AP snapshots from changing the
+  current STA owner;
+- service manager timers even while the event queue remains continuously busy;
+  and
+- bound and serialize TLS command/result sessions so a failed or overlapping
+  WebUI request cannot block every observer route.
 
 ### hwsim and single-phy adaptations
 
@@ -145,7 +158,20 @@ authority. Its dependency order is:
 23. overlay topology station ownership from that same authoritative live
     inventory instead of a second, lossy native-tree traversal; and
 24. consume exactly one length-delimited AL-SAP SDU at a time, leaving any
-    coalesced successor queued for the next dispatch.
+    coalesced successor queued for the next dispatch;
+25. reconcile remote-agent reachability after an IEEE1905 topology-change
+    indication without deleting persistent device identity;
+26. make STA metrics update only a currently associated controller row;
+27. apply bounded transport timeouts and reject command-error trees as
+    authoritative empty topology;
+28. commit association ownership before the optional capability exchange;
+29. emit and consume the standard Associated Clients TLV as a 15-second repair
+    path for unacknowledged Topology Notifications;
+30. service periodic/orchestration timers under continuous event load;
+31. serialize controller command result sessions and close abandoned sessions;
+    and
+32. prevent an unordered conflicting Topology Response snapshot from
+    overwriting a newer association-event owner.
 
 The complete ordered series was replayed against pristine pinned source before
 the Yocto image build.
@@ -156,17 +182,25 @@ The small `ieee1905-em` series is ordered directly in
 `recipes-ccsp/ieee1905/ieee1905-em.bbappend`:
 
 1. use the target tuple, rather than the build-host tuple, for the RBUS bindgen
-   clang argument; and
+   clang argument;
 2. publish established-neighbor expiry from topology garbage collection and
-   feed it to the existing multicast Topology Notification transmitter.
+   feed it to the existing multicast Topology Notification transmitter;
+3. deliver that same normal Topology Notification to the local higher-layer
+   entity through AL-SAP, because a transmitter does not receive its own
+   multicast frame;
+4. refresh `last_seen` only from received remote evidence, never from local
+   query/response/notification state; and
+5. publish the same convergence event when received evidence recreates an
+   expired neighbor.
 
-Patch `0002` deliberately separates transport truth from controller policy. A
-neighbor that has not refreshed the private IEEE 1905 topology for 60 seconds
-is removed, after which a typed `NeighborExpired` event is published outside
-the database write lock. The event consumer uses the normal notification path,
-including the existing multicast destination, message-ID allocator and
-notification-sent state transition. Temporary nodes that never completed
-topology convergence do not produce expiry events.
+The series deliberately separates transport truth from controller policy. A
+neighbor that has not supplied received evidence for 60 seconds is removed,
+after which a typed `NeighborExpired` event is published outside the database
+write lock. The consumer uses the normal Topology Notification transmitter and
+also feeds the same standard notification to AL-SAP. The endpoint metadata
+identifies the changed neighbor; no private TLV is placed on Ethernet.
+`NeighborAdded` follows the same path when the identity returns. Temporary
+nodes that never completed topology convergence do not produce expiry events.
 
 The expiry unit test was cross-compiled with the target test harness and passed
 inside `bpibroadband`. Clean component builds passed for both
@@ -178,14 +212,17 @@ all 28 directed RF pairs of `bpiap-003`. The transport expired AL-MAC
 `01:80:c2:00:00:13`. The control-socket generation restored every modified RF
 pair by verified readback.
 
-This closes only the IEEE 1905 publication boundary. Unified Wi-Fi Mesh still
-has to query/reconcile the changed neighbor set and own reachable/last-seen
-state before an expired extender can disappear truthfully from the controller
-API and WebUI.
+EasyMesh patch `0047` completes the higher-layer boundary. It probes the
+affected remote Agent once with a standard Topology Query, suppresses an
+unanswered identity from active publication after ten seconds, and restores
+that same identity on valid returning traffic. It does not call the
+administrative `RemoveDevice` path and does not consult wmediumd or the WebUI.
 
 The controller service runs `onewifi_em_ctrl` directly as a foreground systemd
-process and sends stdout and stderr to the volatile journal. The image caps
-that journal at 16 MiB, and the unit applies a 1,000-message-per-30-second rate
+process and sends stdout and stderr to the volatile journal. The image
+configures `RuntimeMaxUse=16M` and `RuntimeMaxFileSize=4M`; the active journal
+can make `journalctl --disk-usage` report 20 MiB while four 4 MiB archived files
+are retained. The unit additionally applies a 1,000-message-per-30-second rate
 limit. This replaces the upstream append-only `/tmp/em_ctrl.log`, which grew at
 about 39 KiB/s and reached 815 MiB in tmpfs before causing memory-cgroup OOM
 kills. The controller therefore retains its 1 GiB deployment limit; increasing
@@ -235,6 +272,10 @@ commands become terminal, and completion is evaluated per command. Duplicate M1
 can therefore cancel obsolete work without leaving the radio permanently busy.
 
 ## Build and acceptance
+
+The following is the last fully rebuilt pair before the liveness/association
+P0 roll-up. It is retained as provenance, not as a claim that it contains
+patches `0047` through `0055`:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
@@ -334,6 +375,27 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
+Patches `0047` through `0055` close the follow-on P0 state and service
+boundaries:
+
+| Patch | Root-cause boundary |
+| --- | --- |
+| `0047` | turn a normal IEEE1905 neighbor change into bounded controller reachability probing and active-topology suppression/restoration |
+| `0048` | prohibit periodic metrics from inserting or moving a stale STA owner |
+| `0049` | bound controller-command TLS I/O so one failed peer cannot hold the serialized WebUI bridge forever |
+| `0050` | return HTTP 503 for command/status trees instead of publishing a false empty topology |
+| `0051` | commit the mandatory association notification before optional client-capability completion |
+| `0052` | emit and consume Associated Clients in periodic Topology Responses as a standard repair path |
+| `0053` | service manager timers under continuous event-queue load |
+| `0054` | serialize the controller's shared asynchronous command/result session |
+| `0055` | retain the newer association-event owner when an old AP returns an ambiguous snapshot |
+
+The supporting OneWifi/libwebconfig changes distinguish a live FULL
+association snapshot from retained driver history. IEEE1905 `0003`-`0005`
+make locally detected expiry and reappearance visible to the controller through
+the normal Topology Notification path and ensure only received evidence extends
+a neighbor lifetime.
+
 Fresh deployment of the `20260819032857` image pair reached `5/15/50`, ten
 live clients, zero service restarts and zero client traffic loss. Three strict
 carousel runs (2, 2 and 4 rounds) completed 40 paired group arrivals, or 80
@@ -370,6 +432,21 @@ moved from 36,956/27,252 KiB to 37,028/27,324 KiB; CLI memory moved from
 seconds. Both PIDs and zero-restart counters were unchanged. This is bounded
 working-set expansion, not retained per-report or per-request growth.
 
+The completed P0 RF-outage acceptance then moved the affected client in
+5.464 seconds, observed backhaul loss in 2.011 seconds, removed the isolated
+extender from active topology in 59.181 seconds, restored the exact 210-link
+medium, returned the same identity in 15.198 seconds, and held all ten physical
+and API client owners in agreement for 75 seconds. Traffic passed 10/10 and
+the monitored controller PIDs/restart counters did not change.
+
+Three consecutive cold reconstructions passed in 805, 800 and 802 seconds with
+`5/15/50/14`, 10/10 live clients, a 120-second stable window, zero monitored
+restarts and 10/10 traffic. A separate instrumented reconstruction established
+a 311.57 MiB cgroup peak and 266.10 MiB converged footprint under the 1 GiB
+controller limit, with no swap or memory-pressure/OOM event. See
+[memory-footprint.md](memory-footprint.md). The 12-hour churn/steady-state run
+is explicitly deferred and is not implied by these bounded results.
+
 ## Remaining engineering debt
 
 - Replace fixed CLI tree storage with a length-tracked serializer.
@@ -379,10 +456,9 @@ working-set expansion, not retained per-report or per-request growth.
 - Retain the historical RBUS raw-frame provider miss as a transaction-journal
   trigger. It did not recur in 143 post-fix commanded steers, but that result
   cannot retrospectively prove it shared the AL-SAP stream-boundary cause.
-- Add positive model reconciliation as defense in depth for a genuinely lost,
-  unacknowledged 1905 Client Association Event. The fixed framing path had no
-  association loss across 80 post-fix carousel arrivals; reconciliation should
-  protect against transport/process failure rather than mask framing loss.
+- Generalize the current 15-second Associated Clients reconciliation cadence
+  and capacity policy for larger topologies; it is now active defense in depth,
+  not missing functionality.
 - Make a controller-service-only restart re-query every already-running agent.
   A diagnostic controller restart temporarily reconstructed only `5/15/36`;
   re-onboarding the absent agent restored the required `5/15/50`. Full VM boot

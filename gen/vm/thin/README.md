@@ -5,6 +5,12 @@ Ubuntu 24.04, the accepted `7.0.0-28-generic` kernel and patched hwsim module,
 an approximately 62 GB root filesystem, 8 GiB RAM and 6 virtual CPUs. The full
 lab is installed once after the VM starts.
 
+The published 0817 Dropbox bundle is a frozen bootstrap distribution. Its
+default source/images predate the `0047`-`0055` P0 roll-up. Use it for the dated
+0817/0818 acceptance only, or supply a newer checksum-pinned artifact bundle
+and `EASYMESH_RUNTIME_COMMIT` together. A current source checkout with old
+controller/extender images is not a current lab.
+
 ## 1. Prepare the Linux host
 
 The supported host installations are Ubuntu 22.04 and 24.04. Use the upstream
@@ -168,10 +174,11 @@ wmediumd. It creates four extenders and ten clients, performs the complete
 acceptance audit, and leaves the accepted lab running. Re-running the installer
 reuses valid downloads and exact Git checkouts.
 
-The installer defaults the runtime checkout to the accepted `c2e8ce7` 0818
-revision. A maintainer can select another full commit explicitly with
-`EASYMESH_RUNTIME_COMMIT`, but an unqualified branch tip is never used as an
-installation input.
+The frozen 0817 installer defaults the runtime checkout to its matching
+`c2e8ce7` revision. A newer bundle must select its matching full commit through
+`EASYMESH_RUNTIME_COMMIT`; an unqualified branch tip is never an installation
+input. The runtime commit, controller image and extender image must advance as
+one accepted set.
 
 Do not proceed unless it ends with:
 

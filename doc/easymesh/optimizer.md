@@ -147,7 +147,7 @@ flowchart TB
     METRICBR --> VERIFY
     ORACLE -.-> VERIFY
 
-    DEMO["Do not use for decisions:<br/>canned WebUI metrics, Optimize Layout,<br/>wmediumd plan or configured SNR"]:::warning
+    DEMO["Do not use for decisions:<br/>demonstration-only WebUI endpoints,<br/>Optimize Layout, wmediumd plan or SNR"]:::warning
 ```
 
 The absence of a decision edge from wmediumd or the BPI agents to the decision
@@ -162,7 +162,8 @@ know local protocol state, but neither selects the target for this experiment.
 | RF transport | wmediumd | hwsim | Frequency-isolated simulated frame delivery |
 | live topology | controller/WebUI | external observer | `/api/v1/topology` with current devices, radios and BSSs |
 | live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` and `/api/v1/clients` |
-| real metrics | EasyMesh reports/queries | external observer | Required adapter; current WebUI metric handlers are not valid |
+| current-link metrics | EasyMesh reports/queries | external observer | Live associated-client RCPI/rates/counters are available from `/api/v1/clients` |
+| candidate-link metrics | EasyMesh reports/queries | external observer | Read-only adapter/capability evaluation still required |
 | policy baseline | operator/external setup | controller and agents | Reporting/exclusion configuration; local agent steering set to mode 0 |
 | steer action | external actuator | controller | `steer.sh STA TARGET_BSSID` at the current implementation stage |
 | protocol action | controller | source agent | EasyMesh Client Steering Request in Mandate mode |
@@ -172,19 +173,20 @@ know local protocol state, but neither selects the target for this experiment.
 
 ### Observation boundary
 
-`/api/v1/topology`, `/api/v1/devices` and `/api/v1/clients` now derive identity
-and association placement from the current controller tree. WebSocket initial
-state uses the same live inventory. They expose no invented RSSI, throughput,
-CPU, IP or uptime values. The device/client metric endpoints are keyed by the
-live identities, but their zero values mean unavailable, not observations.
-Performance and interference endpoints still contain demonstration data and
-must not be optimizer inputs.
+`/api/v1/topology`, `/api/v1/devices` and `/api/v1/clients` derive identity and
+association placement from the current controller tree. WebSocket initial
+state uses the same live inventory. `/api/v1/clients` joins the controller's
+detailed associated-STA report by MAC and exposes real RCPI, derived dBm, rate
+and traffic fields when present. Unknown values remain unavailable rather than
+being invented. Performance, interference and other demonstration endpoints
+still contain non-authoritative data and must not be optimizer inputs.
 
-The first implementation task is therefore a read-only observation adapter for
-real EasyMesh Associated STA Link Metrics, AP Metrics and candidate-link
-measurements. It should expose timestamped raw facts without scoring them. If a
-small native bridge is required at the controller boundary, it remains an
-interface adapter only: no optimizer state or algorithm may enter the image.
+The first implementation task is therefore to normalize the working
+associated-client observation and add only the missing AP/candidate-link facts.
+The adapter should expose timestamped raw EasyMesh measurements without scoring
+them. If a small native bridge is required at the controller boundary, it
+remains an interface adapter only: no optimizer state or algorithm may enter
+the image.
 
 Direct MariaDB and `iw` reads are useful acceptance oracles. They must not
 become the durable optimizer API because they bypass the EasyMesh observation
@@ -340,10 +342,11 @@ value or optimistic steer.
 
 ## Implementation stages
 
-1. **Real observation vertical slice.** Return real hwsim client identities and
-   changing EasyMesh metrics; prove correlation with a crossover without
-   exposing wmediumd truth to the optimizer.
-2. **Observe mode.** Record normalized snapshots from both rev130 and rev150-VM.
+1. **Associated-link vertical slice — complete.** Live client identities,
+   placement and changing reported RCPI are exposed; a reversible wmediumd run
+   moved controller RCPI from 138 to 88 and back without injecting a value.
+2. **Candidate observation and observe mode.** Expose fresh target/AP facts and
+   record normalized snapshots from both rev130 and rev150-VM.
 3. **Recommend mode.** Replay snapshots through a deterministic state machine
    and require exactly one recommendation in the active crossover.
 4. **Act mode.** Use the proven `steer.sh` adapter, bounded verification and

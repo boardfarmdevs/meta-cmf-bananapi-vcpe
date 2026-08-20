@@ -18,6 +18,7 @@ gradients that are independent from the steering decision being evaluated.
 | [wmediumd.md](wmediumd.md) | What the medium can simulate, how radios and frames are resolved, and which static and live controls remain |
 | [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
 | [metrics-reporting.md](metrics-reporting.md) | Why STA/AP metrics were inactive, how they are configured, and how to verify the live observation path |
+| [memory-footprint.md](memory-footprint.md) | Measured whole-container and per-process memory during cold reconstruction and convergence |
 | [wmediumd-extender-outage.md](wmediumd-extender-outage.md) | Repeatable RF-loss, client recovery, extender isolation and live-WebUI acceptance |
 | [wmediumd-client-carousel.md](wmediumd-client-carousel.md) | Visual client disconnect/reconnect rotation across every AP |
 | [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
@@ -29,12 +30,12 @@ These documents are the complete current documentation set. Historical
 bring-up notes and superseded 6.8-era decisions remain in Git history rather
 than beside current operating instructions.
 
-## Current accepted baseline
+## Current source and accepted scale
 
 ```text
 source             codex/0815-clean
-image runtime code c2e8ce7
-host tooling       current codex/0815-clean head
+patch series       EasyMesh through 0055, IEEE1905 through 0005
+image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
 model              5 agents / 15 radios / 50 BSSs
@@ -42,17 +43,18 @@ clients            10 active WLAN clients
 medium             patched multichannel wmediumd
 ```
 
-Accepted images:
+The last fully rebuilt pre-P0 image pair is retained as historical provenance:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `easymesh-controller-rootfs-0818.tar.bz2` | `0425fda2a96434fd9c59150e037141c8569208f2bc25fc1e27ce4f7dceef9cd3` |
-| extender | `easymesh-extender-rootfs-0818.tar.bz2` | `a4491eec0116d2bc0b2f6f0b438c43e77ec0ca95214d36ac7f80d039e818e6cd` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `e5314430402513823c86c3a29823b4d2fbc9e826f381d0bb9c342364f52b8a9f` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260819032857.rootfs.lxc.tar.bz2` | `716ef80633e4b3097f2e77e885b828f195778d457d15090db7d00dc62ddc2449` |
 
-rev130 and the rev150 VM are on the same source, kernel, accepted images and
-`5/15/50` topology with 10/10 active clients and zero service restarts. Both
-have passed 10/10 commanded steering and a dynamic two-AP crossover with
-verified medium restoration; the VM also passed an earlier 30/30 matrix.
+That pair does not contain source patches `0047`-`0055`. Current P0 behavior
+was proven with rebuilt targeted artifacts on rev130: complete extender
+expiry/return, association-owner repair, three cold reconstructions, 10/10
+traffic, zero monitored restarts and bounded memory. A full image roll-up and
+dual-lab deployment must record its own new hashes before replacing the table.
 
 ## Runtime access
 

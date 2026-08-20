@@ -1,6 +1,6 @@
 # EasyMesh VM distributions and operator flow
 
-The EasyMesh steering lab is distributed in two forms. New engineers should
+The EasyMesh steering lab is documented in three forms. New engineers should
 normally use the thin form; the precooked form is retained for offline and
 recovery use.
 

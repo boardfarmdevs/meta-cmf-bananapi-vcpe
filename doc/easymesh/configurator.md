@@ -199,7 +199,8 @@ An experiment is not complete unless `summary.json` reports `passed` and
 
 ## Validated behavior
 
-- 9/9 Python/compiler/runner/real-daemon tests passed.
+- The supported Python suite passes ten compiler/observer/runner tests; its
+  real-daemon actuator case runs when `WMDC_TEST_DAEMON` selects a test daemon.
 - The internal wmediumd multichannel/Linux-7 suite passed 9/9.
 - A passive two-AP crossover applied 32 generations in 60 seconds, kept the
   same daemon PID, delivered 1,400/1,400 probes and restored every link.

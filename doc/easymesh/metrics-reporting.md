@@ -55,11 +55,14 @@ The path was disabled by several independent implementation defects:
    intentionally omits periodic STA metrics. The controller contained valid
    RCPI, but the WebUI and `/api/v1/clients` rendered it as unavailable.
 
-The retained fixes are libwebconfig patch `0003` and EasyMesh patches `0042`
-through `0044`. The WebUI now skips unchanged policy nodes, applies changed
-nodes one at a time, verifies controller state and allows the asynchronous
-1905 transaction to retire before continuing. Its client adapter joins the
-detailed `get_sta` metrics to the live topology inventory by STA MAC.
+The retained activation fixes are libwebconfig patch `0003` and EasyMesh
+patches `0042` through `0044`. Patch `0048` additionally prevents a stale
+Agent-local metrics row from changing association ownership: metrics update an
+existing current association but never create or move one. The WebUI skips
+unchanged policy nodes, applies changed nodes one at a time, verifies
+controller state and allows the asynchronous 1905 transaction to retire before
+continuing. Its client adapter joins the detailed `get_sta` metrics to the live
+topology inventory by STA MAC.
 
 ## Active policy values
 
