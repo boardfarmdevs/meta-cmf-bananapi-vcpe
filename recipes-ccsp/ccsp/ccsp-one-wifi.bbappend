@@ -20,6 +20,7 @@ WIFI_DB_HWSIM_SAE_STA_PATCH := "${THISDIR}/${BPN}/0007-wifi_db-disable-sae-wpa3-
 WIFI_DB_HWSIM_20MHZ_PATCH := "${THISDIR}/${BPN}/0008-wifi_db-clamp-channelwidth-20mhz-under-hwsim.patch"
 WIFI_ASSOC_RETURN_DELTA_PATCH := "${THISDIR}/${BPN}/0010-assoc-publish-returning-client-delta.patch"
 WIFI_ASSOC_LIVE_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0011-assoc-mark-monitor-missing-client-inactive.patch"
+WIFI_EM_DUPLICATE_AL_MAC_PATCH := "${THISDIR}/${BPN}/0012-webconfig-prefer-sta-for-duplicate-al-mac.patch"
 python do_patch_append() {
     import subprocess
     s = d.getVar('S')
@@ -101,6 +102,12 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: marking monitor-missing association history inactive")
     with open(d.getVar('WIFI_ASSOC_LIVE_SNAPSHOT_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # Linux bridges inherit a port MAC, so the extender AL MAC can appear on
+    # both brlan0 and its wireless backhaul STA.  Make the Init_dml readiness
+    # check select the known STA instead of depending on getifaddrs() order.
+    bb.note("meta-cmf-bananapi-vcpe: resolving duplicate EasyMesh AL MAC to the backhaul STA")
+    with open(d.getVar('WIFI_EM_DUPLICATE_AL_MAC_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -114,7 +121,8 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH WIFI_DB_HWSIM_STANDARDS_PATCH \
     WIFI_DB_HWSIM_SAE_PATCH WIFI_DB_HWSIM_NO_6GHZ_PATCH \
     WIFI_DB_HWSIM_SAE_STA_PATCH WIFI_DB_HWSIM_20MHZ_PATCH \
-    WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH"
+    WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH \
+    WIFI_EM_DUPLICATE_AL_MAC_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -125,6 +133,7 @@ do_patch[file-checksums] += "${WIFI_DB_HWSIM_SAE_STA_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_HWSIM_20MHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_RETURN_DELTA_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_LIVE_SNAPSHOT_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_DUPLICATE_AL_MAC_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.

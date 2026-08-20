@@ -1,0 +1,76 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] wifi_ctrl: resolve a duplicate AL MAC to the backhaul STA
+
+Linux bridges normally inherit a port MAC.  An EasyMesh extender therefore
+has the configured AL MAC on both its wireless backhaul STA and brlan0.  The
+DML readiness check used interfacename_from_mac(), which returns the first
+matching getifaddrs() entry.  When that entry is brlan0, the check rejects it
+as neither a Wi-Fi VAP nor an allowed Ethernet/loopback interface and returns
+bus_error_access_not_allowed.  The agent then retries Init_dml forever and no
+fronthaul BSS configuration is applied.
+
+If the first matching interface is not usable, search OneWifi's interface map
+for a VAP with the AL MAC and accept it only when it is a STA VAP.  This keeps
+the existing Ethernet handling and readiness semantics while removing the
+getifaddrs() ordering dependency.
+
+Upstream-Status: Pending
+---
+ source/core/wifi_ctrl_rbus_handlers.c | 36 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/source/core/wifi_ctrl_rbus_handlers.c b/source/core/wifi_ctrl_rbus_handlers.c
+--- a/source/core/wifi_ctrl_rbus_handlers.c
++++ b/source/core/wifi_ctrl_rbus_handlers.c
+@@ -1136,6 +1136,8 @@ bus_error_t webconfig_get_dml_subdoc(char *event_name, raw_data_t *p_data, bus_u
+     mac_address_t zero_mac;
+     char ifname[100] = {0};
+     int ret = 0;
++    size_t interface_index;
++    mac_address_t interface_mac;
+     mac_addr_str_t mac_str;
+ 
+     memset(zero_mac, 0, sizeof(mac_address_t));
+@@ -1168,6 +1170,40 @@ bus_error_t webconfig_get_dml_subdoc(char *event_name, raw_data_t *p_data, bus_u
+                     to_mac_str(wifi_prop->al_1905_mac, mac_str));
+                 return bus_error_access_not_allowed;
+             }
++
++            /* A Linux bridge can inherit the backhaul STA MAC.  In that case
++             * getifaddrs() may return the bridge before the STA even though
++             * both are valid matches.  Prefer a matching STA from OneWifi's
++             * own interface map over rejecting an arbitrary first match. */
++            if (convert_ifname_to_vap_index(wifi_prop, ifname) == -1 &&
++                strncmp(ifname, "eth", strlen("eth")) != 0 &&
++                strncmp(ifname, "lo", strlen("lo")) != 0) {
++                for (interface_index = 0;
++                     interface_index < sizeof(wifi_prop->interface_map) /
++                         sizeof(wifi_prop->interface_map[0]);
++                     interface_index++) {
++                    if (wifi_prop->interface_map[interface_index].interface_name[0] == '\0') {
++                        continue;
++                    }
++                    if (mac_address_from_name(
++                            wifi_prop->interface_map[interface_index].interface_name,
++                            interface_mac) != RETURN_OK ||
++                        memcmp(interface_mac, wifi_prop->al_1905_mac,
++                            sizeof(mac_address_t)) != 0) {
++                        continue;
++                    }
++                    vap_index = wifi_prop->interface_map[interface_index].index;
++                    if (get_wifi_object_sta_parameter(vap_index) != NULL) {
++                        snprintf(ifname, sizeof(ifname), "%s",
++                            wifi_prop->interface_map[interface_index].interface_name);
++                        wifi_util_info_print(WIFI_CTRL,
++                            "%s:%d resolved duplicate AL MAC %s to STA interface %s\n",
++                            __func__, __LINE__, to_mac_str(wifi_prop->al_1905_mac, mac_str),
++                            ifname);
++                        break;
++                    }
++                }
++            }
+             vap_index = convert_ifname_to_vap_index(wifi_prop, ifname);
+             if (vap_index != -1) {
+                 sta_info = get_wifi_object_sta_parameter(vap_index);
+-- 
+2.43.0
