@@ -183,13 +183,15 @@ Its gated `40-deploy-easymesh.sh` and `55-scale-topology.sh` accept:
 ```text
 EASYMESH_REPO
 EXPECTED_REPO_HEAD
+EXPECTED_WMEDIUMD_SHA256
 BPI_NVRAM_ROOT
 CONTROLLER_IMAGE
 EXTENDER_IMAGE
 ```
 
-Pin all paths and the expected revision when testing an alternate checkout. Do
-not remove provenance checks to make a deployment proceed.
+Pin all paths, the expected revision and the patched-wmediumd SHA-256 when
+testing an alternate checkout. Do not remove provenance checks to make a
+deployment proceed.
 
 ### rev130 recovery after a host reboot
 

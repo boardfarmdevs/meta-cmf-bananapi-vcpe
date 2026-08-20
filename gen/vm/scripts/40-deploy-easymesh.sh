@@ -14,12 +14,13 @@ boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-vagrant/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2"}
 expected_repo_head=${EXPECTED_REPO_HEAD:-c2e8ce74385d64c788ac750c18342e373d35e878}
+expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-b7fdaf23c5c490dcfc42f1459cb31b78ab2c801f58c86bbbb7a12eca2a7f2ca9}
 
 mkdir -p "$state"
 test -f "$boardfarm_status"
 test "$(git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
 test "$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
-    b7fdaf23c5c490dcfc42f1459cb31b78ab2c801f58c86bbbb7a12eca2a7f2ca9
+    "$expected_wmediumd_sha256"
 
 model_counts() {
     lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
