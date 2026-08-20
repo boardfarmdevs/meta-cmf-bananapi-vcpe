@@ -1,0 +1,200 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] controller: serialize command result sessions
+
+The controller command listener accepts a new TLS client immediately after it
+queues an asynchronous request, but stores the connection in one shared m_ssl
+pointer. A second client can therefore overwrite the first request's result
+session before the manager thread calls send_result(). More importantly, the
+listener resets the same m_cmd object while the manager thread is copying and
+serializing the response. That race can strand the client in SSL_read forever;
+the WebUI then blocks every live REST route behind its native-command mutex.
+
+Keep one result session outstanding at a time. The listener waits for the
+manager thread to send and close the result before accepting another client,
+with a ten-second absolute deadline that closes an abandoned session. Protect
+m_ssl with a mutex/condition pair and defer m_cmd.reset() until the result has
+completed.
+
+Upstream-Status: Pending
+---
+ inc/em_cmd_ctrl.h         |  8 ++++-
+ src/ctrl/em_cmd_ctrl.cpp | 80 +++++++++++++++++++++++++++++++++++++++-------
+ 2 files changed, 76 insertions(+), 12 deletions(-)
+
+diff --git a/inc/em_cmd_ctrl.h b/inc/em_cmd_ctrl.h
+index eff8959..0925781 100644
+--- a/inc/em_cmd_ctrl.h
++++ b/inc/em_cmd_ctrl.h
+@@ -21,7 +21,13 @@
+ 
+ #include "em_cmd_exec.h"
+ 
+-class em_cmd_ctrl_t : public em_cmd_exec_t { 
++class em_cmd_ctrl_t : public em_cmd_exec_t {
++    pthread_mutex_t m_result_lock;
++    pthread_cond_t m_result_cond;
++
++    bool wait_for_result(unsigned int timeout_sec);
++    void set_result_session(SSL *ssl);
++    void close_result_session_locked();
+ 
+ public:
+     
+diff --git a/src/ctrl/em_cmd_ctrl.cpp b/src/ctrl/em_cmd_ctrl.cpp
+index d06b536..0e8eab0 100644
+--- a/src/ctrl/em_cmd_ctrl.cpp
++++ b/src/ctrl/em_cmd_ctrl.cpp
+@@ -35,6 +35,7 @@
+ #include <sys/uio.h>
+ #include <sys/time.h>
+ #include <sys/un.h>
++#include <time.h>
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <cjson/cJSON.h>
+@@ -49,6 +50,7 @@ int em_cmd_ctrl_t::execute(char *result)
+     bool wait = false;
+     em_ctrl_t *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
+     struct timeval io_timeout = {30, 0};
++    SSL *accepted_ssl;
+ 
+     m_cmd.reset();
+ 
+@@ -69,6 +71,7 @@ int em_cmd_ctrl_t::execute(char *result)
+     }
+ 
+     while (1) {
++        wait = false;
+ 
+         //printf("%s:%d: Waiting for client connection\n", __func__, __LINE__);
+         if ((dsock = accept(lsock, NULL, NULL)) == -1) {
+@@ -91,22 +94,22 @@ int em_cmd_ctrl_t::execute(char *result)
+         //printf("%s:%d: Connection accepted from client\n", __func__, __LINE__);
+ 
+         tmp = reinterpret_cast<unsigned char *> (get_event());
+-        m_ssl = SSL_new(get_ssl_ctx());
+-        SSL_set_fd(m_ssl, dsock);
++        accepted_ssl = SSL_new(get_ssl_ctx());
++        SSL_set_fd(accepted_ssl, dsock);
+ 
+-        if (SSL_accept(m_ssl) <= 0) {
+-            SSL_free(m_ssl);
+-            m_ssl = NULL;
++        if (SSL_accept(accepted_ssl) <= 0) {
++            SSL_free(accepted_ssl);
+             close(dsock);
+             continue;
+         }
+ 
+-		if ((ret = SSL_read(m_ssl, tmp, sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN)) <= 0) {
++        set_result_session(accepted_ssl);
++
++		if ((ret = SSL_read(accepted_ssl, tmp, sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN)) <= 0) {
+ 			printf("%s:%d: listen error on socket, err:%d\n", __func__, __LINE__, errno);
+-            SSL_shutdown(m_ssl);
+-            SSL_free(m_ssl);
+-            m_ssl = NULL;
+-            close(dsock);
++            pthread_mutex_lock(&m_result_lock);
++            close_result_session_locked();
++            pthread_mutex_unlock(&m_result_lock);
+             m_cmd.reset();
+             continue;
+ 		}
+@@ -136,8 +139,13 @@ int em_cmd_ctrl_t::execute(char *result)
+ 		//printf("%s:%d: Sending result: Wait: %d\n", __func__, __LINE__, wait);
+         if (wait == false) {
+             send_result(em_cmd_out_status_other);
++        } else if (wait_for_result(10) == false) {
++            printf("%s:%d: command result timed out after 10 seconds\n",
++                    __func__, __LINE__);
+         }
+ 
++        // The manager's send_result() consumes m_cmd.  Do not reset the
++        // shared command while its queued event is still outstanding.
+         m_cmd.reset();
+ 		
+ 
+@@ -148,6 +156,50 @@ int em_cmd_ctrl_t::execute(char *result)
+     return 0;
+ }
+ 
++void em_cmd_ctrl_t::set_result_session(SSL *ssl)
++{
++    pthread_mutex_lock(&m_result_lock);
++    m_ssl = ssl;
++    pthread_mutex_unlock(&m_result_lock);
++}
++
++void em_cmd_ctrl_t::close_result_session_locked()
++{
++    int sd;
++
++    if (m_ssl == NULL) {
++        return;
++    }
++
++    sd = SSL_get_fd(m_ssl);
++    SSL_free(m_ssl);
++    m_ssl = NULL;
++    close(sd);
++    pthread_cond_broadcast(&m_result_cond);
++}
++
++bool em_cmd_ctrl_t::wait_for_result(unsigned int timeout_sec)
++{
++    struct timespec deadline;
++    int rc = 0;
++
++    clock_gettime(CLOCK_REALTIME, &deadline);
++    deadline.tv_sec += timeout_sec;
++
++    pthread_mutex_lock(&m_result_lock);
++    while (m_ssl != NULL && rc != ETIMEDOUT) {
++        rc = pthread_cond_timedwait(&m_result_cond, &m_result_lock, &deadline);
++    }
++
++    bool completed = (m_ssl == NULL);
++    if (completed == false) {
++        close_result_session_locked();
++    }
++    pthread_mutex_unlock(&m_result_lock);
++
++    return completed;
++}
++
+ int em_cmd_ctrl_t::send_result(em_cmd_out_status_t status)
+ {
+     ssize_t ret;
+@@ -160,8 +212,10 @@ int em_cmd_ctrl_t::send_result(em_cmd_out_status_t status)
+ 
+     tmp = reinterpret_cast<unsigned char *> (m_cmd.status_to_string(status, str));
+ 
++    pthread_mutex_lock(&m_result_lock);
+     if (m_ssl == NULL) {
+         printf("%s:%d: SSL is NULL\n", __func__, __LINE__);
++        pthread_mutex_unlock(&m_result_lock);
+         free(str);
+         return -1;
+     }
+@@ -175,6 +229,8 @@ int em_cmd_ctrl_t::send_result(em_cmd_out_status_t status)
+ 	SSL_free(m_ssl);
+ 	m_ssl = NULL;
+ 	close(sd);
++    pthread_cond_broadcast(&m_result_cond);
++    pthread_mutex_unlock(&m_result_lock);
+ 
+ 	free(str);
+ 
+@@ -186,6 +242,8 @@ em_cmd_ctrl_t::em_cmd_ctrl_t()
+ {
+     dm_easy_mesh_t dm;
+ 
++    pthread_mutex_init(&m_result_lock, NULL);
++    pthread_cond_init(&m_result_cond, NULL);
++
+     m_cmd.init(dm);
+ }
+-
+-- 
+2.43.0

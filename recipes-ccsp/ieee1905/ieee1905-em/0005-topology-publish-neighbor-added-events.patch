@@ -1,0 +1,143 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: publish neighbor-added convergence events
+
+An expired IEEE1905 neighbor is reported to the higher-layer entity, but the
+same neighbor being learned again is retained only inside the IEEE1905
+topology database.  Periodic Topology Responses are consumed by IEEE1905 and
+do not necessarily reach the EasyMesh controller.  The controller can
+therefore keep a live, responding agent suppressed after it rejoins.
+
+Publish a topology-change event whenever received evidence creates a new
+IEEE1905 neighbor.  Send the normal multicast Topology Notification and its
+local AL-SAP indication just as for removal.  This lets the higher-layer
+controller issue its standard bounded Topology Query and restore the same
+logical agent without polling or implementation-specific network messages.
+
+Extend the expiry regression to prove the initial add and post-expiry re-add
+events are both published exactly once.
+
+Upstream-Status: Pending
+---
+ ieee1905-core/src/cmdu_proxy.rs      | 30 ++++++++++++++++++++++++++----
+ ieee1905-core/src/topology_manager.rs | 23 +++++++++++++++++++++--
+ 2 files changed, 47 insertions(+), 6 deletions(-)
+
+diff --git a/ieee1905-core/src/topology_manager.rs b/ieee1905-core/src/topology_manager.rs
+index 250164a..45e7a53 100644
+--- a/ieee1905-core/src/topology_manager.rs
++++ b/ieee1905-core/src/topology_manager.rs
+@@ -104,6 +104,7 @@ pub enum TransmissionEvent {
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum TopologyChangeEvent {
+     NeighborExpired { al_mac: MacAddr },
++    NeighborAdded { al_mac: MacAddr },
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq)]
+@@ -805,6 +806,7 @@ impl TopologyDatabase {
+     ) -> TransmissionEvent {
+         let al_mac = device_data.al_mac;
+         let transmission_event;
++        let mut neighbor_added = false;
+ 
+         //TODO: use new update types.
+         tracing::debug!("WAITING for write lock");
+@@ -1007,6 +1009,7 @@ impl TopologyDatabase {
+                     };
+ 
+                     if node_was_created {
++                        neighbor_added = true;
+                         let mut interfaces = self.local_interface_list.write().await;
+                         if let Some(vec) = interfaces.as_mut() {
+                             Self::update_local_neighbours_ieee1905_compatibility(vec, &nodes);
+@@ -1017,5 +1020,12 @@ impl TopologyDatabase {
+         }
+ 
+         debug!("Lock released — function continues safely");
++        if neighbor_added {
++            let event = TopologyChangeEvent::NeighborAdded { al_mac };
++            if self.topology_change_tx.send(event).is_err() {
++                debug!(%al_mac, "No subscriber for neighbor-added event");
++            }
++        }
++
+         transmission_event
+     }
+@@ -1418,6 +1429,10 @@ mod tests {
+         )
+         .await;
+ 
++        assert_eq!(
++            topology_changes.try_recv().unwrap(),
++            TopologyChangeEvent::NeighborAdded { al_mac }
++        );
+         let now = Instant::now();
+         let stale_at = now - Duration::from_secs(61);
+         {
+@@ -1445,5 +1460,17 @@ mod tests {
+             topology_changes.try_recv().unwrap(),
+             TopologyChangeEvent::NeighborExpired { al_mac }
+         );
++
++        db.update_ieee1905_topology(
++            device,
++            UpdateType::DiscoveryReceived,
++            None,
++            None,
++            None,
++        ).await;
++        assert_eq!(
++            topology_changes.try_recv().unwrap(),
++            TopologyChangeEvent::NeighborAdded { al_mac }
++        );
+     }
+ }
+diff --git a/ieee1905-core/src/cmdu_proxy.rs b/ieee1905-core/src/cmdu_proxy.rs
+index e8aca1a..59154de 100644
+--- a/ieee1905-core/src/cmdu_proxy.rs
++++ b/ieee1905-core/src/cmdu_proxy.rs
+@@ -519,6 +519,6 @@ async fn indicate_local_topology_change(
+     message_id_generator: &Arc<MessageIdGenerator>,
+     local_al_mac_address: MacAddr,
+-    expired_al_mac_address: MacAddr,
++    changed_al_mac_address: MacAddr,
+ ) {
+     if !AlServiceAccessPoint::is_connected_and_enabled().await {
+         return info!("AL-SAP is not active; local topology-change indication skipped");
+@@ -547,7 +547,7 @@ async fn indicate_local_topology_change(
+         // neighbor so the local HLE probes only the affected agent.  This is
+         // not transmitted on Ethernet and does not add a private TLV.
+         source_al_mac_address: local_al_mac_address,
+-        destination_al_mac_address: expired_al_mac_address,
++        destination_al_mac_address: changed_al_mac_address,
+         is_fragment: 0,
+         is_last_fragment: 1,
+         fragment_id: 0,
+@@ -591,6 +591,25 @@ pub async fn cmdu_topology_change_notification_worker(
+                     al_mac,
+                 ).await;
+             }
++            Ok(TopologyChangeEvent::NeighborAdded { al_mac }) => {
++                info!(
++                    added_al_mac = %al_mac,
++                    "Sending Topology Notification for added neighbor"
++                );
++                cmdu_topology_notification_transmission(
++                    interface.clone(),
++                    sender.clone(),
++                    message_id_generator.clone(),
++                    local_al_mac_address,
++                    forwarding_interface_mac,
++                )
++                .await;
++                indicate_local_topology_change(
++                    &message_id_generator,
++                    local_al_mac_address,
++                    al_mac,
++                ).await;
++            }
+             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                 warn!(
+                     skipped,
+-- 
+2.43.0

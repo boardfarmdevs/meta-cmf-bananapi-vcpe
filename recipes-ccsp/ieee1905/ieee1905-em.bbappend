@@ -9,6 +9,9 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
 # broadband container build.
 SRC_URI += "file://0001-rbus-sys-use-TARGET-not-HOST-for-bindgen-clang-arg.patch"
 SRC_URI += "file://0002-topology-gc-notify-expired-neighbors.patch"
+SRC_URI += "file://0003-topology-forward-local-change-to-al-sap.patch"
+SRC_URI += "file://0004-topology-age-only-on-received-evidence.patch"
+SRC_URI += "file://0005-topology-publish-neighbor-added-events.patch"
 
 # ieee1905_em_ctrl.service must wait for the interface it actually uses, not the
 # nominal WAN. In the LXD/hwsim controller syscfg reports wan_physical_ifname=erouter0,
@@ -27,8 +30,27 @@ do_install_append() {
     if [ -f "$u" ]; then
         sed -i '/^ExecStartPre=/d' "$u"
         sed -i "\@^ExecStart=@i ExecStartPre=/bin/sh -c 'i=0; while [ ! -e /sys/class/net/brlan0/address ] \&\& [ \$i -lt 60 ]; do i=\$((i+1)); sleep 1; done; [ -e /sys/class/net/brlan0/address ]'\nExecStartPre=/bin/sh -c 'if [ ! -e \"/sys/class/net/eth0_virt_peer/address\" ]; then /usr/ccsp/EasyMesh/setup_veth_for_em.sh brlan0 eth0 true; fi'" "$u"
+
+        # The upstream unit backgrounds ieee1905 from a shell under
+        # Type=forking.  That makes systemd guess the main PID and permits the
+        # unit to become active before the AL-SAP sockets exist.  It also leaves
+        # process ownership ambiguous across an em_ctrl restart, which was
+        # observed as a live ieee1905 PID with no useful controller delivery.
+        # ieee1905 already sends READY=1 after binding both AL-SAP listeners, so
+        # run it in the foreground as a notify service and let systemd track the
+        # real process.  Keep its output in the bounded journal, not an
+        # append-only file in /tmp.
+        sed -i 's/^Type=forking$/Type=notify/' "$u"
+        sed -i 's|^ExecStart=.*$|ExecStart=/usr/bin/ieee1905 -f off -i eth0_virt_peer --sap-data-path /tmp/al_em_ctrl_data_socket --sap-control-path /tmp/al_em_ctrl_control_socket|' "$u"
+        sed -i '/^StandardOutput=/d; /^StandardError=/d; /^SyslogIdentifier=/d' "$u"
+        sed -i '/^ExecStart=\/usr\/bin\/ieee1905 /a StandardOutput=journal\
+StandardError=journal\
+SyslogIdentifier=ieee1905_em_ctrl' "$u"
+
         grep -q '^RestartSec=' "$u" || sed -i '/^Restart=always/a RestartSec=3' "$u"
-        bbnote "meta-cmf-bananapi-vcpe: ieee1905 controller waits for brlan0 and invokes veth setup directly"
+        grep -q '^Type=notify$' "$u" || bbfatal "meta-cmf-bananapi-vcpe: failed to make ieee1905 controller a notify service"
+        ! grep -q '/tmp/ieee1905_ctrl_log\.txt' "$u" || bbfatal "meta-cmf-bananapi-vcpe: unbounded ieee1905 controller log remains"
+        bbnote "meta-cmf-bananapi-vcpe: ieee1905 controller is foregrounded, readiness-tracked, and waits for brlan0"
     fi
 }
 
@@ -59,6 +81,21 @@ do_install_append() {
     if [ -f "$f" ]; then
         sed -i '/^ExecStartPre=/d' "$f"
         sed -i "\@^ExecStart=@i ExecStartPre=/bin/sh -c 'if [ ! -e \"/sys/class/net/eth1_virt_peer/address\" ]; then /usr/ccsp/EasyMesh/setup_veth_for_em.sh brlan0 eth1 false; fi'\nExecStartPre=/bin/sh -c 'timeout 60 /usr/ccsp/EasyMesh/setup_ext_pre.sh || true'" "$f"
-        bbnote "meta-cmf-bananapi-vcpe: reordered/bounded ExecStartPre in ieee1905_em_agent.service"
+
+        # The remote-agent unit has the same process-ownership and tmpfs-log
+        # defects as the controller unit corrected above.  ieee1905's default
+        # AL-SAP paths are used by the agent invocation and it sends READY=1
+        # after both listeners are bound, so systemd can track real readiness.
+        sed -i 's/^Type=forking$/Type=notify/' "$f"
+        sed -i 's|^ExecStart=.*$|ExecStart=/usr/bin/ieee1905 -f off -i eth1_virt_peer|' "$f"
+        sed -i '/^StandardOutput=/d; /^StandardError=/d; /^SyslogIdentifier=/d' "$f"
+        sed -i '/^ExecStart=\/usr\/bin\/ieee1905 /a StandardOutput=journal\
+StandardError=journal\
+SyslogIdentifier=ieee1905_em_agent' "$f"
+        grep -q '^RestartSec=' "$f" || sed -i '/^Restart=always/a RestartSec=3' "$f"
+
+        grep -q '^Type=notify$' "$f" || bbfatal "meta-cmf-bananapi-vcpe: failed to make ieee1905 agent a notify service"
+        ! grep -q '/tmp/ieee1905_agent_log\.txt' "$f" || bbfatal "meta-cmf-bananapi-vcpe: unbounded ieee1905 agent log remains"
+        bbnote "meta-cmf-bananapi-vcpe: ieee1905 agent is foregrounded, readiness-tracked, and uses bounded journald"
     fi
 }

@@ -19,6 +19,7 @@ WIFI_DB_HWSIM_NO_6GHZ_PATCH := "${THISDIR}/${BPN}/0006-wifi_db-disable-6ghz-only
 WIFI_DB_HWSIM_SAE_STA_PATCH := "${THISDIR}/${BPN}/0007-wifi_db-disable-sae-wpa3-sta-defaults-under-hwsim.patch"
 WIFI_DB_HWSIM_20MHZ_PATCH := "${THISDIR}/${BPN}/0008-wifi_db-clamp-channelwidth-20mhz-under-hwsim.patch"
 WIFI_ASSOC_RETURN_DELTA_PATCH := "${THISDIR}/${BPN}/0010-assoc-publish-returning-client-delta.patch"
+WIFI_ASSOC_LIVE_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0011-assoc-mark-monitor-missing-client-inactive.patch"
 python do_patch_append() {
     import subprocess
     s = d.getVar('S')
@@ -94,6 +95,12 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: publishing association delta for returning clients")
     with open(d.getVar('WIFI_ASSOC_RETURN_DELTA_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # The persistent association map can retain a station after a silent roam.
+    # Make the failed live-monitor lookup explicit so full snapshots can exclude
+    # retained history without deleting it.
+    bb.note("meta-cmf-bananapi-vcpe: marking monitor-missing association history inactive")
+    with open(d.getVar('WIFI_ASSOC_LIVE_SNAPSHOT_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -107,7 +114,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH WIFI_DB_HWSIM_STANDARDS_PATCH \
     WIFI_DB_HWSIM_SAE_PATCH WIFI_DB_HWSIM_NO_6GHZ_PATCH \
     WIFI_DB_HWSIM_SAE_STA_PATCH WIFI_DB_HWSIM_20MHZ_PATCH \
-    WIFI_ASSOC_RETURN_DELTA_PATCH"
+    WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -117,6 +124,7 @@ do_patch[file-checksums] += "${WIFI_DB_HWSIM_NO_6GHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_HWSIM_SAE_STA_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_HWSIM_20MHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_RETURN_DELTA_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_ASSOC_LIVE_SNAPSHOT_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.

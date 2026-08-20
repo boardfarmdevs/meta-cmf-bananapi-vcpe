@@ -372,7 +372,13 @@ class Carousel:
             json.dumps(document, indent=2, sort_keys=True) + "\n"
         )
 
-        mesh = [item for item in inventory["radios"] if item["kind"] == "mesh"]
+        # The controller container also owns an hwsim radio, but its colocated
+        # Agent does not advertise the lab's private_ssid.  It is a topology
+        # identity, not a client-placement target for this scenario.
+        mesh = [
+            item for item in inventory["radios"]
+            if item["kind"] == "mesh" and private_bssids(item)
+        ]
         stations = [item for item in inventory["radios"] if item["kind"] == "station"]
         if len(mesh) < 2 or not stations:
             raise RuntimeError(f"need at least two APs and one client; found {len(mesh)}/{len(stations)}")

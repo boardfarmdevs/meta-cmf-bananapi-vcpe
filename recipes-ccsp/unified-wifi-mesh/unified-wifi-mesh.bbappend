@@ -48,6 +48,15 @@ EASYMESH_CORE_PATCHES = " \
     file://0044-cli-expose-live-client-rcpi.patch \
     file://0045-cli-overlay-live-clients-on-topology.patch \
     file://0046-al-sap-preserve-stream-message-boundaries.patch \
+    file://0047-controller-reconcile-topology-notification-liveness.patch \
+    file://0048-controller-update-metrics-only-for-current-stas.patch \
+    file://0049-cli-bound-controller-command-transport.patch \
+    file://0050-cli-reject-empty-controller-topology.patch \
+    file://0051-controller-commit-association-before-capability-query.patch \
+    file://0052-topology-response-reconcile-associated-clients.patch \
+    file://0053-manager-service-timers-under-event-load.patch \
+    file://0054-controller-serialize-command-result-sessions.patch \
+    file://0055-topology-response-do-not-overwrite-conflicting-owner.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -111,6 +120,40 @@ do_install_append() {
     if [ -f "$f" ]; then
         sed -i 's@^if \[ ! -e "/nvram/mysql_db_account_exists" \]; then@if ! mysql -u bpi --password="root" -e "use OneWifiMesh;" >/dev/null 2>\&1; then@' "$f"
         bbnote "meta-cmf-bananapi-vcpe: fixed spurious DB drop + stale-marker guard in setup_mysql_db_pre.sh"
+    fi
+}
+
+# The stock colocated and extender agent units background onewifi_em_agent from
+# a shell under Type=forking and append all output to /tmp/em_agent.log.  There
+# is no PID file, so systemd reports MainPID=0 and cannot reliably stop, restart,
+# or account for the actual agent.  The log is on tmpfs and reached tens of MiB
+# during a short lab run, directly consuming the embedded memory budget.
+#
+# onewifi_em_agent is a normal foreground process (it does not sd_notify), so
+# run it as Type=simple and send output to the bounded journal.  Apply this to
+# both controller-colocated and extender variants after their variant-specific
+# prerequisite edits above.
+do_install_append() {
+    f="${D}${systemd_unitdir}/system/em_agent.service"
+    if [ -f "$f" ]; then
+        if grep -q '^ExecStart=.*onewifi_em_agent.*em_agent\.log' "$f"; then
+            sed -i 's|^ExecStart=.*onewifi_em_agent.*$|ExecStart=/usr/bin/onewifi_em_agent|' "$f"
+        elif ! grep -q '^ExecStart=/usr/bin/onewifi_em_agent$' "$f"; then
+            bbfatal "meta-cmf-bananapi-vcpe: unexpected em_agent.service ExecStart"
+        fi
+
+        sed -i 's/^Type=forking$/Type=simple/' "$f"
+        sed -i '/^StandardOutput=/d; /^StandardError=/d; /^SyslogIdentifier=/d; /^LogRateLimitIntervalSec=/d; /^LogRateLimitBurst=/d' "$f"
+        sed -i '/^ExecStart=\/usr\/bin\/onewifi_em_agent$/a StandardOutput=journal\
+StandardError=journal\
+SyslogIdentifier=onewifi_em_agent\
+LogRateLimitIntervalSec=30s\
+LogRateLimitBurst=1000' "$f"
+        grep -q '^RestartSec=' "$f" || sed -i '/^Restart=always/a RestartSec=3' "$f"
+
+        grep -q '^Type=simple$' "$f" || bbfatal "meta-cmf-bananapi-vcpe: failed to make em_agent foreground"
+        ! grep -q '/tmp/em_agent\.log' "$f" || bbfatal "meta-cmf-bananapi-vcpe: unbounded em_agent log remains"
+        bbnote "meta-cmf-bananapi-vcpe: em_agent is foregrounded and uses bounded journald"
     fi
 }
 
@@ -563,6 +606,31 @@ do_install_append_qemux86bpibroadband() {
     # Ergonomic wrapper: steer.sh <STA> <TARGET_BSSID> resolves the source device
     # from the OneWifiMesh DB and calls steer_drv. Pure shell, controller-only.
     install -D -m 0755 ${WORKDIR}/steer.sh ${D}${bindir}/steer.sh
+
+    # The WebUI is another foreground process hidden behind a backgrounding
+    # shell in the stock unit.  Make systemd own it directly so P0 can account
+    # for its PID/RSS and so its output cannot grow an unbounded tmpfs file.
+    u="${D}${systemd_unitdir}/system/em_cli.service"
+    if [ -f "$u" ]; then
+        if grep -q '^ExecStart=.*onewifi_em_cli.*em_cli\.log' "$u"; then
+            sed -i 's|^ExecStart=.*onewifi_em_cli.*$|ExecStart=/usr/bin/onewifi_em_cli|' "$u"
+        elif ! grep -q '^ExecStart=/usr/bin/onewifi_em_cli$' "$u"; then
+            bbfatal "meta-cmf-bananapi-vcpe: unexpected em_cli.service ExecStart"
+        fi
+
+        sed -i 's/^Type=forking$/Type=simple/' "$u"
+        sed -i '/^StandardOutput=/d; /^StandardError=/d; /^SyslogIdentifier=/d; /^LogRateLimitIntervalSec=/d; /^LogRateLimitBurst=/d' "$u"
+        sed -i '/^ExecStart=\/usr\/bin\/onewifi_em_cli$/a StandardOutput=journal\
+StandardError=journal\
+SyslogIdentifier=onewifi_em_cli\
+LogRateLimitIntervalSec=30s\
+LogRateLimitBurst=500' "$u"
+        grep -q '^RestartSec=' "$u" || sed -i '/^Restart=always/a RestartSec=3' "$u"
+
+        grep -q '^Type=simple$' "$u" || bbfatal "meta-cmf-bananapi-vcpe: failed to make em_cli foreground"
+        ! grep -q '/tmp/em_cli\.log' "$u" || bbfatal "meta-cmf-bananapi-vcpe: unbounded em_cli log remains"
+        bbnote "meta-cmf-bananapi-vcpe: em_cli is foregrounded and uses bounded journald"
+    fi
 }
 
 FILES_${PN}_append_qemux86bpibroadband = " ${bindir}/onewifi_em_cli ${bindir}/steer_drv ${bindir}/steer.sh /usr/ccsp/EasyMesh/static ${systemd_unitdir}/system/em_cli.service.d/nvram.conf "

@@ -1,0 +1,51 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] metrics: update only the controller's current STA rows
+
+STA metrics are measurements for an association; they are not association
+state transitions.  The controller's metrics persistence path nevertheless
+called the general STA set_config() for every row in each Agent data model.
+set_config() inserts a missing key and enforces single ownership, so an old
+Agent retaining a silent roam-away could reinsert its stale row and evict the
+destination Agent's current association every reporting interval.
+
+Before persisting metrics, resolve the exact STA/BSSID/radio key in the
+controller-owned list.  Update it only when that current row exists and is
+associated.  A stale Agent-local row is skipped and cannot mutate topology;
+Client Association Events remain the only owner-changing input.
+
+Upstream-Status: Pending
+---
+ src/ctrl/dm_easy_mesh_ctrl.cpp | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4335,8 +4335,25 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+ 
+     if (dm->db_cfg_type_is_set(db_cfg_type_sta_metrics_update)) {
+         sta = static_cast<dm_sta_t *> (hash_map_get_first(dm->m_sta_map));
+         while (sta != NULL) {
++            dm_sta_t *current_sta;
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id,
++                    sta_mac_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid,
++                    bssid_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
++                    radio_mac_str);
++            snprintf(key, sizeof(em_2xlong_string_t), "%s@%s@%s",
++                    sta_mac_str, bssid_str, radio_mac_str);
++            current_sta = get_sta(key);
++            if (current_sta == NULL ||
++                    current_sta->m_sta_info.associated == false) {
++                em_printfout("Skipping metrics for non-current STA row %s", key);
++                sta = static_cast<dm_sta_t *>(
++                        hash_map_get_next(dm->m_sta_map, sta));
++                continue;
++            }
+ 			criteria = dm->db_cfg_type_get_criteria(db_cfg_type_sta_metrics_update);
+             if (dm_sta_list_t::set_config(m_db_client, *sta, NULL) == 0) {
+                 dm->reset_db_cfg_type(db_cfg_type_sta_metrics_update);
+             }
+-- 
+2.43.0
