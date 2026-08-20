@@ -2,6 +2,11 @@
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
+# Package upgrades can otherwise restart the VirtualBox guest service and
+# detach /vagrant and /vagrant-artifacts while the one-time installer is still
+# consuming them.  Report pending restarts but defer them to the optional VM
+# reboot after installation.
+export NEEDRESTART_MODE=l
 assets=/home/vagrant/easymesh-assets
 
 apt-get update
