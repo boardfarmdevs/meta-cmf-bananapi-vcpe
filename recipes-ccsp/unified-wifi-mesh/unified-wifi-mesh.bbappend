@@ -557,9 +557,10 @@ do_install_append() {
 # target format, and final binary hash are recorded in
 # doc/easymesh/rev130-bringup-summary.md#rebuilding-the-precompiled-webui-helper.
 #
-# The binary reads /nvram/static and /nvram/remoteCtrl.json; /nvram is a ZFS
-# dataset recreated per deploy, so a service drop-in seeds it at start from the
-# persistent copy under /usr/ccsp/EasyMesh/static.
+# The binary reads /nvram/static and /nvram/remoteCtrl.json. A same-node image
+# redeploy deliberately preserves /nvram, so the service drop-in refreshes the
+# packaged assets in /usr/ccsp/EasyMesh/static on every start. Without that
+# overwrite, a controller upgrade keeps serving the previous image's WebUI.
 # em_cli is the controller-side web UI and links libemcli.so, which is only built
 # and packaged in the broadband (controller) configuration of this recipe -- the
 # extender build produces no libemcli, so shipping the prebuilt onewifi_em_cli there
