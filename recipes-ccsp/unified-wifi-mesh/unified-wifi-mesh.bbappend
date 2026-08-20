@@ -64,6 +64,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0060-metrics-create-defaults-for-reloaded-radios.patch \
     file://0061-cli-enable-all-metrics-reporting.patch \
     file://0062-controller-preserve-profile-through-dm-commit.patch \
+    file://0063-controller-commit-topology-response-profile.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
