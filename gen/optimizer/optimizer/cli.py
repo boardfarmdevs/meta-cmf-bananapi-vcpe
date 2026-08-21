@@ -14,6 +14,13 @@ from .simulator import SimulationConfig, WorldSimulator
 from .model import Snapshot
 from .observer import ControllerObserver
 from .policy import ThresholdPolicy
+from .planners import (
+    BackhaulEdgeObservation,
+    BackhaulPlannerConfig,
+    RadioEnvironmentObservation,
+    plan_backhaul,
+    recommend_channel_width,
+)
 from .recorder import Journal, read_records
 from .state import PolicyState
 from .verifier import OutcomeVerifier
@@ -119,6 +126,12 @@ def parser() -> argparse.ArgumentParser:
         default=[],
         metavar="ROLE=accept|reject|ignore",
     )
+    backhaul = sub.add_parser("backhaul-plan")
+    backhaul.add_argument("--input", required=True)
+    backhaul.add_argument("--output", required=True)
+    width = sub.add_parser("width-plan")
+    width.add_argument("--input", required=True)
+    width.add_argument("--output", required=True)
     return result
 
 
@@ -167,6 +180,49 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"em-optimizer: {error}") from error
         Path(args.output).write_text(
             json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
+    if args.mode == "backhaul-plan":
+        value = load_json(args.input)
+        if value.get("schema") != "optimizer.backhaul-observations.v1":
+            raise SystemExit("em-optimizer: expected optimizer.backhaul-observations.v1")
+        try:
+            plan = plan_backhaul(
+                root=value["root"],
+                nodes=value["nodes"],
+                observed_at=value["observed_at"],
+                edges=[BackhaulEdgeObservation(**item) for item in value["edges"]],
+                config=BackhaulPlannerConfig(**value.get("planner", {})),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"em-optimizer: invalid backhaul input: {error}") from error
+        output = {"schema": "optimizer.backhaul-plan.v1", **plan.to_dict()}
+        Path(args.output).write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
+    if args.mode == "width-plan":
+        value = load_json(args.input)
+        if value.get("schema") != "optimizer.radio-environment.v1":
+            raise SystemExit("em-optimizer: expected optimizer.radio-environment.v1")
+        try:
+            recommendations = [
+                recommend_channel_width(
+                    RadioEnvironmentObservation(**item),
+                    now=value["observed_at"],
+                    maximum_metric_age_seconds=float(value.get("maximum_metric_age_seconds", 30)),
+                ).to_dict()
+                for item in value["radios"]
+            ]
+        except (KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"em-optimizer: invalid radio environment: {error}") from error
+        output = {
+            "schema": "optimizer.channel-width-plan.v1",
+            "observed_at": value["observed_at"],
+            "recommendations": recommendations,
+        }
+        Path(args.output).write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         return 0
     if args.mode == "replay":

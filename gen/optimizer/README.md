@@ -88,6 +88,26 @@ jq '{truth_boundary, summary}' /tmp/home-band-sim.json
 The same command and inputs produce the same simulation hash. Do not use this
 output as a live result claim.
 
+Generate recommendation-only backhaul and channel-width plans from example
+observation documents:
+
+```sh
+python3 -m optimizer.cli backhaul-plan \
+  --input scenarios/examples/backhaul-observations.json \
+  --output /tmp/backhaul-plan.json
+python3 -m optimizer.cli width-plan \
+  --input scenarios/examples/radio-environment.json \
+  --output /tmp/width-plan.json
+```
+
+The backhaul baseline scores fresh undirected edge/band alternatives using
+SNR, PHY rate, utilization, retries and configurable band bonuses, then returns
+a maximum-utility loop-free spanning tree. It supports 2.4, 5 and 6 GHz;
+2.4 GHz has a default penalty but remains available when needed for
+connectivity. The width baseline covers 20/40/80/160 MHz and explains clean
+2.4 GHz, radar-risk, congestion and clean-6 GHz recommendations. Neither
+command changes a radio or backhaul link.
+
 `act` requires both a policy-produced recommendation and the explicit
 `--yes-act` flag. At the present interface stage it remains inhibited by
 unknown freshness/missing candidate metrics during ordinary live observation.

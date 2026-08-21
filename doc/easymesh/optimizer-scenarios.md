@@ -208,6 +208,15 @@ apply them: `.wmd` export keeps `protect backhaul`. This prevents a client
 steering scenario from accidentally partitioning the mesh before a safe
 backhaul transaction and verifier exist.
 
+`backhaul-plan` now provides the first recommendation-only baseline. It accepts
+fresh observed alternatives for every undirected edge and band, scores SNR,
+PHY rate, utilization and retries, applies configurable band bonuses, and uses
+a maximum-spanning-tree selection to guarantee a loop-free connected result.
+It is not limited to 5 GHz: 6 GHz has a small default preference, 5 GHz remains
+preferred over 2.4 GHz, and penalized 2.4 GHz remains a connectivity failsafe.
+The actual measurements and transactional topology action remain unavailable,
+so this does not promote the live backhaul capability.
+
 ### Channel width and field behavior
 
 The current hwsim lab operates at an effective 20 MHz width. Location-specific
@@ -219,6 +228,13 @@ threshold policy now turns an expired pending steer into an explicit
 (capped at 600 seconds), and preserves the failure count in replay state. Live
 deterministic testing remains blocked until clients can be assigned
 accept/reject/ignore behavior; the policy already has safe timeout semantics.
+
+`width-plan` is the first recommendation-only width baseline. It can recommend
+40 MHz on 2.4 GHz only for a clean low-neighbor location, cap 5 GHz near radar
+or high congestion, and prefer 160 MHz on sufficiently clean 6 GHz. Every
+result names its reason. The inputs are explicit radio-environment
+observations; the command does not mutate OneWifi and cannot support a
+throughput claim until representative widths, traffic and a verifier exist.
 
 ## Acceptance progression
 
