@@ -10,8 +10,11 @@ Implemented now:
   `/clients`, `/devices` and `/bsses`;
 - explicit unknown freshness and missing candidate-measurement handling;
 - a pure threshold/margin/hold/dwell/cooldown decision engine;
+- explicit association-timeout outcome and bounded exponential failure backoff;
 - an opt-in band-upgrade baseline that still selects an exact BSSID and applies
   target RCPI, maximum-loss, hold, dwell and cooldown gates;
+- a deterministic closed-loop golden-world test double with accept, reject and
+  ignore client behavior;
 - deterministic replay state;
 - a hash-chained JSON-lines experiment journal;
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
@@ -20,7 +23,7 @@ Implemented now:
 The scenario preparation layer also expands ten checked-in golden RF worlds,
 five independent traffic profiles, policy configurations and seeds into a
 hash-verified case matrix. Missing lab abilities remain explicit per-case
-blockers; simulated RF truth is never converted into an optimizer observation.
+blockers. The live observer never reads simulated RF truth.
 
 The live controller API currently serializes `client_metrics.last_updated` at
 read time; it is not the exact report timestamp. It also does not expose target
@@ -29,6 +32,12 @@ until P1 adds trustworthy read-only freshness and candidate-measurement
 adapters. Recorded fixtures may contain those facts when their source is a real
 EasyMesh measurement such as a Beacon Metrics Response. wmediumd SNR is never
 accepted as an optimizer observation.
+
+For offline algorithm tests only, `simulate` intentionally translates a
+verified golden world through a declared receiver-noise/RCPI sensor model into
+synthetic EasyMesh-shaped snapshots. Its records use `simulated://` and
+`simulated_*` sources and state `live_observer_compatible: false`. This is a
+policy test double, not evidence that the controller reported a measurement.
 
 ## Install and test
 
@@ -63,6 +72,21 @@ Use `configs/band-upgrade-policy.yaml` to compare conservative 2.4-to-5 and
 5-to-6 BSSID upgrades. Live recommendations remain inhibited until the
 candidate adapter supplies fresh per-BSSID measurements; band inventory alone
 is never treated as link quality.
+
+Run a deterministic band-walk with one client ignoring BTM requests:
+
+```sh
+python3 -m optimizer.cli simulate \
+  --world ../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json \
+  --policy configs/band-upgrade-policy.yaml \
+  --initial-band 2.4 \
+  --client-behavior sta_static_01=ignore \
+  --output /tmp/home-band-sim.json
+jq '{truth_boundary, summary}' /tmp/home-band-sim.json
+```
+
+The same command and inputs produce the same simulation hash. Do not use this
+output as a live result claim.
 
 `act` requires both a policy-produced recommendation and the explicit
 `--yes-act` flag. At the present interface stage it remains inhibited by

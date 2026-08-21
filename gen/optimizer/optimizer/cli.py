@@ -10,6 +10,7 @@ from .actuator import SteerActuator
 from .config import load_policy
 from .experiments import ExperimentError, build_matrix
 from .traffic import compile_traffic_plan, load_json
+from .simulator import SimulationConfig, WorldSimulator
 from .model import Snapshot
 from .observer import ControllerObserver
 from .policy import ThresholdPolicy
@@ -106,6 +107,18 @@ def parser() -> argparse.ArgumentParser:
     traffic.add_argument("--case", required=True)
     traffic.add_argument("--bindings", required=True)
     traffic.add_argument("--output", required=True)
+    simulate = sub.add_parser("simulate")
+    simulate.add_argument("--world", required=True)
+    simulate.add_argument("--policy", required=True)
+    simulate.add_argument("--output", required=True)
+    simulate.add_argument("--initial-band", choices=("2.4", "5", "6"), default="5")
+    simulate.add_argument("--metric-delay-ms", type=int, default=0)
+    simulate.add_argument(
+        "--client-behavior",
+        action="append",
+        default=[],
+        metavar="ROLE=accept|reject|ignore",
+    )
     return result
 
 
@@ -126,6 +139,31 @@ def main(argv: list[str] | None = None) -> int:
                 load_json(args.matrix), args.case, load_json(args.bindings)
             )
         except ExperimentError as error:
+            raise SystemExit(f"em-optimizer: {error}") from error
+        Path(args.output).write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
+    if args.mode == "simulate":
+        behavior = {}
+        for item in args.client_behavior:
+            if "=" not in item:
+                raise SystemExit("--client-behavior requires ROLE=accept|reject|ignore")
+            role, value = item.split("=", 1)
+            if role in behavior:
+                raise SystemExit(f"duplicate client behavior for {role}")
+            behavior[role] = value
+        try:
+            value = WorldSimulator(
+                load_json(args.world),
+                ThresholdPolicy(load_policy(args.policy)),
+                config=SimulationConfig(
+                    initial_band=args.initial_band,
+                    metric_delay_ms=args.metric_delay_ms,
+                ),
+                client_behavior=behavior,
+            ).run()
+        except (ExperimentError, ValueError) as error:
             raise SystemExit(f"em-optimizer: {error}") from error
         Path(args.output).write_text(
             json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"

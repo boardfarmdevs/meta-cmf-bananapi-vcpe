@@ -25,6 +25,20 @@ The RF values and traffic schedule are evaluator truth. The optimizer may
 observe only measurements reported through EasyMesh. It must not read the
 world file, wmediumd matrix or intended path as a candidate score.
 
+There are two deliberately separate execution boundaries:
+
+- live/capture/recommend/act use `ControllerObserver` and consume only
+  controller-reported facts;
+- offline `simulate` uses a declared sensor model to turn a verified golden
+  world into `simulated_*` EasyMesh-shaped facts for deterministic policy and
+  closed-loop tests.
+
+Synthetic snapshots are marked `simulated://`, explicitly say they are not
+live-observer compatible, and cannot promote a live capability. They let the
+band policy and accept/reject/ignore response handling be developed before the
+hwsim candidate-measurement provider is complete without disguising evaluator
+truth as controller evidence.
+
 ## Checked-in pseudo-worlds
 
 Sources are under `gen/wmediumd/configurator/worlds/`; generated timelines are
@@ -164,6 +178,13 @@ primitives and not a claim that a higher band is always better. Candidate
 inventory with an unknown RCPI cannot trigger the policy. The live band cases
 therefore remain blocked by candidate measurement and receipt-time capabilities
 even though deterministic 2.4/5/6 GHz RF stimulus now works.
+
+The offline closed-loop runner already uses the same policy core against the
+small band-walk golden. It assigns deterministic synthetic device, BSSID and
+STA identities, converts directed station-to-Agent SNR through an explicit
+noise-floor/RCPI sensor model, applies accepted actions to association state,
+and leaves rejected or ignored actions unchanged. This tests policy logic and
+failure backoff; it does not clear the live candidate-measurement blocker.
 
 The compact `/api/v1/topology` response still omits its fronthaul `BSSList`.
 Patch `0068` therefore adds the read-only `/api/v1/bsses` projection from the

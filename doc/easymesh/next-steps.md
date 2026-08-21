@@ -213,7 +213,11 @@ initial matrix. Fourteen small/ping-or-idle cases are runnable today; all
 others record the missing
 measurement, RF, traffic, response-control or scale capability. See
 [optimizer-scenarios.md](optimizer-scenarios.md). Scoring and live execution
-remain open.
+remain open. A deterministic offline closed-loop runner now converts verified
+goldens through a declared synthetic sensor model, runs the real threshold or
+band-upgrade policy, changes association state for accepted BTM actions, and
+models reject/ignore outcomes. It accelerates policy development but cannot
+promote any live controller capability.
 
 Each scenario must have a passive control and deterministic seeds:
 
