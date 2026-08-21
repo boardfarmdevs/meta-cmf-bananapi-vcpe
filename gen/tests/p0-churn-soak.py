@@ -193,18 +193,42 @@ def medium_snapshot(socket_path: str) -> dict[str, object]:
     with ControlClient(socket_path) as control:
         status = control.status()
         generation, links = control.dump_links()
+        _, frequency_links = control.dump_frequency_links()
     links = sorted(
         links, key=lambda item: (item["source"], item["destination"], item["value"])
     )
-    encoded = json.dumps(links, separators=(",", ":"), sort_keys=True).encode()
+    frequency_links = sorted(
+        frequency_links,
+        key=lambda item: (
+            item["source"], item["destination"], item["frequency_mhz"],
+            item["value"], item["override"],
+        ),
+    )
+    encoded = json.dumps(
+        {"links": links, "frequency_links": frequency_links},
+        separators=(",", ":"), sort_keys=True,
+    ).encode()
     return {
         "instance_id": status.instance_id,
         "generation": generation,
         "stations": status.num_stations,
         "link_count": len(links),
+        "frequency_link_count": len(frequency_links),
         "sha256": hashlib.sha256(encoded).hexdigest(),
         "links": links,
+        "frequency_links": frequency_links,
     }
+
+
+def candidate_rcpi_check(socket_path: str, api_url: str) -> dict[str, object]:
+    text = run(
+        sys.executable,
+        str(ROOT / "tests" / "candidate-rcpi-test.py"),
+        "--socket", socket_path,
+        "--api", api_url,
+        timeout=30,
+    )
+    return json.loads(text)
 
 
 def client_link(container: str) -> dict[str, str | None]:
@@ -420,6 +444,7 @@ class Soak:
         traffic = traffic_check()
         services = service_states()
         journal = journal_usage()
+        candidate = candidate_rcpi_check(self.args.socket, self.args.api_url)
         medium = medium_snapshot(self.args.socket)
         errors = []
         if counts != {"nodes": 6, "clients": 10, "edges": 5}:
@@ -450,7 +475,11 @@ class Soak:
             "traffic": traffic,
             "services": services,
             "journal": journal,
-            "medium": {key: value for key, value in medium.items() if key != "links"},
+            "candidate_rcpi": candidate,
+            "medium": {
+                key: value for key, value in medium.items()
+                if key not in ("links", "frequency_links")
+            },
             "errors": errors,
         }
         assert self.recorder
@@ -648,6 +677,7 @@ def main() -> int:
     parser.add_argument("--socket", default="/run/wmediumd-control.sock")
     parser.add_argument("--topology-url", default=TOPOLOGY_URL)
     parser.add_argument("--clients-url", default=CLIENTS_URL)
+    parser.add_argument("--api-url", default="http://127.0.0.1:8888/api/v1")
     parser.add_argument("--max-ctrl-rss-mib", type=int, default=256)
     parser.add_argument("--max-cli-rss-mib", type=int, default=192)
     parser.add_argument("--max-pss-growth-mib", type=int, default=64)
