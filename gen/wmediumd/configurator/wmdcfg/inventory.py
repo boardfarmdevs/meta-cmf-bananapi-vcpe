@@ -51,9 +51,18 @@ def _parse_iw(text: str) -> list[dict[str, Any]]:
 
 
 def discover() -> dict[str, Any]:
+    # A scaled lab intentionally retains stopped containers across cold-start
+    # reconstruction and extender-outage tests.  ``lxc exec`` cannot inspect a
+    # stopped instance, so inventory must describe the active RF world rather
+    # than every matching name in LXD's persistent database.
     names = sorted(
-        [line for line in _run("lxc", "list", "-c", "n", "--format", "csv").splitlines()
-         if MESH_NAME.fullmatch(line) or CLIENT_NAME.fullmatch(line)],
+        [
+            name
+            for line in _run("lxc", "list", "-c", "ns", "--format", "csv").splitlines()
+            for name, _, state in [line.partition(",")]
+            if state.strip().upper() == "RUNNING"
+            and (MESH_NAME.fullmatch(name) or CLIENT_NAME.fullmatch(name))
+        ],
         key=lambda name: [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)],
     )
     if not names:
