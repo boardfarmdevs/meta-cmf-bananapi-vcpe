@@ -105,6 +105,44 @@ scenario bad {
         with self.assertRaisesRegex(ScenarioError, "expected"):
             compile_scenario(parse(source), source, INVENTORY, bindings)
 
+    def test_band_qualified_link_resolves_target_ap_frequency(self):
+        source = """
+scenario band_specific {
+  require frequency_qualified_snr
+  protect backhaul
+  restore captured
+  role client : station
+  role ap_a : fronthaul_ap
+  phase baseline for 1s {
+    link client <-> ap_a band 5GHz snr = 31dB
+  }
+}
+"""
+        plan = compile_scenario(
+            parse(source), source, INVENTORY,
+            {"client": "wlan-client", "ap_a": "bpibroadband"},
+        )
+        self.assertEqual(
+            {item["frequency_mhz"] for item in plan["events"][0]["updates"]},
+            {5180},
+        )
+
+    def test_band_qualified_link_requires_capability_and_cannot_mix(self):
+        missing = """
+scenario bad {
+  protect backhaul
+  restore captured
+  role client : station
+  role ap : fronthaul_ap
+  phase x for 1s { link client <-> ap band 5GHz snr = 30dB }
+}
+"""
+        with self.assertRaisesRegex(ScenarioError, "require frequency_qualified"):
+            compile_scenario(
+                parse(missing), missing, INVENTORY,
+                {"client": "wlan-client", "ap": "bpibroadband"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

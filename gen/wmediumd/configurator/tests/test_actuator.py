@@ -58,6 +58,7 @@ class ActuatorIntegrationTests(unittest.TestCase):
             self.assertEqual(status.generation, 0)
             self.assertEqual(status.num_stations, 3)
             self.assertIn("atomic_generations", status.capabilities)
+            self.assertIn("frequency_qualified_snr", status.capabilities)
             generation, links = client.dump_links()
             self.assertEqual(generation, 0)
             self.assertEqual(len(links), 6)
@@ -72,18 +73,55 @@ class ActuatorIntegrationTests(unittest.TestCase):
             self.assertEqual(client.apply(1, update), update)
             self.assertEqual(client.get_link(SOURCE, DESTINATION), (1, 12))
 
+            self.assertEqual(
+                client.get_frequency_link(SOURCE, DESTINATION, 5180),
+                (1, 12, False),
+            )
+            frequency = [
+                {
+                    "source": SOURCE,
+                    "destination": DESTINATION,
+                    "frequency_mhz": 5180,
+                    "value": 44,
+                    "override": True,
+                }
+            ]
+            self.assertEqual(client.apply_frequency(2, frequency), frequency)
+            self.assertEqual(
+                client.get_frequency_link(SOURCE, DESTINATION, 5180),
+                (2, 44, True),
+            )
+            self.assertEqual(
+                client.get_frequency_link(SOURCE, DESTINATION, 2437),
+                (2, 12, False),
+            )
+            self.assertEqual(client.dump_frequency_links()[1], frequency)
+
+            invalid_frequency = [dict(frequency[0], frequency_mhz=9000)]
+            with self.assertRaisesRegex(ActuatorError, "frequency"):
+                client.apply_frequency(3, invalid_frequency)
+            self.assertEqual(client.status().generation, 2)
+
+            clear = [dict(frequency[0], value=0, override=False)]
+            self.assertEqual(client.apply_frequency(3, clear), clear)
+            self.assertEqual(
+                client.get_frequency_link(SOURCE, DESTINATION, 5180),
+                (3, 12, False),
+            )
+            self.assertEqual(client.dump_frequency_links()[1], [])
+
             with self.assertRaisesRegex(ActuatorError, "generation"):
-                client.apply(1, update)
-            self.assertEqual(client.get_link(SOURCE, DESTINATION), (1, 12))
+                client.apply(3, update)
+            self.assertEqual(client.get_link(SOURCE, DESTINATION), (3, 12))
 
             invalid = [{"source": SOURCE, "destination": DESTINATION, "value": 80}]
             with self.assertRaisesRegex(ActuatorError, "value"):
-                client.apply(2, invalid)
-            self.assertEqual(client.get_link(SOURCE, DESTINATION), (1, 12))
+                client.apply(4, invalid)
+            self.assertEqual(client.get_link(SOURCE, DESTINATION), (3, 12))
 
             restored = [{"source": SOURCE, "destination": DESTINATION, "value": 33}]
-            client.apply(2, restored)
-            self.assertEqual(client.get_link(SOURCE, DESTINATION), (2, 33))
+            client.apply(4, restored)
+            self.assertEqual(client.get_link(SOURCE, DESTINATION), (4, 33))
 
         self.assertIsNone(self.daemon.poll())
         self.assertEqual(self.daemon.pid, original_pid)

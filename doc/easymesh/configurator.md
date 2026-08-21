@@ -91,6 +91,12 @@ python3 -m wmdcfg.cli world-export /tmp/home.world.json \
 python3 -m wmdcfg.cli validate /tmp/home-5.wmd
 ```
 
+`--band 2.4`, `5` or `6` retains the backward-compatible radio-pair
+projection. `--band all` emits all three values at once using band-qualified
+links. Binding resolves each band through the target Agent's live private-SSID
+frequency; rev130 therefore uses 2437, 5180 and either 5955 or 6135 MHz rather
+than assuming one common 6 GHz channel.
+
 The world plan calculates fronthaul and Agent-to-Agent backhaul values for
 2.4, 5 and 6 GHz. The current exporter deliberately emits fronthaul only and
 retains `protect backhaul`.
@@ -204,6 +210,8 @@ because `-F` changes identities and BSSIDs.
                                       HELLO / STATUS
                                       APPLY
                                       GET_LINK / DUMP_LINKS
+                                      APPLY_FREQUENCY
+                                      GET_FREQUENCY / DUMP_FREQUENCIES
 ```
 
 The Unix socket uses `SOCK_SEQPACKET`, fixed-width network-byte-order records
@@ -213,6 +221,13 @@ before applying a complete generation atomically.
 
 Editing the startup configuration does not change a running daemon. Scenario
 ramps use the control socket and leave the PID unchanged.
+
+Patch `0012` adds sparse `(source radio, destination radio, frequency MHz)`
+overrides. An override applies only to frames at that exact frequency; other
+frequencies fall back to the radio-pair value. Set and clear operations share
+the atomic generation counter. Readback reports whether a value is an explicit
+override, so the runner restores both the number and the original presence or
+absence of that override.
 
 The socket deliberately replaces the file for live scenario state, but not yet
 for daemon bootstrap. The startup file supplies the initial registered-radio
@@ -253,7 +268,8 @@ runner then:
 3. captures every touched directed link;
 4. verifies frozen identities still exist;
 5. applies and reads back each generation;
-6. records deadline lateness and association observations; and
+6. records deadline lateness and controller-model association/RCPI
+   observations with one bounded query per generation; and
 7. restores all captured values as one verified final generation.
 
 Each run directory contains:
@@ -270,25 +286,38 @@ An experiment is not complete unless `summary.json` reports `passed` and
 
 ## Validated behavior
 
-- The supported Python suite passes 16 parser/compiler/world/observer/runner
-  tests; its real-daemon actuator case runs when `WMDC_TEST_DAEMON` selects a
-  test daemon.
-- The internal wmediumd multichannel/Linux-7 suite passed 9/9.
+- The supported Python suite passes 23 parser/compiler/world/observer/runner
+  tests, including real-daemon pair/frequency apply, reject, readback, clear
+  and restore.
+- The internal wmediumd multichannel/Linux-7 suite passed 10/10.
 - A passive two-AP crossover applied 32 generations in 60 seconds, kept the
   same daemon PID, delivered 1,400/1,400 probes and restored every link.
 - The passive client did not roam, proving RF alone is not an autonomous
   policy.
 - Replaying the gradient with an explicit `steer.sh` action moved the client
   and converged the controller model while the medium still restored cleanly.
+- Rev130 applied simultaneous 5180 and 2437 MHz overrides to one client/Agent
+  pair. The associated 5180 MHz link moved from -41 to -66 dBm and controller
+  RCPI from 138 to 88 with 40/40 probes. Clearing all overrides restored the
+  pair fallback, -41 dBm/RCPI 138 and 20/20 probes.
+- The complete ten-client `small band walk` applied 30 scheduled all-band
+  generations over 60 seconds. It changed 4,374 directed values, completed in
+  60.8 seconds, had 32.9 ms mean and 65.3 ms maximum deadline lateness, restored
+  all 300 touched frequency keys, and left zero explicit overrides. Both
+  preflight and postflight held 6 WebUI nodes, 10 WLAN clients and the
+  authoritative 5-device/15-radio/50-BSS/14-association controller model.
 
 ## Limits
 
-- SNR is keyed by radio pair, not frequency; same-wiphy band steering needs a
-  frequency-qualified actuator. `world-export --band 5` projects the 5 GHz
-  calculation onto the whole pair; it is not a true band-steering stimulus.
+- Legacy SNR remains keyed by radio pair. Use `world-export --band all` and a
+  daemon advertising `frequency_qualified_snr` for simultaneous same-wiphy
+  band conditions; a single-band projection still applies to the whole pair.
 - `SIGKILL` or host loss cannot execute Python restoration; unattended use
   needs a daemon-side lease/watchdog.
-- Health is gated before/after, not continuously used to advance phases.
+- Health is gated before/after, not continuously used to advance phases. The
+  gate combines the compact WebUI node/client projection with authoritative
+  controller database counts; it does not require the WebUI response to repeat
+  all 50 BSS records.
 - The geometry front end supports deterministic paths, presence, walls and
   seeded shadowing. Trace import, a real floor-plan propagation model and
   conditional waits are not implemented.

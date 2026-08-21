@@ -277,9 +277,10 @@ wmediumd patches, in order:
 | `0009` | honor configured default SNR |
 | `0010` | require current transmit-learned frequency evidence before cloning to a receiver |
 | `0011` | classify tracked clones rejected during transient receive states without hiding other netlink faults |
+| `0012` | add atomic frequency-qualified SNR overrides with pair fallback and exact clear/readback semantics |
 
 `gen/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
-`wmediumd-up.sh` runs its nine-test internal acceptance suite before launch.
+`wmediumd-up.sh` runs its ten-test internal acceptance suite before launch.
 
 ## Deliberate differences from 0814
 
@@ -290,7 +291,7 @@ wmediumd patches, in order:
 | forced controller transition out of `wsc_m2_sent` | removed; it could fire after valid M2 and hid command cancellation deadlock |
 | forced `wsc_m1_pending` recovery | not imported; previous capability is not proof of current configuration |
 | passive returning-client cache update | replaced by refresh, insertion verification and explicit delta publication |
-| one historical wmediumd patch | replaced by the tested eleven-patch multichannel/control protocol series |
+| one historical wmediumd patch | replaced by the tested twelve-patch multichannel/control protocol series |
 
 The replacement for forced WSC state is EasyMesh patch `0026`: cancelled
 commands become terminal, and completion is evaluated per command. Duplicate M1

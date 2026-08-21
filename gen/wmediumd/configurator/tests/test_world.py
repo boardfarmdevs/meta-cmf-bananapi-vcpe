@@ -87,6 +87,16 @@ class WorldTests(unittest.TestCase):
         self.assertIn("current actuator is radio-pair, not per-frequency", text)
         self.assertIn("protect backhaul", text)
 
+    def test_all_band_export_is_frequency_qualified(self):
+        plan = compile_world(_layout(), _mobility())
+        text = export_wmd(plan, "all")
+        scenario = parse(text)
+        validate_scenario(scenario)
+        self.assertIn("require frequency_qualified_snr", text)
+        self.assertIn("band 2.4GHz", text)
+        self.assertIn("band 5GHz", text)
+        self.assertIn("band 6GHz", text)
+
     def test_tampered_golden_is_rejected(self):
         plan = compile_world(_layout(), _mobility())
         plan["generations"][0]["time_ms"] = 7

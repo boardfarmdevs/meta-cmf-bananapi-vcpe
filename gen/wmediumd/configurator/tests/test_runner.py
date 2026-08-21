@@ -40,6 +40,7 @@ class FakeControlClient:
     def __init__(self, socket_path: str):
         self.generation = 0
         self.matrix = {(SOURCE, DESTINATION): 40}
+        self.frequency = {}
         type(self).last = self
 
     def __enter__(self):
@@ -50,7 +51,7 @@ class FakeControlClient:
 
     def status(self):
         return SimpleNamespace(
-            capabilities=REQUIRED_CAPABILITIES,
+            capabilities=REQUIRED_CAPABILITIES | {"frequency_qualified_snr"},
             generation=self.generation,
         )
 
@@ -69,6 +70,22 @@ class FakeControlClient:
 
     def get_link(self, source: str, destination: str):
         return self.generation, self.matrix[(source, destination)]
+
+    def get_frequency_link(self, source: str, destination: str, frequency: int):
+        key = (source, destination, frequency)
+        if key in self.frequency:
+            return self.generation, self.frequency[key], True
+        return self.generation, self.matrix[(source, destination)], False
+
+    def apply_frequency(self, generation: int, updates: list[dict]):
+        self.generation = generation
+        for update in updates:
+            key = (update["source"], update["destination"], update["frequency_mhz"])
+            if update.get("override", True):
+                self.frequency[key] = update["value"]
+            else:
+                self.frequency.pop(key, None)
+        return updates
 
 
 class RunnerTests(unittest.TestCase):
@@ -113,6 +130,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(summary["outcome"], "failed")
         self.assertFalse(summary["restored"])
         self.assertIn("restoration readback", summary["error"])
+
+    def test_frequency_override_is_removed_on_restore(self):
+        runner, _ = self._execute(False)
+        runner.plan = _plan()
+        runner.plan["events"][0]["updates"][0].update(
+            {"frequency_mhz": 5180, "override": True}
+        )
+        runner.execute()
+        self.assertEqual(FakeControlClient.last.frequency, {})
 
 
 if __name__ == "__main__":

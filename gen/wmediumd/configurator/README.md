@@ -15,9 +15,11 @@ interrupt, and ramps never restart wmediumd.
 
 The `worlds/` front end adds deterministic 2D layouts, physical role paths,
 presence intervals, directed link asymmetry, fixed-loss walls and per-band
-golden timelines. It exports one selected band into the existing auditable
-`.wmd` language; current radio-pair control is not frequency-qualified, so this
-projection must not be described as simultaneous band steering.
+golden timelines. It can export one backward-compatible pair projection or all
+bands into the auditable `.wmd` language. Patch `0012` applies the all-band form
+as frequency-qualified overrides with exact readback and restore. This creates
+valid band-specific RF stimulus; the external optimizer still needs reported
+target-BSSID measurements before it can make a band-steering decision.
 
 Run directly from the source tree:
 
@@ -38,7 +40,7 @@ python3 -m wmdcfg.cli run /tmp/two-ap-crossover.plan.json \
 worlds/build-goldens.sh --check
 python3 -m wmdcfg.cli world-export \
     worlds/golden/home-a-stationary.world.json \
-    --band 5 -o /tmp/home-a-stationary-5.wmd
+    --band all -o /tmp/home-a-stationary-all.wmd
 ```
 
 Every station/AP pair declared by the scenario must be initialized in its first
@@ -59,6 +61,9 @@ traffic flowing to `10.0.0.1` so hwsim reports each current phase; set
 `WMD_TRAFFIC_TARGET` to use a different reachable address.
 
 The runner requires a complete EasyMesh topology and all expected WLAN clients
-to be active at preflight and postflight. Run artifacts contain the frozen plan,
-every applied generation and observation, health snapshots, verified restore,
-and a machine-readable summary.
+to be active at preflight and postflight. It checks WebUI topology/client counts
+and the controller's authoritative device/radio/BSS/association counts. Each
+generation obtains all client BSSID/RCPI observations with one controller query,
+so observation cost does not distort a multi-client RF timeline. Run artifacts
+contain the frozen plan, every applied generation and observation, health
+snapshots, verified restore, and a machine-readable summary.

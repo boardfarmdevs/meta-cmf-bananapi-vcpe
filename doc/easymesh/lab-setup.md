@@ -337,7 +337,7 @@ gen/wmediumd/wmediumd-up.sh status
 cat /run/meta-cmf-wmediumd/wmediumd.pid
 ```
 
-Every launch runs the nine internal multichannel/Linux-7 tests. Do not accept a
+Every launch runs the ten internal multichannel/Linux-7 tests. Do not accept a
 daemon that logs registration failure, unknown senders or cross-frequency
 delivery.
 

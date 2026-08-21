@@ -357,22 +357,31 @@ def _role_lines(plan: dict[str, Any]) -> list[str]:
 
 
 def export_wmd(plan: dict[str, Any], band: str) -> str:
-    """Project one band into the current radio-pair-only wmdcfg language.
+    """Export one pair projection or simultaneous band-qualified links.
 
-    This is intentionally not called a band-steering export. The current daemon
-    applies the selected value to the radio pair on every frequency.
+    A one-band projection applies to the whole pair. ``all`` uses the daemon's
+    frequency-qualified capability, but remains RF stimulus rather than an
+    optimizer decision.
     """
     verify_world_plan(plan)
-    if band not in BANDS:
-        raise ScenarioError(f"projection band must be one of {list(BANDS)}")
+    if band not in (*BANDS, "all"):
+        raise ScenarioError(f"projection band must be one of {list(BANDS)} or all")
     safe_name = re.sub(r"[^A-Za-z0-9_]", "_", plan["name"])
+    all_bands = band == "all"
     lines = [
         f"# generated from world golden {plan['golden_sha256']}",
-        f"# projection-band {band}GHz; current actuator is radio-pair, not per-frequency",
+        (
+            "# simultaneous 2.4/5/6GHz frequency-qualified values"
+            if all_bands else
+            f"# projection-band {band}GHz; current actuator is radio-pair, not per-frequency"
+        ),
         f"scenario {safe_name}_{band.replace('.', '_')} {{",
         "    language 1",
         f"    tick {plan['tick_ms']}ms",
-        "    require radio_pair_snr",
+        (
+            "    require frequency_qualified_snr"
+            if all_bands else "    require radio_pair_snr"
+        ),
         "    require atomic_generations",
         "    require readback",
         "    protect backhaul",
@@ -381,14 +390,15 @@ def export_wmd(plan: dict[str, Any], band: str) -> str:
         *_role_lines(plan),
         "",
     ]
-    previous: dict[tuple[str, str], int] = {}
+    previous: dict[tuple[str, str, str | None], int] = {}
     for generation in plan["generations"]:
         current = {
-            (item["source_role"], item["destination_role"]): int(
-                item["snr_db_by_band"][band]
+            (item["source_role"], item["destination_role"], selected_band): int(
+                item["snr_db_by_band"][selected_band]
             )
             for item in generation["links"]
             if item["link_class"] == "fronthaul"
+            for selected_band in (BANDS if all_bands else (band,))
         }
         changed = current if not previous else {
             key: value for key, value in current.items() if previous.get(key) != value
@@ -402,16 +412,22 @@ def export_wmd(plan: dict[str, Any], band: str) -> str:
             for key in sorted(changed):
                 if key in emitted:
                     continue
-                source, destination = key
-                reverse = (destination, source)
+                source, destination, selected_band = key
+                reverse = (destination, source, selected_band)
+                qualification = (
+                    f" band {selected_band}GHz" if selected_band is not None and all_bands
+                    else ""
+                )
                 if reverse in changed and changed[reverse] == changed[key]:
                     lines.append(
-                        f"            link {source} <-> {destination} snr = {changed[key]}dB"
+                        f"            link {source} <-> {destination}{qualification} "
+                        f"snr = {changed[key]}dB"
                     )
                     emitted.add(reverse)
                 else:
                     lines.append(
-                        f"            link {source} -> {destination} snr = {changed[key]}dB"
+                        f"            link {source} -> {destination}{qualification} "
+                        f"snr = {changed[key]}dB"
                     )
                 emitted.add(key)
             lines.append("        }")

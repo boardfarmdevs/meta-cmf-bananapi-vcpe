@@ -74,7 +74,9 @@ def main(argv: list[str] | None = None) -> int:
         "world-export", help="project one golden world band into a runnable .wmd scenario"
     )
     world_export_cmd.add_argument("plan")
-    world_export_cmd.add_argument("--band", required=True, choices=["2.4", "5", "6"])
+    world_export_cmd.add_argument(
+        "--band", required=True, choices=["2.4", "5", "6", "all"]
+    )
     world_export_cmd.add_argument("-o", "--output", required=True)
 
     args = parser.parse_args(argv)

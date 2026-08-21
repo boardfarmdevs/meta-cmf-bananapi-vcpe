@@ -180,8 +180,10 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
 - Complete RF isolation now ages a remote IEEE1905 neighbor, probes it through
   a bounded standard Topology Query, removes only its active publication and
   restores the same identity when valid traffic returns.
-- The wmediumd configurator safely controls radio-pair SNR; frequency-keyed
-  same-wiphy band steering is not implemented.
+- The wmediumd configurator safely controls both radio-pair SNR and sparse,
+  frequency-qualified SNR overrides on a shared hwsim radio. This supplies
+  band-specific RF stimulus; autonomous band steering still requires fresh
+  candidate-BSSID measurements and a policy decision.
 - One historical RBUS raw-frame provider delivery miss succeeded on immediate
   retry. It has not recurred across 143 post-AL-SAP-fix commanded steers and is
   now covered by transaction-level command/completion journals; no duplicate

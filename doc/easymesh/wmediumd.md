@@ -326,13 +326,17 @@ maximum message.
 | `APPLY` | Apply one or more directed `(source MAC, destination MAC, SNR)` updates |
 | `GET_LINK` | Read one directed matrix cell |
 | `DUMP_LINKS` | Read all non-self directed matrix cells |
+| `APPLY_FREQUENCY` | Atomically set or clear `(source, destination, frequency MHz, SNR)` overrides |
+| `GET_FREQUENCY` | Read effective SNR and whether an explicit override exists |
+| `DUMP_FREQUENCIES` | Read all explicit frequency overrides |
 
 The advertised capabilities are radio-pair SNR, atomic generations, readback
-and full dump. For `N` configured stations, the matrix contains `N x N` cells,
-an apply can contain at most `N x N` updates, and a dump returns the
-`N x (N - 1)` non-self directed links. Only one control client can remain
-connected at a time. The accepted 15-radio topology therefore reports 225 as
-its maximum update count and dumps 210 directed links.
+and full dump, plus frequency-qualified SNR in patch `0012`. For `N` configured
+stations, the base matrix contains `N x N` cells and its dump returns the
+`N x (N - 1)` non-self directed links. The frequency table is sparse and
+preallocated for up to four contexts per pair within the 64 KiB message limit.
+Only one client can remain connected. The accepted 15-radio topology dumps 210
+base links and reports a maximum frequency generation of 900 entries.
 
 `APPLY` must request exactly `current_generation + 1`. Before changing any
 cell, wmediumd validates the entire packet, known radio identities, number of
@@ -340,6 +344,12 @@ updates and SNR range. If one update is invalid, none is applied. On success it
 mutates the live matrix and advances the generation. This makes a crossover in
 which AP-A weakens while AP-B strengthens one visible medium transition rather
 than two partially applied writes.
+
+`APPLY_FREQUENCY` shares the generation counter. A set entry overrides the base
+pair only for an hwsim frame at the exact keyed frequency; other frequencies
+use the base pair. A clear entry removes the override. `GET_FREQUENCY` returns
+both the effective value and an override-presence flag, so restoration can
+remove a temporary override rather than leave a numerically equal stale entry.
 
 The socket does not:
 
@@ -350,9 +360,9 @@ The socket does not:
 - restore values automatically after process or host failure.
 
 The random 128-bit instance ID and generation returning to zero expose a daemon
-restart. The Python runner captures the touched baseline with `DUMP_LINKS`,
-applies each generation, reads it back and restores the exact captured cells in
-a `finally` path.
+restart. The Python runner captures pair state with `DUMP_LINKS` and frequency
+state with `GET_FREQUENCY`, applies each generation, reads it back and restores
+both values and original override presence in a `finally` path.
 
 The older upstream `-a` API socket is a frame-relay/control-notification
 interface for additional wmediumd clients. Its `SET_CONTROL` flags request all
@@ -425,7 +435,7 @@ tests do. They still use the same generation, readback and restore contract.
 | Path or artifact | Required? | Owner and lifetime |
 | --- | --- | --- |
 | `gen/wmediumd/wmediumd.patched` | Yes, unless rebuilt | Proven patched daemon binary committed with the lab |
-| `gen/wmediumd/patches/*.patch` | Required to rebuild | Eleven-patch delta over pinned upstream |
+| `gen/wmediumd/patches/*.patch` | Required to rebuild | Twelve-patch delta over pinned upstream |
 | `/run/meta-cmf-wmediumd/wmediumd.cfg` | Yes at every start | Generated static radio inventory and initial model |
 | `/run/wmediumd-control.sock` | Yes for dynamic scenarios | Runtime socket; disappears with daemon |
 | `/run/meta-cmf-wmediumd/wmediumd.pid` | Lifecycle state | Launcher-created runtime PID |
@@ -445,7 +455,7 @@ modify the file.
 
 The lab pins upstream commit
 `717e5d7fcc23eecbc8e32bd897a8fd4b1e3ba640` (the source reports v0.3.1) and
-applies eleven patches in `gen/wmediumd/patches/`:
+applies twelve patches in `gen/wmediumd/patches/`:
 
 | Patch | Operational effect |
 | --- | --- |
@@ -460,11 +470,20 @@ applies eleven patches in `gen/wmediumd/patches/`:
 | `0009` | Makes generated `model.default_snr` effective and validates its range |
 | `0010` | Requires transmit-learned receive-frequency evidence and rechecks directed delivery after scan/channel changes |
 | `0011` | Distinguishes a tracked clone rejected during a transient radio receive state from an untracked netlink/protocol error |
+| `0012` | Adds frequency-qualified SNR set/clear, readback, sparse dump and pair fallback |
 
 The launcher executes `wmediumd.patched -T` before every start. That suite
-checks multichannel interference isolation, ownership/filter invariants,
-frequency-filtered multicast, independent scheduling, Linux 7 rate mapping and
-the related regression cases.
+checks multichannel interference isolation, frequency override/fallback,
+ownership/filter invariants, frequency-filtered multicast, independent
+scheduling, Linux 7 rate mapping and the related regression cases.
+
+The patch-`0012` prebuilt binary has SHA-256
+`59a98419c1a4f587796fb04d319dfdf993e94eb2e8d7aa341861a55f8129d42e`.
+On rev130, one client/Agent pair simultaneously held 25 dB at 5180 MHz and
+55 dB at 2437 MHz. The active 5180 MHz link changed from -41 to -66 dBm and
+controller RCPI from 138 to 88 with 40/40 probes. Clearing the sparse entries
+restored the exact absent-override state, 50 dB pair fallback, -41 dBm/RCPI 138
+and 20/20 probes. The daemon PID and client association remained stable.
 
 Interference accounting is not enabled by the current generated config. If it
 is enabled manually, the patch keeps exact-frequency buckets and writes bounded

@@ -9,6 +9,7 @@ MAGIC = 0x574D4443
 VERSION = 1
 HEADER = struct.Struct("!IHHIIQ")
 LINK = struct.Struct("!6s6shH")
+FREQUENCY_LINK = struct.Struct("!6s6sIhH")
 INFO = struct.Struct("!QQIIII")
 
 OP_HELLO = 1
@@ -16,12 +17,18 @@ OP_STATUS = 2
 OP_APPLY = 3
 OP_GET_LINK = 4
 OP_DUMP_LINKS = 5
+OP_APPLY_FREQUENCY = 6
+OP_GET_FREQUENCY = 7
+OP_DUMP_FREQUENCIES = 8
+
+FREQUENCY_OVERRIDE = 1 << 0
 
 CAPABILITIES = {
     1 << 0: "radio_pair_snr",
     1 << 1: "atomic_generations",
     1 << 2: "readback",
     1 << 3: "dump_links",
+    1 << 4: "frequency_qualified_snr",
 }
 
 STATUS = {
@@ -32,6 +39,7 @@ STATUS = {
     4: "identity",
     5: "value",
     6: "internal",
+    7: "frequency",
 }
 
 
@@ -204,5 +212,90 @@ class ControlClient:
             for item in updates
         ]:
             raise ActuatorError("daemon apply echo differs from requested generation")
+        self.status()
+        return applied
+
+    @staticmethod
+    def _encode_frequency_links(updates: list[dict]) -> bytes:
+        return b"".join(
+            FREQUENCY_LINK.pack(
+                _mac_bytes(item["source"]),
+                _mac_bytes(item["destination"]),
+                int(item["frequency_mhz"]),
+                int(item.get("value", 0)),
+                FREQUENCY_OVERRIDE if item.get("override", True) else 0,
+            )
+            for item in updates
+        )
+
+    @staticmethod
+    def _decode_frequency_links(payload: bytes) -> list[dict]:
+        if len(payload) % FREQUENCY_LINK.size:
+            raise ActuatorError("invalid frequency-link payload length")
+        result = []
+        for offset in range(0, len(payload), FREQUENCY_LINK.size):
+            source, destination, frequency, snr_db, flags = FREQUENCY_LINK.unpack_from(
+                payload, offset
+            )
+            result.append(
+                {
+                    "source": _mac_text(source),
+                    "destination": _mac_text(destination),
+                    "frequency_mhz": frequency,
+                    "value": snr_db,
+                    "override": bool(flags & FREQUENCY_OVERRIDE),
+                }
+            )
+        return result
+
+    def dump_frequency_links(self) -> tuple[int, list[dict]]:
+        generation, payload = self._request(OP_DUMP_FREQUENCIES)
+        return generation, self._decode_frequency_links(payload)
+
+    def get_frequency_link(
+        self, source: str, destination: str, frequency_mhz: int
+    ) -> tuple[int, int, bool]:
+        request = [
+            {
+                "source": source,
+                "destination": destination,
+                "frequency_mhz": frequency_mhz,
+                "value": 0,
+                "override": False,
+            }
+        ]
+        generation, payload = self._request(
+            OP_GET_FREQUENCY, self._encode_frequency_links(request)
+        )
+        links = self._decode_frequency_links(payload)
+        if len(links) != 1:
+            raise ActuatorError("daemon returned an invalid frequency-link readback")
+        return generation, links[0]["value"], links[0]["override"]
+
+    def apply_frequency(self, generation: int, updates: list[dict]) -> list[dict]:
+        if not updates:
+            raise ActuatorError("an atomic generation requires at least one update")
+        normalized = [
+            {
+                "source": item["source"],
+                "destination": item["destination"],
+                "frequency_mhz": int(item["frequency_mhz"]),
+                "value": int(item.get("value", 0)),
+                "override": bool(item.get("override", True)),
+            }
+            for item in updates
+        ]
+        effective, payload = self._request(
+            OP_APPLY_FREQUENCY,
+            self._encode_frequency_links(normalized),
+            generation=generation,
+        )
+        if effective != generation:
+            raise ActuatorError(
+                f"daemon acknowledged generation {effective}, expected {generation}"
+            )
+        applied = self._decode_frequency_links(payload)
+        if applied != normalized:
+            raise ActuatorError("daemon frequency apply echo differs from requested generation")
         self.status()
         return applied
