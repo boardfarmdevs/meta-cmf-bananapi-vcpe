@@ -39,6 +39,17 @@ band policy and accept/reject/ignore response handling be developed before the
 hwsim candidate-measurement provider is complete without disguising evaluator
 truth as controller evidence.
 
+### Pre-association preference is bounded influence
+
+The recommendation-only `PreAssociationPolicy` expresses the intended
+behavior without pretending that EasyMesh supplies a portable probe-blocking
+primitive. It suppresses a 2.4 GHz probe response only when prior knowledge
+says the client supports 5 or 6 GHz, for at most three seconds and three probes
+by default. A preferred-band probe is answered immediately. Reaching either
+limit forces a 2.4 GHz response and a 30-second cooldown, so preference cannot
+become denial of service. The current capability remains blocked because
+OneWifi/hwsim has no accepted per-probe observation/action adapter.
+
 ## Checked-in pseudo-worlds
 
 Sources are under `gen/wmediumd/configurator/worlds/`; generated timelines are
@@ -134,7 +145,7 @@ until its additional roles have real containers and a profile is accepted.
 | --- | --- | --- |
 | ordinary client steering | atomic RF, current RCPI, BTM action and association verifier | candidate-link measurements with trustworthy receipt time |
 | band steering | per-band worlds, frequency-qualified RF control and band-aware observation/policy schemas | expose BSSID/band inventory plus fresh per-BSSID candidate measurements with receipt time |
-| pre-association steering | scenario and expected behavior | bounded probe-response control and failsafe semantics |
+| pre-association steering | bounded decision state machine and failsafe semantics | probe-response observation/control adapter |
 | BTM `NoDisconnect` | action and outcome model | clients that deterministically accept, reject or ignore BTM |
 | load steering | traffic schedules | accepted `iperf3` driver and timestamped AP/BSS load metrics |
 | backhaul topology | directed Agent/Agent values in every world | backhaul metric observer and safe topology/band action adapter |

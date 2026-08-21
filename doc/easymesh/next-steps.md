@@ -219,6 +219,11 @@ band-upgrade policy, changes association state for accepted BTM actions, and
 models reject/ignore outcomes. It accelerates policy development but cannot
 promote any live controller capability.
 
+The pre-association family now has a pure bounded state machine: only clients
+with known higher-band support can have 2.4 GHz responses suppressed, and both
+a time cap and probe-count cap force a cooldown-protected 2.4 GHz failsafe.
+Live execution still requires a narrow OneWifi probe-response control adapter.
+
 Each scenario must have a passive control and deterministic seeds:
 
 | Scenario | What it isolates |

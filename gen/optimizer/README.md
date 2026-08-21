@@ -15,6 +15,8 @@ Implemented now:
   target RCPI, maximum-loss, hold, dwell and cooldown gates;
 - a deterministic closed-loop golden-world test double with accept, reject and
   ignore client behavior;
+- a recommendation-only pre-association policy with hard time/probe caps and a
+  2.4 GHz failsafe cooldown;
 - deterministic replay state;
 - a hash-chained JSON-lines experiment journal;
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
@@ -107,6 +109,12 @@ a maximum-utility loop-free spanning tree. It supports 2.4, 5 and 6 GHz;
 connectivity. The width baseline covers 20/40/80/160 MHz and explains clean
 2.4 GHz, radar-risk, congestion and clean-6 GHz recommendations. Neither
 command changes a radio or backhaul link.
+
+`PreAssociationPolicy` is also available to test probe-response preference
+logic. It suppresses a known multiband client's 2.4 GHz response only within a
+bounded window and probe count, immediately permits 5/6 GHz probes, and then
+forces a 2.4 GHz response plus cooldown. There is deliberately no live probe
+control adapter yet.
 
 `act` requires both a policy-produced recommendation and the explicit
 `--yes-act` flag. At the present interface stage it remains inhibited by
