@@ -524,13 +524,12 @@ if [[ "$mv" == bpi* ]]; then
     lxc profile device add "${profilename}" nvram disk source="${nvram_source}" path=/nvram 1>/dev/null
 
     # Candidate-link measurements come from a protocol-enforced read-only
-    # wmediumd endpoint.  Mount only that endpoint's directory; never expose
-    # the scenario writer socket to a CPE container.
+    # wmediumd endpoint.  Prepare its host directory now, but attach it only
+    # after container PID 1 has mounted /run.  A nested LXD disk attached at
+    # instance creation is otherwise hidden by systemd's later /run tmpfs.
+    # Never expose the scenario writer socket to a CPE container.
     wmediumd_metrics_source=${WMEDIUMD_METRICS_DIR:-/run/meta-cmf-wmediumd/metrics}
     sudo install -d -m 0755 -o root -g root "${wmediumd_metrics_source}"
-    lxc profile device add "${profilename}" wmediumd-metrics disk \
-        source="${wmediumd_metrics_source}" path=/run/wmediumd-metrics \
-        readonly=true 1>/dev/null
 
     # The controller's LAN address is deliberately 10.0.0.1, which commonly
     # collides with (and is hidden by) the host's existing default-LAN route.
@@ -609,6 +608,29 @@ hwsim_default_radios=1
 lxc init "${imagename}" "${containername}" -p "${profilename}" || exit 1
 hwsim_attach_radios "${profilename}" "${HWSIM_RADIOS:-$hwsim_default_radios}"
 lxc start "${containername}" || exit 1
+
+# /run is a tmpfs mounted by systemd inside the guest.  Hot-adding this nested
+# disk after that mount makes it visible at the HAL's read-only metrics path;
+# adding it to the stopped instance would leave it hidden below the tmpfs.
+if [[ "$mv" == bpi* ]]; then
+    run_ready=""
+    for _ in {1..50}; do
+        if lxc exec "${containername}" -- awk '$2 == "/run" { found=1 } END { exit !found }' \
+                /proc/mounts 2>/dev/null; then
+            run_ready=1
+            break
+        fi
+        sleep 0.1
+    done
+    if [ -z "${run_ready}" ]; then
+        echo "Error: ${containername} did not mount /run before metrics attachment" >&2
+        exit 1
+    fi
+    lxc profile device add "${profilename}" wmediumd-metrics disk \
+        source="${wmediumd_metrics_source}" path=/run/wmediumd-metrics \
+        readonly=true 1>/dev/null || exit 1
+    lxc exec "${containername}" -- test -d /run/wmediumd-metrics || exit 1
+fi
 
 # Build provenance: the container name no longer carries the datestamp, so record
 # which image it was launched from. `lxc list -c n,config:user.build` then answers
