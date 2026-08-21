@@ -70,6 +70,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0066-controller-synchronize-runtime-agent-profile.patch \
     file://0067-controller-replay-explicit-policy.patch \
     file://0068-cli-expose-live-bss-inventory.patch \
+    file://0069-candidate-rcpi-complete-unassociated-transaction.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

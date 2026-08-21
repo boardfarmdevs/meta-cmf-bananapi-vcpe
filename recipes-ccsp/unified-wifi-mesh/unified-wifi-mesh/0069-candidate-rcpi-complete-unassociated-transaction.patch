@@ -1,0 +1,571 @@
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Subject: [PATCH] metrics: complete unassociated candidate RCPI transaction
+
+Route a standard Unassociated STA Link Metrics Query to the radio supporting
+the requested operating class, invoke OneWifi's real per-VAP GetNaSta method,
+decode its actual response schema, and retain the resulting 1905 metrics.
+
+Expose retained candidate metrics through get_sta and make the HTTP POST wait
+for a fresh matching response instead of reporting success after submission.
+Also provide a read-only result endpoint.  Provider metadata makes it explicit
+that hwsim measurements are simulated radio truth supplied through the HAL.
+
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index d17fa5c..f746aa1 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -96,6 +96,9 @@ public:
+ 
+     unsigned int m_num_unassoc_sta_metrics;
+     em_unassoc_sta_metric_entry_t  m_unassoc_sta_metrics[EM_MAX_UNASSOC_STA];
++    uint64_t m_unassoc_sta_metrics_received_ms = 0;
++    unsigned short m_unassoc_sta_metrics_msg_id = 0;
++    mac_address_t m_unassoc_sta_metrics_ruid = {0};
+ 
+ public:
+ 
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 67fad6b..e8bfbd7 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -953,90 +953,62 @@ int dm_easy_mesh_agent_t::analyze_unassoc_sta_result(em_bus_event_t *evt, em_cmd
+     em_cmd_t *tmp = NULL;
+     unsigned int num = 0;
+ 
+-    cJSON *json;
+-    cJSON *resp_array;
+-
+-    em_unassoc_sta_metrics_rsp_t *rsp;
+-
+-    translate_and_decode_onewifi_subdoc(reinterpret_cast<char *>(evt->u.raw_buff), webconfig_subdoc_type_nasta_query, "Unassoc STA Metrics Response");
+-
+-    json = cJSON_Parse((const char *)evt->u.raw_buff);
++    cJSON *json = cJSON_Parse(reinterpret_cast<const char *>(evt->u.raw_buff));
+ 
+     if (json == NULL) {
+         em_printfout("%s:%d JSON parse failed", __func__, __LINE__);
+         return 0;
+     }
+ 
+-    resp_array = cJSON_GetObjectItemCaseSensitive(json, "UnassocStaLinkMetricsResponse");
+-
+-    if ((resp_array == NULL) || (!cJSON_IsArray(resp_array))) {
+-        em_printfout("%s:%d UnassocStaLinkMetricsResponse missing", __func__, __LINE__);
++    cJSON *response = cJSON_GetObjectItemCaseSensitive(
++        json, "UnassociatedSTALinkMetricsResponse");
++    cJSON *sta_list = response == NULL ? NULL :
++        cJSON_GetObjectItemCaseSensitive(response, "sta_list");
++    if (response == NULL || !cJSON_IsObject(response) ||
++        sta_list == NULL || !cJSON_IsArray(sta_list)) {
++        em_printfout("%s:%d OneWifi UnassociatedSTALinkMetricsResponse missing",
++                     __func__, __LINE__);
+         cJSON_Delete(json);
+         return 0;
+     }
+ 
+-    rsp = &m_unassoc_sta_metrics_rsp;
++    em_unassoc_sta_metrics_rsp_t *rsp = &m_unassoc_sta_metrics_rsp;
+     memset(rsp, 0, sizeof(*rsp));
+     unsigned int entry_idx = 0;
+-    cJSON *opclass_obj = NULL;
+-
+-    cJSON_ArrayForEach(opclass_obj, resp_array)
+-    {
+-        cJSON *opclass_json = cJSON_GetObjectItemCaseSensitive(opclass_obj, "opclass");
+-
+-        if ((opclass_json == NULL) || (!cJSON_IsNumber(opclass_json))) {
+-            continue;
++    cJSON *sta_obj = NULL;
++    cJSON_ArrayForEach(sta_obj, sta_list) {
++        if (entry_idx >= EM_MAX_UNASSOC_STA) {
++            break;
+         }
+ 
+-        unsigned char op_class = (unsigned char)opclass_json->valueint;
+-
+-        cJSON *channels = cJSON_GetObjectItemCaseSensitive(opclass_obj, "channels");
+-        if ((channels == NULL) || (!cJSON_IsArray(channels))) {
++        cJSON *mac_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "sta_mac");
++        cJSON *channel_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "channel");
++        cJSON *opclass_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "op_class");
++        cJSON *rcpi_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "rcpi");
++
++        if (mac_json == NULL || !cJSON_IsString(mac_json) ||
++            channel_json == NULL || !cJSON_IsNumber(channel_json) ||
++            opclass_json == NULL || !cJSON_IsNumber(opclass_json) ||
++            rcpi_json == NULL || !cJSON_IsNumber(rcpi_json) ||
++            channel_json->valueint <= 0 || channel_json->valueint > 255 ||
++            opclass_json->valueint <= 0 || opclass_json->valueint > 255 ||
++            rcpi_json->valueint < 0 || rcpi_json->valueint > 220) {
+             continue;
+         }
+ 
+-        cJSON *channel_obj = NULL;
+-
+-        cJSON_ArrayForEach(channel_obj, channels)
+-        {
+-            cJSON *channel_json = cJSON_GetObjectItemCaseSensitive(channel_obj, "channel");
+-
+-            if ((channel_json == NULL) || (!cJSON_IsNumber(channel_json))) {
+-                continue;
+-            }
+-
+-            unsigned char channel = (unsigned char)channel_json->valueint;
+-
+-            cJSON *sta_list = cJSON_GetObjectItemCaseSensitive(channel_obj, "sta_list");
+-            if ((sta_list == NULL) || (!cJSON_IsArray(sta_list))) {
+-                continue;
+-            }
+-
+-            cJSON *sta_obj = NULL;
+-
+-            cJSON_ArrayForEach(sta_obj, sta_list)
+-            {
+-                if (entry_idx >= EM_MAX_UNASSOC_STA) {
+-                    break;
+-                }
+-
+-                cJSON *mac_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "sta_mac");
+-
+-                cJSON *rcpi_json = cJSON_GetObjectItemCaseSensitive(sta_obj, "rcpi");
+-
+-                if ((mac_json == NULL) || (!cJSON_IsString(mac_json)) || (rcpi_json == NULL) || (!cJSON_IsNumber(rcpi_json))) {
+-                    continue;
+-                }
+-
+-                dm_easy_mesh_t::string_to_macbytes(mac_json->valuestring, rsp->entry[entry_idx].sta_mac);
+-                rsp->entry[entry_idx].channel = channel;
+-                rsp->entry[entry_idx].op_class = op_class;
+-                rsp->entry[entry_idx].rcpi = (unsigned char)rcpi_json->valueint;
+-                rsp->entry[entry_idx].time_delta = 0;
+-                em_printfout("Parsed STA[%u] opclass=%u channel=%u rcpi=%u", entry_idx, op_class, channel, (unsigned char)rcpi_json->valueint);
+-                entry_idx++;
+-            }
+-        }
++        dm_easy_mesh_t::string_to_macbytes(mac_json->valuestring,
++            rsp->entry[entry_idx].sta_mac);
++        rsp->entry[entry_idx].channel =
++            static_cast<unsigned char>(channel_json->valueint);
++        rsp->entry[entry_idx].op_class =
++            static_cast<unsigned char>(opclass_json->valueint);
++        rsp->entry[entry_idx].rcpi =
++            static_cast<unsigned char>(rcpi_json->valueint);
++        rsp->entry[entry_idx].time_delta = 0;
++        em_printfout("Parsed STA[%u] opclass=%u channel=%u rcpi=%u",
++            entry_idx, rsp->entry[entry_idx].op_class,
++            rsp->entry[entry_idx].channel, rsp->entry[entry_idx].rcpi);
++        entry_idx++;
+     }
+ 
+     rsp->num_entries = entry_idx;
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 4be89b4..7fd7ff1 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -855,6 +855,43 @@ int em_agent_t::send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_
+         return -1;
+     }
+ 
++    int vap_index = -1;
++    for (uint8_t op_idx = 0; op_idx < work->num_opclass; op_idx++) {
++        em_unassoc_work_opclass_t *op = &work->opclass_list[op_idx];
++        int op_vap_index = -1;
++        unsigned int op_class = op->op_class;
++
++        for (unsigned int bss_idx = 0; bss_idx < m_data_model.m_num_bss; bss_idx++) {
++            em_bss_info_t *bss_info = m_data_model.get_bss_info(bss_idx);
++            if (bss_info == NULL || bss_info->vap_mode != em_vap_mode_ap) {
++                continue;
++            }
++            if (m_data_model.get_opclass_info_for_bss(bss_info->ruid.mac,
++                    &op_class) == NULL) {
++                continue;
++            }
++            op_vap_index = static_cast<int>(bss_info->vap_index);
++            break;
++        }
++
++        if (op_vap_index < 0) {
++            em_printfout("%s:%d No AP VAP supports operating class %u",
++                         __func__, __LINE__, op->op_class);
++            return -1;
++        }
++        if (vap_index >= 0 && vap_index != op_vap_index) {
++            em_printfout("%s:%d Query spans multiple radios; submit one radio per query",
++                         __func__, __LINE__);
++            return -1;
++        }
++        vap_index = op_vap_index;
++    }
++
++    if (vap_index < 0) {
++        em_printfout("%s:%d Query has no supported operating class", __func__, __LINE__);
++        return -1;
++    }
++
+     cJSON *root = cJSON_CreateObject();
+     if (root == NULL) {
+         em_printfout("%s:%d root creation failed", __func__, __LINE__);
+@@ -946,13 +983,21 @@ int em_agent_t::send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_
+     bus_data.raw_data.bytes = json_str;
+     bus_data.raw_data_len = strlen(json_str);
+ 
+-    if (desc->bus_set_fn(bus_hdl, "Device.WiFi.UnAssoc.STA", &bus_data) != 0) {
+-        em_printfout("%s:%d Unassoc subdoc send failed",  __func__, __LINE__);
++    char method[128] = {0};
++    snprintf(method, sizeof(method),
++             "Device.WiFi.AccessPoint.%d.X_RDKCENTRAL-COM_GetNaSta",
++             vap_index + 1);
++
++    if (desc->bus_method_invoke_fn(bus_hdl, method, method, &bus_data, NULL,
++            BUS_METHOD_SET) != bus_error_success) {
++        em_printfout("%s:%d Unassoc method invoke failed for %s",
++                     __func__, __LINE__, method);
+         free(json_str);
+         cJSON_Delete(root);	
+         return -1;
+     }
+-    em_printfout("%s:%d Unassoc STA Link Metrics Query subdoc send success", __func__, __LINE__);
++    em_printfout("%s:%d Unassoc STA Link Metrics Query accepted by %s",
++                 __func__, __LINE__, method);
+     
+     free(json_str);
+     cJSON_Delete(root);
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 546f47e..0f3beab 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -3654,7 +3654,9 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+     int i, j, k;
+     char *tmp;
+     dm_device_t *pdev;
+-    mac_addr_str_t bss_str, mac_str;
++    mac_addr_str_t bss_str, mac_str, ruid_str;
++    mac_address_t device_mac;
++    dm_easy_mesh_t *agent_dm;
+     dm_bss_t *bss;
+     em_device_info_t *info;
+ 
+@@ -3699,6 +3701,41 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+ 
+     for (i = 0; i < cJSON_GetArraySize(dev_list_obj); i++) {
+         dev_obj = cJSON_GetArrayItem(dev_list_obj, i);
++
++        const char *device_id = cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "ID"));
++        cJSON *candidate_metrics = cJSON_AddArrayToObject(dev_obj,
++            "UnassociatedSTAMetrics");
++        if (device_id != NULL) {
++            dm_easy_mesh_t::string_to_macbytes(device_id, device_mac);
++            agent_dm = m_data_model_list.get_data_model(key, device_mac);
++            if (agent_dm != NULL && agent_dm->m_unassoc_sta_metrics_received_ms != 0) {
++                dm_easy_mesh_t::macbytes_to_string(
++                    agent_dm->m_unassoc_sta_metrics_ruid, ruid_str);
++                for (unsigned int metric_idx = 0;
++                     metric_idx < agent_dm->m_num_unassoc_sta_metrics; metric_idx++) {
++                    em_unassoc_sta_metric_entry_t *metric =
++                        &agent_dm->m_unassoc_sta_metrics[metric_idx];
++                    cJSON *metric_obj = cJSON_CreateObject();
++                    char received_at_ms[32] = {0};
++
++                    dm_easy_mesh_t::macbytes_to_string(metric->sta_mac, mac_str);
++                    snprintf(received_at_ms, sizeof(received_at_ms), "%llu",
++                        static_cast<unsigned long long>(
++                            agent_dm->m_unassoc_sta_metrics_received_ms));
++                    cJSON_AddStringToObject(metric_obj, "STA", mac_str);
++                    cJSON_AddStringToObject(metric_obj, "RUID", ruid_str);
++                    cJSON_AddNumberToObject(metric_obj, "Channel", metric->channel);
++                    cJSON_AddNumberToObject(metric_obj, "OpClass", metric->op_class);
++                    cJSON_AddNumberToObject(metric_obj, "RCPI", metric->rcpi);
++                    cJSON_AddNumberToObject(metric_obj, "TimeDelta", metric->time_delta);
++                    cJSON_AddStringToObject(metric_obj, "ReceivedAtMS", received_at_ms);
++                    cJSON_AddNumberToObject(metric_obj, "MessageID",
++                        agent_dm->m_unassoc_sta_metrics_msg_id);
++                    cJSON_AddItemToArray(candidate_metrics, metric_obj);
++                }
++            }
++        }
++
+         radio_list_obj = cJSON_AddArrayToObject(dev_obj, "RadioList");
+         dm_radio_list_t::get_config(radio_list_obj, cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "ID")), 
+ 				em_get_radio_list_reason_radio_summary);
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index bac9773..d6a668b 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -436,6 +436,20 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsig
+         tlv = reinterpret_cast<em_tlv_t *>(reinterpret_cast<unsigned char *>(tlv) + sizeof(em_tlv_t) + tlv_len);
+     }
+ 
++    if (dm->m_num_unassoc_sta_metrics > 0) {
++        struct timeval received_at;
++        em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
++        em_t *em = static_cast<em_t *>(this);
++
++        gettimeofday(&received_at, NULL);
++        dm->m_unassoc_sta_metrics_received_ms =
++            static_cast<uint64_t>(received_at.tv_sec) * 1000ULL +
++            static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
++        dm->m_unassoc_sta_metrics_msg_id = ntohs(cmdu->id);
++        memcpy(dm->m_unassoc_sta_metrics_ruid, em->get_radio_interface_mac(),
++            sizeof(mac_address_t));
++    }
++
+     m_unassoc_in_progress = false;
+     return 0;
+ }
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 3718ff9..d397d55 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -40,6 +40,7 @@
+ #include "em_configuration.h"
+ #include "em_orch_ctrl.h"
+ #include "em_cmd_ctrl.h"
++#include "em_cmd_unassoc_sta_query.h"
+ 
+ void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+ {
+@@ -366,7 +367,9 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+         case em_cmd_type_set_policy:
+         case em_cmd_type_bsta_cap:
+ 	case em_cmd_type_unassoc_sta_query:
+-            if (em->get_state() == em_state_ctrl_configured) {
++            if ((em->get_state() == em_state_ctrl_configured) ||
++                (em->get_state() == em_state_ctrl_topo_synchronized) ||
++                (em->get_state() == em_state_ctrl_channel_selected)) {
+                 return true;
+             }
+             break;
+@@ -786,12 +789,38 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
+                 }
+                 break;
+             case em_cmd_type_unassoc_sta_query:
+-		if (count == 0 && memcmp(em->get_data_model()->get_agent_al_interface_mac(),
+-					pcmd->m_param.u.unassoc_sta_query_params.al_mac, sizeof(mac_address_t)) == 0) {
+-		    queue_push(pcmd->m_em_candidates, em);
+-		    count++;
+-		}		
+-		break;
++                if (count == 0 && !em->is_al_interface_em() &&
++                    memcmp(em->get_data_model()->get_agent_al_interface_mac(),
++                           pcmd->m_param.u.unassoc_sta_query_params.al_mac,
++                           sizeof(mac_address_t)) == 0) {
++                    auto *query_cmd = static_cast<em_cmd_unassoc_sta_query_t *>(pcmd);
++                    em_unassoc_query_list_t *query = query_cmd->get_query();
++                    dm_easy_mesh_t *agent_dm = em->get_data_model();
++                    bool radio_matches_query = false;
++
++                    for (unsigned int op_idx = 0;
++                         query != nullptr && op_idx < query->num_opclass && !radio_matches_query;
++                         op_idx++) {
++                        for (unsigned int dm_idx = 0; dm_idx < agent_dm->get_num_op_class(); dm_idx++) {
++                            em_op_class_info_t *op_info = agent_dm->get_op_class_info(dm_idx);
++                            if (op_info != nullptr &&
++                                op_info->op_class == query->opclass_list[op_idx].op_class &&
++                                memcmp(op_info->id.ruid, em->get_radio_interface_mac(),
++                                       sizeof(mac_address_t)) == 0) {
++                                radio_matches_query = true;
++                                break;
++                            }
++                        }
++                    }
++
++                    if (radio_matches_query) {
++                        queue_push(pcmd->m_em_candidates, em);
++                        count++;
++                        em_printfout("Unassociated STA query selected radio %s for requested operating class",
++                                     util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                    }
++                }
++                break;
+ 	    default:
+ 		break;
+ 	}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 54070bc..a8dd163 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -727,6 +727,18 @@ type unassocStaQueryRequest struct {
+         QueryList []unassocStaOpClass `json:"UnassocStaQueryList"`
+ }
+ 
++type candidateLinkMetric struct {
++    AgentAL    string `json:"agent_al"`
++    RUID       string `json:"ruid"`
++    STA        string `json:"sta"`
++    Channel    int    `json:"channel"`
++    OpClass    int    `json:"opclass"`
++    RCPI       int    `json:"rcpi"`
++    TimeDelta  int    `json:"time_delta"`
++    ReceivedAt uint64 `json:"received_at_ms"`
++    MessageID  int    `json:"message_id"`
++}
++
+ //ckp cov end
+ // ===== GLOBAL VARIABLES =====
+ var (
+@@ -3093,6 +3105,7 @@ func main() {
+ 
+ 	// Unassoc STA 
+ 	api.HandleFunc("/unassoc_sta_query", unassocStaQueryHandler).Methods("POST")
++	api.HandleFunc("/unassoc_sta_metrics", unassocStaMetricsHandler).Methods("GET")
+ 
+ 	// Enable CORS
+ 	router.Use(corsMiddleware)
+@@ -4173,6 +4186,82 @@ func WifiResetHandler(w http.ResponseWriter, r *http.Request) {
+  * Handles POST /unassoc_sta_query requests.
+  * Parses payload and triggers Unassociated STA Link Metrics Query.
+  */
++func candidateMetricKey(sta string, opclass, channel int) string {
++    return fmt.Sprintf("%s/%d/%d", strings.ToLower(sta), opclass, channel)
++}
++
++func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
++    cmd := C.CString("get_sta OneWifiMesh")
++    defer C.free(unsafe.Pointer(cmd))
++    tree := execEMCommand(cmd, nil)
++    if tree == nil {
++        return nil, fmt.Errorf("controller returned no candidate metrics data")
++    }
++    defer C.free_network_tree(tree)
++
++    deviceList := getNetworkTreeByKey(tree, "DeviceList")
++    if deviceList == nil {
++        return nil, fmt.Errorf("controller STA tree has no DeviceList")
++    }
++    metrics := make([]candidateLinkMetric, 0)
++    for deviceIndex := 0; deviceIndex < int(deviceList.num_children); deviceIndex++ {
++        device := deviceList.child[deviceIndex]
++        if device == nil {
++            continue
++        }
++        agentAL := strings.ToLower(getTreeValue(device, "ID"))
++        candidateList := getNetworkTreeByKey(device, "UnassociatedSTAMetrics")
++        if agentAL == "" || candidateList == nil {
++            continue
++        }
++        for metricIndex := 0; metricIndex < int(candidateList.num_children); metricIndex++ {
++            item := candidateList.child[metricIndex]
++            if item == nil {
++                continue
++            }
++            receivedAt, err := strconv.ParseUint(getTreeValue(item, "ReceivedAtMS"), 10, 64)
++            if err != nil {
++                continue
++            }
++            metrics = append(metrics, candidateLinkMetric{
++                AgentAL: agentAL,
++                RUID: strings.ToLower(getTreeValue(item, "RUID")),
++                STA: strings.ToLower(getTreeValue(item, "STA")),
++                Channel: getKeyIntValue(item, "Channel"),
++                OpClass: getKeyIntValue(item, "OpClass"),
++                RCPI: getKeyIntValue(item, "RCPI"),
++                TimeDelta: getKeyIntValue(item, "TimeDelta"),
++                ReceivedAt: receivedAt,
++                MessageID: getKeyIntValue(item, "MessageID"),
++            })
++        }
++    }
++    sort.Slice(metrics, func(i, j int) bool {
++        if metrics[i].AgentAL != metrics[j].AgentAL {
++            return metrics[i].AgentAL < metrics[j].AgentAL
++        }
++        return candidateMetricKey(metrics[i].STA, metrics[i].OpClass,
++            metrics[i].Channel) < candidateMetricKey(metrics[j].STA,
++            metrics[j].OpClass, metrics[j].Channel)
++    })
++    return metrics, nil
++}
++
++func unassocStaMetricsHandler(w http.ResponseWriter, r *http.Request) {
++    metrics, err := loadCandidateLinkMetrics()
++    if err != nil {
++        http.Error(w, err.Error(), http.StatusServiceUnavailable)
++        return
++    }
++    w.Header().Set("Content-Type", "application/json")
++    _ = json.NewEncoder(w).Encode(map[string]interface{}{
++        "metrics": metrics,
++        "total": len(metrics),
++        "provider": "hwsim-wmediumd-read-only",
++        "simulated": true,
++    })
++}
++
+ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     if r.Method != http.MethodPost {
+         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+@@ -4218,6 +4307,24 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+         }
+     }
+ 
++    baseline := make(map[string]uint64)
++    if current, err := loadCandidateLinkMetrics(); err == nil {
++        for _, metric := range current {
++            if strings.EqualFold(metric.AgentAL, req.AlMac) {
++                baseline[candidateMetricKey(metric.STA, metric.OpClass,
++                    metric.Channel)] = metric.ReceivedAt
++            }
++        }
++    }
++    expected := make(map[string]struct{})
++    for _, op := range req.QueryList {
++        for _, channel := range op.Channels {
++            for _, sta := range channel.StaMacList {
++                expected[candidateMetricKey(sta, op.OpClass, channel.Channel)] = struct{}{}
++            }
++        }
++    }
++
+     for i, op := range req.QueryList {
+         log.Printf("[DEBUG][HTTP] OpClass[%d]=%d Channels=%d", i, op.OpClass, len(op.Channels))
+ 
+@@ -4253,13 +4360,45 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     }
+     defer C.free_network_tree(result)
+ 
+-    //log.Printf("[CLI] Unassoc STA Query sent: %+v", req)
++    deadline := time.Now().Add(8 * time.Second)
++    var observed []candidateLinkMetric
++    for time.Now().Before(deadline) {
++        all, err := loadCandidateLinkMetrics()
++        if err == nil {
++            observed = observed[:0]
++            fresh := make(map[string]struct{})
++            for _, metric := range all {
++                if !strings.EqualFold(metric.AgentAL, req.AlMac) {
++                    continue
++                }
++                key := candidateMetricKey(metric.STA, metric.OpClass, metric.Channel)
++                if _, wanted := expected[key]; wanted && metric.ReceivedAt > baseline[key] {
++                    fresh[key] = struct{}{}
++                    observed = append(observed, metric)
++                }
++            }
++            if len(fresh) == len(expected) {
++                w.Header().Set("Content-Type", "application/json")
++                _ = json.NewEncoder(w).Encode(map[string]interface{}{
++                    "success": true,
++                    "message": "Unassociated STA metrics response received",
++                    "metrics": observed,
++                    "provider": "hwsim-wmediumd-read-only",
++                    "simulated": true,
++                })
++                return
++            }
++        }
++        time.Sleep(100 * time.Millisecond)
++    }
+ 
+     w.Header().Set("Content-Type", "application/json")
+-
+-    if err := json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Unassoc STA Query sent",}); err != nil {
+-        log.Printf("[ERROR][HTTP] Failed to encode response: %v", err)
+-    }    
++    w.WriteHeader(http.StatusGatewayTimeout)
++    _ = json.NewEncoder(w).Encode(map[string]interface{}{
++        "success": false,
++        "message": "Timed out waiting for a fresh unassociated STA metrics response",
++        "metrics": observed,
++    })
+ }

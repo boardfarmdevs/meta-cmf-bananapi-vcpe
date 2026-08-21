@@ -244,3 +244,9 @@ SRC_URI += "file://0022-single-phy-let-START_AP-set-each-radio-channel.patch"
 # pre-auth EAPOL M4 is not diverted to the WDS netdev -> reason 15). Driven from the HAL's
 # SET_STATION(authorized) path because a leftover WDS netdev suppresses UNEXPECTED_4ADDR.
 SRC_URI += "file://0023-create-wds-sta-on-authorization-not-association.patch"
+
+# The standard non-associated STA query reaches wifi_getNASta(), but the
+# generic HAL has no provider.  For HWSIM_RADIO only, read frequency-qualified
+# SNR from wmediumd's separately mounted read-only metrics endpoint and expose
+# it as candidate-link RCPI.  Physical targets retain their native provider.
+SRC_URI += "file://0024-hwsim-read-candidate-rcpi-from-wmediumd.patch"
