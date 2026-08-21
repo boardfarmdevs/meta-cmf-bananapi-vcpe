@@ -1,0 +1,34 @@
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Subject: [PATCH] metrics: label asynchronous NaSta payload as a response
+
+The GetNaSta RBUS method accepts an UnassocStaQuery document and later
+publishes a different document on Device.WiFi.EM.NaStaResponse.  The encoder
+left SubDocName set to UnassocStaQuery, making the response indistinguishable
+from a reflected request and causing the EasyMesh agent to reject it.
+
+Name the published document after its actual response object.  This changes
+only the internal OneWifi webconfig envelope; the RBUS method/event names and
+the EasyMesh 1905 wire representation remain unchanged.
+
+diff --git a/source/webconfig/wifi_webconfig_nasta.c b/source/webconfig/wifi_webconfig_nasta.c
+--- a/source/webconfig/wifi_webconfig_nasta.c
++++ b/source/webconfig/wifi_webconfig_nasta.c
+@@ -35,7 +35,7 @@
+  * Response JSON (produced by encode_nasta_query_subdoc):
+  * {
+  *   "Version": "1.0",
+- *   "SubDocName": "UnassocStaQuery",
++ *   "SubDocName": "UnassociatedSTALinkMetricsResponse",
+  *   "UnassociatedSTALinkMetricsResponse": {
+  *     "num_sta": 2,
+  *     "sta_list": [
+@@ -102,7 +102,8 @@ webconfig_error_t encode_nasta_query_subdoc(webconfig_t *config,
+     }
+ 
+     cJSON_AddStringToObject(json, "Version", "1.0");
+-    cJSON_AddStringToObject(json, "SubDocName", "UnassocStaQuery");
++    cJSON_AddStringToObject(json, "SubDocName",
++        "UnassociatedSTALinkMetricsResponse");
+ 
+     resp_obj = cJSON_CreateObject();
+     if (resp_obj == NULL) {

@@ -23,6 +23,7 @@ WIFI_ASSOC_LIVE_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0011-assoc-mark-monitor-mis
 WIFI_EM_DUPLICATE_AL_MAC_PATCH := "${THISDIR}/${BPN}/0012-webconfig-prefer-sta-for-duplicate-al-mac.patch"
 WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH := "${THISDIR}/${BPN}/0013-ap-metrics-index-radio-config-by-radio-index.patch"
 WIFI_EM_CLIENT_UPTIME_PATCH := "${THISDIR}/${BPN}/0014-easymesh-copy-client-association-uptime.patch"
+WIFI_NASTA_RESPONSE_NAME_PATCH := "${THISDIR}/${BPN}/0015-nasta-label-response-subdoc.patch"
 python do_patch_append() {
     import subprocess
     s = d.getVar('S')
@@ -122,6 +123,12 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: forwarding client association uptime to EasyMesh")
     with open(d.getVar('WIFI_EM_CLIENT_UPTIME_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # The NaSta encoder publishes a response on Device.WiFi.EM.NaStaResponse,
+    # but labelled the document as the original request.  Consumers must be
+    # able to distinguish the asynchronous result from the method input.
+    bb.note("meta-cmf-bananapi-vcpe: labelling NaSta event payload as a response")
+    with open(d.getVar('WIFI_NASTA_RESPONSE_NAME_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -137,7 +144,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_DB_HWSIM_SAE_STA_PATCH WIFI_DB_HWSIM_20MHZ_PATCH \
     WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH \
     WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
-    WIFI_EM_CLIENT_UPTIME_PATCH"
+    WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -151,6 +158,7 @@ do_patch[file-checksums] += "${WIFI_ASSOC_LIVE_SNAPSHOT_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_DUPLICATE_AL_MAC_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_CLIENT_UPTIME_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_NASTA_RESPONSE_NAME_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.
