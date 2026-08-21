@@ -10,10 +10,10 @@ The provider fails closed unless the endpoint advertises both frequency
 qualification and read-only capabilities.  This is deliberately HWSIM_RADIO
 only: hardware builds retain their existing scan/provider implementation.
 
-diff --git a/src/wifi_hal.c b/src/wifi_hal.c
+diff --git a/wifi_hal.c b/wifi_hal.c
 index d489ffd..73ff9e6 100644
---- a/src/wifi_hal.c
-+++ b/src/wifi_hal.c
+--- a/wifi_hal.c
++++ b/wifi_hal.c
 @@ -24,8 +24,13 @@
  #include <errno.h>
  #include <stdarg.h>
