@@ -24,6 +24,77 @@ agent-initiated steering.
 Implementation: `gen/wmediumd/configurator/`, Python 3.8+, no external parser
 dependency.
 
+## Geometry front end and golden sequences
+
+The phase language remains the final, auditable input to the existing runner.
+For larger experiments, `world-compile` first calculates that input from two
+separate JSON documents:
+
+```text
+layout: space + fixed Agents + fixed clients + walls + propagation
+mobility: duration + tick + paths + presence intervals + seed
+                             |
+                             v
+world plan: positions + presence + directed SNR by band at every tick
+                             |
+                    world-export --band 5
+                             |
+                             v
+auditable v1 .wmd phase source -> normal bind/compile/run path
+```
+
+The checked-in home is 20 by 14 metres with five fixed Agents, ten fixed
+clients and four simple walls. Mobility variants add ten slow walkers, clients
+hovering around borders, a flash crowd, disappearance/reappearance, fast
+transit, an asymmetric transmitter and extender loss/recovery. A second layout
+moves the Agents while leaving the space and client paths unchanged.
+
+For band `b`, directed link SNR at time `t` is:
+
+```text
+clamp(reference[b]
+      - 10 * path_loss_exponent * log10(distance / reference_distance)
+      - sum(crossed wall losses)
+      + source transmit adjustment[b]
+      + deterministic seeded shadowing)
+```
+
+Every proper wall intersection adds its configured loss; the present home uses
+5 dB per wall. This is a reproducible stress model, not a ray tracer or claim
+about a real building. An absent node is represented by minimum SNR on all its
+links. Positions and presence are keyed to physical roles and never to current
+association.
+
+Regenerate or verify all golden world timelines with:
+
+```sh
+cd gen/wmediumd/configurator
+worlds/build-goldens.sh --check
+# Intentional source change only:
+worlds/build-goldens.sh --write
+```
+
+Each world plan contains hashes of its layout and mobility inputs plus a
+canonical `golden_sha256`. Exact JSON numbers hash identically whether a JSON
+writer emits `5` or `5.0`. Tests reject any content change without a matching
+regeneration.
+
+Compile and inspect one world directly:
+
+```sh
+python3 -m wmdcfg.cli world-compile \
+  --layout worlds/layouts/home-five-agent.json \
+  worlds/mobility/slow-walk-ten.json \
+  -o /tmp/home.world.json
+python3 -m wmdcfg.cli world-export /tmp/home.world.json \
+  --band 5 -o /tmp/home-5.wmd
+python3 -m wmdcfg.cli validate /tmp/home-5.wmd
+```
+
+The world plan calculates fronthaul and Agent-to-Agent backhaul values for
+2.4, 5 and 6 GHz. The current exporter deliberately emits fronthaul only and
+retains `protect backhaul`.
+
 ## Scenario model
 
 The first language version describes named roles and time phases. A two-AP
@@ -199,8 +270,9 @@ An experiment is not complete unless `summary.json` reports `passed` and
 
 ## Validated behavior
 
-- The supported Python suite passes ten compiler/observer/runner tests; its
-  real-daemon actuator case runs when `WMDC_TEST_DAEMON` selects a test daemon.
+- The supported Python suite passes 16 parser/compiler/world/observer/runner
+  tests; its real-daemon actuator case runs when `WMDC_TEST_DAEMON` selects a
+  test daemon.
 - The internal wmediumd multichannel/Linux-7 suite passed 9/9.
 - A passive two-AP crossover applied 32 generations in 60 seconds, kept the
   same daemon PID, delivered 1,400/1,400 probes and restored every link.
@@ -212,10 +284,12 @@ An experiment is not complete unless `summary.json` reports `passed` and
 ## Limits
 
 - SNR is keyed by radio pair, not frequency; same-wiphy band steering needs a
-  frequency-qualified actuator.
+  frequency-qualified actuator. `world-export --band 5` projects the 5 GHz
+  calculation onto the whole pair; it is not a true band-steering stimulus.
 - `SIGKILL` or host loss cannot execute Python restoration; unattended use
   needs a daemon-side lease/watchdog.
 - Health is gated before/after, not continuously used to advance phases.
-- Parameters, loops, trace import, geometry, random models and conditional waits
-  are not language features yet.
+- The geometry front end supports deterministic paths, presence, walls and
+  seeded shadowing. Trace import, a real floor-plan propagation model and
+  conditional waits are not implemented.
 - The configurator is a CLI/library, not a long-running authenticated service.

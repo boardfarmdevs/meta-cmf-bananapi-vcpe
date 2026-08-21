@@ -13,6 +13,12 @@ execution through wmediumd's dedicated atomic control socket. Every generation
 is read back, the captured baseline is restored on normal exit or a handled
 interrupt, and ramps never restart wmediumd.
 
+The `worlds/` front end adds deterministic 2D layouts, physical role paths,
+presence intervals, directed link asymmetry, fixed-loss walls and per-band
+golden timelines. It exports one selected band into the existing auditable
+`.wmd` language; current radio-pair control is not frequency-qualified, so this
+projection must not be described as simultaneous band steering.
+
 Run directly from the source tree:
 
 ```sh
@@ -28,6 +34,11 @@ python3 -m wmdcfg.cli compile scenarios/two-ap-crossover.wmd \
 python3 -m wmdcfg.cli status
 python3 -m wmdcfg.cli run /tmp/two-ap-crossover.plan.json \
     --output-root /tmp/wmdcfg-runs
+
+worlds/build-goldens.sh --check
+python3 -m wmdcfg.cli world-export \
+    worlds/golden/home-a-stationary.world.json \
+    --band 5 -o /tmp/home-a-stationary-5.wmd
 ```
 
 Every station/AP pair declared by the scenario must be initialized in its first
