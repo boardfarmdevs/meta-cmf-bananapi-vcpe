@@ -160,7 +160,7 @@ know local protocol state, but neither selects the target for this experiment.
 | --- | --- | --- | --- |
 | RF generation | `wmdcfg` | wmediumd | Atomic radio-pair SNR generations with verified restore |
 | RF transport | wmediumd | hwsim | Frequency-isolated simulated frame delivery |
-| live topology | controller/WebUI | external observer | `/api/v1/topology` with current devices, radios and BSSs |
+| live topology | controller/WebUI | external observer | compact `/api/v1/topology` with current nodes and client placement; fronthaul BSS inventory exposure is still missing |
 | live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` and `/api/v1/clients` |
 | current-link metrics | EasyMesh reports/queries | external observer | Live associated-client RCPI/rates/counters are available from `/api/v1/clients` |
 | candidate-link metrics | EasyMesh reports/queries | external observer | Read-only adapter/capability evaluation still required |
@@ -216,7 +216,8 @@ The proposed host-side Python package is:
 gen/optimizer/
 |-- pyproject.toml
 |-- configs/
-|   `-- threshold-policy.yaml
+|   |-- threshold-policy.yaml
+|   `-- band-upgrade-policy.yaml
 |-- scenarios/
 |   |-- capabilities-current.json
 |   |-- traffic-profiles.json
@@ -400,9 +401,10 @@ are usable.
 
 Scenario preparation is also implemented. Two 2D Agent layouts, ten mobility/
 presence worlds and five separate traffic profiles expand into a deterministic
-74-case matrix. The initial capability file marks 7 cases runnable and 67
-blocked with exact missing mechanisms. Frequency-qualified RF is now accepted;
-candidate freshness, load traffic, controlled BTM response, backhaul actions,
+148-case matrix across two policy baselines. The initial capability file marks
+14 cases runnable and 134 blocked with exact missing mechanisms.
+Frequency-qualified RF is now accepted; candidate freshness, load traffic,
+controlled BTM response, backhaul actions,
 channel width and 20-client scale must not be inferred from configuration
 alone. See [optimizer-scenarios.md](optimizer-scenarios.md).
 
@@ -418,7 +420,9 @@ The optimizer tests intentionally progress in layers:
 4. actuator source/target validation and verifier convergence;
 5. hash-chain integrity and byte-deterministic replay; and
 6. the existing `two-ap-crossover.wmd` phase contract combined with a recorded
-   EasyMesh-observation stream, requiring exactly one recommendation.
+   EasyMesh-observation stream, requiring exactly one recommendation; and
+7. both 2.4-to-5 and 5-to-6 BSSID decisions against the ten-client small band
+   world without reading its simulated SNR as policy input.
 
 The crossover test reads the scenario only for phase/timing coordination. Its
 RCPI inputs are explicitly labelled Associated STA Link Metrics and Beacon

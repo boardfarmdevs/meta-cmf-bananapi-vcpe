@@ -53,3 +53,55 @@ def test_observed_target_association_enters_cooldown():
     moved = policy().evaluate(snapshot(6, source=TARGET), pending.state)
     assert decision(moved).reason == "target_association_observed"
     assert moved.state.for_sta(snapshot(0).clients[0].sta_mac).phase == "cooldown"
+
+
+def test_band_upgrade_is_a_bssid_decision_with_safety_floor_and_hold():
+    engine = policy(
+        band_upgrade_enabled=True,
+        minimum_band_upgrade_target_rcpi=120,
+        maximum_band_upgrade_loss_rcpi=8,
+    )
+    first = engine.evaluate(
+        snapshot(0, current_rcpi=130, target_rcpi=126,
+                 current_band="2.4", target_band="5")
+    )
+    assert decision(first).reason == "condition_hold_not_met"
+    assert decision(first).target_band == "5"
+    assert decision(first).scores[0].band_rank_delta == 1
+    second = engine.evaluate(
+        snapshot(5, current_rcpi=130, target_rcpi=126,
+                 current_band="2.4", target_band="5"),
+        first.state,
+    )
+    assert decision(second).action == "steer"
+    assert decision(second).reason == "band_preference_hold_satisfied"
+    assert decision(second).target_bssid == TARGET
+    assert decision(second).target_band == "5"
+
+
+def test_band_upgrade_abstains_when_candidate_is_too_weak():
+    result = policy(band_upgrade_enabled=True).evaluate(
+        snapshot(0, current_rcpi=130, target_rcpi=118,
+                 current_band="5", target_band="6")
+    )
+    assert decision(result).action == "none"
+    assert decision(result).reason == "no_safe_band_upgrade"
+
+
+def test_band_upgrade_can_select_a_measured_6ghz_bssid():
+    engine = policy(band_upgrade_enabled=True, condition_hold_seconds=0)
+    result = engine.evaluate(
+        snapshot(0, current_rcpi=132, target_rcpi=126,
+                 current_band="5", target_band="6")
+    )
+    assert decision(result).action == "steer"
+    assert decision(result).target_band == "6"
+    assert decision(result).scores[0].band_rank_delta == 1
+
+
+def test_default_policy_does_not_upgrade_an_acceptable_link():
+    result = policy().evaluate(
+        snapshot(0, current_rcpi=130, target_rcpi=130,
+                 current_band="2.4", target_band="5")
+    )
+    assert decision(result).reason == "current_link_acceptable"

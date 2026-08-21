@@ -206,8 +206,9 @@ have explicit resource and stability envelopes.
 golden RF worlds cover stationary, slow walk, AP placement, border hover,
 flash crowd, disappearance, fast transit, asymmetric links and extender loss.
 The tenth moves the accepted ten-client profile for band experiments. Five
-independent traffic profiles produce a 74-case initial matrix. Seven
-small/ping-or-idle cases are runnable today; all others record the missing
+independent traffic profiles and two policy baselines produce a 148-case
+initial matrix. Fourteen small/ping-or-idle cases are runnable today; all
+others record the missing
 measurement, RF, traffic, response-control or scale capability. See
 [optimizer-scenarios.md](optimizer-scenarios.md). Scoring and live execution
 remain open.
@@ -287,7 +288,8 @@ costs.
 7. Automate a result bundle containing configuration, observations, packet
    capture indexes, service health, actions, outcomes and medium restoration.
 8. **Scenario preparation complete for the first corpus:** keep the ten
-   goldens, five traffic profiles and generated capability matrix deterministic;
+   goldens, five traffic profiles, two policy baselines and generated capability
+   matrix deterministic;
    implement only the adapters needed to move blocked cases to runnable.
 
 The first policy decision should follow item 4, not precede items 1–3.

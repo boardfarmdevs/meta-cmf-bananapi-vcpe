@@ -91,8 +91,10 @@ jq -r '.cases[] | select(.status == "blocked") |
   scenarios/generated/home-suite.matrix.json
 ```
 
-The initial matrix contains 74 cases: 7 runnable and 67 blocked. The count is
-not a quality score. It shows that the Cartesian core and specialized scenario
+The initial matrix contains 148 cases: 14 runnable and 134 blocked. It applies
+both the ordinary weak-link threshold baseline and the opt-in band-upgrade
+baseline to the same RF/traffic cases. The count is not a quality score. It
+shows that the Cartesian core and specialized scenario
 families exist while preserving the present lab boundary.
 
 Create the runnable stationary latency plan for rev130:
@@ -117,7 +119,7 @@ until its additional roles have real containers and a profile is accepted.
 | Family | Present foundation | Required before a valid live claim |
 | --- | --- | --- |
 | ordinary client steering | atomic RF, current RCPI, BTM action and association verifier | candidate-link measurements with trustworthy receipt time |
-| band steering | per-band worlds, frequency-qualified RF control and BSSID/band inventory | fresh per-BSSID candidate measurements with receipt time |
+| band steering | per-band worlds, frequency-qualified RF control and band-aware observation/policy schemas | expose BSSID/band inventory plus fresh per-BSSID candidate measurements with receipt time |
 | pre-association steering | scenario and expected behavior | bounded probe-response control and failsafe semantics |
 | BTM `NoDisconnect` | action and outcome model | clients that deterministically accept, reject or ignore BTM |
 | load steering | traffic schedules | accepted `iperf3` driver and timestamped AP/BSS load metrics |
@@ -149,6 +151,26 @@ band decisions.
 The optimizer then ranks target BSSIDs using reported candidate measurements.
 It does not simply choose the label “5 GHz” or “6 GHz.” A 2.4-to-5 or 5-to-6
 case remains blocked until both RF and measurement requirements exist.
+
+`band-upgrade-policy.yaml` is the first conservative, explainable baseline. It
+normalizes the EasyMesh band enumeration (0=2.4, 1=5, 3=6 GHz), keeps the exact
+source and target BSSID in every score/decision, and considers only a higher
+band whose fresh measured RCPI is at least 120 and no more than 8 RCPI (4 dB)
+below the current link. The same hold, dwell, pending timeout and cooldown gates
+still apply. It deliberately defaults off in `threshold-policy.yaml`.
+
+Those numbers are hypotheses for comparison, not EasyMesh-standard policy
+primitives and not a claim that a higher band is always better. Candidate
+inventory with an unknown RCPI cannot trigger the policy. The live band cases
+therefore remain blocked by candidate measurement and receipt-time capabilities
+even though deterministic 2.4/5/6 GHz RF stimulus now works.
+
+On rev130 the observer normalizes all ten associated clients as 5 GHz, but the
+current compact `/api/v1/topology` response omits the fronthaul `BSSList` and
+therefore yields zero target candidates. The controller database's 50 BSS rows
+prove internal model completeness, not external optimizer availability.
+`band-candidate-inventory` consequently remains false until an API exposes the
+same BSSID/device/band/SSID identities.
 
 ### Backhaul topology is a slower, separate loop
 

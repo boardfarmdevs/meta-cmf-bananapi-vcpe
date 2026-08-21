@@ -16,6 +16,9 @@
     "../../wmediumd/configurator/worlds/golden/home-a-asymmetric-link.world.json",
     "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json"
   ],
-  "policies": ["../configs/threshold-policy.yaml"],
+  "policies": [
+    "../configs/threshold-policy.yaml",
+    "../configs/band-upgrade-policy.yaml"
+  ],
   "seeds": [1701]
 }

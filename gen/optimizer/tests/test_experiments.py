@@ -20,19 +20,20 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     assert first == second
     verify_matrix(first)
     assert first["summary"] == {
-        "cases": 74,
-        "runnable": 7,
-        "blocked": 67,
+        "cases": 148,
+        "runnable": 14,
+        "blocked": 134,
         "worlds": 10,
         "traffic_profiles": 5,
-        "policies": 1,
+        "policies": 2,
         "seeds": 1,
     }
     band = [item for item in first["cases"] if item["scenario"] == "band-steer-5-to-6"]
-    assert len(band) == 3
+    assert len(band) == 6
     assert all(item["status"] == "blocked" for item in band)
     assert all("frequency-qualified-snr" not in item["missing_capabilities"] for item in band)
     assert all("candidate-link-metrics" in item["missing_capabilities"] for item in band)
+    assert all("band-candidate-inventory" in item["missing_capabilities"] for item in band)
     assert all(item["truth_boundary"]["optimizer_inputs"] == "EasyMesh observations only" for item in first["cases"])
 
 

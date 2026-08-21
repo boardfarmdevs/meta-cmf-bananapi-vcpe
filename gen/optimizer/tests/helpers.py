@@ -25,6 +25,8 @@ def snapshot(
     metric_age: int | None = 0,
     target_age: int | None = 0,
     source: str = SOURCE,
+    current_band: str | None = "5",
+    target_band: str | None = "5",
     association_uptime: int = 120,
     devices: int = 5,
     clients: int = 10,
@@ -41,6 +43,7 @@ def snapshot(
         association_uptime_seconds=association_uptime,
         metric_observed_at=current_at,
         measurement_source="associated_sta_link_metrics",
+        band=current_band,
     )
     candidate = CandidateObservation(
         sta_mac=STA,
@@ -50,6 +53,7 @@ def snapshot(
         rcpi=target_rcpi,
         metric_observed_at=candidate_at,
         measurement_source="beacon_metrics_response",
+        band=target_band,
     )
     return Snapshot(
         schema_version=1,

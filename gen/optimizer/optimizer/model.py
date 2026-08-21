@@ -7,6 +7,22 @@ from typing import Any, Iterable
 
 
 _MAC = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
+# EasyMesh/em_freq_band values are 0=2.4 GHz, 1=5 GHz, 2=60 GHz and
+# 3=6 GHz. This lab intentionally has no 60 GHz policy domain.
+_BAND_ALIASES = {
+    0: "2.4",
+    1: "5",
+    3: "6",
+    "0": "2.4",
+    "1": "5",
+    "3": "6",
+    "2.4": "2.4",
+    "2.4ghz": "2.4",
+    "5": "5",
+    "5ghz": "5",
+    "6": "6",
+    "6ghz": "6",
+}
 
 
 def normalize_mac(value: str) -> str:
@@ -14,6 +30,16 @@ def normalize_mac(value: str) -> str:
     if not _MAC.fullmatch(value):
         raise ValueError(f"invalid MAC address: {value!r}")
     return value
+
+
+def normalize_band(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    key = value.strip().lower() if isinstance(value, str) else value
+    try:
+        return _BAND_ALIASES[key]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"invalid Wi-Fi band: {value!r}") from error
 
 
 def parse_time(value: str) -> datetime:
@@ -42,6 +68,7 @@ class CandidateObservation:
     rcpi: int | None
     metric_observed_at: str | None
     measurement_source: str
+    band: str | None = None
     eligible: bool = True
 
     def __post_init__(self) -> None:
@@ -53,6 +80,7 @@ class CandidateObservation:
             raise ValueError("RCPI must be between 0 and 220")
         if self.metric_observed_at is not None:
             parse_time(self.metric_observed_at)
+        object.__setattr__(self, "band", normalize_band(self.band))
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "CandidateObservation":
@@ -69,6 +97,7 @@ class ClientObservation:
     association_uptime_seconds: int
     metric_observed_at: str | None
     measurement_source: str
+    band: str | None = None
 
     def __post_init__(self) -> None:
         normalize_mac(self.sta_mac)
@@ -81,6 +110,7 @@ class ClientObservation:
             raise ValueError("association uptime cannot be negative")
         if self.metric_observed_at is not None:
             parse_time(self.metric_observed_at)
+        object.__setattr__(self, "band", normalize_band(self.band))
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ClientObservation":

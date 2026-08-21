@@ -10,6 +10,8 @@ Implemented now:
   `/clients` and `/devices`;
 - explicit unknown freshness and missing candidate-measurement handling;
 - a pure threshold/margin/hold/dwell/cooldown decision engine;
+- an opt-in band-upgrade baseline that still selects an exact BSSID and applies
+  target RCPI, maximum-loss, hold, dwell and cooldown gates;
 - deterministic replay state;
 - a hash-chained JSON-lines experiment journal;
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
@@ -56,6 +58,11 @@ em-optimizer replay \
   --policy configs/threshold-policy.yaml \
   --journal /tmp/em-replay.jsonl
 ```
+
+Use `configs/band-upgrade-policy.yaml` to compare conservative 2.4-to-5 and
+5-to-6 BSSID upgrades. Live recommendations remain inhibited until the
+candidate adapter supplies fresh per-BSSID measurements; band inventory alone
+is never treated as link quality.
 
 `act` requires both a policy-produced recommendation and the explicit
 `--yes-act` flag. At the present interface stage it remains inhibited by

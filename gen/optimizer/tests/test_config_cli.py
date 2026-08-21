@@ -13,6 +13,11 @@ def test_example_policy_loads_without_external_yaml_dependency():
     assert config.policy_version == 1
     assert config.current_rcpi_below == 100
     assert config.expected_clients == 10
+    assert config.band_upgrade_enabled is False
+
+    band = load_policy(Path(__file__).parents[1] / "configs" / "band-upgrade-policy.yaml")
+    assert band.band_upgrade_enabled is True
+    assert band.minimum_band_upgrade_target_rcpi == 120
 
 
 def test_replay_is_byte_deterministic(tmp_path):

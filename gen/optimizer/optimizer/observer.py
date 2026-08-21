@@ -11,6 +11,7 @@ from .model import (
     MeshHealth,
     Snapshot,
     format_time,
+    normalize_band,
     normalize_mac,
     sorted_candidates,
     sorted_clients,
@@ -38,7 +39,7 @@ def _topology_client_context(topology: dict[str, Any]) -> dict[str, dict[str, An
             result[mac.lower()] = {
                 "device_id": (node.get("id") or "").lower(),
                 "device_name": node.get("name") or "",
-                "band": sta.get("band"),
+                "band": normalize_band(sta.get("band")),
                 "ssid": sta.get("ssid") or "",
             }
     return result
@@ -58,7 +59,7 @@ def _topology_bsses(topology: dict[str, Any]) -> list[dict[str, Any]]:
                             "bssid": bssid.lower(),
                             "device_id": (node.get("id") or "").lower(),
                             "device_name": node.get("name") or "",
-                            "band": bss.get("Band"),
+                            "band": normalize_band(bss.get("Band")),
                             "ssid": bss.get("ssid") or haul.get("ssid") or "",
                         }
                     )
@@ -133,6 +134,7 @@ class ControllerObserver:
                     ),
                     metric_observed_at=metric_time,
                     measurement_source="associated_sta_link_metrics",
+                    band=placement.get("band"),
                 )
             )
         normalized_clients = sorted_clients(clients)
@@ -143,10 +145,7 @@ class ControllerObserver:
             for bss in bsses:
                 if bss["bssid"] == client.connected_bssid:
                     continue
-                if placement and (
-                    bss["band"] != placement.get("band")
-                    or bss["ssid"] != placement.get("ssid")
-                ):
+                if placement and bss["ssid"] != placement.get("ssid"):
                     continue
                 candidates.append(
                     CandidateObservation(
@@ -157,6 +156,7 @@ class ControllerObserver:
                         rcpi=None,
                         metric_observed_at=None,
                         measurement_source="topology_inventory_only",
+                        band=bss["band"],
                     )
                 )
         if self.candidate_provider is not None:

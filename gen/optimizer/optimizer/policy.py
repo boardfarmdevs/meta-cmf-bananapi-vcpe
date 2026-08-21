@@ -21,6 +21,9 @@ class PolicyConfig:
     steer_timeout_seconds: float = 10
     post_steer_cooldown_seconds: float = 30
     reject_stale_metrics_after_seconds: float = 7
+    band_upgrade_enabled: bool = False
+    minimum_band_upgrade_target_rcpi: int = 120
+    maximum_band_upgrade_loss_rcpi: int = 8
     expected_devices: int = 5
     expected_clients: int = 10
 
@@ -34,6 +37,10 @@ class PolicyConfig:
                 raise ValueError(f"{name} cannot be negative")
         if not 0 <= self.current_rcpi_below <= 220:
             raise ValueError("current_rcpi_below must be a valid RCPI")
+        if not 0 <= self.minimum_band_upgrade_target_rcpi <= 220:
+            raise ValueError("minimum_band_upgrade_target_rcpi must be a valid RCPI")
+        if self.maximum_band_upgrade_loss_rcpi > 220:
+            raise ValueError("maximum_band_upgrade_loss_rcpi must not exceed 220")
 
     def digest(self) -> str:
         encoded = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -45,6 +52,8 @@ class CandidateScore:
     bssid: str
     rcpi: int
     gain_rcpi: int
+    band: str | None = None
+    band_rank_delta: int = 0
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,8 @@ class Decision:
     reason: str
     source_bssid: str
     target_bssid: str | None = None
+    current_band: str | None = None
+    target_band: str | None = None
     current_rcpi: int | None = None
     target_rcpi: int | None = None
     hold_seconds: float = 0
@@ -83,6 +94,9 @@ def _fresh(timestamp: str | None, now, maximum_age: float) -> bool:
     observed = parse_time(timestamp)
     age = (now - observed).total_seconds()
     return 0 <= age <= maximum_age
+
+
+_BAND_RANK = {"2.4": 0, "5": 1, "6": 2}
 
 
 class ThresholdPolicy:
@@ -121,6 +135,7 @@ class ThresholdPolicy:
             sta_mac=client.sta_mac,
             source_bssid=client.connected_bssid,
             current_rcpi=client.rcpi,
+            current_band=client.band,
         )
         stable = ClientPolicyState(
             sta_mac=client.sta_mac,
@@ -172,7 +187,8 @@ class ThresholdPolicy:
             return Decision(action="none", reason=reason, **base), stable
         if client.association_uptime_seconds < self.config.minimum_dwell_seconds:
             return Decision(action="none", reason="minimum_dwell_not_met", **base), stable
-        if client.rcpi >= self.config.current_rcpi_below:
+        current_is_weak = client.rcpi < self.config.current_rcpi_below
+        if not current_is_weak and not self.config.band_upgrade_enabled:
             return Decision(action="none", reason="current_link_acceptable", **base), stable
 
         observed_candidates = [
@@ -188,16 +204,43 @@ class ThresholdPolicy:
             )
         ]
         if not observed_candidates:
-            return Decision(action="none", reason="fresh_candidate_metric_missing", **base), stable
+            reason = (
+                "fresh_candidate_metric_missing"
+                if current_is_weak else "fresh_band_candidate_metric_missing"
+            )
+            return Decision(action="none", reason=reason, **base), stable
 
+        current_rank = _BAND_RANK.get(client.band)
         ranked = sorted(observed_candidates, key=lambda item: (-int(item.rcpi), item.bssid))
-        scores = tuple(
-            CandidateScore(item.bssid, int(item.rcpi), int(item.rcpi) - client.rcpi)
-            for item in ranked
-        )
+        scores = self._scores(ranked, client)
+        band_upgrade = False
+        if not current_is_weak:
+            if current_rank is None:
+                return Decision(action="none", reason="current_band_unknown", **base), stable
+            upgrades = [
+                item for item in observed_candidates
+                if _BAND_RANK.get(item.band, -1) > current_rank
+                and int(item.rcpi) >= self.config.minimum_band_upgrade_target_rcpi
+                and int(item.rcpi) - client.rcpi
+                >= -self.config.maximum_band_upgrade_loss_rcpi
+            ]
+            if not upgrades:
+                return (
+                    Decision(
+                        action="none", reason="no_safe_band_upgrade",
+                        scores=scores, **base,
+                    ),
+                    stable,
+                )
+            ranked = sorted(
+                upgrades,
+                key=lambda item: (-_BAND_RANK[item.band], -int(item.rcpi), item.bssid),
+            )
+            band_upgrade = True
+
         best: CandidateObservation = ranked[0]
         gain = int(best.rcpi) - client.rcpi
-        if gain < self.config.minimum_target_gain_rcpi:
+        if not band_upgrade and gain < self.config.minimum_target_gain_rcpi:
             return (
                 Decision(action="none", reason="candidate_gain_too_small", scores=scores, **base),
                 stable,
@@ -225,6 +268,7 @@ class ThresholdPolicy:
                     action="none",
                     reason="condition_hold_not_met",
                     target_bssid=best.bssid,
+                    target_band=best.band,
                     target_rcpi=best.rcpi,
                     hold_seconds=held,
                     scores=scores,
@@ -245,12 +289,35 @@ class ThresholdPolicy:
         return (
             Decision(
                 action="steer",
-                reason="threshold_margin_hold_satisfied",
+                reason=(
+                    "band_preference_hold_satisfied"
+                    if band_upgrade else "threshold_margin_hold_satisfied"
+                ),
                 target_bssid=best.bssid,
+                target_band=best.band,
                 target_rcpi=best.rcpi,
                 hold_seconds=held,
                 scores=scores,
                 **base,
             ),
             new,
+        )
+
+    @staticmethod
+    def _scores(
+        candidates: list[CandidateObservation], client: ClientObservation
+    ) -> tuple[CandidateScore, ...]:
+        current_rank = _BAND_RANK.get(client.band)
+        return tuple(
+            CandidateScore(
+                item.bssid,
+                int(item.rcpi),
+                int(item.rcpi) - int(client.rcpi),
+                item.band,
+                (
+                    _BAND_RANK[item.band] - current_rank
+                    if current_rank is not None and item.band in _BAND_RANK else 0
+                ),
+            )
+            for item in candidates
         )
