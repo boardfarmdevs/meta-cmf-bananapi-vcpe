@@ -251,7 +251,7 @@ index 546f47e..0f3beab 100644
      for (i = 0; i < cJSON_GetArraySize(dev_list_obj); i++) {
          dev_obj = cJSON_GetArrayItem(dev_list_obj, i);
 +
-+        const char *device_id = cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "ID"));
++        char *device_id = cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "ID"));
 +        cJSON *candidate_metrics = cJSON_AddArrayToObject(dev_obj,
 +            "UnassociatedSTAMetrics");
 +        if (device_id != NULL) {
