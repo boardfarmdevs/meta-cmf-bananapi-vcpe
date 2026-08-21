@@ -20,6 +20,8 @@ class PolicyConfig:
     minimum_dwell_seconds: int = 20
     steer_timeout_seconds: float = 10
     post_steer_cooldown_seconds: float = 30
+    failure_backoff_seconds: float = 60
+    maximum_failure_backoff_seconds: float = 600
     reject_stale_metrics_after_seconds: float = 7
     band_upgrade_enabled: bool = False
     minimum_band_upgrade_target_rcpi: int = 120
@@ -41,6 +43,10 @@ class PolicyConfig:
             raise ValueError("minimum_band_upgrade_target_rcpi must be a valid RCPI")
         if self.maximum_band_upgrade_loss_rcpi > 220:
             raise ValueError("maximum_band_upgrade_loss_rcpi must not exceed 220")
+        if self.maximum_failure_backoff_seconds < self.failure_backoff_seconds:
+            raise ValueError(
+                "maximum_failure_backoff_seconds must be at least failure_backoff_seconds"
+            )
 
     def digest(self) -> str:
         encoded = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -141,6 +147,8 @@ class ThresholdPolicy:
             sta_mac=client.sta_mac,
             phase="stable",
             source_bssid=client.connected_bssid,
+            failure_count=old.failure_count,
+            last_failure_reason=old.last_failure_reason,
             last_action_at=old.last_action_at,
         )
 
@@ -152,6 +160,7 @@ class ThresholdPolicy:
                     phase="cooldown",
                     source_bssid=client.connected_bssid,
                     cooldown_until=until.isoformat(),
+                    failure_count=0,
                     last_action_at=old.pending_since,
                 )
                 return Decision(action="none", reason="target_association_observed", **base), new
@@ -159,10 +168,32 @@ class ThresholdPolicy:
                 now - parse_time(old.pending_since)
             ).total_seconds() <= self.config.steer_timeout_seconds:
                 return Decision(action="none", reason="steer_pending", **base), old
+            failures = old.failure_count + 1
+            backoff = min(
+                self.config.maximum_failure_backoff_seconds,
+                self.config.failure_backoff_seconds * (2 ** min(failures - 1, 30)),
+            )
+            until = now + timedelta(seconds=backoff)
+            failed = ClientPolicyState(
+                sta_mac=client.sta_mac,
+                phase="backoff",
+                source_bssid=client.connected_bssid,
+                backoff_until=until.isoformat(),
+                failure_count=failures,
+                last_failure_reason="association_timeout",
+                last_action_at=old.pending_since,
+            )
+            return Decision(action="none", reason="steer_timeout_backoff", **base), failed
+
+        if old.phase == "backoff" and old.backoff_until:
+            if now < parse_time(old.backoff_until):
+                return Decision(action="none", reason="steer_failure_backoff", **base), old
             stable = ClientPolicyState(
                 sta_mac=client.sta_mac,
                 phase="stable",
                 source_bssid=client.connected_bssid,
+                failure_count=old.failure_count,
+                last_failure_reason=old.last_failure_reason,
                 last_action_at=old.last_action_at,
             )
 
@@ -284,7 +315,9 @@ class ThresholdPolicy:
             target_bssid=best.bssid,
             condition_since=condition_since,
             pending_since=snapshot.observed_at,
-            last_action_at=old.last_action_at,
+            failure_count=old.failure_count,
+            last_failure_reason=old.last_failure_reason,
+            last_action_at=snapshot.observed_at,
         )
         return (
             Decision(

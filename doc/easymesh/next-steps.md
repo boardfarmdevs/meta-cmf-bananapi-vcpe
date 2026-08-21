@@ -90,7 +90,9 @@ narrow actuator and verifier. Its unit/replay/scenario tests pass, and a live
 rev130 read-only run captured 5 mesh devices/10 clients while correctly
 abstaining because the current API does not provide trustworthy metric
 freshness or candidate-link observations. The capability/exposure matrix and
-exact next adapter boundary are in [optimizer.md](optimizer.md).
+exact next adapter boundary are in [optimizer.md](optimizer.md). An ignored
+BTM attempt now becomes an explicit association-timeout outcome with bounded
+exponential failure backoff, so `NoDisconnect` cannot cause blind retry loops.
 
 ```text
 EasyMesh observations                  EasyMesh actions

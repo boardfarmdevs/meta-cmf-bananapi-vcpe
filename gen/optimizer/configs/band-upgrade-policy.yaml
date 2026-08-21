@@ -8,6 +8,8 @@ condition_hold_seconds: 5
 minimum_dwell_seconds: 20
 steer_timeout_seconds: 10
 post_steer_cooldown_seconds: 30
+failure_backoff_seconds: 60
+maximum_failure_backoff_seconds: 600
 reject_stale_metrics_after_seconds: 7
 band_upgrade_enabled: true
 minimum_band_upgrade_target_rcpi: 120

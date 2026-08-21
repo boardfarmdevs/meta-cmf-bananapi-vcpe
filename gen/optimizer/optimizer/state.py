@@ -13,6 +13,9 @@ class ClientPolicyState:
     condition_since: str | None = None
     pending_since: str | None = None
     cooldown_until: str | None = None
+    backoff_until: str | None = None
+    failure_count: int = 0
+    last_failure_reason: str | None = None
     last_action_at: str | None = None
 
     @classmethod

@@ -192,9 +192,12 @@ backhaul transaction and verifier exist.
 The current hwsim lab operates at an effective 20 MHz width. Location-specific
 40/80/160 MHz policies may be designed and replayed, but throughput claims are
 blocked until those widths are represented and measured. Likewise, BTM
-`NoDisconnect` is a normal outcome rather than a protocol failure; experiments
-must record it, apply backoff and avoid blind retries. It becomes deterministic
-only after clients can be assigned accept/reject/ignore behavior.
+`NoDisconnect` is a normal outcome rather than a protocol failure. The
+threshold policy now turns an expired pending steer into an explicit
+`association_timeout`, applies a 60-second exponentially increasing backoff
+(capped at 600 seconds), and preserves the failure count in replay state. Live
+deterministic testing remains blocked until clients can be assigned
+accept/reject/ignore behavior; the policy already has safe timeout semantics.
 
 ## Acceptance progression
 

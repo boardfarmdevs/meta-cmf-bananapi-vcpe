@@ -105,3 +105,38 @@ def test_default_policy_does_not_upgrade_an_acceptable_link():
                  current_band="2.4", target_band="5")
     )
     assert decision(result).reason == "current_link_acceptable"
+
+
+def test_ignored_btm_times_out_into_exponential_failure_backoff():
+    engine = policy(
+        condition_hold_seconds=0,
+        steer_timeout_seconds=10,
+        failure_backoff_seconds=20,
+        maximum_failure_backoff_seconds=80,
+    )
+    pending = engine.evaluate(snapshot(0))
+    assert decision(pending).action == "steer"
+
+    timed_out = engine.evaluate(snapshot(11), pending.state)
+    assert decision(timed_out).reason == "steer_timeout_backoff"
+    failed = timed_out.state.for_sta(snapshot(0).clients[0].sta_mac)
+    assert failed.phase == "backoff"
+    assert failed.failure_count == 1
+    assert failed.last_failure_reason == "association_timeout"
+
+    inhibited = engine.evaluate(snapshot(30), timed_out.state)
+    assert decision(inhibited).reason == "steer_failure_backoff"
+
+    retry = engine.evaluate(snapshot(31), timed_out.state)
+    assert decision(retry).action == "steer"
+    second_timeout = engine.evaluate(snapshot(42), retry.state)
+    second = second_timeout.state.for_sta(snapshot(0).clients[0].sta_mac)
+    assert second.failure_count == 2
+    assert decision(second_timeout).reason == "steer_timeout_backoff"
+    assert parse_backoff_seconds(second.backoff_until, 42) == 40
+
+
+def parse_backoff_seconds(value, seconds):
+    from optimizer.model import parse_time
+
+    return int((parse_time(value) - parse_time(snapshot(seconds).observed_at)).total_seconds())
