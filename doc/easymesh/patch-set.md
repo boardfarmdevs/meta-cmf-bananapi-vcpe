@@ -32,9 +32,9 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0059`, IEEE1905
+The current source series contains EasyMesh patches through `0067`, IEEE1905
 patches through `0005`, libwebconfig patches through `0005`, and OneWifi
-patches through `0012`, plus the log4c category-factory serialization fix. The
+patches through `0014`, plus the log4c category-factory serialization fix. The
 Dropbox-packaged 0818 appliance remains an
 older, separately accepted distribution until its binary artifacts are
 deliberately rolled forward. Never infer image content from the host checkout;
@@ -187,11 +187,19 @@ authority. Its dependency order is:
     normal frame and command events keep that radio queue non-empty;
 34. keep fallback BSS-label formatting out of the fetched topology model; and
 35. clone that model before D3 adds coordinates and resolved link objects; and
-36. run explicit layout optimization against those cloned simulation nodes.
+36. run explicit layout optimization against those cloned simulation nodes;
+37. create reporting defaults for radios restored from persistent state;
+38. expose a one-operation deployment of metrics policy to every live radio;
+39. preserve and commit the agent profile through asynchronous onboarding;
+40. report node and current-association uptime;
+41. source the WebUI client inventory from the detailed associated-STA model;
+42. synchronize the validated agent profile into every runtime radio object;
+    and
+43. make an explicit complete policy submission an idempotent runtime replay.
 
 The ordered series is replayed against pristine pinned source before each Yocto
 component or image build. The current images contain the complete ordered
-series through `0059`.
+series through `0067`.
 
 ## IEEE 1905 ordering
 
@@ -433,6 +441,13 @@ presentation boundaries:
 | `0057` | render fallback IEEE labels without mutating the fetched topology model, so an unchanged two-second poll does not recreate an optimized graph |
 | `0058` | clone the fetched topology before D3 mutates render nodes and links, eliminating the remaining one-time post-optimize redraw |
 | `0059` | release and settle D3's cloned simulation nodes during Optimize Layout instead of changing only viewport scale around still-fixed nodes |
+| `0060` | create complete default metrics-policy records for radios reloaded from persistent state |
+| `0061` | deploy a complete metrics policy to every live device/radio through one WebUI/API operation |
+| `0062`-`0063` | preserve the reported agent profile through both device-model commit paths |
+| `0064` | carry agent boot uptime and current client-association uptime to the API/UI |
+| `0065` | use the detailed associated-STA model as the live client inventory and metric source |
+| `0066` | synchronize the validated Profile-3 value into all runtime radio objects before metrics validation |
+| `0067` | replay a complete explicitly submitted policy even when desired database state is unchanged |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -523,6 +538,20 @@ a 311.57 MiB cgroup peak and 266.10 MiB converged footprint under the 1 GiB
 controller limit, with no swap or memory-pressure/OOM event. See
 [memory-footprint.md](memory-footprint.md). The 12-hour churn/steady-state run
 is explicitly deferred and is not implied by these bounded results.
+
+The final metrics/uptime image (`20260821015142`) was then installed on rev130.
+Its controller artifact SHA-256 is
+`ba5b7ea8aabed018d614781450523037624f63a504afc4f8bc7f9b8794d810b2` and
+its extender artifact SHA-256 is
+`32ae5b9d3d10ad301490219882044e69451c36aff97c68b8bfaf3057e3166e35`.
+An untouched cold run first exposed a remaining timing boundary: policy was
+deployed at complete mesh-model state, but one agent completed its operational
+transition later and lost the volatile reporting timer, leaving RCPI at 8/10.
+The lab startup now performs the same idempotent complete-policy replay after
+live-client convergence. A fresh 866-second run passed `5/15/50/14`, 10/10
+clients, 10/10 RCPI and association uptime, 120 seconds stable, zero monitored
+restarts and 10/10 traffic. Every BPI container had one `snmp_subagent`, and
+the controller recorded zero AP Metrics Response validation failures.
 
 ## Remaining engineering debt
 

@@ -20,6 +20,10 @@ limit:
 | swap used | 0 |
 | cgroup pressure, limit or OOM events | 0 |
 
+The reduction ideas later in this report are design proposals only. No
+memory-reduction patch has been applied, and every saving attributed to those
+proposals is a projection rather than a measured result.
+
 Cold bring-up creates a temporary controller allocation pulse while agent,
 radio and BSS records are configured. The pulse is released after convergence.
 This run found no retained bring-up growth. It is not, however, a substitute for
@@ -202,15 +206,114 @@ The peak is almost entirely anonymous/private-dirty memory. It correlates with
 agent and BSS configuration and returns to the original range. Client
 onboarding is a much smaller contributor than extender/radio/BSS creation.
 
-`em_cli` is the largest steady process. At convergence its 81.03 MiB PSS is
-approximately 74.1 MiB anonymous and 6.9 MiB file-backed. One anonymous mapping
-accounts for about 61.1 MiB. The helper is a Go program using cgo, so a large
-runtime arena is expected; this measurement does not prove that the mapping is
-all live application data. The native `EM_MAX_EVENT_DATA_LEN` is 400 KiB, not
-64 MiB, so it does not by itself explain the arena. Heap profiling of the Go
-helper is a useful optimization follow-up, but the mapping is bounded in this
-run and in the earlier 3,000/6,000-request leak tests documented in
-[patch-set.md](patch-set.md).
+`em_cli` is the largest steady process. Its PSS ranged from approximately 74.9
+to 81.0 MiB in the accepted profile and later instant snapshots. A later
+`memdetail.sh` snapshot attributed 68.5 MiB of its 74.9 MiB PSS to anonymous
+memory and 6.4 MiB to file-backed mappings.
+
+Binary and object-file inspection identified the principal cause. The native
+CLI declares this static table:
+
+```cpp
+em_cmd_t em_cmd_cli_t::m_client_cmd_spec[] = {
+    // 31 command entries
+};
+```
+
+Each `em_cmd_t` embeds a complete `dm_easy_mesh_t`, including its fixed-capacity
+device, radio, BSS, STA and policy collections. The table therefore reserves a
+complete maximum-sized mesh data model for every command descriptor, even
+though the descriptors primarily need a command type, name and parameters.
+
+| Binary observation | Size |
+| --- | ---: |
+| `em_cmd_cli_t::m_client_cmd_spec` | 76,138,976 bytes (72.61 MiB) |
+| one `em_cmd_t` table element | 2,456,096 bytes (2.34 MiB) |
+| executable `.bss` | 76,196,996 bytes (72.67 MiB) |
+| executable `.noptrbss` | 33,690,560 bytes (32.13 MiB) |
+| executable total BSS reported by `size` | 109,887,560 bytes (104.80 MiB) |
+
+The command table accounts for almost the entire ordinary `.bss` section. A
+separate minimal Go 386 probe using the comparable standard-library runtime had
+approximately the same 32.13 MiB `.noptrbss`, but only about 53 KiB of ordinary
+`.bss`. This distinguishes the Go runtime's large virtual reservation from the
+additional application-owned command table. BSS and virtual-size figures must
+not be reported as physical savings; the projected PSS reduction below is
+bounded using the pages observed resident in the running process.
+
+The table remained bounded in the earlier 3,000/6,000-request leak tests
+documented in [patch-set.md](patch-set.md). It is a large fixed baseline rather
+than evidence of continuing request-by-request growth.
+
+## Projected memory-reduction patches
+
+The following patches are candidates for later implementation and individual
+measurement. None is present in the current images. Ranges account for
+allocator behavior, shared pages and pages reserved virtually but not resident.
+
+| Priority | Proposed patch | Measured starting point | Projected PSS reduction | Confidence and risk |
+| --- | --- | ---: | ---: | --- |
+| P1 | Replace the 31 full `em_cmd_t` entries with immutable lightweight descriptors and construct or reuse one full command for the serialized request | `em_cli` 74.9-81.0 MiB PSS; table 72.61 MiB static | **58-65 MiB** | High-confidence cause; low-to-medium implementation risk |
+| P2 | Add an embedded/lab MariaDB profile with smaller buffer pool, connection, table and per-thread caches, disabling unused instrumentation only after verification | MariaDB approximately 42.4 MiB PSS for 55.6 KiB of logical EasyMesh tables and indexes | **10-20 MiB** | Medium confidence; low risk when changed one setting group at a time |
+| P3 | Replace selected fixed-capacity `dm_easy_mesh_t` collections in `em_ctrl` and `em_agent` with topology-sized storage | controller plus agent approximately 51-53 MiB steady PSS; controller also has a released bring-up pulse | **5-15 MiB combined** | Preliminary estimate; medium-to-high protocol and lifetime risk |
+| P4 | Split the Go WebUI service from the native CLI bridge and make the on-device WebUI optional | residual CLI/WebUI cost expected after P1 | **8-15 MiB when the WebUI is disabled** | Conditional and partly overlaps the CLI footprint; medium architectural risk |
+| P5 | Remove or conditionally build unused OneWifi evaluation features and buffers | OneWifi approximately 16 MiB PSS | **2-5 MiB** | Low confidence until feature-level attribution; medium regression risk |
+
+### P1: lightweight command descriptors
+
+P1 has the best return and the clearest root cause. The static array should
+contain only immutable lookup data, conceptually:
+
+```cpp
+struct em_cmd_descriptor_t {
+    em_cmd_type_t type;
+    const char *name;
+    em_cmd_params_t params;
+};
+```
+
+The execution path would create one owned `em_cmd_t`, or reuse one scratch
+instance, after selecting the descriptor. Retaining one complete command would
+reduce static virtual storage by about 70.27 MiB compared with retaining all 31.
+The projected physical reduction is deliberately lower, 58-65 MiB, based on
+the resident anonymous mapping and process PSS. Existing `emExecMutex`
+serialization must remain in force; returning a mutable reference to a shared
+command outside that critical section would introduce races.
+
+The expected steady `em_cli` PSS after P1 is approximately 10-17 MiB. That is a
+forecast, not an acceptance limit. Validation must exercise every CLI command,
+the WebUI topology and client APIs, policy configuration, steering, concurrent
+HTTP requests, and the existing repeated-request memory tests.
+
+Moving the Go `main` package to a source directory without adjacent C++ files
+is useful packaging cleanup, but is not an independent 72 MiB saving:
+`libemcli` contains the same command-table definition. The data structure must
+be fixed at its owner to remove the resident baseline.
+
+### P2-P5: follow-on work
+
+MariaDB is the next isolated target. Its approximately 42.4 MiB PSS is large
+relative to the stored model, but the 10-20 MiB range must be established by a
+configuration matrix covering cold reconstruction, concurrent reads, topology
+persistence and restart recovery. Replacing MariaDB with another database is
+not justified before this lower-risk tuning is measured.
+
+Dynamic controller/agent model storage can reduce the steady footprint and
+perhaps the controller's temporary bring-up pulse, but it changes ownership,
+pointer lifetime and protocol-processing paths. It should follow P1 and P2 and
+be divided into separately reviewable collection conversions.
+
+The optional external WebUI and OneWifi reductions are deployment choices,
+not prerequisites for the lab. P4 must not be added to P1 as though the two
+estimates were fully independent, and P5 needs symbol, heap and feature-level
+evidence before a patch is proposed.
+
+P1 and conservative P2 tuning together project a **68-85 MiB** reduction on
+`bpibroadband`. Adding P3 could raise the projected reduction to approximately
+**75-100 MiB**. These totals exclude P4 and P5 to avoid overlap and unsupported
+addition. They must remain labelled projected until rebuilt images reproduce
+the functional acceptance suite and new PSS/cgroup profiles quantify the
+result.
 
 ## Persistent and volatile storage
 
@@ -263,13 +366,18 @@ retention and failure recovery active.
    require zero pressure/OOM events and preserve recovery margin.
 3. Measure maximum supported agent, BSS and client scale and derive marginal
    MiB per agent, radio, BSS and client.
-4. Profile `em_cli` with Go heap/runtime metrics to distinguish live WebUI data,
-   allocator arenas and cgo/native allocations.
-5. Move immutable WebUI assets out of `/nvram` in the production filesystem
+4. Prototype P1 alone on a review branch, rebuild both relevant packages, and
+   compare steady and repeated-request PSS before considering the other
+   reduction candidates.
+5. Test MariaDB tuning as a configuration matrix and retain only settings that
+   pass cold reconstruction, persistence and restart recovery.
+6. Use Go heap/runtime metrics after P1 to attribute the smaller residual
+   `em_cli` footprint rather than treating virtual BSS as resident memory.
+7. Move immutable WebUI assets out of `/nvram` in the production filesystem
    layout.
-6. Extend the accepted two-interval SNMP check with an explicit forced recovery
+8. Extend the accepted two-interval SNMP check with an explicit forced recovery
    and verify that it still leaves exactly one daemon and no wrapper.
-7. Run the explicitly deferred 12-hour churn/steady-state test when authorized
+9. Run the explicitly deferred 12-hour churn/steady-state test when authorized
    and compare start, post-churn and final PSS by service.
 
 ## Reproducing the profile

@@ -69,10 +69,15 @@ be used to claim policy quality until the preceding acceptance gates pass.
    [memory-footprint.md](memory-footprint.md). PSS growth from hour 1 to hour 12
    remains intentionally unmeasured until the deferred soak is authorized.
 
-Exit gate status: the three consecutive cold/reboot runs are complete. The P0
-exit gate remains open solely for the deferred 12-hour churn result, which must
-finish with complete topology, no unexplained restart, exact medium restoration
-and no unresolved observation disagreement.
+Exit gate status: **P0 functional acceptance is closed.** In addition to the
+earlier three-run gate, the final metrics/uptime image passed a fresh rev130
+cold reconstruction on 2026-08-20 in 866 seconds with `5/15/50/14`, 10/10
+live clients, 10/10 non-zero RCPI and association uptime, a 120-second stable
+window, zero monitored restarts and 10/10 traffic. All five BPI containers had
+exactly one `snmp_subagent`, and the controller logged zero AP Metrics Response
+validation failures. The 12-hour churn test is a deliberately deferred
+long-duration characterization task; it is not a blocker for starting P1 and
+must not be claimed as completed.
 
 ### P1 — Freeze the optimizer integration contract
 

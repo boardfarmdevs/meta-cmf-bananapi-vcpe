@@ -51,18 +51,35 @@ The path was disabled by several independent implementation defects:
 6. The WebUI submitted all devices to a native command that accepts one device
    per transaction. Requests returned false success or collided with the
    controller's still-running policy state machine.
-7. The Connected Clients adapter used the compact topology model, which
-   intentionally omits periodic STA metrics. The controller contained valid
-   RCPI, but the WebUI and `/api/v1/clients` rendered it as unavailable.
+7. The Connected Clients adapter used the compact topology model, which can
+   omit associated STAs and intentionally omits periodic STA metrics. The
+   controller contained valid associations and RCPI, but the WebUI and
+   `/api/v1/clients` could render zero clients or unavailable signal.
+8. OneWifi mapped each requested RUID to a physical radio and then stored the
+   radio configuration by request-array position. A request whose RUID order
+   differed from platform order produced an empty VAP list and no per-STA
+   metrics for that radio.
+9. OneWifi calculated current-association uptime but omitted it from the
+   EasyMesh STA translation, so every reported client uptime was zero.
+10. A controller radio created before the asynchronous device-profile commit
+    retained Profile 1/reserved state. It then rejected valid Profile-3 AP
+    Metrics Response TLVs even though DeviceList contained Profile 3.
+11. The controller treated an explicit policy submission as a database diff.
+    It could not replay an unchanged desired policy to restore an agent's
+    volatile reporting timer, and filtering individual rows could make a
+    compound Metric Reporting Policy TLV incomplete.
 
-The retained activation fixes are libwebconfig patch `0003` and EasyMesh
-patches `0042` through `0044`. Patch `0048` additionally prevents a stale
+The retained activation fixes are libwebconfig patch `0003`, OneWifi patches
+`0013` and `0014`, and EasyMesh patches `0042` through `0044` and `0060`
+through `0067`. Patch `0048` additionally prevents a stale
 Agent-local metrics row from changing association ownership: metrics update an
 existing current association but never create or move one. The WebUI skips
 unchanged policy nodes, applies changed nodes one at a time, verifies
 controller state and allows the asynchronous 1905 transaction to retire before
-continuing. Its client adapter joins the detailed `get_sta` metrics to the live
-topology inventory by STA MAC.
+continuing. Its client adapter uses detailed `get_sta` association and metric
+records as one authoritative client snapshot. Explicit policy application is
+an idempotent deployment of the complete per-device policy, including when the
+database already contains the requested values.
 
 ## Active policy values
 
@@ -132,8 +149,9 @@ Read the current associated clients and their reported signal:
 ```sh
 curl -fsS http://127.0.0.1:8888/api/v1/clients \
   | jq -r '.clients[]
-      | [.hostname, .mac, .connected_device, .connected_bssid,
-         .client_metrics.rcpi, .client_metrics.rssi_dbm]
+      | [.hostname, .mac, .connected_ap_mac, .connected_bssid,
+         .client_metrics.rcpi, .client_metrics.rssi_dbm,
+         .client_metrics.association_uptime_seconds]
       | @tsv'
 ```
 
@@ -147,6 +165,18 @@ legitimately show the same observation.
 `client_metrics.last_updated` records when the adapter read the current
 controller model. The native model does not yet expose the exact report-receipt
 timestamp, so this field must not be interpreted as measurement age.
+
+Read node uptime from the same API surface:
+
+```sh
+curl -fsS http://127.0.0.1:8888/api/v1/devices \
+  | jq -r '.devices[] | [.role, .mac, .metrics.uptime_seconds, .uptime] | @tsv'
+```
+
+The colocated controller uses local `/proc/uptime`. Remote agents carry their
+monotonic boot uptime in an RDK vendor-specific metrics extension. Client
+association uptime is the duration of the current association and resets after
+a disconnect or roam; it is not the client container's boot uptime.
 
 ### Policy REST API
 
@@ -330,7 +360,30 @@ Traffic is required because hwsim attaches the current simulated signal to
 frames. Without frames, a new wmediumd SNR can be applied correctly while the
 last controller RCPI remains unchanged.
 
-The 2026-08-18 acceptance result was:
+The final P0 cold reconstruction on 2026-08-20 passed without a service nudge:
+
+```text
+elapsed                866 seconds
+controller model       5 devices / 15 radios / 50 BSS / 14 associated STAs
+WebUI/API clients      10/10
+non-zero RCPI          10/10
+association uptime     10/10
+stability hold         120 seconds
+service restarts       0
+client gateway traffic 10/10
+```
+
+Cold start applies the complete metrics policy after mesh convergence and
+replays it once after the live client model converges. The second application
+is required because agent policy timers are volatile and an agent can finish
+an operational transition after the first deployment. Both calls are normal,
+idempotent policy deployments. During acceptance, omitting the second call
+reproduced an 8/10 RCPI result; replaying it restored 10/10 without restarting
+an agent or client. The accepted controller logged zero AP Metrics Response
+validation failures, and every BPI container retained exactly one
+`snmp_subagent`.
+
+The earlier 2026-08-18 acceptance result was:
 
 ```text
 devices/profile       5 devices, all Profile 3
