@@ -1,0 +1,12 @@
+# External optimizer policy. This is not an EasyMesh Policy Configuration TLV.
+policy_version: 1
+decision_interval_seconds: 1
+current_rcpi_below: 100
+minimum_target_gain_rcpi: 16
+condition_hold_seconds: 5
+minimum_dwell_seconds: 20
+steer_timeout_seconds: 10
+post_steer_cooldown_seconds: 30
+reject_stale_metrics_after_seconds: 7
+expected_devices: 5
+expected_clients: 10

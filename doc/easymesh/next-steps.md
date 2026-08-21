@@ -84,6 +84,14 @@ must not be claimed as completed.
 The optimizer remains a host-side Python component. Do not put policy logic in
 the BPI images.
 
+**Started 2026-08-20:** `gen/optimizer` now contains the controller observer,
+immutable snapshot, pure threshold policy, replay state, append-only journal,
+narrow actuator and verifier. Its unit/replay/scenario tests pass, and a live
+rev130 read-only run captured 5 mesh devices/10 clients while correctly
+abstaining because the current API does not provide trustworthy metric
+freshness or candidate-link observations. The capability/exposure matrix and
+exact next adapter boundary are in [optimizer.md](optimizer.md).
+
 ```text
 EasyMesh observations                  EasyMesh actions
 topology + association ----+       +-> steer.sh initially
@@ -246,12 +254,18 @@ costs.
 
 ## Immediate two-sprint backlog
 
-1. Write the EasyMesh measurement capability/exposure matrix.
-2. Implement optimizer `observer`, normalized snapshot and recorder.
-3. Run a passive crossover and prove reported RCPI follows RF without reading
+1. **Initial matrix complete:** keep it current as the read-only adapters are
+   tested.
+2. **Initial slice complete:** observer, normalized snapshot, raw recorder and
+   deterministic replay exist; add correlated candidate result exposure next.
+3. Run a passive crossover and prove current and candidate reported RCPI follow RF without reading
    wmediumd from the optimizer.
-4. Implement the threshold/hysteresis policy in replay and recommend modes.
-5. Wrap `steer.sh` in the actuator/verifier transaction.
+4. **Replay implementation complete:** threshold/margin/hold/dwell/cooldown
+   tests produce one crossover recommendation; live recommend remains safely
+   inhibited until item 3 supplies fresh candidate facts.
+5. **Adapter skeleton complete:** `steer.sh` actuation and association/traffic
+   verification are tested with fakes; enable live act only after item 3 and
+   the remaining health gates pass.
 6. Add the first topology manifest and measure 4/10 versus 8/20 resource use.
 7. Automate a result bundle containing configuration, observations, packet
    capture indexes, service health, actions, outcomes and medium restoration.

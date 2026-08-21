@@ -356,6 +356,59 @@ value or optimistic steer.
 6. **Optional API hardening.** Replace `lxc exec` with authenticated observation
    and steering endpoints without moving optimization logic into the BPI image.
 
+## P1 implementation status
+
+The first host-side package now exists in `gen/optimizer`. It implements the
+immutable snapshot, controller observer, pure threshold/margin/hold/dwell/
+cooldown state machine, deterministic replay, hash-chained journal, narrow
+`gen/steer.sh` actuator and bounded association verifier. It has no wmediumd
+import or simulator-truth input.
+
+A live rev130 read-only check captured 5 mesh devices and 10 clients twice.
+`recommend` correctly produced zero steering actions and the explicit reason
+`current_metric_freshness_unknown` for all clients. This is not a failed policy
+test: the current `/clients` endpoint rewrites `last_updated` when the API is
+read, so that field cannot prove when the agent measured RCPI. The current
+`/topology` projection also supplied no target-BSS list to this observer run.
+
+### Measurement capability and exposure matrix
+
+| Fact or mechanism | Standard/native implementation | Controller state | External exposure now | P1 disposition |
+| --- | --- | --- | --- | --- |
+| current association | topology notifications, Associated Clients repair | current STA owner and BSSID | `/clients` | use now |
+| associated-link RCPI/rates/counters | periodic AP Metrics Response and Associated STA Link Metrics | persisted in STA model | `/clients`, but exact measurement time absent | use value; abstain on freshness until receipt time is exposed |
+| AP/BSS utilization | AP Metrics and Radio Metrics TLVs | parser and model fields exist | values reach current model; hwsim HAL reports zero | expose with receipt time, but do not score zero synthetic survey data |
+| candidate BSS identity | device/radio/BSS model | BSSList contains target identities | not present in the normalized live topology response used by the first observer check | add read-only BSS inventory adapter |
+| Unassociated STA Link Metrics | Profile-3 query/response path is implemented | response parser stores RCPI/time-delta in an in-memory array | POST `/api/v1/unassoc_sta_query` sends a query; no correlated GET/result or receipt timestamp | first candidate-quality adapter candidate; add transaction/result exposure and test actual hwsim support |
+| Beacon Metrics | query/response handlers and agent RBus beacon-report path exist | raw measurement-report elements are copied into the STA model | no external query/result API and no decoded candidate RCPI | evaluate after unassociated metrics; decode only required fields |
+| client capability/BTM support | client capability query/report and reassociation parsing | capability data exists in STA model | not normalized for optimizer filtering | add read-only capability flags |
+| steering | Client Steering Request, BTM, ACK/report | proven controller/agent transaction | `gen/steer.sh` | use through narrow actuator |
+
+The shortest sound next slice is therefore not a scoring change. It is a
+read-only controller adapter that returns correlated observation identity,
+source, value, measurement age/receipt time and status for BSS inventory,
+associated-link and Unassociated STA Link Metrics. Until that exists, live
+recommend/act remain safely inhibited while capture and deterministic replay
+are usable.
+
+### Test ladder
+
+The optimizer tests intentionally progress in layers:
+
+1. model/MAC/timestamp validation and serialization;
+2. observer normalization and the rule that API serialization time is not
+   measurement time;
+3. missing, stale, threshold, margin, dwell, hold, pending and cooldown policy
+   transitions;
+4. actuator source/target validation and verifier convergence;
+5. hash-chain integrity and byte-deterministic replay; and
+6. the existing `two-ap-crossover.wmd` phase contract combined with a recorded
+   EasyMesh-observation stream, requiring exactly one recommendation.
+
+The crossover test reads the scenario only for phase/timing coordination. Its
+RCPI inputs are explicitly labelled Associated STA Link Metrics and Beacon
+Metrics observations; it never calculates them from the scenario SNR.
+
 ## Acceptance criteria
 
 The first optimizer is accepted on rev130 with:
