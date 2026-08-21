@@ -26,6 +26,7 @@ gradients that are independent from the steering decision being evaluated.
 | [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
 | [optimizer-scenarios.md](optimizer-scenarios.md) | How deterministic homes, mobility, walls, RF goldens and traffic profiles form the optimizer test matrix |
 | [next-steps.md](next-steps.md) | Prioritized stability, integration, scale and novel-policy research plan |
+| [soak-acceptance.md](soak-acceptance.md) | Exact 12-hour topology, traffic, candidate-RCPI, restoration and memory gates |
 | [lab-presentation.md](lab-presentation.md) | Presentation-ready lab introduction, current demos and policy roadmap |
 
 These documents are the complete current documentation set. Historical
