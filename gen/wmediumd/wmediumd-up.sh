@@ -17,6 +17,8 @@ WMD=${WMEDIUMD:-$HERE/wmediumd.patched}
 CONTROL=${WMEDIUMD_CONTROL:-/run/wmediumd-control.sock}
 CONTROL_GROUP=${WMEDIUMD_CONTROL_GROUP:-lxd}
 RUNTIME=${WMEDIUMD_RUNTIME_DIR:-/run/meta-cmf-wmediumd}
+METRICS_DIR=${WMEDIUMD_METRICS_DIR:-$RUNTIME/metrics}
+METRICS=${WMEDIUMD_METRICS_SOCKET:-$METRICS_DIR/control.sock}
 CFG=${CFG:-$RUNTIME/wmediumd.cfg}
 PIDF=${WMEDIUMD_PIDFILE:-$RUNTIME/wmediumd.pid}
 LOG=${WMEDIUMD_LOG:-$RUNTIME/wmediumd.log}
@@ -25,6 +27,9 @@ LOG=${WMEDIUMD_LOG:-$RUNTIME/wmediumd.log}
 # policy otherwise makes a root provision fail after a non-root lab run (and
 # vice versa) even though both callers are authorized to manage the daemon.
 sudo install -d -m 0775 -o root -g "$CONTROL_GROUP" "$RUNTIME"
+# This directory is mounted read-only into each BPI container.  The socket
+# itself is world-connectable, but its protocol rejects every mutation opcode.
+sudo install -d -m 0755 -o root -g root "$METRICS_DIR"
 
 # `up` is also the normal way to refresh the matrix after adding clients.  It
 # must replace the existing daemon, not overwrite the pidfile and leave the old
@@ -45,6 +50,9 @@ find_running_wmediumd() {
     if [ -S "$CONTROL" ] && command -v fuser >/dev/null 2>&1; then
         pids="$pids $(sudo fuser "$CONTROL" 2>/dev/null || true)"
     fi
+    if [ -S "$METRICS" ] && command -v fuser >/dev/null 2>&1; then
+        pids="$pids $(sudo fuser "$METRICS" 2>/dev/null || true)"
+    fi
     # Normalize whitespace and suppress duplicates when both checks find the
     # same daemon.
     printf '%s\n' $pids | sed '/^[[:space:]]*$/d' | sort -un
@@ -54,7 +62,7 @@ stop_running_wmediumd() {
     local pattern pids n
     pattern="^${WMD//./\\.}([[:space:]]|$)"
     pids=$(find_running_wmediumd "$pattern")
-    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL"; return; }
+    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL" "$METRICS"; return; }
     sudo kill $pids 2>/dev/null || true
     for n in $(seq 1 20); do
         pids=$(find_running_wmediumd "$pattern")
@@ -64,7 +72,7 @@ stop_running_wmediumd() {
     if [ -n "$pids" ]; then
         sudo kill -KILL $pids 2>/dev/null || true
     fi
-    sudo rm -f "$PIDF" "$CONTROL"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS"
 }
 
 case "${1:-up}" in
@@ -86,8 +94,8 @@ case "${1:-up}" in
         exit 1
     }
     echo ">> starting wmediumd"
-    sudo rm -f "$PIDF" "$CONTROL" "$LOG"
-    sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$LOG"
+    sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' -R '$METRICS' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
     sleep 1
     pid=$(cat "$PIDF" 2>/dev/null || true)
     if [ -z "$pid" ] || ! sudo kill -0 "$pid" 2>/dev/null; then
@@ -108,9 +116,16 @@ case "${1:-up}" in
         sudo rm -f "$PIDF" "$CONTROL"
         exit 1
     fi
+    if [ ! -S "$METRICS" ]; then
+        echo "!! wmediumd read-only metrics socket did not appear: $METRICS" >&2
+        sudo kill "$pid" 2>/dev/null || true
+        sudo rm -f "$PIDF" "$CONTROL" "$METRICS"
+        exit 1
+    fi
     sudo chgrp "$CONTROL_GROUP" "$CONTROL"
     sudo chmod 0660 "$CONTROL"
-    echo ">> up (pid $pid); log $LOG"
+    sudo chmod 0666 "$METRICS"
+    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS"
     ;;
   down)
     stop_running_wmediumd
@@ -118,7 +133,13 @@ case "${1:-up}" in
     ;;
   status)
     if [ -f "$PIDF" ] && sudo kill -0 "$(cat "$PIDF")" 2>/dev/null; then
-        echo "wmediumd running (pid $(cat "$PIDF"))"; tail -3 "$LOG" 2>/dev/null
+        if [ -S "$CONTROL" ] && [ -S "$METRICS" ]; then
+            echo "wmediumd running (pid $(cat "$PIDF")); control and read-only metrics sockets ready"
+        else
+            echo "wmediumd running (pid $(cat "$PIDF")); socket missing"
+            exit 1
+        fi
+        tail -3 "$LOG" 2>/dev/null
     else echo "wmediumd not running"; fi
     ;;
   *) echo "usage: $0 {up|down|status}" >&2; exit 2 ;;

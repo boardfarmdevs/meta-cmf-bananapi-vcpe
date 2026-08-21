@@ -3,13 +3,14 @@
 #
 # Base: upstream wmediumd (github.com/bcopeland/wmediumd), the v0.3.1 line, which
 # already carries per-frame HWSIM_ATTR_FREQ. On top of it we apply
-# a twelve-patch series: per-frequency interference and scheduling, learned VIF
+# a thirteen-patch series: per-frequency interference and scheduling, learned VIF
 # ownership, removal of hot-path file I/O, Linux 7 HT/VHT rate flags,
 # frequency-filtered multicast, a larger netlink receive buffer, the atomic
 # scenario-control socket, configured default-SNR handling, and evidence-based
 # multicast eligibility for newly registered radios, and classification of
 # normal mac80211_hwsim receive-state rejections, and frequency-qualified SNR
-# overrides for simultaneous 2.4/5/6 GHz scenario control.
+# overrides for simultaneous 2.4/5/6 GHz scenario control, plus an independently
+# permissioned read-only metrics endpoint for hwsim radio-provider queries.
 #
 #   ./build-wmediumd.sh          # clone (or reuse ./src), patch, build -> ./src/wmediumd/wmediumd
 #

@@ -523,6 +523,15 @@ if [[ "$mv" == bpi* ]]; then
     # clone a storage-pool object for these small files.
     lxc profile device add "${profilename}" nvram disk source="${nvram_source}" path=/nvram 1>/dev/null
 
+    # Candidate-link measurements come from a protocol-enforced read-only
+    # wmediumd endpoint.  Mount only that endpoint's directory; never expose
+    # the scenario writer socket to a CPE container.
+    wmediumd_metrics_source=${WMEDIUMD_METRICS_DIR:-/run/meta-cmf-wmediumd/metrics}
+    sudo install -d -m 0755 -o root -g root "${wmediumd_metrics_source}"
+    lxc profile device add "${profilename}" wmediumd-metrics disk \
+        source="${wmediumd_metrics_source}" path=/run/wmediumd-metrics \
+        readonly=true 1>/dev/null
+
     # The controller's LAN address is deliberately 10.0.0.1, which commonly
     # collides with (and is hidden by) the host's existing default-LAN route.
     # Publish em_cli through LXD's namespace-aware proxy so operators can always

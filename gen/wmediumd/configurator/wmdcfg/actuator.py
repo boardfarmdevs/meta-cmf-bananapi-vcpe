@@ -29,6 +29,7 @@ CAPABILITIES = {
     1 << 2: "readback",
     1 << 3: "dump_links",
     1 << 4: "frequency_qualified_snr",
+    1 << 5: "read_only",
 }
 
 STATUS = {
@@ -40,6 +41,7 @@ STATUS = {
     5: "value",
     6: "internal",
     7: "frequency",
+    8: "read-only",
 }
 
 
