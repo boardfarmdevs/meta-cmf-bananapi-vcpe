@@ -202,10 +202,11 @@ have explicit resource and stability envelopes.
 
 ### P5 — Create the policy scenario and score library
 
-**Scenario sources and capability-gated matrix started 2026-08-20:** nine
+**Scenario sources and capability-gated matrix started 2026-08-20:** ten
 golden RF worlds cover stationary, slow walk, AP placement, border hover,
 flash crowd, disappearance, fast transit, asymmetric links and extender loss.
-Five independent traffic profiles produce a 64-case initial matrix. Only five
+The tenth moves the accepted ten-client profile for band experiments. Five
+independent traffic profiles produce a 74-case initial matrix. Seven
 small/ping-or-idle cases are runnable today; all others record the missing
 measurement, RF, traffic, response-control or scale capability. See
 [optimizer-scenarios.md](optimizer-scenarios.md). Scoring and live execution
@@ -285,7 +286,7 @@ costs.
 6. Add the first topology manifest and measure 4/10 versus 8/20 resource use.
 7. Automate a result bundle containing configuration, observations, packet
    capture indexes, service health, actions, outcomes and medium restoration.
-8. **Scenario preparation complete for the first corpus:** keep the nine
+8. **Scenario preparation complete for the first corpus:** keep the ten
    goldens, five traffic profiles and generated capability matrix deterministic;
    implement only the adapters needed to move blocked cases to runnable.
 

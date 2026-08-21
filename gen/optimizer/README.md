@@ -15,7 +15,7 @@ Implemented now:
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
 - unit, adapter, replay and existing two-AP configurator-scenario tests.
 
-The scenario preparation layer also expands nine checked-in golden RF worlds,
+The scenario preparation layer also expands ten checked-in golden RF worlds,
 five independent traffic profiles, policy configurations and seeds into a
 hash-verified case matrix. Missing lab abilities remain explicit per-case
 blockers; simulated RF truth is never converted into an optimizer observation.

@@ -13,7 +13,7 @@
     "association-verification": {"available": true, "evidence": "client link plus controller/API convergence verifier"},
     "traffic-ping": {"available": true, "evidence": "accepted client traffic gate"},
     "traffic-iperf3": {"available": false, "evidence": "traffic driver and capacity envelope not yet accepted"},
-    "frequency-qualified-snr": {"available": false, "evidence": "wmediumd control currently addresses hwsim radio pairs, not pair plus frequency"},
+    "frequency-qualified-snr": {"available": true, "evidence": "wmediumd patch 0012 atomically controls and restores source/destination/frequency overrides; rev130 RCPI 138->88->138 acceptance"},
     "band-candidate-inventory": {"available": true, "evidence": "controller topology identifies radios, BSSIDs and operating bands"},
     "backhaul-band-control": {"available": false, "evidence": "configurator deliberately protects backhaul and no controller action adapter exists"},
     "channel-width-control": {"available": false, "evidence": "hwsim OneWifi setup currently fixes effective test width at 20 MHz"},

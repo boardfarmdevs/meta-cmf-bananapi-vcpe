@@ -13,7 +13,8 @@
     "../../wmediumd/configurator/worlds/golden/home-a-disappear-reappear.world.json",
     "../../wmediumd/configurator/worlds/golden/home-a-fast-transit.world.json",
     "../../wmediumd/configurator/worlds/golden/home-a-extender-loss-recovery.world.json",
-    "../../wmediumd/configurator/worlds/golden/home-a-asymmetric-link.world.json"
+    "../../wmediumd/configurator/worlds/golden/home-a-asymmetric-link.world.json",
+    "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json"
   ],
   "policies": ["../configs/threshold-policy.yaml"],
   "seeds": [1701]

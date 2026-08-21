@@ -87,12 +87,97 @@
         "use 2.4 GHz only as an explicit failsafe",
         "avoid loops and partitions"
       ],
+      "id": "backhaul-topology-band--home-five-agent--band-walk-small--constant-load--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "ap-load-metrics",
+        "backhaul-band-control",
+        "backhaul-link-metrics",
+        "traffic-iperf3"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "ap-load-metrics",
+        "backhaul-band-control",
+        "backhaul-link-metrics",
+        "frequency-qualified-snr",
+        "scale-profile-small",
+        "traffic-iperf3"
+      ],
+      "scenario": "backhaul-topology-band",
+      "scenario_class": "backhaul-optimization",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "iperf3",
+        "id": "constant-load",
+        "schedule": [
+          {
+            "direction": "downstream",
+            "duration": "world",
+            "group": "present-clients",
+            "rate_mbps": 20,
+            "start_ms": 0
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "prefer 5 or 6 GHz when viable",
+        "use 2.4 GHz only as an explicit failsafe",
+        "avoid loops and partitions"
+      ],
       "id": "backhaul-topology-band--home-five-agent--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "frequency-qualified-snr",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -189,7 +274,6 @@
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "frequency-qualified-snr",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -280,10 +364,93 @@
         "choose a BSSID, not merely a band",
         "retain 2.4 GHz when 5 GHz benefit is insufficient"
       ],
+      "id": "band-steer-24-to-5--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "candidate-link-metrics",
+        "measurement-receipt-time"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "band-candidate-inventory",
+        "btm-steering",
+        "candidate-link-metrics",
+        "frequency-qualified-snr",
+        "measurement-receipt-time",
+        "scale-profile-small",
+        "traffic-ping"
+      ],
+      "scenario": "band-steer-24-to-5",
+      "scenario_class": "band-steering",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "ping",
+        "id": "latency-probe",
+        "schedule": [
+          {
+            "duration": "world",
+            "group": "all-clients",
+            "interval_ms": 200,
+            "start_ms": 0,
+            "target": "10.0.0.1"
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "choose a BSSID, not merely a band",
+        "retain 2.4 GHz when 5 GHz benefit is insufficient"
+      ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
         "candidate-link-metrics",
-        "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20"
       ],
@@ -378,7 +545,6 @@
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
         "candidate-link-metrics",
-        "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20"
       ],
@@ -469,10 +635,92 @@
       "expected_behavior": [
         "prefer 6 GHz only while measured benefit and persistence justify it"
       ],
+      "id": "band-steer-5-to-6--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "candidate-link-metrics",
+        "measurement-receipt-time"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "band-candidate-inventory",
+        "btm-steering",
+        "candidate-link-metrics",
+        "frequency-qualified-snr",
+        "measurement-receipt-time",
+        "scale-profile-small",
+        "traffic-ping"
+      ],
+      "scenario": "band-steer-5-to-6",
+      "scenario_class": "band-steering",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "ping",
+        "id": "latency-probe",
+        "schedule": [
+          {
+            "duration": "world",
+            "group": "all-clients",
+            "interval_ms": 200,
+            "start_ms": 0,
+            "target": "10.0.0.1"
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "prefer 6 GHz only while measured benefit and persistence justify it"
+      ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
         "candidate-link-metrics",
-        "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20"
       ],
@@ -566,7 +814,6 @@
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
         "candidate-link-metrics",
-        "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20"
       ],
@@ -1215,6 +1462,402 @@
           "home",
           "layout-a",
           "mobile-1",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "preserve every RF and traffic axis",
+        "never feed world truth into policy"
+      ],
+      "id": "cartesian-home--home-five-agent--band-walk-small--bursty-apps--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "traffic-iperf3"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "current-link-metrics",
+        "rf-atomic-generations",
+        "scale-profile-small",
+        "traffic-iperf3"
+      ],
+      "scenario": "cartesian-home",
+      "scenario_class": "benchmark-matrix",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "iperf3",
+        "id": "bursty-apps",
+        "schedule": [
+          {
+            "direction": "downstream",
+            "group": "odd-clients",
+            "on_ms": 3000,
+            "period_ms": 15000,
+            "rate_mbps": 40,
+            "start_ms": 5000
+          },
+          {
+            "direction": "upstream",
+            "group": "even-clients",
+            "on_ms": 3000,
+            "period_ms": 15000,
+            "rate_mbps": 15,
+            "start_ms": 10000
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "preserve every RF and traffic axis",
+        "never feed world truth into policy"
+      ],
+      "id": "cartesian-home--home-five-agent--band-walk-small--constant-load--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "traffic-iperf3"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "current-link-metrics",
+        "rf-atomic-generations",
+        "scale-profile-small",
+        "traffic-iperf3"
+      ],
+      "scenario": "cartesian-home",
+      "scenario_class": "benchmark-matrix",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "iperf3",
+        "id": "constant-load",
+        "schedule": [
+          {
+            "direction": "downstream",
+            "duration": "world",
+            "group": "present-clients",
+            "rate_mbps": 20,
+            "start_ms": 0
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "preserve every RF and traffic axis",
+        "never feed world truth into policy"
+      ],
+      "id": "cartesian-home--home-five-agent--band-walk-small--idle-keepalive--threshold-policy--seed-1701",
+      "missing_capabilities": [],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "current-link-metrics",
+        "rf-atomic-generations",
+        "scale-profile-small"
+      ],
+      "scenario": "cartesian-home",
+      "scenario_class": "benchmark-matrix",
+      "seed": 1701,
+      "status": "runnable",
+      "traffic": {
+        "driver": "none",
+        "id": "idle-keepalive",
+        "schedule": []
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "preserve every RF and traffic axis",
+        "never feed world truth into policy"
+      ],
+      "id": "cartesian-home--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
+      "missing_capabilities": [],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "current-link-metrics",
+        "rf-atomic-generations",
+        "scale-profile-small",
+        "traffic-ping"
+      ],
+      "scenario": "cartesian-home",
+      "scenario_class": "benchmark-matrix",
+      "seed": 1701,
+      "status": "runnable",
+      "traffic": {
+        "driver": "ping",
+        "id": "latency-probe",
+        "schedule": [
+          {
+            "duration": "world",
+            "group": "all-clients",
+            "interval_ms": 200,
+            "start_ms": 0,
+            "target": "10.0.0.1"
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "preserve every RF and traffic axis",
+        "never feed world truth into policy"
+      ],
+      "id": "cartesian-home--home-five-agent--band-walk-small--traffic-flash-crowd--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "traffic-iperf3"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "current-link-metrics",
+        "rf-atomic-generations",
+        "scale-profile-small",
+        "traffic-iperf3"
+      ],
+      "scenario": "cartesian-home",
+      "scenario_class": "benchmark-matrix",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "iperf3",
+        "id": "traffic-flash-crowd",
+        "schedule": [
+          {
+            "direction": "downstream",
+            "duration_ms": 30000,
+            "group": "mobile-clients",
+            "rate_mbps": 50,
+            "start_ms": 20000
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
           "static-10",
           "walls"
         ]
@@ -5071,6 +5714,173 @@
         "bounded moves after hold and margin",
         "no ping-pong"
       ],
+      "id": "slow-walk-steering--home-five-agent--band-walk-small--constant-load--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "candidate-link-metrics",
+        "measurement-receipt-time",
+        "traffic-iperf3"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "association-verification",
+        "btm-steering",
+        "candidate-link-metrics",
+        "measurement-receipt-time",
+        "scale-profile-small",
+        "traffic-iperf3"
+      ],
+      "scenario": "slow-walk-steering",
+      "scenario_class": "client-steering",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "iperf3",
+        "id": "constant-load",
+        "schedule": [
+          {
+            "direction": "downstream",
+            "duration": "world",
+            "group": "present-clients",
+            "rate_mbps": 20,
+            "start_ms": 0
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "bounded moves after hold and margin",
+        "no ping-pong"
+      ],
+      "id": "slow-walk-steering--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
+      "missing_capabilities": [
+        "candidate-link-metrics",
+        "measurement-receipt-time"
+      ],
+      "policy": {
+        "id": "threshold-policy",
+        "path": "../configs/threshold-policy.yaml",
+        "sha256": "21d0be688e6ba1f9a372cce380ca7cb12b2e5340a15c935ea7594293d2c34b54"
+      },
+      "requirements": [
+        "association-verification",
+        "btm-steering",
+        "candidate-link-metrics",
+        "measurement-receipt-time",
+        "scale-profile-small",
+        "traffic-ping"
+      ],
+      "scenario": "slow-walk-steering",
+      "scenario_class": "client-steering",
+      "seed": 1701,
+      "status": "blocked",
+      "traffic": {
+        "driver": "ping",
+        "id": "latency-probe",
+        "schedule": [
+          {
+            "duration": "world",
+            "group": "all-clients",
+            "interval_ms": 200,
+            "start_ms": 0,
+            "target": "10.0.0.1"
+          }
+        ]
+      },
+      "truth_boundary": {
+        "evaluator_only": [
+          "world golden RF",
+          "traffic schedule"
+        ],
+        "optimizer_inputs": "EasyMesh observations only"
+      },
+      "world": {
+        "counts": {
+          "agents": 5,
+          "stations": 10
+        },
+        "duration_ms": 60000,
+        "golden_sha256": "9aad6d5ae3fef45a906320c3618eb255cac4820b93b83a74fbea35240d6e3109",
+        "layout": "home-five-agent",
+        "mobility": "band-walk-small",
+        "name": "home-five-agent--band-walk-small",
+        "path": "../../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json",
+        "station_roles": [
+          "sta_static_01",
+          "sta_static_02",
+          "sta_static_03",
+          "sta_static_04",
+          "sta_static_05",
+          "sta_static_06",
+          "sta_static_07",
+          "sta_static_08",
+          "sta_static_09",
+          "sta_static_10"
+        ],
+        "tags": [
+          "band-walk",
+          "clients-10",
+          "five-agent",
+          "home",
+          "layout-a",
+          "mobile-10",
+          "slow-walk",
+          "static-10",
+          "walls"
+        ]
+      }
+    },
+    {
+      "expected_behavior": [
+        "bounded moves after hold and margin",
+        "no ping-pong"
+      ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
         "candidate-link-metrics",
@@ -5447,15 +6257,15 @@
       "runnable": 0
     },
     "backhaul-topology-band": {
-      "blocked": 2,
+      "blocked": 3,
       "runnable": 0
     },
     "band-steer-24-to-5": {
-      "blocked": 2,
+      "blocked": 3,
       "runnable": 0
     },
     "band-steer-5-to-6": {
-      "blocked": 2,
+      "blocked": 3,
       "runnable": 0
     },
     "border-hysteresis": {
@@ -5467,8 +6277,8 @@
       "runnable": 0
     },
     "cartesian-home": {
-      "blocked": 41,
-      "runnable": 4
+      "blocked": 44,
+      "runnable": 6
     },
     "client-disappearance": {
       "blocked": 1,
@@ -5495,30 +6305,30 @@
       "runnable": 0
     },
     "slow-walk-steering": {
-      "blocked": 4,
+      "blocked": 6,
       "runnable": 0
     }
   },
-  "matrix_sha256": "31a24d96e7d41dcc2e86ecae43d60bfa89f616d7077ecf9abce59ba74493f575",
+  "matrix_sha256": "2afa6a3643fb846644e92a43cc4777669ec9e61b4e9aa5620093a8e5bc3e28a2",
   "schema": "optimizer.experiment-matrix.v1",
   "source": {
     "capabilities": "capabilities-current.json",
-    "capabilities_sha256": "894d8d05f5c93fa2eca290aa243f686a49a441086a627a59970f4ef82398c94d",
+    "capabilities_sha256": "ed173d827a20a54e68d42055c81d5433c0544940cb630d43057b3afbbee1eee0",
     "scenario_catalog": "scenario-catalog.json",
     "scenario_catalog_sha256": "58ec2d56ec220ca929b434a6eaf18b06148d49cf1284005ca13618d25711e43f",
     "spec": "home-suite.json",
-    "spec_sha256": "0194826dc9a86305719b562c16b9b669e3a96ffc0c57a53bed01f9918cfe3a85",
+    "spec_sha256": "7ed65972e3bbe6ce14a73842815150ae3b6d575e43d3ff735303b74a9b876467",
     "traffic_suite": "traffic-profiles.json",
     "traffic_suite_sha256": "920934d7ca182a70f53c95a47c9ed883aafced282edc41cc3d3f847aa9084afe"
   },
   "suite": "home-policy-research-v1",
   "summary": {
-    "blocked": 59,
-    "cases": 64,
+    "blocked": 67,
+    "cases": 74,
     "policies": 1,
-    "runnable": 5,
+    "runnable": 7,
     "seeds": 1,
     "traffic_profiles": 5,
-    "worlds": 9
+    "worlds": 10
   }
 }

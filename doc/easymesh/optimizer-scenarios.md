@@ -41,8 +41,9 @@ under `worlds/golden/`.
 | fast transit | 5 / 12 | candidate opportunity shorter than a costly roam |
 | asymmetric link | 5 / 11 | station-originated SNR is deliberately weaker than AP-originated SNR |
 | extender loss/recovery | 5 / 10 | one Agent becomes fully attenuated and later returns |
+| small band walk | 5 / 10 | move all ten accepted client roles without increasing lab scale |
 
-The two layouts and nine worlds are small enough to review and deterministic
+The two layouts and ten worlds are small enough to review and deterministic
 enough to reuse. They contain complete directed station/Agent fronthaul and
 Agent/Agent backhaul values for 2.4, 5 and 6 GHz at each tick. They do not
 change meaning after a client roams.
@@ -90,7 +91,7 @@ jq -r '.cases[] | select(.status == "blocked") |
   scenarios/generated/home-suite.matrix.json
 ```
 
-The initial matrix contains 64 cases: 5 runnable and 59 blocked. The count is
+The initial matrix contains 74 cases: 7 runnable and 67 blocked. The count is
 not a quality score. It shows that the Cartesian core and specialized scenario
 families exist while preserving the present lab boundary.
 
@@ -116,7 +117,7 @@ until its additional roles have real containers and a profile is accepted.
 | Family | Present foundation | Required before a valid live claim |
 | --- | --- | --- |
 | ordinary client steering | atomic RF, current RCPI, BTM action and association verifier | candidate-link measurements with trustworthy receipt time |
-| band steering | per-band calculated world values and BSSID/band inventory | frequency-qualified wmediumd control plus fresh per-BSSID candidate measurements |
+| band steering | per-band worlds, frequency-qualified RF control and BSSID/band inventory | fresh per-BSSID candidate measurements with receipt time |
 | pre-association steering | scenario and expected behavior | bounded probe-response control and failsafe semantics |
 | BTM `NoDisconnect` | action and outcome model | clients that deterministically accept, reject or ignore BTM |
 | load steering | traffic schedules | accepted `iperf3` driver and timestamped AP/BSS load metrics |
@@ -126,13 +127,24 @@ until its additional roles have real containers and a profile is accepted.
 
 ### Band steering is a BSSID decision
 
-The checked-in world calculates different 2.4, 5 and 6 GHz reach. Today,
-wmediumd's live control key is `(source radio, destination radio)`, while every
-BPI hwsim wiphy carries frames on all three frequency contexts. Therefore a
-selected world band can be projected for a single-band experiment, but 2.4,
-5 and 6 GHz cannot simultaneously have different controlled SNR for the same
-pair. True band-steering tests require a key such as `(source, destination,
-frequency or channel context)` and matching readback/restore semantics.
+The checked-in world calculates different 2.4, 5 and 6 GHz reach. Patch `0012`
+extends wmediumd's live key to `(source radio, destination radio, frequency
+MHz)` while retaining the old pair value as fallback. Atomic apply, get, dump,
+clear and exact restore are implemented. `world-export --band all` resolves
+2.4/5/6 GHz through each Agent's actual live fronthaul frequency and emits all
+three conditions in one scenario.
+
+Rev130 proved the frequency boundary on an associated 5180 MHz link: a 25 dB
+override moved signal/RCPI from -41 dBm/138 to -66 dBm/88 while a different
+2437 MHz override existed for the same pair. Clearing both directions returned
+to the original 50 dB pair fallback and -41 dBm/138 without packet loss.
+
+The ten-client small band walk then exercised all three bands together for 30
+ticks. The 60-second plan completed in 60.8 seconds with at most 65.3 ms apply
+lateness, restored all 300 touched frequency keys and left the 5/15/50
+controller model and all 10 WLAN associations complete. This accepts the RF
+stimulus path at the current small profile; it does not claim an optimizer made
+band decisions.
 
 The optimizer then ranks target BSSIDs using reported candidate measurements.
 It does not simply choose the label “5 GHz” or “6 GHz.” A 2.4-to-5 or 5-to-6
@@ -170,7 +182,9 @@ only after clients can be assigned accept/reject/ignore behavior.
    border and fast-transit cases.
 5. Enable exactly one live bounded steering transaction and score its outcome.
 6. Generate and accept the 5/20 profile, then medium and stress manifests.
-7. Add frequency-qualified RF before calling any result a band-steering test.
+7. **Frequency-qualified RF complete:** keep its apply/readback/restore
+   regression mandatory; candidate measurements still gate a band-steering
+   policy claim.
 8. Add backhaul and width action adapters as separate safety domains.
 
 Every promotion updates `capabilities-current.json`; matrix regeneration then
