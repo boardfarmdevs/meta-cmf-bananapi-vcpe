@@ -212,7 +212,7 @@ same transaction and verification semantics.
 
 ## External optimizer components
 
-The proposed host-side Python package is:
+The host-side Python package is:
 
 ```text
 gen/optimizer/
@@ -235,6 +235,9 @@ gen/optimizer/
 |   |-- verifier.py
 |   |-- experiments.py
 |   |-- traffic.py
+|   |-- simulator.py
+|   |-- planners.py
+|   |-- preassociation.py
 |   `-- recorder.py
 `-- tests/
 ```
@@ -246,6 +249,9 @@ Its execution modes are:
 | `observe` | Collect and record real snapshots; never recommend or steer |
 | `recommend` | Run the complete state machine and record decisions; never act |
 | `act` | Issue one validated action and verify the complete outcome |
+| `simulate` | Run synthetic EasyMesh-shaped telemetry from a verified golden world; never a live claim |
+| `backhaul-plan` | Build a recommendation-only weighted loop-free backhaul tree |
+| `width-plan` | Produce explained recommendation-only channel-width choices |
 
 The decision core should be a pure function over a snapshot, versioned policy
 and prior client state. Network I/O belongs in adapters, not in scoring logic.
@@ -266,6 +272,8 @@ condition_hold_seconds: 5
 minimum_dwell_seconds: 20
 steer_timeout_seconds: 10
 post_steer_cooldown_seconds: 30
+failure_backoff_seconds: 60
+maximum_failure_backoff_seconds: 600
 maximum_in_flight_per_sta: 1
 reject_stale_metrics_after_seconds: 3
 ```
@@ -388,8 +396,8 @@ read, so that field cannot prove when the agent measured RCPI. The current
 | current association | topology notifications, Associated Clients repair | current STA owner and BSSID | `/clients` | use now |
 | associated-link RCPI/rates/counters | periodic AP Metrics Response and Associated STA Link Metrics | persisted in STA model | `/clients`, but exact measurement time absent | use value; abstain on freshness until receipt time is exposed |
 | AP/BSS utilization | AP Metrics and Radio Metrics TLVs | parser and model fields exist | values reach current model; hwsim HAL reports zero | expose with receipt time, but do not score zero synthetic survey data |
-| candidate BSS identity | device/radio/BSS model | BSSList contains target identities | not present in the normalized live topology response used by the first observer check | add read-only BSS inventory adapter |
-| Unassociated STA Link Metrics | Profile-3 query/response path is implemented | response parser stores RCPI/time-delta in an in-memory array | POST `/api/v1/unassoc_sta_query` sends a query; no correlated GET/result or receipt timestamp | first candidate-quality adapter candidate; add transaction/result exposure and test actual hwsim support |
+| candidate BSS identity | device/radio/BSS model | BSSList contains target identities | `/bsses` returns 30 fronthaul identities across five devices and three bands | use now; unknown quality remains unknown |
+| Unassociated STA Link Metrics | Profile-3 CMDU and OneWifi method/event pieces exist but are not connected correctly | controller response parser can store RCPI/time-delta | POST `/api/v1/unassoc_sta_query` reports command submission only; no result GET/receipt timestamp | repair the four audited boundaries below, then add correlated result exposure |
 | Beacon Metrics | query/response handlers and agent RBus beacon-report path exist | raw measurement-report elements are copied into the STA model | no external query/result API and no decoded candidate RCPI | evaluate after unassociated metrics; decode only required fields |
 | client capability/BTM support | client capability query/report and reassociation parsing | capability data exists in STA model | not normalized for optimizer filtering | add read-only capability flags |
 | steering | Client Steering Request, BTM, ACK/report | proven controller/agent transaction | `gen/steer.sh` | use through narrow actuator |
@@ -400,6 +408,39 @@ source, value, measurement age/receipt time and status for BSS inventory,
 associated-link and Unassociated STA Link Metrics. Until that exists, live
 recommend/act remain safely inhibited while capture and deterministic replay
 are usable.
+
+### Unassociated-metrics boundary audit (2026-08-21)
+
+A source audit, compile test and targeted rev130 diagnostic separated four
+independent defects. None is currently hidden by an optimizer workaround:
+
+1. The controller chooses the first radio object for the requested Agent and
+   starts the command only from `configured`. A live request selected the 6 GHz
+   radio for a 5 GHz query and timed out while the otherwise complete runtime
+   radio state was `channel_selected`. Candidate selection must match the
+   requested operating class and accept operational synchronized/selected
+   states without prematurely completing the command.
+2. The Agent writes the nonexistent `Device.WiFi.UnAssoc.STA` property. OneWifi
+   actually registers the per-VAP
+   `Device.WiFi.AccessPoint.{i}.X_RDKCENTRAL-COM_GetNaSta` method and publishes
+   `Device.WiFi.EM.NaStaResponse`.
+3. OneWifi publishes a flat
+   `UnassociatedSTALinkMetricsResponse.sta_list`, while the Agent parser expects
+   different nesting and would discard a valid physical result.
+4. The generic hwsim Wi-Fi HAL implementation of `wifi_getNASta` returns
+   `WIFI_HAL_ERROR`; only the MXL-specific branch has a measurement provider.
+   Correcting orchestration and JSON cannot create candidate RCPI in this lab.
+
+The REST handler also returns `success: true` whenever native command execution
+returns a tree; it does not expose `not-ready`, timeout, ACK or measurement
+status. A safe adapter therefore needs a transaction ID and semantic status,
+not merely a new GET over the current POST.
+
+A local prototype connecting items 1–3 compiled successfully, but the runtime
+could not cross item 4 and the accepted binaries were restored. It is not in
+the layer patch set. The next implementation should first define an hwsim
+measurement provider at the simulated radio/HAL boundary—not inside the
+optimizer—then land and test the generic control/schema repair end to end.
 
 Scenario preparation is also implemented. Two 2D Agent layouts, ten mobility/
 presence worlds and five separate traffic profiles expand into a deterministic
