@@ -165,12 +165,13 @@ inventory with an unknown RCPI cannot trigger the policy. The live band cases
 therefore remain blocked by candidate measurement and receipt-time capabilities
 even though deterministic 2.4/5/6 GHz RF stimulus now works.
 
-On rev130 the observer normalizes all ten associated clients as 5 GHz, but the
-current compact `/api/v1/topology` response omits the fronthaul `BSSList` and
-therefore yields zero target candidates. The controller database's 50 BSS rows
-prove internal model completeness, not external optimizer availability.
-`band-candidate-inventory` consequently remains false until an API exposes the
-same BSSID/device/band/SSID identities.
+The compact `/api/v1/topology` response still omits its fronthaul `BSSList`.
+Patch `0068` therefore adds the read-only `/api/v1/bsses` projection from the
+controller's serialized `get_sta` tree. Rev130 returns exactly 30 fronthaul
+identities: private and IoT BSSs on five devices across bands 0, 1 and 3. The
+observer normalizes those as 2.4, 5 and 6 GHz and produces 14 same-SSID target
+identities for each associated private client. All 140 candidate RCPI values
+remain explicitly unknown; inventory cannot trigger a steer.
 
 ### Backhaul topology is a slower, separate loop
 

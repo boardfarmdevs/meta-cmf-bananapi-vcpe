@@ -725,7 +725,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--band-walk-small--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time"
       ],
@@ -810,7 +809,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time"
       ],
@@ -895,7 +893,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -990,7 +987,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1085,7 +1081,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1180,7 +1175,6 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1274,7 +1268,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--band-walk-small--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time"
       ],
@@ -1358,7 +1351,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time"
       ],
@@ -1442,7 +1434,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1536,7 +1527,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1630,7 +1620,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -1724,7 +1713,6 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "candidate-link-metrics",
         "measurement-receipt-time",
         "scale-profile-home20"
@@ -11299,7 +11287,6 @@
       ],
       "id": "preassociation-band-preference--home-five-agent--stationary--idle-keepalive--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "preassociation-probe-control"
       ],
       "policy": {
@@ -11369,7 +11356,6 @@
       ],
       "id": "preassociation-band-preference--home-five-agent--stationary--idle-keepalive--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "band-candidate-inventory",
         "preassociation-probe-control"
       ],
       "policy": {
@@ -12573,11 +12559,11 @@
       "runnable": 0
     }
   },
-  "matrix_sha256": "8c27ee6ac5ddbae28d7bea1efa000df0df8a568cbf7c9866bdb2f90f63547e7a",
+  "matrix_sha256": "5c3d1a55aac3c8a7da55a0a97d3456d76b69b479a69f8aefb3c8000f02f02aa1",
   "schema": "optimizer.experiment-matrix.v1",
   "source": {
     "capabilities": "capabilities-current.json",
-    "capabilities_sha256": "f2428aa8b95c337baf0286fe167fc01245a8e882e3b4924ebfdc70076f8c4eeb",
+    "capabilities_sha256": "c19b01aadd04342dafb7564b1af81c45a2c2bac0ab7177d7243584e69cb417ee",
     "scenario_catalog": "scenario-catalog.json",
     "scenario_catalog_sha256": "58ec2d56ec220ca929b434a6eaf18b06148d49cf1284005ca13618d25711e43f",
     "spec": "home-suite.json",

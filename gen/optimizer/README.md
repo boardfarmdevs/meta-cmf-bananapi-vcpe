@@ -7,7 +7,7 @@ lab host, not in a BPI image.
 Implemented now:
 
 - raw endpoint records plus normalized immutable snapshots from `/topology`,
-  `/clients` and `/devices`;
+  `/clients`, `/devices` and `/bsses`;
 - explicit unknown freshness and missing candidate-measurement handling;
 - a pure threshold/margin/hold/dwell/cooldown decision engine;
 - an opt-in band-upgrade baseline that still selects an exact BSSID and applies

@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 20 Aug 2026 23:15:00 -0700
+Subject: [PATCH] cli: expose live fronthaul BSS inventory
+
+The external optimizer needs an exact target identity before it can request or
+score candidate measurements.  The controller owns a complete device/radio/BSS
+model, but the compact topology response intentionally omits its nested BSSList.
+Consequently the read-only optimizer observer could identify the serving band
+but no target BSSID or target band.
+
+Add /api/v1/bsses from the same serialized get_sta controller command already
+used by the detailed client endpoint.  Return only controller-owned identity
+and configuration: BSSID, device, radio, band, available channel, SSID and haul
+type.
+Exclude backhaul/zero BSS entries and sort by BSSID for deterministic capture.
+No signal, candidate quality or synthetic metric is inferred.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/rdkb-cli/main.go | 98 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 98 insertions(+)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -180,6 +180,16 @@ type BSS struct {
+     STAList   []STA  `json:"staList"`
+ }
+ 
++type BSSInventory struct {
++    BSSID     string `json:"bssid"`
++    DeviceID  string `json:"device_id"`
++    RadioID   string `json:"radio_id"`
++    Band      int    `json:"band"`
++    Channel   int    `json:"channel,omitempty"`
++    SSID      string `json:"ssid"`
++    HaulType  string `json:"haul_type"`
++}
++
+ type STA struct {
+     MACAddress  string `json:"MACAddress"`
+     MLDAddr     string `json:"MLDAddr"`
+@@ -2968,6 +2978,7 @@ func main() {
+ 	api.HandleFunc("/clients/{mac}/disconnect", disconnectClientHandler).Methods("POST")
+ 	api.HandleFunc("/clients/{mac}/block", blockClientHandler).Methods("POST")
+ 	api.HandleFunc("/clients/{mac}/unblock", unblockClientHandler).Methods("POST")
++	api.HandleFunc("/bsses", getBSSInventoryHandler).Methods("GET")
+ 
+     // ===== WIRELESS SETTINGS =====
+ 	
+@@ -3447,6 +3458,93 @@ func getLiveClientsWithMetrics() ([]Client, error) {
+ 	return loadDetailedLiveClients()
+ }
+ 
++// loadLiveBSSInventory exposes target identities without turning simulator or
++// configuration data into a link-quality observation.
++func loadLiveBSSInventory() ([]BSSInventory, error) {
++	cmd := C.CString("get_sta OneWifiMesh")
++	defer C.free(unsafe.Pointer(cmd))
++
++	var tree *C.em_network_node_t
++	for attempt := 0; attempt < 3; attempt++ {
++		tree = execEMCommand(cmd, nil)
++		if tree != nil {
++			break
++		}
++		time.Sleep(200 * time.Millisecond)
++	}
++	if tree == nil {
++		return nil, fmt.Errorf("controller returned no BSS inventory data")
++	}
++	defer C.free_network_tree(tree)
++
++	deviceList := getNetworkTreeByKey(tree, "DeviceList")
++	if deviceList == nil {
++		return nil, fmt.Errorf("controller BSS tree has no DeviceList")
++	}
++
++	bsses := make([]BSSInventory, 0)
++	seen := make(map[string]struct{})
++	for deviceIndex := 0; deviceIndex < int(deviceList.num_children); deviceIndex++ {
++		device := deviceList.child[deviceIndex]
++		if device == nil {
++			continue
++		}
++		deviceID := strings.ToLower(getTreeValue(device, "ID"))
++		radioList := getNetworkTreeByKey(device, "RadioList")
++		if deviceID == "" || radioList == nil {
++			continue
++		}
++		for radioIndex := 0; radioIndex < int(radioList.num_children); radioIndex++ {
++			radio := radioList.child[radioIndex]
++			if radio == nil {
++				continue
++			}
++			radioID := strings.ToLower(getTreeValue(radio, "ID"))
++			band := getKeyIntValue(radio, "Band")
++			channel := getKeyIntValue(radio, "Channel")
++			bssList := getNetworkTreeByKey(radio, "BSSList")
++			if radioID == "" || bssList == nil {
++				continue
++			}
++			for bssIndex := 0; bssIndex < int(bssList.num_children); bssIndex++ {
++				bss := bssList.child[bssIndex]
++				if bss == nil {
++					continue
++				}
++				bssid := strings.ToLower(getTreeValue(bss, "BSSID"))
++				ssid := getTreeValue(bss, "SSID")
++				haulType := getTreeValue(bss, "HaulType")
++				if bssid == "" || bssid == "00:00:00:00:00:00" || ssid == "" ||
++					strings.EqualFold(haulType, "Backhaul") || ssid == "mesh_backhaul" {
++					continue
++				}
++				if _, found := seen[bssid]; found {
++					continue
++				}
++				seen[bssid] = struct{}{}
++				bsses = append(bsses, BSSInventory{
++					BSSID: bssid, DeviceID: deviceID, RadioID: radioID,
++					Band: band, Channel: channel, SSID: ssid, HaulType: haulType,
++				})
++			}
++		}
++	}
++	sort.Slice(bsses, func(i, j int) bool { return bsses[i].BSSID < bsses[j].BSSID })
++	return bsses, nil
++}
++
++func getBSSInventoryHandler(w http.ResponseWriter, r *http.Request) {
++	bsses, err := loadLiveBSSInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh BSS inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
++	w.Header().Set("Content-Type", "application/json")
++	_ = json.NewEncoder(w).Encode(map[string]interface{}{
++		"bsses": bsses, "total": len(bsses), "observed_at": time.Now(),
++	})
++}
++
+ // getLiveInventory falls back only to the last successful live snapshot.
+ func getLiveInventory() ([]Device, []Client, error) {
+ 	inventoryDevices, inventoryClients, err := buildLiveInventory()
+-- 
+2.43.0

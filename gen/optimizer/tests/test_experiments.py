@@ -33,7 +33,7 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     assert all(item["status"] == "blocked" for item in band)
     assert all("frequency-qualified-snr" not in item["missing_capabilities"] for item in band)
     assert all("candidate-link-metrics" in item["missing_capabilities"] for item in band)
-    assert all("band-candidate-inventory" in item["missing_capabilities"] for item in band)
+    assert all("band-candidate-inventory" not in item["missing_capabilities"] for item in band)
     assert all(item["truth_boundary"]["optimizer_inputs"] == "EasyMesh observations only" for item in first["cases"])
 
 

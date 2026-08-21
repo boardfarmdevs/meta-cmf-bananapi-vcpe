@@ -69,6 +69,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0065-cli-source-client-association-from-sta-model.patch \
     file://0066-controller-synchronize-runtime-agent-profile.patch \
     file://0067-controller-replay-explicit-policy.patch \
+    file://0068-cli-expose-live-bss-inventory.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

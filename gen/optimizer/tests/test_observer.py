@@ -47,6 +47,7 @@ def test_controller_observer_does_not_claim_api_serialization_time_is_metric_tim
                 {"role": "Extender-4"},
             ]
         },
+        "/api/v1/bsses": {"bsses": [], "total": 0},
     }
 
     def fetch(url):
@@ -78,17 +79,7 @@ def test_controller_inventory_keeps_cross_band_bssid_candidates():
                     "band": 0,
                     "ssid": "private_ssid",
                 }],
-                "haulTypes": [{
-                    "name": "Fronthaul",
-                    "BSSList": [
-                        {"BSSID": "02:00:00:aa:aa:01", "Band": 0,
-                         "ssid": "private_ssid"},
-                        {"BSSID": "02:00:00:bb:bb:01", "Band": 1,
-                         "ssid": "private_ssid"},
-                        {"BSSID": "02:00:00:cc:cc:01", "Band": 3,
-                         "ssid": "private_ssid"},
-                    ],
-                }],
+                "haulTypes": [],
             }
         ]
     }
@@ -99,7 +90,20 @@ def test_controller_inventory_keeps_cross_band_bssid_candidates():
             "connected_bssid": "02:00:00:aa:aa:01",
             "client_metrics": {"rcpi": 138, "association_uptime_seconds": 42},
         }]},
-        "/api/v1/devices": {"devices": [{"role": "Extender-1"}]},
+        "/api/v1/devices": {"devices": [{
+            "mac": "02:00:00:00:09:20", "role": "Extender-1",
+        }]},
+        "/api/v1/bsses": {"bsses": [
+            {"bssid": "02:00:00:aa:aa:01", "device_id": "02:00:00:00:09:20",
+             "radio_id": "02:00:00:00:09:00", "band": 0, "channel": 6,
+             "ssid": "private_ssid", "haul_type": "Fronthaul"},
+            {"bssid": "02:00:00:bb:bb:01", "device_id": "02:00:00:00:09:20",
+             "radio_id": "02:00:00:00:09:00", "band": 1, "channel": 36,
+             "ssid": "private_ssid", "haul_type": "Fronthaul"},
+            {"bssid": "02:00:00:cc:cc:01", "device_id": "02:00:00:00:09:20",
+             "radio_id": "02:00:00:00:09:00", "band": 3, "channel": 37,
+             "ssid": "private_ssid", "haul_type": "Fronthaul"},
+        ], "total": 3},
     }
     observer = ControllerObserver(
         "http://controller",
@@ -113,3 +117,8 @@ def test_controller_inventory_keeps_cross_band_bssid_candidates():
         ("02:00:00:cc:cc:01", "6"),
     ]
     assert all(item.rcpi is None for item in result.candidates)
+    assert all(
+        item.measurement_source == "controller_bss_inventory_only"
+        for item in result.candidates
+    )
+    assert all(item.device_name == "Extender-1" for item in result.candidates)

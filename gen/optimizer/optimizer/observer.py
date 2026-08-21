@@ -45,24 +45,23 @@ def _topology_client_context(topology: dict[str, Any]) -> dict[str, dict[str, An
     return result
 
 
-def _topology_bsses(topology: dict[str, Any]) -> list[dict[str, Any]]:
+def _bss_inventory(
+    payload: dict[str, Any], device_names: dict[str, str]
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for node in topology.get("nodes", []):
-        for haul in node.get("haulTypes", []) or []:
-            if (haul.get("name") or "").lower() != "fronthaul":
-                continue
-            for bss in haul.get("BSSList", []) or []:
-                bssid = bss.get("BSSID")
-                if bssid:
-                    result.append(
-                        {
-                            "bssid": bssid.lower(),
-                            "device_id": (node.get("id") or "").lower(),
-                            "device_name": node.get("name") or "",
-                            "band": normalize_band(bss.get("Band")),
-                            "ssid": bss.get("ssid") or haul.get("ssid") or "",
-                        }
-                    )
+    for item in payload.get("bsses", []):
+        bssid = item.get("bssid")
+        device_id = (item.get("device_id") or "").lower()
+        if bssid:
+            result.append(
+                {
+                    "bssid": normalize_mac(bssid),
+                    "device_id": device_id,
+                    "device_name": device_names.get(device_id, ""),
+                    "band": normalize_band(item.get("band")),
+                    "ssid": item.get("ssid") or "",
+                }
+            )
     return result
 
 
@@ -94,14 +93,22 @@ class ControllerObserver:
         topology = self._get("/api/v1/topology")
         clients_payload = self._get("/api/v1/clients")
         devices_payload = self._get("/api/v1/devices")
+        bsses_payload = self._get("/api/v1/bsses")
         self.last_raw = {
             "sampled_at": observed_at,
             "topology": topology,
             "clients": clients_payload,
             "devices": devices_payload,
+            "bsses": bsses_payload,
         }
         context = _topology_client_context(topology)
-        bsses = _topology_bsses(topology)
+        devices = devices_payload.get("devices", [])
+        device_names = {
+            (item.get("mac") or "").lower(): item.get("role") or ""
+            for item in devices
+            if item.get("mac")
+        }
+        bsses = _bss_inventory(bsses_payload, device_names)
 
         clients: list[ClientObservation] = []
         for item in clients_payload.get("clients", []):
@@ -155,7 +162,7 @@ class ControllerObserver:
                         device_name=bss["device_name"],
                         rcpi=None,
                         metric_observed_at=None,
-                        measurement_source="topology_inventory_only",
+                        measurement_source="controller_bss_inventory_only",
                         band=bss["band"],
                     )
                 )
@@ -168,7 +175,6 @@ class ControllerObserver:
                 if (item.sta_mac, item.bssid) not in measured_keys
             ] + measured
 
-        devices = devices_payload.get("devices", [])
         mesh_devices = sum(
             1 for item in devices if (item.get("role") or "").lower() != "controller"
         )

@@ -32,7 +32,7 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0067`, IEEE1905
+The current source series contains EasyMesh patches through `0068`, IEEE1905
 patches through `0005`, libwebconfig patches through `0005`, and OneWifi
 patches through `0014`, plus the log4c category-factory serialization fix. The
 Dropbox-packaged 0818 appliance remains an
@@ -414,6 +414,18 @@ live inventory already used by `/clients`. The fix is in the ordered recipe
 series and in the separately cross-built `em-cli.tar.gz`; changing patched Go
 source alone does not replace that prebuilt helper.
 
+Patch `0068` keeps the compact topology response small while exposing the
+controller-owned fronthaul target identities required by an external
+optimizer. `/api/v1/bsses` uses the already serialized, allocation-owned
+`get_sta` path and returns BSSID, device, radio, EasyMesh band, available
+channel, SSID and haul type without inventing candidate quality. A channel
+absent from the controller tree is omitted rather than represented as zero.
+Rev130 returned 30/30
+private/IoT BSSs and excluded every backhaul and zero BSSID. After warm-up, 300
+requests retained the same CLI PID; PSS changed from 84,897 to 84,337 KiB and
+VmData by only 320 KiB. The committed prebuilt helper containing `0068` has
+SHA-256 `42d22772f4173bf979c98617d4b4823d4ca05c1c2093d5356c737a024004e764`.
+
 Patch `0046` closes the rare controller association-delivery miss exposed by
 the strict two-client carousel. Packet captures proved that two distinct
 Topology Notification CMDUs reached the controller bridge 88 microseconds
@@ -449,6 +461,7 @@ presentation boundaries:
 | `0065` | use the detailed associated-STA model as the live client inventory and metric source |
 | `0066` | synchronize the validated Profile-3 value into all runtime radio objects before metrics validation |
 | `0067` | replay a complete explicitly submitted policy even when desired database state is unchanged |
+| `0068` | expose deterministic controller-owned fronthaul BSS identities to the external optimizer without fabricating candidate quality |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy

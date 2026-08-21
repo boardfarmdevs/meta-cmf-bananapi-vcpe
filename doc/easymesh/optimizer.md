@@ -160,7 +160,7 @@ know local protocol state, but neither selects the target for this experiment.
 | --- | --- | --- | --- |
 | RF generation | `wmdcfg` | wmediumd | Atomic radio-pair SNR generations with verified restore |
 | RF transport | wmediumd | hwsim | Frequency-isolated simulated frame delivery |
-| live topology | controller/WebUI | external observer | compact `/api/v1/topology` with current nodes and client placement; fronthaul BSS inventory exposure is still missing |
+| live topology | controller/WebUI | external observer | compact `/api/v1/topology` supplies nodes/client placement; `/api/v1/bsses` supplies controller-owned fronthaul BSSID/device/radio/band/SSID identity |
 | live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` and `/api/v1/clients` |
 | current-link metrics | EasyMesh reports/queries | external observer | Live associated-client RCPI/rates/counters are available from `/api/v1/clients` |
 | candidate-link metrics | EasyMesh reports/queries | external observer | Read-only adapter/capability evaluation still required |
@@ -173,13 +173,15 @@ know local protocol state, but neither selects the target for this experiment.
 
 ### Observation boundary
 
-`/api/v1/topology`, `/api/v1/devices` and `/api/v1/clients` derive identity and
-association placement from the current controller tree. WebSocket initial
-state uses the same live inventory. `/api/v1/clients` joins the controller's
-detailed associated-STA report by MAC and exposes real RCPI, derived dBm, rate
-and traffic fields when present. Unknown values remain unavailable rather than
-being invented. Performance, interference and other demonstration endpoints
-still contain non-authoritative data and must not be optimizer inputs.
+`/api/v1/topology`, `/api/v1/devices`, `/api/v1/clients` and `/api/v1/bsses`
+derive identity, association placement and target BSS identity from the current
+controller tree. WebSocket initial state uses the same live inventory.
+`/api/v1/clients` joins the controller's detailed associated-STA report by MAC
+and exposes real RCPI, derived dBm, rate and traffic fields when present.
+`/api/v1/bsses` deliberately exposes no candidate quality. Unknown values
+remain unavailable rather than being invented. Performance, interference and
+other demonstration endpoints still contain non-authoritative data and must
+not be optimizer inputs.
 
 The first implementation task is therefore to normalize the working
 associated-client observation and add only the missing AP/candidate-link facts.
