@@ -8,6 +8,8 @@ import time
 
 from .actuator import SteerActuator
 from .config import load_policy
+from .experiments import ExperimentError, build_matrix
+from .traffic import compile_traffic_plan, load_json
 from .model import Snapshot
 from .observer import ControllerObserver
 from .policy import ThresholdPolicy
@@ -96,11 +98,39 @@ def parser() -> argparse.ArgumentParser:
     replay.add_argument("--input", required=True)
     replay.add_argument("--journal", required=True)
     replay.add_argument("--policy", required=True)
+    matrix = sub.add_parser("matrix")
+    matrix.add_argument("--spec", required=True)
+    matrix.add_argument("--output", required=True)
+    traffic = sub.add_parser("traffic-plan")
+    traffic.add_argument("--matrix", required=True)
+    traffic.add_argument("--case", required=True)
+    traffic.add_argument("--bindings", required=True)
+    traffic.add_argument("--output", required=True)
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if args.mode == "matrix":
+        try:
+            value = build_matrix(args.spec)
+        except ExperimentError as error:
+            raise SystemExit(f"em-optimizer: {error}") from error
+        Path(args.output).write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
+    if args.mode == "traffic-plan":
+        try:
+            value = compile_traffic_plan(
+                load_json(args.matrix), args.case, load_json(args.bindings)
+            )
+        except ExperimentError as error:
+            raise SystemExit(f"em-optimizer: {error}") from error
+        Path(args.output).write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
     if args.mode == "replay":
         return _replay(args)
     return _live(args, args.mode)

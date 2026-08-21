@@ -1,0 +1,21 @@
+{
+  "schema": "optimizer.lab-bindings.v1",
+  "name": "rev130-small",
+  "roles": {
+    "gateway": "bpibroadband",
+    "extender_1": "bpiap",
+    "extender_2": "bpiap-001",
+    "extender_3": "bpiap-002",
+    "extender_4": "bpiap-003",
+    "sta_static_01": "wlan-client",
+    "sta_static_02": "wlan-client-001",
+    "sta_static_03": "wlan-client-002",
+    "sta_static_04": "wlan-client-003",
+    "sta_static_05": "wlan-client-004",
+    "sta_static_06": "wlan-client-005",
+    "sta_static_07": "wlan-client-006",
+    "sta_static_08": "wlan-client-007",
+    "sta_static_09": "wlan-client-008",
+    "sta_static_10": "wlan-client-009"
+  }
+}

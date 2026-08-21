@@ -1,0 +1,28 @@
+{
+  "schema": "optimizer.capabilities.v1",
+  "name": "0815-current-lab",
+  "capabilities": {
+    "rf-radio-pair-control": {"available": true, "evidence": "wmediumd APPLY/GET/dump control socket"},
+    "rf-atomic-generations": {"available": true, "evidence": "generation-checked atomic control with readback and restore"},
+    "current-link-metrics": {"available": true, "evidence": "controller /api/v1/clients RCPI and traffic counters"},
+    "measurement-receipt-time": {"available": false, "evidence": "client metric timestamp is currently serialized at API read time"},
+    "candidate-link-metrics": {"available": false, "evidence": "Beacon and unassociated response data are not yet correlated and exposed"},
+    "ap-load-metrics": {"available": false, "evidence": "no accepted timestamped per-BSS/AP utilization adapter"},
+    "backhaul-link-metrics": {"available": false, "evidence": "no optimizer-facing timestamped backhaul metric adapter"},
+    "btm-steering": {"available": true, "evidence": "steer.sh mandate path and bounded carousel acceptance"},
+    "association-verification": {"available": true, "evidence": "client link plus controller/API convergence verifier"},
+    "traffic-ping": {"available": true, "evidence": "accepted client traffic gate"},
+    "traffic-iperf3": {"available": false, "evidence": "traffic driver and capacity envelope not yet accepted"},
+    "frequency-qualified-snr": {"available": false, "evidence": "wmediumd control currently addresses hwsim radio pairs, not pair plus frequency"},
+    "band-candidate-inventory": {"available": true, "evidence": "controller topology identifies radios, BSSIDs and operating bands"},
+    "backhaul-band-control": {"available": false, "evidence": "configurator deliberately protects backhaul and no controller action adapter exists"},
+    "channel-width-control": {"available": false, "evidence": "hwsim OneWifi setup currently fixes effective test width at 20 MHz"},
+    "preassociation-probe-control": {"available": false, "evidence": "no safe probe-response suppression action adapter"},
+    "controlled-btm-response": {"available": false, "evidence": "no per-client accept/reject/ignore behavior fixture"},
+    "extender-rf-isolation": {"available": true, "evidence": "accepted isolation/recovery scenario and topology liveness path"},
+    "scale-profile-small": {"available": true, "evidence": "five mesh devices and ten clients accepted on rev130"},
+    "scale-profile-home20": {"available": false, "evidence": "five-Agent/twenty-client generated RF exists but runtime profile is not accepted"},
+    "scale-profile-medium": {"available": false, "evidence": "not generated or accepted"},
+    "scale-profile-stress": {"available": false, "evidence": "not generated or accepted"}
+  }
+}

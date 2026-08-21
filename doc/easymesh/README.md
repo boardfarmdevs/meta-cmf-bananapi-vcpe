@@ -24,6 +24,7 @@ gradients that are independent from the steering decision being evaluated.
 | [wmediumd-client-carousel.md](wmediumd-client-carousel.md) | Visual client disconnect/reconnect rotation across every AP |
 | [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
 | [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
+| [optimizer-scenarios.md](optimizer-scenarios.md) | How deterministic homes, mobility, walls, RF goldens and traffic profiles form the optimizer test matrix |
 | [next-steps.md](next-steps.md) | Prioritized stability, integration, scale and novel-policy research plan |
 | [lab-presentation.md](lab-presentation.md) | Presentation-ready lab introduction, current demos and policy roadmap |
 

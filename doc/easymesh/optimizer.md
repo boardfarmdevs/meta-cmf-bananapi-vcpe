@@ -217,6 +217,11 @@ gen/optimizer/
 |-- pyproject.toml
 |-- configs/
 |   `-- threshold-policy.yaml
+|-- scenarios/
+|   |-- capabilities-current.json
+|   |-- traffic-profiles.json
+|   |-- scenario-catalog.json
+|   `-- generated/home-suite.matrix.json
 |-- optimizer/
 |   |-- cli.py
 |   |-- model.py
@@ -225,6 +230,8 @@ gen/optimizer/
 |   |-- state.py
 |   |-- actuator.py
 |   |-- verifier.py
+|   |-- experiments.py
+|   |-- traffic.py
 |   `-- recorder.py
 `-- tests/
 ```
@@ -390,6 +397,14 @@ source, value, measurement age/receipt time and status for BSS inventory,
 associated-link and Unassociated STA Link Metrics. Until that exists, live
 recommend/act remain safely inhibited while capture and deterministic replay
 are usable.
+
+Scenario preparation is also implemented. Two 2D Agent layouts, nine mobility/
+presence worlds and five separate traffic profiles expand into a deterministic
+64-case matrix. The initial capability file marks 5 cases runnable and 59
+blocked with exact missing mechanisms. This is intentional: per-band RF,
+candidate freshness, load traffic, controlled BTM response, backhaul actions,
+channel width and 20-client scale must not be inferred from configuration
+alone. See [optimizer-scenarios.md](optimizer-scenarios.md).
 
 ### Test ladder
 

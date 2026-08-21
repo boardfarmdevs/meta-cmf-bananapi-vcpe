@@ -161,6 +161,13 @@ no-steering control on predefined metrics.
 
 ### P4 — Scale the infrastructure cheaply and predictably
 
+**Preparation started 2026-08-20:** the scenario layer now has a five-Agent/
+ten-static-client home, ten additional mobile-client roles, a second Agent
+placement and deterministic golden RF timelines. `scale-profiles.json` marks
+small as accepted, home20 as generated-not-accepted, and medium/stress as
+planned. This does not replace the topology manifest or its runtime resource
+envelope.
+
 Replace fixed container lists with a topology manifest:
 
 ```yaml
@@ -194,6 +201,15 @@ Exit gate: small, medium and stress profiles are one-command reproducible and
 have explicit resource and stability envelopes.
 
 ### P5 — Create the policy scenario and score library
+
+**Scenario sources and capability-gated matrix started 2026-08-20:** nine
+golden RF worlds cover stationary, slow walk, AP placement, border hover,
+flash crowd, disappearance, fast transit, asymmetric links and extender loss.
+Five independent traffic profiles produce a 64-case initial matrix. Only five
+small/ping-or-idle cases are runnable today; all others record the missing
+measurement, RF, traffic, response-control or scale capability. See
+[optimizer-scenarios.md](optimizer-scenarios.md). Scoring and live execution
+remain open.
 
 Each scenario must have a passive control and deterministic seeds:
 
@@ -269,5 +285,8 @@ costs.
 6. Add the first topology manifest and measure 4/10 versus 8/20 resource use.
 7. Automate a result bundle containing configuration, observations, packet
    capture indexes, service health, actions, outcomes and medium restoration.
+8. **Scenario preparation complete for the first corpus:** keep the nine
+   goldens, five traffic profiles and generated capability matrix deterministic;
+   implement only the adapters needed to move blocked cases to runnable.
 
 The first policy decision should follow item 4, not precede items 1–3.

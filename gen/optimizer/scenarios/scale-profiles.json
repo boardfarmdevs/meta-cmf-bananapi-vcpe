@@ -1,0 +1,9 @@
+{
+  "schema": "optimizer.scale-profiles.v1",
+  "profiles": [
+    {"id": "small", "agents": 5, "clients": 10, "status": "accepted", "evidence": "rev130 cold and runtime gates"},
+    {"id": "home20", "agents": 5, "clients": 20, "status": "generated-not-accepted", "evidence": "golden RF plans exist; runtime topology manifest does not"},
+    {"id": "medium", "agents": 9, "clients": 40, "status": "planned", "evidence": "none"},
+    {"id": "stress", "agents": 17, "clients": 80, "status": "planned", "evidence": "none"}
+  ]
+}

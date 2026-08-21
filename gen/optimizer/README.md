@@ -15,6 +15,11 @@ Implemented now:
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
 - unit, adapter, replay and existing two-AP configurator-scenario tests.
 
+The scenario preparation layer also expands nine checked-in golden RF worlds,
+five independent traffic profiles, policy configurations and seeds into a
+hash-verified case matrix. Missing lab abilities remain explicit per-case
+blockers; simulated RF truth is never converted into an optimizer observation.
+
 The live controller API currently serializes `client_metrics.last_updated` at
 read time; it is not the exact report timestamp. It also does not expose target
 link quality. Consequently live `recommend` and `act` safely emit no action
@@ -55,3 +60,15 @@ em-optimizer replay \
 `act` requires both a policy-produced recommendation and the explicit
 `--yes-act` flag. At the present interface stage it remains inhibited by
 unknown freshness/missing candidate metrics during ordinary live observation.
+
+Build and inspect the scenario matrix:
+
+```sh
+python3 -m optimizer.cli matrix \
+  --spec scenarios/home-suite.json \
+  --output scenarios/generated/home-suite.matrix.json
+jq '.summary' scenarios/generated/home-suite.matrix.json
+```
+
+See [`optimizer-scenarios.md`](../../doc/easymesh/optimizer-scenarios.md) for
+the pseudo-home, traffic plan, band-steering and backhaul boundaries.
