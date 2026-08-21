@@ -21,6 +21,8 @@ WIFI_DB_HWSIM_20MHZ_PATCH := "${THISDIR}/${BPN}/0008-wifi_db-clamp-channelwidth-
 WIFI_ASSOC_RETURN_DELTA_PATCH := "${THISDIR}/${BPN}/0010-assoc-publish-returning-client-delta.patch"
 WIFI_ASSOC_LIVE_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0011-assoc-mark-monitor-missing-client-inactive.patch"
 WIFI_EM_DUPLICATE_AL_MAC_PATCH := "${THISDIR}/${BPN}/0012-webconfig-prefer-sta-for-duplicate-al-mac.patch"
+WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH := "${THISDIR}/${BPN}/0013-ap-metrics-index-radio-config-by-radio-index.patch"
+WIFI_EM_CLIENT_UPTIME_PATCH := "${THISDIR}/${BPN}/0014-easymesh-copy-client-association-uptime.patch"
 python do_patch_append() {
     import subprocess
     s = d.getVar('S')
@@ -108,6 +110,18 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: resolving duplicate EasyMesh AL MAC to the backhaul STA")
     with open(d.getVar('WIFI_EM_DUPLICATE_AL_MAC_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # AP Metrics requests can enumerate RUIDs in a different order from the
+    # platform radio array.  Keep the decoded radio config indexed by physical
+    # radio_index, as required by the encoder, so per-VAP/per-STA metrics are
+    # not silently omitted.
+    bb.note("meta-cmf-bananapi-vcpe: fixing AP-metrics radio-config indexing")
+    with open(d.getVar('WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # OneWifi already measures time associated; preserve it when translating
+    # the association snapshot into the EasyMesh station data model.
+    bb.note("meta-cmf-bananapi-vcpe: forwarding client association uptime to EasyMesh")
+    with open(d.getVar('WIFI_EM_CLIENT_UPTIME_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -122,7 +136,8 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_DB_HWSIM_SAE_PATCH WIFI_DB_HWSIM_NO_6GHZ_PATCH \
     WIFI_DB_HWSIM_SAE_STA_PATCH WIFI_DB_HWSIM_20MHZ_PATCH \
     WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH \
-    WIFI_EM_DUPLICATE_AL_MAC_PATCH"
+    WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
+    WIFI_EM_CLIENT_UPTIME_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -134,6 +149,8 @@ do_patch[file-checksums] += "${WIFI_DB_HWSIM_20MHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_RETURN_DELTA_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_LIVE_SNAPSHOT_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_DUPLICATE_AL_MAC_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_CLIENT_UPTIME_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.

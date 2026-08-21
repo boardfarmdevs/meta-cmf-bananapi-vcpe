@@ -65,6 +65,10 @@ EASYMESH_CORE_PATCHES = " \
     file://0061-cli-enable-all-metrics-reporting.patch \
     file://0062-controller-preserve-profile-through-dm-commit.patch \
     file://0063-controller-commit-topology-response-profile.patch \
+    file://0064-metrics-report-cpe-and-client-uptime.patch \
+    file://0065-cli-source-client-association-from-sta-model.patch \
+    file://0066-controller-synchronize-runtime-agent-profile.patch \
+    file://0067-controller-replay-explicit-policy.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

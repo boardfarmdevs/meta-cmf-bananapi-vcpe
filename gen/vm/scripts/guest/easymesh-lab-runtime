@@ -395,6 +395,12 @@ start)
     sudo -H -u "$lab_user" env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
     wait_clients
     wait_mesh_model
+    # Policy state in the agents is volatile.  The first application starts
+    # reporting early, but an agent can finish its operational transition
+    # while the WLAN clients are associating and lose that timer.  Replay the
+    # complete, idempotent policy after the live client model has converged so
+    # every operational agent receives the same final policy state.
+    enable_metrics_reporting
     wait_client_metrics
     verify_stability_window
     assert_zero_restarts
