@@ -56,22 +56,42 @@ for index in 2 3; do
 done
 
 for index in 5 6 7 8 9; do
-    ./wlan-client.sh -i "$index" up private_ssid test-fronthaul
-    lxc config set "$(printf 'wlan-client-%03d' "$index")" boot.autostart false
+    ./wlan-client.sh -i "$index" --cohort private --security wpa2 \
+        up private_ssid test-fronthaul
+    container=$(printf 'wlan-client-%03d' "$index")
+    lxc config set "$container" user.easymesh.ordinal "$((index + 1))"
+    lxc config set "$container" boot.autostart false
+done
+
+# Add a separate WPA3-SAE IoT cohort. Global indexes keep container names and
+# hwsim identities unique; the per-cohort ordinal is persisted for tooling.
+for index in 10 11 12 13 14 15 16 17 18 19; do
+    ./wlan-client.sh -i "$index" --cohort iot --security sae \
+        up iot_ssid test-backhaul
+    container=$(printf 'wlan-client-%03d' "$index")
+    lxc config set "$container" user.easymesh.ordinal "$((index - 9))"
+    lxc config set "$container" boot.autostart false
 done
 
 for attempt in $(seq 1 30); do
     topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null || true)
     live=$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' \
         <<<"$topology" 2>/dev/null || true)
+    private_live=$(jq -r \
+        '[.nodes[].STAList[]? | select(.ssid == "private_ssid") | .staMAC] | unique | length' \
+        <<<"$topology" 2>/dev/null || true)
+    iot_live=$(jq -r \
+        '[.nodes[].STAList[]? | select(.ssid == "iot_ssid") | .staMAC] | unique | length' \
+        <<<"$topology" 2>/dev/null || true)
     stations=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
         'select count(*) from STAList where Associated=1' 2>/dev/null || true)
-    echo "scaled client gate $attempt/30: live_topology=${live:-?} associated_STA=${stations:-?}"
-    if [ "$live" = 10 ] && [ "$stations" = 14 ]; then
+    echo "scaled client gate $attempt/30: live=${live:-?} private=${private_live:-?} iot=${iot_live:-?} associated=${stations:-?}"
+    if [ "$live" = 20 ] && [ "$private_live" = 10 ] \
+        && [ "$iot_live" = 10 ] && [ "$stations" = 24 ]; then
         exit 0
     fi
     sleep 10
 done
 
-echo 'scaled topology did not converge to 4 extenders and 10 clients' >&2
+echo 'scaled topology did not converge to 4 extenders, 10 private and 10 IoT clients' >&2
 exit 1

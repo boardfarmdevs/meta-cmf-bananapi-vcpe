@@ -22,8 +22,7 @@ install -m 0755 /home/vagrant/easymesh-assets/easymesh-health-audit \
 # Boardfarm reconstructs its Docker lab and br-wan105 first. The EasyMesh
 # runtime then starts LXD nodes in dependency order.
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003 \
-    wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 \
-    wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009; do
+    $(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V); do
     lxc info "$container" >/dev/null 2>&1 || continue
     lxc config set "$container" boot.autostart false
 done

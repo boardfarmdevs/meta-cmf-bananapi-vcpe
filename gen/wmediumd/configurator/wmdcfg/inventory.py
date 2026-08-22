@@ -97,6 +97,13 @@ def discover() -> dict[str, Any]:
             link = _exec(name, "iw dev wlan0 link 2>/dev/null || true")
             match = re.search(r"Connected to ([0-9a-f:]{17})", link, re.I)
             item["associated_bssid"] = match.group(1).lower() if match else None
+            ssid_match = re.search(r"^\s*SSID:\s*(.+?)\s*$", link, re.M)
+            item["ssid"] = ssid_match.group(1) if ssid_match else None
+            item["cohort"] = (
+                "iot" if item["ssid"] == "iot_ssid"
+                else "private" if item["ssid"] == "private_ssid"
+                else "other"
+            )
         radios.append(item)
     return {
         "schema": "wmdcfg.inventory.v1",

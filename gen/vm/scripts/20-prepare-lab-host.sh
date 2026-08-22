@@ -115,7 +115,11 @@ test "$(lxc image info alpine | sed -n 's/^Fingerprint: *//p')" = \
 # The module archive contains the same patched binary accepted on rev130.
 # Start a tri-band pool only after confirming that no copied runtime state is
 # present in this clean guest.
-printf '%s\n' 'options mac80211_hwsim radios=24 channels=3 regtest=5' \
+hwsim_radios=${HWSIM_RADIOS:-32}
+case "$hwsim_radios" in
+    ''|*[!0-9]*|0) echo "HWSIM_RADIOS must be a positive integer" >&2; exit 2 ;;
+esac
+printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_radios" \
     > /etc/modprobe.d/easymesh-hwsim.conf
 printf '%s\n' 'mac80211_hwsim' > /etc/modules-load.d/easymesh-hwsim.conf
 if [ ! -d /sys/module/mac80211_hwsim ]; then
@@ -124,7 +128,7 @@ fi
 # Never reload a live pool: LXD physical NICs move their entire wiphy into
 # container namespaces and do not reliably keep modprobe -r from succeeding.
 # Reloading here silently removes Wi-Fi from already-running lab nodes.
-test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = 24
+test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$hwsim_radios"
 test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = 3
 test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
 

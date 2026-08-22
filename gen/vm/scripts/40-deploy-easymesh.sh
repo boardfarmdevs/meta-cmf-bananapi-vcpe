@@ -145,9 +145,13 @@ SNR=40 ./wmediumd/wmediumd-up.sh up
 if ! lxc image info wlan-client-base >/dev/null 2>&1; then
     ./wlan-client.sh build-image
 fi
-./wlan-client.sh up private_ssid test-fronthaul
+./wlan-client.sh --cohort private --security wpa2 up private_ssid test-fronthaul
+lxc config set wlan-client user.easymesh.ordinal 1
 for index in 1 2 3 4; do
-    ./wlan-client.sh -i "$index" up private_ssid test-fronthaul
+    ./wlan-client.sh -i "$index" --cohort private --security wpa2 \
+        up private_ssid test-fronthaul
+    lxc config set "$(printf 'wlan-client-%03d' "$index")" \
+        user.easymesh.ordinal "$((index + 1))"
 done
 
 # The host runtime service, not LXD's previous-power-state restoration, owns

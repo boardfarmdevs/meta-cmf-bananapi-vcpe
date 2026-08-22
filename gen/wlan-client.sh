@@ -4,7 +4,8 @@
 # one radio from the hwsim pool (returns to the pool on delete).
 #
 #   wlan-client.sh build-image                       # build the self-contained wlan-client-base image
-#   wlan-client.sh [-i NNN] [--build-image] up [ssid] [psk]  # create client, connect to ssid (open if no psk)
+#   wlan-client.sh [-i NNN] [--cohort NAME] [--security MODE] [--build-image]
+#                  up [ssid] [psk]  # create client and connect
 #   wlan-client.sh [-i NNN] status                   # print association state
 #   wlan-client.sh [-i NNN] down                     # tear down (radio returns to the pool)
 #
@@ -30,10 +31,12 @@ SRC_IMG="${WLAN_CLIENT_SRC_IMAGE:-alpine}"          # minimal base to build it f
 WNMBIN="$HERE/wpa_supplicant/wpa_supplicant-wnm"    # committed CONFIG_WNM supplicant
 WMD_PIDF=${WMEDIUMD_PIDFILE:-/run/meta-cmf-wmediumd/wmediumd.pid}
 
-INST=""; FORCE_BUILD=0
+INST=""; FORCE_BUILD=0; COHORT=""; SECURITY="auto"
 while true; do
     case "$1" in
         -i)            INST=$(printf "%03d" "$2" 2>/dev/null) || INST="$2"; shift 2;;
+        --cohort)      COHORT="$2"; shift 2;;
+        --security)    SECURITY="$2"; shift 2;;
         --build-image) FORCE_BUILD=1; shift;;
         --wnm)         shift;;   # deprecated: WNM is baked into wlan-client-base now (accepted, ignored)
         *)             break;;
@@ -123,6 +126,34 @@ build-image)
     ;;
 up)
     SSID="${2:-PlumeSim}"; PSK="$3"
+    if [ "$SECURITY" = auto ]; then
+        if [ -z "$PSK" ]; then
+            SECURITY=open
+        elif [ "$SSID" = iot_ssid ]; then
+            SECURITY=sae
+        else
+            SECURITY=wpa2
+        fi
+    fi
+    case "$SECURITY" in
+        open)
+            [ -z "$PSK" ] || { echo "$CT: open security cannot use a passphrase" >&2; exit 2; }
+            NET="network={\n ssid=\"$SSID\"\n key_mgmt=NONE\n}"
+            ;;
+        wpa2)
+            [ -n "$PSK" ] || { echo "$CT: WPA2 requires a passphrase" >&2; exit 2; }
+            NET="network={\n ssid=\"$SSID\"\n psk=\"$PSK\"\n key_mgmt=WPA-PSK\n}"
+            ;;
+        sae)
+            [ -n "$PSK" ] || { echo "$CT: SAE requires a passphrase" >&2; exit 2; }
+            NET="network={\n ssid=\"$SSID\"\n sae_password=\"$PSK\"\n key_mgmt=SAE\n ieee80211w=2\n}"
+            ;;
+        *)
+            echo "$CT: unsupported security '$SECURITY' (use auto, open, wpa2 or sae)" >&2
+            exit 2
+            ;;
+    esac
+    [ -n "$COHORT" ] || COHORT=$([ "$SSID" = iot_ssid ] && echo iot || echo private)
     LAB_POOL=$(ensure_lxd_lab_pool) || exit 1
     # ensure the self-contained image (build once, or on --build-image)
     if [ "$FORCE_BUILD" = 1 ] || ! lxc image info "$BASE_IMG" >/dev/null 2>&1; then
@@ -141,16 +172,16 @@ up)
     lxc profile device add "$PROFILE" root disk path=/ pool="$LAB_POOL" >/dev/null
     lxc profile device add "$PROFILE" eth0 nic nictype=bridged parent=lxdbr0 name=eth0 >/dev/null
     _lxc_launch "$BASE_IMG" "$CT" "$PROFILE" 1 || { echo "$CT: failed to launch"; exit 1; }
+    # Persist intent outside the disposable rootfs so inventory, cold-start and
+    # scale tooling can distinguish cohorts without relying on MAC allocation.
+    lxc config set "$CT" user.easymesh.cohort "$COHORT"
+    lxc config set "$CT" user.easymesh.ssid "$SSID"
+    lxc config set "$CT" user.easymesh.security "$SECURITY"
     # base image already has iw + wpa_supplicant + the WNM binary; only apk-install
     # if we fell back to the raw Alpine base
     if [ "$BASE_IMG" = "$SRC_IMG" ]; then
         lxc exec "$CT" -- sh -c 'command -v wpa_supplicant >/dev/null && command -v iw >/dev/null || apk add --no-cache wpa_supplicant iw >/dev/null 2>&1'
         [ -f "$WNMBIN" ] && lxc file push -p "$WNMBIN" "$CT/usr/local/sbin/wpa_supplicant-wnm" 2>/dev/null && lxc exec "$CT" -- chmod +x /usr/local/sbin/wpa_supplicant-wnm 2>/dev/null
-    fi
-    if [ -n "$PSK" ]; then
-        NET="network={\n ssid=\"$SSID\"\n psk=\"$PSK\"\n key_mgmt=WPA-PSK\n}"
-    else
-        NET="network={\n ssid=\"$SSID\"\n key_mgmt=NONE\n}"
     fi
     # A running wmediumd has a fixed radio matrix.  Adding a client radio after
     # REGISTER leaves that radio outside the medium until the daemon is

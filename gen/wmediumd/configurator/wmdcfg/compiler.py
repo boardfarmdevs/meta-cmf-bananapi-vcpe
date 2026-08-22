@@ -86,10 +86,13 @@ def _bind(
         if role_type == "fronthaul_ap":
             candidates = [
                 iface for iface in item.get("interfaces", [])
-                if iface.get("ssid") == "private_ssid" and iface.get("frequency_mhz")
+                if iface.get("ssid") in {"private_ssid", "iot_ssid"}
+                and iface.get("frequency_mhz")
             ]
             if not candidates:
-                raise ScenarioError(f"role {role}: {container} has no live private fronthaul")
+                raise ScenarioError(
+                    f"role {role}: {container} has no live private or IoT fronthaul"
+                )
             frequencies = {}
             for candidate in candidates:
                 frequency = int(candidate["frequency_mhz"])

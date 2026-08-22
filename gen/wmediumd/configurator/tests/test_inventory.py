@@ -36,7 +36,7 @@ def test_discover_ignores_stopped_matching_containers():
                 "wlan-client": "02:00:00:00:00:03",
             }[container]
         if command.startswith("iw dev wlan0 link"):
-            return "Not connected."
+            return "Connected to 02:00:00:10:00:01\n\tSSID: iot_ssid\n\tfreq: 5180"
         return ""
 
     with patch("wmdcfg.inventory._run", return_value=listing), patch(
@@ -49,3 +49,7 @@ def test_discover_ignores_stopped_matching_containers():
         "bpibroadband",
         "wlan-client",
     ]
+    station = next(item for item in inventory["radios"] if item["kind"] == "station")
+    assert station["associated_bssid"] == "02:00:00:10:00:01"
+    assert station["ssid"] == "iot_ssid"
+    assert station["cohort"] == "iot"

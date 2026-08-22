@@ -9,7 +9,11 @@ lab_home=${EASYMESH_LAB_HOME:-$(getent passwd "$lab_user" | cut -d: -f6)}
 gen=${EASYMESH_GEN:-$lab_home/git/meta-cmf-bananapi-vcpe/gen}
 mesh='bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003'
 extenders='bpiap bpiap-001 bpiap-002 bpiap-003'
-clients='wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009'
+clients=$(lxc list -c n --format csv 2>/dev/null \
+    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V | paste -sd' ' - || true)
+client_count=$(printf '%s\n' $clients | sed '/^$/d' | wc -l)
+[ "$client_count" -gt 0 ] || { echo 'no provisioned WLAN clients found' >&2; exit 1; }
+expected_associated=$((client_count + 4))
 state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-vagrant/reboot-acceptance}
 
 instance_state() {
@@ -229,8 +233,8 @@ wait_client_metrics() {
             trigger_client_metric_frames
         fi
         reporting=$(live_client_metrics_count || true)
-        if [ "$reporting" = 10 ]; then
-            echo 'all ten WLAN clients report non-zero RCPI'
+        if [ "$reporting" = "$client_count" ]; then
+            echo "all $client_count WLAN clients report non-zero RCPI"
             return 0
         fi
         # A Policy Configuration ACK proves that an Agent accepted the CMDU,
@@ -240,14 +244,14 @@ wait_client_metrics() {
         # even though desired policy and all ACK bookkeeping look complete.
         # Re-deploy the complete idempotent policy while the observed result is
         # incomplete; this is a bounded convergence loop, not an operator
-        # nudge, and it stops immediately once all ten reports are visible.
+        # nudge, and it stops immediately once all reports are visible.
         if [ $((attempt % 4)) -eq 0 ]; then
-            echo "metrics incomplete (${reporting:-?}/10); replaying complete policy"
+            echo "metrics incomplete (${reporting:-?}/$client_count); replaying complete policy"
             enable_metrics_reporting
         fi
         sleep 5
     done
-    echo "client metrics did not converge (non-zero RCPI=${reporting:-?}/10)" >&2
+    echo "client metrics did not converge (non-zero RCPI=${reporting:-?}/$client_count)" >&2
     return 1
 }
 
@@ -257,7 +261,8 @@ wait_clients() {
         topology_clients=$(live_client_count || true)
         associated=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
             -e 'select count(*) from STAList where Associated=1' 2>/dev/null || true)
-        if [ "$topology_clients" = 10 ] && [ "$associated" = 14 ]; then
+        if [ "$topology_clients" = "$client_count" ] \
+            && [ "$associated" = "$expected_associated" ]; then
             return 0
         fi
         sleep 5
@@ -302,7 +307,8 @@ verify_stability_window() {
             'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
             2>/dev/null || true)
         topology_clients=$(live_client_count || true)
-        [ "$model" = 5/15/50/14 ] && [ "$topology_clients" = 10 ]
+        [ "$model" = "5/15/50/$expected_associated" ] \
+            && [ "$topology_clients" = "$client_count" ]
         assert_zero_restarts >/dev/null
         [ "$SECONDS" -ge "$deadline" ] && break
         sleep 5
@@ -337,7 +343,7 @@ verify_client_traffic() {
             return 1
         fi
     done
-    echo 'all ten WLAN clients reach 10.0.0.1'
+    echo "all $client_count WLAN clients reach 10.0.0.1"
 }
 
 capture_result() {
@@ -418,12 +424,11 @@ start)
     assert_zero_restarts
     verify_client_traffic
     result=PASS
-    echo 'EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=10/10 metrics=10/10 associated=14 restarts=0'
+    echo "EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
     ;;
 stop)
     sudo -H -u "$lab_user" "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
-    for container in wlan-client-009 wlan-client-008 wlan-client-007 wlan-client-006 wlan-client-005 \
-        wlan-client-004 wlan-client-003 wlan-client-002 wlan-client-001 wlan-client \
+    for container in $(printf '%s\n' $clients | sort -Vr) \
         bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
     done
@@ -439,9 +444,9 @@ status)
     [[ "$wmediumd_status" == *'wmediumd running'* ]]
     [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
         'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
-        2>/dev/null)" = 5/15/50/14 ]
-    [ "$(live_client_count)" = 10 ]
-    [ "$(live_client_metrics_count)" = 10 ]
+        2>/dev/null)" = "5/15/50/$expected_associated" ]
+    [ "$(live_client_count)" = "$client_count" ]
+    [ "$(live_client_metrics_count)" = "$client_count" ]
     assert_zero_restarts >/dev/null
     verify_client_traffic >/dev/null
     ;;
