@@ -122,14 +122,21 @@ class Runner:
                          "value": pair_baseline[(source, destination)]}
                         for source, destination in sorted(touched_pairs)
                     ]
-                expected_agents = sum(
-                    binding["role_type"] == "fronthaul_ap"
-                    for binding in self.plan["bindings"].values()
-                )
-                expected_clients = sum(
-                    binding["role_type"] == "station"
-                    for binding in self.plan["bindings"].values()
-                )
+                expected_lab = self.plan.get("expected_lab") or {}
+                expected_agents = int(expected_lab.get(
+                    "mesh_devices",
+                    sum(
+                        binding["role_type"] == "fronthaul_ap"
+                        for binding in self.plan["bindings"].values()
+                    ),
+                ))
+                expected_clients = int(expected_lab.get(
+                    "clients",
+                    sum(
+                        binding["role_type"] == "station"
+                        for binding in self.plan["bindings"].values()
+                    ),
+                ))
                 initial_health = mesh_health(expected_agents, expected_clients)
                 _append(health_log, {"event": "preflight", **initial_health})
                 self._require_healthy(initial_health, "preflight")

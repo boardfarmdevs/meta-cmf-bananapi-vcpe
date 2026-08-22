@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,16 @@ class CompilerTests(unittest.TestCase):
         }
         self.assertEqual(values[("client", "ap_a")], 10)
         self.assertEqual(values[("client", "ap_b")], 42)
+
+    def test_health_expectation_covers_unbound_inventory(self):
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["radios"].extend(
+            [{"container": f"extra-ap-{index}", "kind": "mesh"} for index in range(3)]
+            + [{"container": f"extra-sta-{index}", "kind": "station"} for index in range(9)]
+        )
+        source = (ROOT / "scenarios/two-ap-crossover.wmd").read_text()
+        plan = compile_scenario(parse(source), source, inventory, BINDINGS)
+        self.assertEqual(plan["expected_lab"], {"mesh_devices": 5, "clients": 10})
 
     def test_direction_expands_symmetrically(self):
         plan = self.compile("all-strong.wmd")

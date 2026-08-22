@@ -19,6 +19,7 @@ def _plan() -> dict:
     return {
         "scenario": "runner_test",
         "duration_ms": 0,
+        "expected_lab": {"mesh_devices": 5, "clients": 10},
         "bindings": {},
         "events": [
             {
@@ -100,13 +101,15 @@ class RunnerTests(unittest.TestCase):
             "complete_nodes": 6,
             "topology_nodes": 6,
         }
-        patches = (
-            patch("wmdcfg.runner.ControlClient", FakeControlClient),
-            patch("wmdcfg.runner.mesh_health", return_value=healthy),
-            patch("wmdcfg.runner.snapshot", return_value={"stations": []}),
+        control_patch = patch("wmdcfg.runner.ControlClient", FakeControlClient)
+        health_patch = patch("wmdcfg.runner.mesh_health", return_value=healthy)
+        snapshot_patch = patch(
+            "wmdcfg.runner.snapshot", return_value={"stations": []}
         )
-        for item in patches:
-            item.start()
+        control_patch.start()
+        self.health_mock = health_patch.start()
+        snapshot_patch.start()
+        for item in (control_patch, health_patch, snapshot_patch):
             self.addCleanup(item.stop)
         runner = Runner(_plan(), "/test/control.sock", root)
         return runner, root
@@ -120,6 +123,10 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(summary["error"])
         self.assertIsNotNone(summary["execution_elapsed_ms"])
         self.assertEqual(FakeControlClient.last.matrix[(SOURCE, DESTINATION)], 40)
+        self.assertEqual(
+            [call.args for call in self.health_mock.call_args_list],
+            [(5, 10), (5, 10)],
+        )
 
     def test_restore_readback_failure_reports_failed(self):
         runner, root = self._execute(True)

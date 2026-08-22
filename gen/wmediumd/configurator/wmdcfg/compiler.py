@@ -246,6 +246,12 @@ def compile_scenario(
             }
         )
 
+    inventory_radios = inventory.get("radios", [])
+    expected_lab = {
+        "mesh_devices": sum(item.get("kind") == "mesh" for item in inventory_radios),
+        "clients": sum(item.get("kind") == "station" for item in inventory_radios),
+    }
+
     return {
         "schema": "wmdcfg.event-plan.v1",
         "scenario": scenario.name,
@@ -257,6 +263,11 @@ def compile_scenario(
         "duration_ms": cursor_ms,
         "restore": scenario.restore,
         "protections": sorted(scenario.protections),
+        # Health acceptance describes the complete frozen inventory, not just
+        # the small subset of radios assigned scenario roles. A two-AP
+        # crossover in the five-agent lab must still prove 5/15/50/14 and all
+        # ten clients before and after applying its two touched links.
+        "expected_lab": expected_lab,
         "bindings": bindings,
         "phases": phase_records,
         "events": events,
