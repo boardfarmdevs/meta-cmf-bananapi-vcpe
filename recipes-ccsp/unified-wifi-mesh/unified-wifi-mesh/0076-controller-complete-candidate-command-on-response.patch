@@ -1,0 +1,93 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] metrics: complete candidate command with its response
+
+The controller records a successful Unassociated STA Link Metrics Response
+before its periodic orchestrator pass has retired the corresponding command.
+The HTTP adapter sees the new metrics immediately and issues the next per-agent
+query, but is_cmd_type_in_progress() still sees the completed command and
+silently rejects the new event.  The API then waits eight seconds and returns
+504 even though both agents and their radios are healthy.
+
+Live reproduction was deterministic: a query to 02:00:00:00:05:20 returned
+one metric in 1.28 seconds; an immediate query to 02:00:00:00:06:20 never
+reached that agent and timed out.  A later standalone query succeeded.
+
+Add an orchestrator completion primitive that synchronously removes the one
+active command of a type, restores its candidate EMs to idle, updates command
+statistics, and releases the command.  Invoke it after the correlated response
+has been parsed and retained.  The next request can therefore be admitted as
+soon as the successful response becomes externally visible.
+
+Upstream-Status: Pending
+---
+ inc/em_orch.h                    |  2 ++
+ src/em/metrics/em_metrics.cpp    |  5 +++++
+ src/orch/em_orch.cpp             | 27 +++++++++++++++++++++++++++
+ 3 files changed, 34 insertions(+)
+
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -194,6 +194,8 @@ public:
+      */
+ 	void destroy_command(em_cmd_t *pcmd);
+ 
++    bool complete_command(em_cmd_type_t type);
++
+ 	/**!
+ 	 * @brief Cancels a command of the specified type if misconfiguration for specific EMs.
+      *
+diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -170,6 +170,33 @@ void em_orch_t::destroy_command(em_cmd_t *pcmd)
+     delete pcmd;
+ }
+ 
++bool em_orch_t::complete_command(em_cmd_type_t type)
++{
++    em_cmd_t *pcmd;
++    em_t *em;
++
++    for (int i = static_cast<int>(queue_count(m_active)) - 1; i >= 0; i--) {
++        pcmd = static_cast<em_cmd_t *>(
++            queue_peek(m_active, static_cast<unsigned int>(i)));
++        if (pcmd == nullptr || pcmd->m_type != type) {
++            continue;
++        }
++
++        queue_remove(m_active, static_cast<unsigned int>(i));
++        pop_stats(pcmd);
++        for (int j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1;
++             j >= 0; j--) {
++            em = static_cast<em_t *>(queue_peek(
++                pcmd->m_em_candidates, static_cast<unsigned int>(j)));
++            em->set_orch_state(em_orch_state_idle);
++        }
++        destroy_command(pcmd);
++        return true;
++    }
++
++    return false;
++}
++
+ void em_orch_t::cancel_command(em_cmd_type_t type, std::vector<em_t*> &em_radios)
+ {
+     int i, j;
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -485,6 +485,11 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+     }
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr || !orch->complete_command(em_cmd_type_unassoc_sta_query)) {
++        em_printfout("Candidate metrics response MID %u had no active command",
++            response_msg_id);
++    }
+     em_printfout("Completed candidate metrics transaction MID %u", response_msg_id);
+ 
+     m_unassoc_in_progress = false;
+-- 
+2.43.0
