@@ -121,3 +121,86 @@ def test_simulated_candidate_source_requires_explicit_lab_opt_in():
         assert "--allow-simulated-candidates" in str(error)
     else:
         raise AssertionError("simulated metrics were accepted without opt-in")
+
+
+def test_simulated_lab_uses_frozen_channel_plan_when_controller_channel_is_zero():
+    raw = bsses()
+    raw[0].pop("channel")
+    calls = []
+    provider = ControllerCandidateProvider(
+        "http://controller",
+        requester=lambda _url, payload: calls.append(payload) or response(),
+        allow_simulated=True,
+    )
+    measured = list(provider(
+        (client(),), (inventory(),), raw, "2026-08-21T20:00:01.000Z"
+    ))
+    assert len(measured) == 1
+    assert calls[0]["UnassocStaQueryList"][0] == {
+        "opclass": 115,
+        "channels": [{"channel": 36, "sta_macs": [STA]}],
+    }
+
+
+def test_missing_physical_operating_channel_is_not_invented():
+    raw = bsses()
+    raw[0]["channel"] = 0
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: response()
+    )
+    try:
+        list(provider(
+            (client(),), (inventory(),), raw, "2026-08-21T20:00:01.000Z"
+        ))
+    except CandidateMetricsError as error:
+        assert "must report it for a physical candidate query" in str(error)
+    else:
+        raise AssertionError("a physical BSS with no channel was queried")
+
+
+def test_queries_for_two_radios_are_not_combined():
+    second_radio = "02:00:00:00:09:01"
+    second_bssid = "02:00:00:aa:aa:02"
+    second_inventory = CandidateObservation(
+        sta_mac=STA,
+        bssid=second_bssid,
+        device_id=AGENT,
+        device_name="Extender-1",
+        rcpi=None,
+        metric_observed_at=None,
+        measurement_source="controller_bss_inventory_only",
+        band="6",
+    )
+    raw = bsses() + [{
+        "bssid": second_bssid,
+        "device_id": AGENT,
+        "radio_id": second_radio,
+        "band": 3,
+        "channel": 5,
+        "ssid": "private_ssid",
+        "haul_type": "Fronthaul",
+    }]
+    calls = []
+
+    def request(_url, payload):
+        calls.append(payload)
+        op = payload["UnassocStaQueryList"][0]
+        radio = RADIO if op["opclass"] == 115 else second_radio
+        result = response()
+        result["metrics"][0].update({
+            "ruid": radio,
+            "opclass": op["opclass"],
+            "channel": op["channels"][0]["channel"],
+        })
+        return result
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=request, allow_simulated=True
+    )
+    measured = list(provider(
+        (client(),), (inventory(), second_inventory), raw,
+        "2026-08-21T20:00:01.000Z",
+    ))
+    assert len(calls) == 2
+    assert all(len(call["UnassocStaQueryList"]) == 1 for call in calls)
+    assert {item.bssid for item in measured} == {BSSID, second_bssid}

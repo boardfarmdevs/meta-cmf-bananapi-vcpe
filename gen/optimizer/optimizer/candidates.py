@@ -17,6 +17,12 @@ from .model import (
 
 JsonRequester = Callable[[str, dict[str, Any]], dict[str, Any]]
 
+# The hwsim lab deliberately uses one fixed 20 MHz control channel per band.
+# The controller's current model exposes Band but leaves Radio.Channel at zero;
+# this mapping is therefore only legal behind the explicit simulated-provider
+# opt-in.  A physical deployment must report its actual operating channel.
+LAB_CONTROL_CHANNELS = {"2.4": 6, "5": 36, "6": 5}
+
 
 class CandidateMetricsError(RuntimeError):
     """The controller could not produce a trustworthy candidate snapshot."""
@@ -92,6 +98,18 @@ class ControllerCandidateProvider:
         self.allow_simulated = allow_simulated
         self.last_raw: list[dict[str, Any]] = []
 
+    def _channel(self, raw: dict[str, Any]) -> int:
+        channel = int(raw.get("channel") or 0)
+        if channel > 0:
+            return channel
+        band = normalize_band(raw.get("band"))
+        if self.allow_simulated and band in LAB_CONTROL_CHANNELS:
+            return LAB_CONTROL_CHANNELS[band]
+        raise CandidateMetricsError(
+            f"BSS {raw.get('bssid', '<unknown>')} has no operating channel; "
+            "the controller must report it for a physical candidate query"
+        )
+
     def __call__(
         self,
         clients: tuple[ClientObservation, ...],
@@ -109,7 +127,9 @@ class ControllerCandidateProvider:
         targets: dict[
             tuple[str, str, str, int, int], list[CandidateObservation]
         ] = {}
-        query_groups: dict[str, dict[tuple[int, int], set[str]]] = {}
+        query_groups: dict[
+            tuple[str, str], dict[tuple[int, int], set[str]]
+        ] = {}
 
         for candidate in inventory:
             raw = bss_by_id.get(candidate.bssid)
@@ -118,18 +138,21 @@ class ControllerCandidateProvider:
                 continue
             agent = normalize_mac(raw["device_id"])
             radio = normalize_mac(raw["radio_id"])
-            channel = int(raw.get("channel") or 0)
+            channel = self._channel(raw)
             opclass = operating_class(raw.get("band"), channel)
             targets.setdefault(
                 (agent, radio, candidate.sta_mac, opclass, channel), []
             ).append(candidate)
-            query_groups.setdefault(agent, {}).setdefault(
+            # OneWifi routes GetNaSta through one VAP.  A single EasyMesh query
+            # must therefore remain on one agent radio; combining opclasses
+            # from different radios is rejected by the agent.
+            query_groups.setdefault((agent, radio), {}).setdefault(
                 (opclass, channel), set()
             ).add(candidate.sta_mac)
 
         measured: list[CandidateObservation] = []
         self.last_raw = []
-        for agent, groups in sorted(query_groups.items()):
+        for (agent, query_radio), groups in sorted(query_groups.items()):
             by_opclass: dict[int, list[dict[str, Any]]] = {}
             for (opclass, channel), stations in sorted(groups.items()):
                 by_opclass.setdefault(opclass, []).append(
@@ -143,7 +166,11 @@ class ControllerCandidateProvider:
                 ],
             }
             response = self.requester(self.url, payload)
-            self.last_raw.append({"request": payload, "response": response})
+            self.last_raw.append({
+                "request": payload,
+                "query_radio": query_radio,
+                "response": response,
+            })
             if response.get("success") is not True:
                 raise CandidateMetricsError(
                     f"candidate query for {agent} was not successful: {response}"
