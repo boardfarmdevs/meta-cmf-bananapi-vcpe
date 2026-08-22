@@ -102,6 +102,8 @@ class ClientObservation:
     metric_observed_at: str | None
     measurement_source: str
     band: str | None = None
+    ssid: str = ""
+    cohort: str = "other"
 
     def __post_init__(self) -> None:
         normalize_mac(self.sta_mac)
@@ -115,6 +117,17 @@ class ClientObservation:
         if self.metric_observed_at is not None:
             parse_time(self.metric_observed_at)
         object.__setattr__(self, "band", normalize_band(self.band))
+        expected_cohort = (
+            "iot" if self.ssid == "iot_ssid"
+            else "private" if self.ssid == "private_ssid"
+            else "other"
+        )
+        if self.cohort not in {"private", "iot", "other"}:
+            raise ValueError(f"invalid client cohort: {self.cohort!r}")
+        if self.cohort != expected_cohort:
+            raise ValueError(
+                f"client cohort {self.cohort!r} does not match SSID {self.ssid!r}"
+            )
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ClientObservation":

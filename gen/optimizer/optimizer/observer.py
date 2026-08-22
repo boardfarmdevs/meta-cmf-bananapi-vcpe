@@ -170,6 +170,12 @@ class ControllerObserver:
                     metric_observed_at=metric_time,
                     measurement_source="associated_sta_link_metrics",
                     band=placement.get("band"),
+                    ssid=placement.get("ssid") or "",
+                    cohort=(
+                        "iot" if placement.get("ssid") == "iot_ssid"
+                        else "private" if placement.get("ssid") == "private_ssid"
+                        else "other"
+                    ),
                 )
             )
         normalized_clients = sorted_clients(clients)

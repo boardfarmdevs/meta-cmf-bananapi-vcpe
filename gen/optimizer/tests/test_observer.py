@@ -63,6 +63,8 @@ def test_controller_observer_consumes_controller_report_receipt_time():
     assert result.health.clients == 1
     assert result.clients[0].rcpi == 138
     assert result.clients[0].band == "5"
+    assert result.clients[0].ssid == "private_ssid"
+    assert result.clients[0].cohort == "private"
     assert result.clients[0].metric_observed_at == "2026-08-20T20:00:00Z"
     assert result.candidates == ()
     assert observer.last_raw["clients"] is payloads["/api/v1/clients"]
