@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +67,23 @@ def test_read_only_lxc_probe_retries_a_lost_exec_transport(monkeypatch):
 
     assert soak.lxc_read("mesh", "systemctl show", attempts=2) == "healthy"
     assert len(calls) == 2
+
+
+def test_candidate_identity_probe_retries_a_lost_exec_transport():
+    candidate = load_script("candidate-rcpi-test.py")
+    failed = subprocess.CalledProcessError(-15, ["lxc", "exec"])
+    completed = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0, "02:00:00:00:03:00\n", ""
+    )
+    with patch.object(
+        candidate.subprocess, "run", side_effect=[failed, completed]
+    ) as probe, patch.object(candidate.time, "sleep") as sleep:
+        assert candidate.lxc("wlan-client", "cat address", attempts=2) == (
+            "02:00:00:00:03:00"
+        )
+
+    assert probe.call_count == 2
+    sleep.assert_called_once_with(0.5)
 
 
 def test_stability_window_can_follow_a_separate_recovery_interval(monkeypatch):

@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,15 +26,23 @@ from wmdcfg.actuator import ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
 
 
-def lxc(container: str, command: str) -> str:
-    import subprocess
-
-    return subprocess.run(
-        ("lxc", "exec", container, "--", "sh", "-c", command),
-        check=True,
-        text=True,
-        capture_output=True,
-    ).stdout.strip().lower()
+def lxc(container: str, command: str, attempts: int = 3) -> str:
+    """Run a bounded, read-only container identity probe."""
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    for attempt in range(1, attempts + 1):
+        try:
+            return subprocess.run(
+                ("lxc", "exec", container, "--", "sh", "-c", command),
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip().lower()
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    raise AssertionError("unreachable")
 
 
 def request_json(url: str, payload: dict | None = None) -> tuple[int, dict]:
