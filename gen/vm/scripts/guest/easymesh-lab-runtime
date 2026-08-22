@@ -233,6 +233,18 @@ wait_client_metrics() {
             echo 'all ten WLAN clients report non-zero RCPI'
             return 0
         fi
+        # A Policy Configuration ACK proves that an Agent accepted the CMDU,
+        # but the useful end-to-end condition is that every associated STA is
+        # actually present in a periodic metrics report.  A rare raw-frame
+        # delivery miss can leave one Agent's volatile reporting timer idle
+        # even though desired policy and all ACK bookkeeping look complete.
+        # Re-deploy the complete idempotent policy while the observed result is
+        # incomplete; this is a bounded convergence loop, not an operator
+        # nudge, and it stops immediately once all ten reports are visible.
+        if [ $((attempt % 4)) -eq 0 ]; then
+            echo "metrics incomplete (${reporting:-?}/10); replaying complete policy"
+            enable_metrics_reporting
+        fi
         sleep 5
     done
     echo "client metrics did not converge (non-zero RCPI=${reporting:-?}/10)" >&2
