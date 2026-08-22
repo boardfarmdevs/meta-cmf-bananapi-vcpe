@@ -169,14 +169,14 @@ def test_queries_for_two_radios_are_not_combined():
         rcpi=None,
         metric_observed_at=None,
         measurement_source="controller_bss_inventory_only",
-        band="6",
+        band="5",
     )
     raw = bsses() + [{
         "bssid": second_bssid,
         "device_id": AGENT,
         "radio_id": second_radio,
-        "band": 3,
-        "channel": 5,
+        "band": 1,
+        "channel": 40,
         "ssid": "private_ssid",
         "haul_type": "Fronthaul",
     }]
@@ -185,7 +185,8 @@ def test_queries_for_two_radios_are_not_combined():
     def request(_url, payload):
         calls.append(payload)
         op = payload["UnassocStaQueryList"][0]
-        radio = RADIO if op["opclass"] == 115 else second_radio
+        channel = op["channels"][0]["channel"]
+        radio = RADIO if channel == 36 else second_radio
         result = response()
         result["metrics"][0].update({
             "ruid": radio,
@@ -204,3 +205,29 @@ def test_queries_for_two_radios_are_not_combined():
     assert len(calls) == 2
     assert all(len(call["UnassocStaQueryList"]) == 1 for call in calls)
     assert {item.bssid for item in measured} == {BSSID, second_bssid}
+
+
+def test_cross_band_inventory_is_not_misreported_as_candidate_measurement():
+    raw = bsses()
+    raw[0]["band"] = 3
+    raw[0]["channel"] = 5
+    cross_band = CandidateObservation(
+        sta_mac=STA,
+        bssid=BSSID,
+        device_id=AGENT,
+        device_name="Extender-1",
+        rcpi=None,
+        metric_observed_at=None,
+        measurement_source="controller_bss_inventory_only",
+        band="6",
+    )
+    calls = []
+    provider = ControllerCandidateProvider(
+        "http://controller",
+        requester=lambda _url, payload: calls.append(payload) or response(),
+        allow_simulated=True,
+    )
+    assert list(provider(
+        (client(),), (cross_band,), raw, "2026-08-21T20:00:01.000Z"
+    )) == []
+    assert calls == []

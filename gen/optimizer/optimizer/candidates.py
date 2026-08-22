@@ -136,6 +136,13 @@ class ControllerCandidateProvider:
             client = clients_by_mac.get(candidate.sta_mac)
             if raw is None or client is None:
                 continue
+            # An Unassociated STA Link Metrics Query asks a candidate radio to
+            # hear the STA on the channel where it is currently transmitting.
+            # It is a same-band candidate primitive, not evidence that an
+            # associated STA would work on a different band.  Cross-band
+            # policy needs beacon/probe/capability observations instead.
+            if candidate.band != client.band:
+                continue
             agent = normalize_mac(raw["device_id"])
             radio = normalize_mac(raw["radio_id"])
             channel = self._channel(raw)
