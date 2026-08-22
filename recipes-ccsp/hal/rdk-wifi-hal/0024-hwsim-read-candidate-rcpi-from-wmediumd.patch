@@ -171,7 +171,7 @@ index d489ffd..73ff9e6 100644
 +    memset(&address, 0, sizeof(address));
 +    address.sun_family = AF_UNIX;
 +    snprintf(address.sun_path, sizeof(address.sun_path),
-+        "%s", "/run/wmediumd-metrics/control.sock");
++        "%s", "/wmediumd-metrics/control.sock");
 +    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0)
 +        goto error;
 +
