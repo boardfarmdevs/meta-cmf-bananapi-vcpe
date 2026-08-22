@@ -7,6 +7,7 @@ import sys
 import time
 
 from .actuator import SteerActuator
+from .candidates import ControllerCandidateProvider
 from .config import load_policy
 from .experiments import ExperimentError, build_matrix
 from .traffic import compile_traffic_plan, load_json
@@ -32,7 +33,17 @@ def _record_cycle(journal: Journal, snapshot: Snapshot, evaluation) -> None:
 
 
 def _live(args, mode: str) -> int:
-    observer = ControllerObserver(args.base_url)
+    candidate_provider = None
+    if args.candidate_provider == "controller":
+        candidate_provider = ControllerCandidateProvider(
+            args.base_url,
+            allow_simulated=args.allow_simulated_candidates,
+        )
+    observer = ControllerObserver(
+        args.base_url,
+        candidate_provider=candidate_provider,
+        trust_api_metric_timestamp=args.trust_api_metric_timestamp,
+    )
     journal = Journal(args.journal)
     policy = ThresholdPolicy(load_policy(args.policy)) if mode != "observe" else None
     state = PolicyState()
@@ -94,6 +105,13 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--journal", required=True)
         command.add_argument("--count", type=int, default=1)
         command.add_argument("--interval", type=float, default=1)
+        command.add_argument(
+            "--candidate-provider",
+            choices=("off", "controller"),
+            default="off",
+        )
+        command.add_argument("--allow-simulated-candidates", action="store_true")
+        command.add_argument("--trust-api-metric-timestamp", action="store_true")
         if mode != "observe":
             command.add_argument("--policy", required=True)
         if mode == "act":

@@ -20,7 +20,13 @@ from .model import (
 
 JsonFetcher = Callable[[str], dict[str, Any]]
 CandidateProvider = Callable[
-    [tuple[ClientObservation, ...], str], Iterable[CandidateObservation]
+    [
+        tuple[ClientObservation, ...],
+        tuple[CandidateObservation, ...],
+        list[dict[str, Any]],
+        str,
+    ],
+    Iterable[CandidateObservation],
 ]
 
 
@@ -167,13 +173,24 @@ class ControllerObserver:
                     )
                 )
         if self.candidate_provider is not None:
-            measured = list(self.candidate_provider(normalized_clients, observed_at))
+            inventory = sorted_candidates(candidates)
+            measured = list(
+                self.candidate_provider(
+                    normalized_clients,
+                    inventory,
+                    bsses_payload.get("bsses", []),
+                    observed_at,
+                )
+            )
             measured_keys = {(item.sta_mac, item.bssid) for item in measured}
             candidates = [
                 item
                 for item in candidates
                 if (item.sta_mac, item.bssid) not in measured_keys
             ] + measured
+            provider_raw = getattr(self.candidate_provider, "last_raw", None)
+            if provider_raw is not None:
+                self.last_raw["candidate_transactions"] = provider_raw
 
         mesh_devices = sum(
             1 for item in devices if (item.get("role") or "").lower() != "controller"
