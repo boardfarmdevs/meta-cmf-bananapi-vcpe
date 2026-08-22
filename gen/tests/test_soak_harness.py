@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -48,6 +49,23 @@ def test_service_validation_retains_restart_and_main_pid_gates():
     assert soak.validate_services(state(), state(restarts=1)) == [
         "mesh/onewifi.service: restarts 0->1"
     ]
+
+
+def test_read_only_lxc_probe_retries_a_lost_exec_transport(monkeypatch):
+    soak = load_script("p0-churn-soak.py")
+    calls = []
+
+    def probe(container, command, check=True):
+        calls.append((container, command, check))
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(-15, ["lxc", "exec"])
+        return "healthy"
+
+    monkeypatch.setattr(soak, "lxc", probe)
+    monkeypatch.setattr(soak.time, "sleep", lambda _seconds: None)
+
+    assert soak.lxc_read("mesh", "systemctl show", attempts=2) == "healthy"
+    assert len(calls) == 2
 
 
 def test_stability_window_can_follow_a_separate_recovery_interval(monkeypatch):

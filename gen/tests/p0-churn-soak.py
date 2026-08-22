@@ -72,6 +72,20 @@ def lxc(container: str, command: str, check: bool = True) -> str:
     return run("lxc", "exec", container, "--", "sh", "-c", command, check=check)
 
 
+def lxc_read(container: str, command: str, attempts: int = 3) -> str:
+    """Retry a side-effect-free LXC probe when the exec transport is lost."""
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    for attempt in range(1, attempts + 1):
+        try:
+            return lxc(container, command)
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    raise AssertionError("unreachable")
+
+
 def fetch_json(url: str) -> dict:
     return json.loads(
         run(
@@ -100,7 +114,7 @@ def service_states() -> dict[str, dict[str, dict[str, object]]]:
     result: dict[str, dict[str, dict[str, object]]] = {}
     for container, units in UNITS.items():
         quoted = " ".join(units)
-        text = lxc(
+        text = lxc_read(
             container,
             "for unit in " + quoted + "; do "
             "printf 'UNIT=%s\\n' \"$unit\"; "
