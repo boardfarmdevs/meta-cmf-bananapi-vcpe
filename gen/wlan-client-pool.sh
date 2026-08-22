@@ -128,6 +128,24 @@ up)
         echo "reload the idle lab with HWSIM_RADIOS=$(radio_plan) before provisioning" >&2
         exit 1
     fi
+    # wmediumd registers a fixed radio matrix. Refreshing that matrix after
+    # every new client is correct for the one-client helper but quadratic work
+    # for a pool. Let mac80211_hwsim's built-in medium carry the bounded
+    # association/export gates, then register the complete matrix once. The
+    # EXIT trap restores wmediumd even if provisioning stops part way through.
+    medium_helper="$HERE/wmediumd/wmediumd-up.sh"
+    medium_pending=0
+    restore_medium() {
+        if [ "$medium_pending" = 1 ]; then
+            medium_pending=0
+            SNR="${SNR:-40}" "$medium_helper" up
+        fi
+    }
+    if [ -x "$medium_helper" ]; then
+        "$medium_helper" down
+        medium_pending=1
+        trap restore_medium EXIT INT TERM
+    fi
     for index in $(seq 0 $((TOTAL - 1))); do
         args=()
         [ "$index" -eq 0 ] || args=(-i "$index")
@@ -144,6 +162,8 @@ up)
         lxc config set "$name" user.easymesh.ordinal "$ordinal"
         lxc config set "$name" boot.autostart false
     done
+    restore_medium
+    trap - EXIT INT TERM
     expected_associated=$((TOTAL + 4))
     for attempt in $(seq 1 60); do
         topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null || true)
