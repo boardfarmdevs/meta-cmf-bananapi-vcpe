@@ -74,6 +74,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0070-agent-accept-onewifi-nasta-response.patch \
     file://0071-agent-correlate-candidate-metrics-response.patch \
     file://0072-metrics-preserve-associated-report-receipt-time.patch \
+    file://0073-wsc-retry-with-fresh-enrollee-transaction.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
