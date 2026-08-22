@@ -45,7 +45,20 @@ def run(*args: str, check: bool = True) -> str:
 
 
 def lxc(container: str, command: str) -> str:
-    return run("lxc", "exec", container, "--", "sh", "-c", command, check=False)
+    for attempt in range(1, 4):
+        result = subprocess.run(
+            ("lxc", "exec", container, "--", "sh", "-c", command),
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode >= 0:
+            return result.stdout.strip()
+        if attempt < 3:
+            time.sleep(0.5 * attempt)
+    raise subprocess.CalledProcessError(
+        result.returncode, result.args, output=result.stdout, stderr=result.stderr
+    )
 
 
 def now() -> str:

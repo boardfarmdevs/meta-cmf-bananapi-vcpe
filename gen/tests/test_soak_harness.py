@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 HERE = Path(__file__).resolve().parent
 
@@ -84,6 +86,33 @@ def test_candidate_identity_probe_retries_a_lost_exec_transport():
 
     assert probe.call_count == 2
     sleep.assert_called_once_with(0.5)
+
+
+@pytest.mark.parametrize(
+    "script", ["wmediumd-client-carousel.py", "wmediumd-extender-outage.py"]
+)
+def test_scenario_read_retries_only_signal_terminated_lxc_transport(script):
+    scenario = load_script(script)
+    terminated = subprocess.CompletedProcess(["lxc", "exec"], -15, "", "lost")
+    completed = subprocess.CompletedProcess(["lxc", "exec"], 0, "pass\n", "")
+
+    with patch.object(
+        scenario.subprocess, "run", side_effect=[terminated, completed]
+    ) as probe, patch.object(scenario.time, "sleep") as sleep:
+        assert scenario.lxc("wlan-client", "ping") == "pass"
+
+    assert probe.call_count == 2
+    sleep.assert_called_once_with(0.5)
+
+
+def test_outage_read_preserves_a_real_command_failure_without_retry():
+    outage = load_script("wmediumd-extender-outage.py")
+    failed = subprocess.CompletedProcess(["lxc", "exec"], 1, "fail\n", "")
+
+    with patch.object(outage.subprocess, "run", return_value=failed) as probe:
+        assert outage.lxc("wlan-client", "ping") == "fail"
+
+    probe.assert_called_once()
 
 
 def test_stability_window_can_follow_a_separate_recovery_interval(monkeypatch):
