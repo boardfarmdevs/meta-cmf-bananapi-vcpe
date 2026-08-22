@@ -70,13 +70,80 @@ for (const station of cohortStations) {
     placement.to.x - bubble.offset.x,
     placement.to.y - bubble.offset.y
   );
-  assert.ok(distance + placement.iconSize / 2 + 28 <= bubble.radius + 0.001,
+  assert.ok(distance + placement.iconSize / 2 + 42 <= bubble.radius + 0.001,
     `${station.staMAC} was placed outside ${station.ssid}`);
 }
 assert.ok(controller.topologyNodeExtent({
   haulTypes: cohortHauls,
   STAList: cohortStations
 }) > 240, 'expanded SSID groups did not increase D3 collision spacing');
+
+const metricsUpdated = new Date().toISOString();
+controller.clients = [{
+  mac: '02:00:00:00:09:00',
+  client_metrics: {
+    rssi_dbm: -41,
+    rcpi: 138,
+    last_updated: metricsUpdated,
+    association_uptime_seconds: 10
+  }
+}];
+const liveSignal = controller.topologySignalForSTA({
+  staMAC: '02:00:00:00:09:00',
+  band: 1
+});
+assert.equal(liveSignal.available, true);
+assert.equal(liveSignal.rssi, -41);
+assert.equal(liveSignal.rcpi, 138);
+assert.equal(liveSignal.quality, 'strong');
+assert.equal(liveSignal.band, '5G');
+
+const uptimeOnlyChange = structuredClone(controller.clients);
+uptimeOnlyChange[0].client_metrics.association_uptime_seconds = 12;
+assert.equal(
+  controller.topologyClientMetricsSignature(controller.clients),
+  controller.topologyClientMetricsSignature(uptimeOnlyChange),
+  'association uptime would redraw the topology every two seconds'
+);
+const signalChange = structuredClone(controller.clients);
+signalChange[0].client_metrics.rssi_dbm = -72;
+assert.notEqual(
+  controller.topologyClientMetricsSignature(controller.clients),
+  controller.topologyClientMetricsSignature(signalChange),
+  'an RSSI change would not redraw the topology'
+);
+
+controller.clients = [{
+  mac: '02:00:00:00:13:00',
+  client_metrics: {
+    rssi_dbm: 0,
+    rcpi: 100,
+    last_updated: metricsUpdated
+  }
+}];
+const rcpiFallback = controller.topologySignalForSTA({
+  staMAC: '02:00:00:00:13:00',
+  band: 3
+});
+assert.equal(rcpiFallback.rssi, -60);
+assert.equal(rcpiFallback.quality, 'good');
+assert.equal(rcpiFallback.band, '6G');
+
+controller.clients[0].client_metrics.last_updated = '2000-01-01T00:00:00Z';
+const staleSignal = controller.topologySignalForSTA({
+  staMAC: '02:00:00:00:13:00',
+  band: 3
+});
+assert.equal(staleSignal.available, false);
+assert.equal(staleSignal.stale, true);
+assert.equal(staleSignal.label, 'stale');
+const visualizationSource = controller.updateTopologyVisualization.toString();
+assert.match(visualizationSource, /sta-signal-ring/,
+  'topology does not render the signal-quality ring');
+assert.match(visualizationSource, /sta-signal-label/,
+  'topology does not render the band and RSSI label');
+assert.match(controller.refreshTopologyData.toString(), /apiCall\('\/clients'\)/,
+  'topology refresh does not acquire the live client metrics snapshot');
 
 const renderTopology = controller.topologyRenderSnapshot(topology);
 renderTopology.nodes[0].x = 123;

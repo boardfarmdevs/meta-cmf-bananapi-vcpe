@@ -88,7 +88,7 @@ if [[ "$initial_rcpi" -le 0 ]]; then
 fi
 
 echo "client=$client_container mac=$client_mac serving_ap=$serving_ap bssid=$serving_bssid"
-echo "Open Connected Clients in the WebUI; Signal refreshes every two seconds."
+echo "Open Network Topology or Connected Clients in the WebUI; signal refreshes every two seconds."
 printf 'time\tclient\tbssid\trcpi\trssi_dbm\n'
 
 sample_api() {

@@ -1,0 +1,306 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: show live client signal in topology
+
+The topology identifies private and IoT clients but does not expose the link
+metric driving steering decisions. Join each topology STA to the authoritative
+client metrics snapshot by MAC, show its current band and RSSI below the stable
+name, and retain RCPI plus metrics age in the tooltip.
+
+Use a colored ring and compact legend for strong, good, fair and weak signal.
+Poll client metrics with topology every two seconds, redraw only when RSSI,
+RCPI, membership or freshness changes, and retain the existing drag and
+optimize-layout deferral. A client API failure leaves the prior signal snapshot
+in place rather than suppressing topology refresh.
+
+Upstream-Status: Inappropriate [lab WebUI presentation]
+---
+ src/rdkb-cli/static/index.html |   2 +-
+ src/rdkb-cli/static/script.js  | 178 ++++++++++++++++++++++++++++++++--
+ 2 files changed, 171 insertions(+), 9 deletions(-)
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2037,7 +2037,7 @@
+     <div id="toast-container" class="toast-container"></div>
+
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-ssid-cohorts-1"></script>
++    <script src="static/script.js?v=topology-live-signal-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -1121,8 +1121,7 @@
+       this.updateClient(data.client);
+       break;
+     case 'topology_change':
+-      const freshTopology = await this.apiCall('/topology');
+-      await this.updateTopology(freshTopology);
++      await this.refreshTopologyData();
+       break;
+     case 'security_event':
+       this.handleSecurityEvent(data.event);
+@@ -2700,6 +2699,103 @@
+     );
+   }
+
++  topologyClientMetricsSignature(clients = this.clients) {
++    return JSON.stringify((Array.isArray(clients) ? clients : []).map(client => {
++      const metrics = client?.client_metrics || {};
++      const rssi = Number(metrics.rssi_dbm);
++      const rcpi = Number(metrics.rcpi);
++      const updatedAt = Date.parse(metrics.last_updated || '');
++      const stale = Number.isFinite(updatedAt) && Date.now() - updatedAt > 20000;
++      return [
++        this.normalizeMac(client?.mac),
++        Number.isFinite(rssi) ? rssi : null,
++        Number.isFinite(rcpi) ? rcpi : null,
++        stale
++      ];
++    }).sort((left, right) => left[0].localeCompare(right[0])));
++  }
++
++  topologyBandLabel(band) {
++    if (Number(band) === 0) return '2.4G';
++    if (Number(band) === 1) return '5G';
++    if (Number(band) === 2 || Number(band) === 3) return '6G';
++    return '?G';
++  }
++
++  topologySignalForSTA(sta) {
++    const mac = this.normalizeMac(sta?.staMAC);
++    const client = this.clients.find(item => this.normalizeMac(item?.mac) === mac);
++    const metrics = client?.client_metrics || {};
++    const rawRSSI = Number(metrics.rssi_dbm);
++    const rcpi = Number(metrics.rcpi);
++    const hasRSSI = Number.isFinite(rawRSSI) && rawRSSI < 0 && rawRSSI >= -110;
++    const hasRCPI = Number.isInteger(rcpi) && rcpi > 0 && rcpi <= 220;
++    const rssi = hasRSSI ? Math.round(rawRSSI) :
++      (hasRCPI ? Math.round(rcpi / 2 - 110) : null);
++    const updatedAt = Date.parse(metrics.last_updated || '');
++    const ageMs = Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : null;
++    const stale = rssi !== null && ageMs !== null && ageMs > 20000;
++    const available = rssi !== null && !stale;
++
++    let quality = 'unknown';
++    let color = '#6b7280';
++    if (available && rssi >= -55) {
++      quality = 'strong';
++      color = '#15803d';
++    } else if (available && rssi >= -67) {
++      quality = 'good';
++      color = '#2563eb';
++    } else if (available && rssi >= -75) {
++      quality = 'fair';
++      color = '#d97706';
++    } else if (available) {
++      quality = 'weak';
++      color = '#dc2626';
++    }
++
++    return {
++      available,
++      stale,
++      rssi,
++      rcpi: hasRCPI ? rcpi : null,
++      ageMs,
++      quality,
++      color,
++      band: this.topologyBandLabel(sta?.band),
++      label: available ? `${rssi} dBm` : (stale ? 'stale' : 'N/A')
++    };
++  }
++
++  updateTopologyClients(clients) {
++    const next = Array.isArray(clients) ? clients : [];
++    const changed = this.topologyClientMetricsSignature(next) !==
++      this.topologyClientMetricsSignature(this.clients);
++    this.clients = next;
++    return changed;
++  }
++
++  requestTopologyRender() {
++    if ((this.topologyInteractionDepth || 0) > 0 || this.topologyLayoutInProgress) {
++      this.topologyRenderPending = true;
++      return;
++    }
++    this.updateTopologyVisualization();
++  }
++
++  async refreshTopologyData() {
++    const topologyRequest = this.apiCall('/topology');
++    const clientsRequest = this.apiCall('/clients').catch(error => {
++      console.warn('Keeping the previous topology signal snapshot:', error);
++      return null;
++    });
++    const [topology, clientsResponse] = await Promise.all([topologyRequest, clientsRequest]);
++    const metricsChanged = clientsResponse
++      ? this.updateTopologyClients(clientsResponse.clients)
++      : false;
++    const topologyChanged = this.applyTopologyRefresh(topology);
++    if (metricsChanged && !topologyChanged) this.requestTopologyRender();
++  }
++
+   /**
+    * Apply a live topology snapshot without interrupting an operator gesture.
+    * A running controller must always be present, so an empty snapshot after a
+@@ -2821,6 +2917,7 @@
+     svg.call(zoom);
+     svg.call(zoom.transform, this.zoomTransformCache);
+     this.topologyView = { svg, group: svgGroup, zoom, width, height };
++    this.drawTopologySignalLegend(svg);
+
+     // Normalize node and edge IDs to strings
+     renderTopology.nodes.forEach(n => n.id = String(n.id));
+@@ -2859,6 +2956,7 @@
+       '0': '#8B4513',
+       '1': '#5a82c2ff',
+       '2': '#d83131ff',
++      '3': '#d83131ff',
+     };
+
+     const bandWavelengths = {
+@@ -2866,6 +2964,7 @@
+       '0': 25,
+       '1': 15,
+       '2': 10,
++      '3': 10,
+       'default': 20
+     };
+
+@@ -3005,6 +3104,7 @@
+             return {
+               nodeRef: d,
+               sta,
++              signal: self.topologySignalForSTA(sta),
+               ...self.topologySTAPlacement(sta, staList, haulGeometry)
+             };
+           });
+@@ -3030,6 +3130,17 @@
+           const iconUrl = self.getClientIcon(sta.clientType, sta.ssid);
+           const staIdentity = self.getSTAIdentity(sta);
+
++          staElement.append('circle')
++            .attr('class', 'sta-signal-ring')
++            .attr('cx', to.x)
++            .attr('cy', to.y)
++            .attr('r', data.iconSize / 2 + 4)
++            .attr('fill', 'rgba(255,255,255,0.72)')
++            .attr('stroke', data.signal.color)
++            .attr('stroke-width', data.signal.available ? 3 : 1.5)
++            .attr('stroke-dasharray', data.signal.available ? null : '3 3')
++            .style('pointer-events', 'none');
++
+           staElement.append('image')
+            .attr('xlink:href', iconUrl)
+            .attr('x', to.x - data.iconSize / 2)
+@@ -3041,9 +3152,15 @@
+               if (sta.MLDAddr && sta.MLDAddr !== '') {
+                 mldInfo = `<br>MLD Address: ${sta.MLDAddr}`;
+               }
++              const freshnessInfo = data.signal.ageMs !== null
++                ? `, ${Math.round(data.signal.ageMs / 1000)}s old`
++                : '';
++              const signalInfo = data.signal.available
++                ? `${data.signal.rssi} dBm${data.signal.rcpi !== null ? ` (RCPI ${data.signal.rcpi})` : ''}${freshnessInfo}`
++                : (data.signal.stale ? 'Stale metrics' : 'N/A');
+               tooltip.style('display', 'block')
+               .html(`<b>${staIdentity}</b><br>Type: ${sta.ssid === 'iot_ssid' ?
+-                'IoT device' : (sta.clientType || 'Unknown')}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}`);
++                'IoT device' : (sta.clientType || 'Unknown')}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}<br>Band: ${data.signal.band}<br>Signal: ${signalInfo}`);
+             })
+            .on('mousemove', function(event) {
+               self.positionTooltip(event, tooltip);
+@@ -3064,6 +3181,20 @@
+             .attr('paint-order', 'stroke')
+             .style('pointer-events', 'none')
+             .text(staIdentity);
++
++          staElement.append('text')
++            .attr('class', 'sta-signal-label')
++            .attr('x', to.x)
++            .attr('y', to.y + data.iconSize / 2 + 23)
++            .attr('text-anchor', 'middle')
++            .attr('font-size', '9px')
++            .attr('font-weight', '700')
++            .attr('fill', data.signal.color)
++            .attr('stroke', '#fff')
++            .attr('stroke-width', 3)
++            .attr('paint-order', 'stroke')
++            .style('pointer-events', 'none')
++            .text(`${data.signal.band} · ${data.signal.label}`);
+         });
+
+       }
+@@ -3252,7 +3383,7 @@
+         offset: { x: 0, y: 0 }, radius: 80
+       };
+     const iconSize = Math.max(26, 44 - Math.max(0, cohortCount - 8));
+-    const usableRadius = Math.max(0, target.radius - iconSize / 2 - 28);
++    const usableRadius = Math.max(0, target.radius - iconSize / 2 - 42);
+     const radial = cohortCount === 1
+       ? 0
+       : usableRadius * Math.sqrt((cohortIndex + 0.5) / cohortCount);
+@@ -3268,6 +3399,39 @@
+     };
+   }
+
++  drawTopologySignalLegend(svg) {
++    const entries = [
++      { label: 'Strong >=-55', color: '#15803d' },
++      { label: 'Good -56..-67', color: '#2563eb' },
++      { label: 'Fair -68..-75', color: '#d97706' },
++      { label: 'Weak <-75', color: '#dc2626' }
++    ];
++    const legend = svg.append('g')
++      .attr('class', 'topology-signal-legend')
++      .attr('transform', 'translate(14,18)');
++    legend.append('rect')
++      .attr('x', -8).attr('y', -14)
++      .attr('width', 452).attr('height', 34)
++      .attr('rx', 6)
++      .attr('fill', '#fff').attr('opacity', 0.88)
++      .attr('stroke', '#d1d5db');
++    legend.append('text')
++      .attr('x', 0).attr('y', 8)
++      .attr('font-size', '10px').attr('font-weight', '700')
++      .attr('fill', '#374151').text('Signal');
++    const item = legend.selectAll('g.signal-quality')
++      .data(entries).enter().append('g')
++      .attr('class', 'signal-quality')
++      .attr('transform', (_entry, index) => `translate(${52 + index * 100},0)`);
++    item.append('circle')
++      .attr('cx', 0).attr('cy', 4).attr('r', 4)
++      .attr('fill', entry => entry.color);
++    item.append('text')
++      .attr('x', 8).attr('y', 8)
++      .attr('font-size', '9px').attr('fill', '#374151')
++      .text(entry => entry.label);
++  }
++
+   /**
+    * generate the sign wave connecting to node and STA
+    */
+@@ -3433,8 +3597,7 @@
+         await this.refreshClients();
+         break;
+       case 'topology':
+-        const freshTopology = await this.apiCall('/topology');
+-        await this.updateTopology(freshTopology);
++        await this.refreshTopologyData();
+         break;
+       case 'performance':
+         await this.loadPerformanceData();
+@@ -3926,8 +4089,7 @@
+       if (this.currentTab === 'topology' && !this.topologyRefreshInFlight) {
+         this.topologyRefreshInFlight = true;
+         try {
+-          const response = await this.apiCall('/topology');
+-          this.applyTopologyRefresh(response);
++          await this.refreshTopologyData();
+         } catch (error) {
+           console.error('Failed to refresh topology:', error);
+           this.showNotification('Failed to refresh topology', 'error');
+--
+2.43.0
