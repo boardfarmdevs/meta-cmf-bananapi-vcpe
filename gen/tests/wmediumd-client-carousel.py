@@ -52,7 +52,7 @@ def lxc(container: str, command: str) -> str:
             text=True,
             capture_output=True,
         )
-        if result.returncode >= 0:
+        if 0 <= result.returncode < 128:
             return result.stdout.strip()
         if attempt < 3:
             time.sleep(0.5 * attempt)

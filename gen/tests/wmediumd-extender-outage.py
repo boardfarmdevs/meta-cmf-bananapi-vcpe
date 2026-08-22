@@ -38,10 +38,10 @@ def lxc(container: str, command: str) -> str:
             text=True,
             capture_output=True,
         )
-        # A non-negative status belongs to the command inside the container;
-        # callers intentionally interpret its output.  A signal means the LXC
-        # transport itself disappeared and a read-only retry is safe.
-        if result.returncode >= 0:
+        # Statuses below 128 belong to the command inside the container;
+        # callers intentionally interpret its output.  LXD may expose a lost
+        # signal as either -N or 128+N, so both forms receive a read-only retry.
+        if 0 <= result.returncode < 128:
             return result.stdout.strip()
         if attempt < 3:
             time.sleep(0.5 * attempt)

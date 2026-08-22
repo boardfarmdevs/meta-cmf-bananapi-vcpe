@@ -307,7 +307,7 @@ def traffic_one(client: str) -> dict[str, object]:
             text=True,
             capture_output=True,
         )
-        if result.returncode >= 0:
+        if 0 <= result.returncode < 128:
             break
         if attempt < 3:
             time.sleep(0.5 * attempt)

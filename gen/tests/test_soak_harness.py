@@ -91,9 +91,14 @@ def test_candidate_identity_probe_retries_a_lost_exec_transport():
 @pytest.mark.parametrize(
     "script", ["wmediumd-client-carousel.py", "wmediumd-extender-outage.py"]
 )
-def test_scenario_read_retries_only_signal_terminated_lxc_transport(script):
+@pytest.mark.parametrize("transport_status", [-15, 143])
+def test_scenario_read_retries_only_signal_terminated_lxc_transport(
+    script, transport_status
+):
     scenario = load_script(script)
-    terminated = subprocess.CompletedProcess(["lxc", "exec"], -15, "", "lost")
+    terminated = subprocess.CompletedProcess(
+        ["lxc", "exec"], transport_status, "", "lost"
+    )
     completed = subprocess.CompletedProcess(["lxc", "exec"], 0, "pass\n", "")
 
     with patch.object(
@@ -115,9 +120,14 @@ def test_outage_read_preserves_a_real_command_failure_without_retry():
     probe.assert_called_once()
 
 
-def test_soak_traffic_retries_transport_signal_but_not_ping_failure():
+@pytest.mark.parametrize("transport_status", [-15, 143])
+def test_soak_traffic_retries_transport_signal_but_not_ping_failure(
+    transport_status,
+):
     soak = load_script("p0-churn-soak.py")
-    terminated = subprocess.CompletedProcess(["lxc", "exec"], -15, "", "lost")
+    terminated = subprocess.CompletedProcess(
+        ["lxc", "exec"], transport_status, "", "lost"
+    )
     ping_failed = subprocess.CompletedProcess(
         ["lxc", "exec"], 1, "3 packets transmitted, 0 received, 100% packet loss\n", ""
     )
