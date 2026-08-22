@@ -212,8 +212,25 @@ def radio_disconnected(observation: dict) -> bool:
 
 def set_client_link(clients: list[dict], state: str) -> None:
     for client in clients:
-        run("lxc", "exec", client["container"], "--",
-            "ip", "link", "set", "wlan0", state)
+        for attempt in range(1, 4):
+            result = subprocess.run(
+                (
+                    "lxc", "exec", client["container"], "--", "ip", "link",
+                    "set", "wlan0", state,
+                ),
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                break
+            signal_status = result.returncode < 0 or result.returncode >= 128
+            if not signal_status or attempt == 3:
+                raise subprocess.CalledProcessError(
+                    result.returncode, result.args,
+                    output=result.stdout, stderr=result.stderr,
+                )
+            time.sleep(0.5 * attempt)
 
 
 def relevant_log_lines(text: str, identities: set[str]) -> str:

@@ -158,6 +158,36 @@ def test_soak_traffic_check_is_sequential_and_ordered():
     assert [result["client"] for result in results] == list(soak.CLIENTS)
 
 
+@pytest.mark.parametrize("transport_status", [-15, 143])
+def test_carousel_retries_idempotent_link_state_after_transport_signal(
+    transport_status,
+):
+    carousel = load_script("wmediumd-client-carousel.py")
+    terminated = subprocess.CompletedProcess(
+        ["lxc", "exec"], transport_status, "", "lost"
+    )
+    completed = subprocess.CompletedProcess(["lxc", "exec"], 0, "", "")
+
+    with patch.object(
+        carousel.subprocess, "run", side_effect=[terminated, completed]
+    ) as command, patch.object(carousel.time, "sleep") as sleep:
+        carousel.set_client_link([{"container": "wlan-client"}], "up")
+
+    assert command.call_count == 2
+    sleep.assert_called_once_with(0.5)
+
+
+def test_carousel_does_not_retry_real_link_state_failure():
+    carousel = load_script("wmediumd-client-carousel.py")
+    failed = subprocess.CompletedProcess(["lxc", "exec"], 1, "", "denied")
+
+    with patch.object(carousel.subprocess, "run", return_value=failed) as command:
+        with pytest.raises(subprocess.CalledProcessError):
+            carousel.set_client_link([{"container": "wlan-client"}], "up")
+
+    command.assert_called_once()
+
+
 def test_stability_window_can_follow_a_separate_recovery_interval(monkeypatch):
     outage = load_script("wmediumd-extender-outage.py")
 
