@@ -27,7 +27,7 @@ proposals is a projection rather than a measured result.
 Cold bring-up creates a temporary controller allocation pulse while agent,
 radio and BSS records are configured. The pulse is released after convergence.
 This run found no retained bring-up growth. It is not, however, a substitute for
-the deferred 12-hour stability run.
+the 12-hour stability run now active on the three 0822 targets.
 
 A later multi-day observation found an independent 15-minute SNMP self-heal
 process-multiplication defect. The bounded profile below ended with one
@@ -377,8 +377,9 @@ retention and failure recovery active.
    layout.
 8. Extend the accepted two-interval SNMP check with an explicit forced recovery
    and verify that it still leaves exactly one daemon and no wrapper.
-9. Run the explicitly deferred 12-hour churn/steady-state test when authorized
-   and compare start, post-churn and final PSS by service.
+9. Complete the active 0822 12-hour churn/steady-state test and compare start,
+   post-churn and final PSS by service; do not report a growth result before
+   the final summaries are written.
 
 ## Reproducing the profile
 

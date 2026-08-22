@@ -52,22 +52,24 @@ be used to claim policy quality until the preceding acceptance gates pass.
    - **Three-run reconstruction gate closed on 2026-08-19:** consecutive runs
      passed in 805, 800 and 802 seconds with `5/15/50/14`, 10/10 live clients,
      a 120-second stable window, zero monitored restarts and 10/10 traffic.
-   - The 12-hour alternating carousel/outage soak remains deliberately
-     deferred; do not treat the three cold runs as a substitute.
+   - A 12-hour alternating carousel/outage soak was started on rev130 and both
+     0821 VMs on 2026-08-22. It remains in progress; do not treat a running
+     unit or the three cold runs as a completed acceptance result.
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
    unsupported startup clones and valid cloned frames rejected during normal
    scan/channel receive-state gaps. wmediumd now requires current frequency
    evidence and downgrades only its own tracked transient clone rejection.
    A two-round paired carousel converged and restored with zero command-2
    diagnostics while an unrelated command-3 error remained visible.
-6. **Cold-reconstruction footprint closed; long-growth gate deferred:** the
+6. **Cold-reconstruction footprint closed; long-growth gate in progress:** the
    15-minute whole-container profile sampled one complete cold reconstruction.
    The 1 GiB `bpibroadband` cgroup peaked at 311.57 MiB and converged at
    266.10 MiB with no swap, pressure, limit or OOM events. Converged aggregate
    process PSS was 281.95 MiB; `em_ctrl`/`em_cli` were 22.92/81.03 MiB PSS.
    Bring-up allocator pulses were released. See
    [memory-footprint.md](memory-footprint.md). PSS growth from hour 1 to hour 12
-   remains intentionally unmeasured until the deferred soak is authorized.
+   is now being measured by the three-target 0822 soak and has no result until
+   each final summary is written.
 
 Exit gate status: **P0 functional acceptance is closed.** In addition to the
 earlier three-run gate, the final metrics/uptime image passed a fresh rev130
@@ -75,24 +77,26 @@ cold reconstruction on 2026-08-20 in 866 seconds with `5/15/50/14`, 10/10
 live clients, 10/10 non-zero RCPI and association uptime, a 120-second stable
 window, zero monitored restarts and 10/10 traffic. All five BPI containers had
 exactly one `snmp_subagent`, and the controller logged zero AP Metrics Response
-validation failures. The 12-hour churn test is a deliberately deferred
-long-duration characterization task; it is not a blocker for starting P1 and
-must not be claimed as completed.
+validation failures. The 12-hour churn test is now an active long-duration
+characterization task; it was not a blocker for starting P1 and must not be
+claimed as completed until all three final summaries pass.
 
 ### P1 — Freeze the optimizer integration contract
 
 The optimizer remains a host-side Python component. Do not put policy logic in
 the BPI images.
 
-**Started 2026-08-20:** `gen/optimizer` now contains the controller observer,
-immutable snapshot, pure threshold policy, replay state, append-only journal,
-narrow actuator and verifier. Its unit/replay/scenario tests pass, and a live
-rev130 read-only run captured 5 mesh devices/10 clients while correctly
-abstaining because the current API does not provide trustworthy metric
-freshness or candidate-link observations. The capability/exposure matrix and
-exact next adapter boundary are in [optimizer.md](optimizer.md). An ignored
-BTM attempt now becomes an explicit association-timeout outcome with bounded
-exponential failure backoff, so `NoDisconnect` cannot cause blind retry loops.
+**Same-band vertical slice accepted 2026-08-21:** `gen/optimizer` contains the
+controller observer, immutable Snapshot v1, pure threshold policy, replay
+state, append-only journal, narrow actuator and verifier. Associated and
+same-band candidate RCPI now carry controller receipt time. A ten-client live
+cycle performs seven bounded Unassociated STA Link Metrics transactions and
+returns 40 exact-BSSID candidates without reading scenario truth. The isolated
+crossover produced one recommendation and one bounded act converged in 3.04
+seconds. An ignored BTM becomes an explicit association-timeout outcome with
+bounded exponential failure backoff, so `NoDisconnect` cannot cause blind
+retry loops. The remaining measurement boundary is exact-BSSID cross-band
+evidence plus client capability; live band-upgrade action stays inhibited.
 
 ```text
 EasyMesh observations                  EasyMesh actions
@@ -115,34 +119,39 @@ Implement three narrow adapters:
 - `verifier`: client link, controller model, API parent, traffic and protocol
   result convergence.
 
-The current `/topology`, `/clients`, RCPI reporting and `steer.sh` provide much
-of the vertical slice. The main open interface question is trustworthy target
-quality. Build a capability matrix for Associated STA Link Metrics, AP Metrics,
-Beacon Metrics and Unassociated STA Link Metrics. Where a standard measurement
-exists but is not exposed, add only a read-only EasyMesh adapter. Never replace
-missing candidate measurements with wmediumd SNR.
+The current `/topology`, `/clients`, `/bsses`, associated RCPI reporting,
+`/unassoc_sta_query` and `steer.sh` provide the same-band vertical slice. The
+main open interface question is trustworthy cross-band target quality and
+client capability. Continue the capability matrix for Beacon/Probe evidence
+without changing the boundary: where a standard measurement exists but is not
+exposed, add only a read-only EasyMesh adapter. Never replace missing candidate
+measurements with wmediumd SNR.
 
 Exit gate: `observe` records fresh current and candidate facts; `act` performs
 one bounded steer; neither policy code nor wmediumd truth crosses the adapters.
 
 ### P2 — Build a replayable policy harness
 
-Create `gen/optimizer/` with four execution modes:
+**Core harness complete:** `gen/optimizer/` exposes the following execution
+modes. Continue adding policies and adapters without creating a second runner.
 
 | Mode | Purpose |
 | --- | --- |
-| `capture` | Record raw observations and outcomes without a policy |
+| `observe` | Record raw controller inputs and normalized snapshots without a policy |
+| `evaluate` | Validate and evaluate one team-supplied Snapshot v1 |
 | `replay` | Feed a previous observation stream to policy code deterministically |
 | `recommend` | Run live policy state but never issue a steer |
 | `act` | Issue and verify actions after all safety gates pass |
+| `simulate` | Exercise the same policy core with explicitly synthetic observations |
 
 Each decision record needs the input snapshot, age of every measurement,
 candidate filters, scores, prior state, selected action or explicit no-action
 reason, policy/configuration hash and outcome. Make the policy core a pure
 function over snapshot plus prior state so algorithms can be compared offline.
 
-Exit gate: replaying a run produces byte-equivalent recommendations and state
-transitions without a live lab.
+Exit gate status: hash-chain validation and deterministic replay are covered by
+the package tests. New policy plug-ins must retain byte-equivalent
+recommendations and state transitions without a live lab.
 
 ### P3 — Establish baselines before claiming novelty
 

@@ -97,7 +97,7 @@ gen/tests/steering-matrix.sh       portable ten-client steering acceptance
 gen/tests/health-audit.sh          topology, restart and traffic audit
 gen/tests/p0-cold-reconstruction.sh repeatable managed cold-reconstruction gate
 gen/tests/bpibroadband-memory-profile.py whole-container PSS/RSS/storage profile
-gen/tests/p0-churn-soak.py          deferred long-duration P0 gate; not routine
+gen/tests/p0-churn-soak.py          requirements-driven long-duration gate
 ```
 
 The packaged rev150 VM normally installs its runtime source at

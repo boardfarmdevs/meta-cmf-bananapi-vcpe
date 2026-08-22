@@ -6,6 +6,10 @@ The steering optimizer is a completely external component. It runs on the lab
 host or Vagrant VM, outside every BPI container and outside the EasyMesh,
 OneWifi, WebUI and wmediumd processes.
 
+For installation, operating commands, input schemas, adapter examples and
+policy extension, use the companion [optimizer user and extension
+manual](optimizer-manual.md).
+
 The optimizer owns all optimization behavior:
 
 - measurement interpretation and freshness rules;
@@ -163,7 +167,7 @@ know local protocol state, but neither selects the target for this experiment.
 | live topology | controller/WebUI | external observer | compact `/api/v1/topology` supplies nodes/client placement; `/api/v1/bsses` supplies controller-owned fronthaul BSSID/device/radio/band/SSID identity |
 | live association | controller/WebUI | external observer/verifier | Parent agent and STA MAC in `/api/v1/topology` and `/api/v1/clients` |
 | current-link metrics | EasyMesh reports/queries | external observer | Live associated-client RCPI/rates/counters are available from `/api/v1/clients` |
-| candidate-link metrics | EasyMesh reports/queries | external observer | Read-only adapter/capability evaluation still required |
+| candidate-link metrics | EasyMesh Unassociated STA Link Metrics | external observer | Active same-band query returns timestamped RCPI mapped from Agent/RUID to exact BSSID; hwsim requires explicit simulator opt-in |
 | policy baseline | operator/external setup | controller and agents | Reporting/exclusion configuration; local agent steering set to mode 0 |
 | steer action | external actuator | controller | `steer.sh STA TARGET_BSSID` at the current implementation stage |
 | protocol action | controller | source agent | EasyMesh Client Steering Request in Mandate mode |
@@ -177,18 +181,24 @@ know local protocol state, but neither selects the target for this experiment.
 derive identity, association placement and target BSS identity from the current
 controller tree. WebSocket initial state uses the same live inventory.
 `/api/v1/clients` joins the controller's detailed associated-STA report by MAC
-and exposes real RCPI, derived dBm, rate and traffic fields when present.
-`/api/v1/bsses` deliberately exposes no candidate quality. Unknown values
-remain unavailable rather than being invented. Performance, interference and
-other demonstration endpoints still contain non-authoritative data and must
-not be optimizer inputs.
+and exposes real RCPI, derived dBm, rate, counters, association uptime and the
+report receipt timestamp. `/api/v1/bsses` deliberately exposes identity rather
+than invented quality. The observer actively POSTs
+`/api/v1/unassoc_sta_query`, groups clients per Agent radio, and maps each
+timestamped response RUID to an exact BSSID. Inventory entries with no response
+remain unknown and cannot trigger an action.
 
-The first implementation task is therefore to normalize the working
-associated-client observation and add only the missing AP/candidate-link facts.
-The adapter should expose timestamped raw EasyMesh measurements without scoring
-them. If a small native bridge is required at the controller boundary, it
-remains an interface adapter only: no optimizer state or algorithm may enter
-the image.
+The hwsim provider measures at the simulated-radio/HAL boundary and labels the
+response simulated. The optimizer accepts it only with an explicit lab-only
+flag. The query listens on the channel where a STA currently transmits, so it
+provides same-band candidates. Live cross-band policy still needs
+Beacon/Probe/capability observations. Performance, interference and other
+demonstration endpoints remain non-authoritative and must not be optimizer
+inputs.
+
+Native controller code remains an interface adapter: it correlates commands
+and exposes measurements, but contains no optimizer state, ranking, target
+selection or policy algorithm.
 
 Direct MariaDB and `iw` reads are useful acceptance oracles. They must not
 become the durable optimizer API because they bypass the EasyMesh observation
@@ -249,6 +259,8 @@ Its execution modes are:
 | `observe` | Collect and record real snapshots; never recommend or steer |
 | `recommend` | Run the complete state machine and record decisions; never act |
 | `act` | Issue one validated action and verify the complete outcome |
+| `evaluate` | Validate and evaluate one team-supplied plain Snapshot v1; never act |
+| `replay` | Re-evaluate a hash-chained chronological snapshot journal |
 | `simulate` | Run synthetic EasyMesh-shaped telemetry from a verified golden world; never a live claim |
 | `backhaul-plan` | Build a recommendation-only weighted loop-free backhaul tree |
 | `width-plan` | Produce explained recommendation-only channel-width choices |
@@ -343,17 +355,22 @@ steer should have worked.
 
 ## Health and safety gates
 
-Action mode is inhibited unless all of these are true:
+The optimizer code inhibits an action unless all of these are true:
 
-- expected `5/15/50` model and 10/10 active clients are present;
+- expected five non-controller mesh-device records and 10/10 active clients
+  are present;
 - the STA has one current association and a fresh current-link measurement;
 - the target BSSID exists, is not the source and is eligible for the STA;
 - candidate measurements are fresh and exceed the configured margin;
 - minimum dwell and condition-hold periods are satisfied;
-- no steering transaction or cooldown exists for the STA;
-- wmediumd is healthy, but its link values are not read by the decision engine;
-- controller/agent/OneWifi services have not restarted; and
-- the experiment recorder is writable.
+- no steering transaction, failure backoff or cooldown exists for the STA; and
+- the operator supplied the explicit act confirmation.
+
+The live test harness must additionally require the complete `5/15/50`
+controller model, healthy wmediumd, no controller/agent/OneWifi restart, a
+writable journal and complete post-action traffic/model agreement. These are
+acceptance gates around the optimizer; the policy does not read wmediumd or
+service-manager state.
 
 Missing, contradictory or stale data results in `NO_ACTION`, never an inferred
 value or optimistic steer.
@@ -363,12 +380,13 @@ value or optimistic steer.
 1. **Associated-link vertical slice — complete.** Live client identities,
    placement and changing reported RCPI are exposed; a reversible wmediumd run
    moved controller RCPI from 138 to 88 and back without injecting a value.
-2. **Candidate observation and observe mode.** Expose fresh target/AP facts and
-   record normalized snapshots from the pinned rev130 scenario.
-3. **Recommend mode.** Replay snapshots through a deterministic state machine
-   and require exactly one recommendation in the active crossover.
-4. **Act mode.** Use the proven `steer.sh` adapter, bounded verification and
-   cooldown.
+2. **Candidate observation — complete for same-band hwsim.** Correlated target
+   facts and per-result receipt time are mapped to exact target BSSIDs.
+3. **Recommend mode — implemented.** Replay and live snapshots use the same
+   deterministic state machine; the isolated five-AP crossover requires one
+   unique target.
+4. **Act mode — implemented and explicitly gated.** The proven `steer.sh`
+   adapter, bounded verifier, cooldown and failure backoff are in place.
 5. **Scale and fault tests.** Ten clients, four extenders, stale metrics,
    rejected BTM, missing target, delayed model convergence and process loss.
 6. **Optional API hardening.** Replace `lxc exec` with authenticated observation
@@ -376,78 +394,68 @@ value or optimistic steer.
 
 ## P1 implementation status
 
-The first host-side package now exists in `gen/optimizer`. It implements the
-immutable snapshot, controller observer, pure threshold/margin/hold/dwell/
-cooldown state machine, deterministic replay, hash-chained journal, narrow
-`gen/steer.sh` actuator and bounded association verifier. It has no wmediumd
-import or simulator-truth input.
+The host-side package in `gen/optimizer` implements immutable Snapshot v1,
+controller and candidate adapters, a pure threshold/margin/hold/dwell/cooldown
+state machine, plain-JSON evaluation, deterministic replay, a hash-chained
+journal, the narrow `gen/steer.sh` actuator and bounded association verifier.
+It imports no wmediumd state in its live observation or decision path.
 
-A live rev130 read-only check captured 5 mesh devices and 10 clients twice.
-`recommend` correctly produced zero steering actions and the explicit reason
-`current_metric_freshness_unknown` for all clients. This is not a failed policy
-test: the current `/clients` endpoint rewrites `last_updated` when the API is
-read, so that field cannot prove when the agent measured RCPI. The current
-`/topology` projection also supplied no target-BSS list to this observer run.
+Associated and candidate metrics carry controller receipt times. Candidate
+requests are serialized by Agent radio and the controller retires a completed
+command synchronously when its correlated response is retained, so an
+immediate next request is admitted. Collection failure aborts the complete
+snapshot; optional non-acting soak behavior records and skips that cycle rather
+than evaluating partial candidates.
 
 ### Measurement capability and exposure matrix
 
 | Fact or mechanism | Standard/native implementation | Controller state | External exposure now | P1 disposition |
 | --- | --- | --- | --- | --- |
 | current association | topology notifications, Associated Clients repair | current STA owner and BSSID | `/clients` | use now |
-| associated-link RCPI/rates/counters | periodic AP Metrics Response and Associated STA Link Metrics | persisted in STA model | `/clients`, but exact measurement time absent | use value; abstain on freshness until receipt time is exposed |
+| associated-link RCPI/rates/counters | periodic AP Metrics Response and Associated STA Link Metrics | persisted with report receipt time | `/clients` with receipt time | use now with freshness gate |
 | AP/BSS utilization | AP Metrics and Radio Metrics TLVs | parser and model fields exist | values reach current model; hwsim HAL reports zero | expose with receipt time, but do not score zero synthetic survey data |
 | candidate BSS identity | device/radio/BSS model | BSSList contains target identities | `/bsses` returns 30 fronthaul identities across five devices and three bands | use now; unknown quality remains unknown |
-| Unassociated STA Link Metrics | Profile-3 CMDU and OneWifi method/event pieces exist but are not connected correctly | controller response parser can store RCPI/time-delta | POST `/api/v1/unassoc_sta_query` reports command submission only; no result GET/receipt timestamp | repair the four audited boundaries below, then add correlated result exposure |
+| Unassociated STA Link Metrics | Profile-3 CMDU, OneWifi method/event and hwsim provider | controller correlates MID, Agent/RUID, STA, opclass, channel, RCPI and receipt time | POST `/api/v1/unassoc_sta_query` waits for and returns correlated measurements | use now for same-band hwsim with explicit simulator opt-in |
 | Beacon Metrics | query/response handlers and agent RBus beacon-report path exist | raw measurement-report elements are copied into the STA model | no external query/result API and no decoded candidate RCPI | evaluate after unassociated metrics; decode only required fields |
 | client capability/BTM support | client capability query/report and reassociation parsing | capability data exists in STA model | not normalized for optimizer filtering | add read-only capability flags |
 | steering | Client Steering Request, BTM, ACK/report | proven controller/agent transaction | `gen/steer.sh` | use through narrow actuator |
 
-The shortest sound next slice is therefore not a scoring change. It is a
-read-only controller adapter that returns correlated observation identity,
-source, value, measurement age/receipt time and status for BSS inventory,
-associated-link and Unassociated STA Link Metrics. Until that exists, live
-recommend/act remain safely inhibited while capture and deterministic replay
-are usable.
+The next measurement slice is cross-band evidence and client capability, not a
+shortcut through scenario truth. Beacon/probe observations must name exact
+BSSID/band, source and receipt time before live band-upgrade action is enabled.
 
-### Unassociated-metrics boundary audit (2026-08-21)
+### Unassociated-metrics boundary resolution (2026-08-21)
 
-A source audit, compile test and targeted rev130 diagnostic separated four
-independent defects. None is currently hidden by an optimizer workaround:
+The earlier source audit separated radio selection/state, RBus method/event,
+payload-shape, hwsim-provider, result-correlation and HTTP semantic defects.
+The layer repairs each boundary without moving policy into the BPI:
 
-1. The controller chooses the first radio object for the requested Agent and
-   starts the command only from `configured`. A live request selected the 6 GHz
-   radio for a 5 GHz query and timed out while the otherwise complete runtime
-   radio state was `channel_selected`. Candidate selection must match the
-   requested operating class and accept operational synchronized/selected
-   states without prematurely completing the command.
-2. The Agent writes the nonexistent `Device.WiFi.UnAssoc.STA` property. OneWifi
-   actually registers the per-VAP
-   `Device.WiFi.AccessPoint.{i}.X_RDKCENTRAL-COM_GetNaSta` method and publishes
-   `Device.WiFi.EM.NaStaResponse`.
-3. OneWifi publishes a flat
-   `UnassociatedSTALinkMetricsResponse.sta_list`, while the Agent parser expects
-   different nesting and would discard a valid physical result.
-4. The generic hwsim Wi-Fi HAL implementation of `wifi_getNASta` returns
-   `WIFI_HAL_ERROR`; only the MXL-specific branch has a measurement provider.
-   Correcting orchestration and JSON cannot create candidate RCPI in this lab.
+1. controller orchestration selects the requested Agent radio/opclass and
+   admits operational radio states;
+2. the Agent invokes OneWifi's real per-VAP `GetNaSta` method and consumes
+   `Device.WiFi.EM.NaStaResponse`;
+3. producer and parser share the flat STA-list contract;
+4. hwsim obtains read-only candidate quality at the simulated-radio medium
+   boundary and labels the result simulated;
+5. controller and Agent correlate message IDs and retain RCPI with receipt
+   time; and
+6. HTTP waits for a semantic result and returns provider, simulated flag and
+   measurements rather than command submission alone.
 
-The REST handler also returns `success: true` whenever native command execution
-returns a tree; it does not expose `not-ready`, timeout, ACK or measurement
-status. A safe adapter therefore needs a transaction ID and semantic status,
-not merely a new GET over the current POST.
-
-A local prototype connecting items 1–3 compiled successfully, but the runtime
-could not cross item 4 and the accepted binaries were restored. It is not in
-the layer patch set. The next implementation should first define an hwsim
-measurement provider at the simulated radio/HAL boundary—not inside the
-optimizer—then land and test the generic control/schema repair end to end.
+Multi-Agent collection exposed one additional lifecycle race: the first result
+was externally visible before its active orchestrator command was retired. An
+immediate second query was silently treated as already in progress and HTTP
+returned 504. The controller now completes that command when the correlated
+response is retained. This is a generic command-lifecycle correction, not an
+optimizer retry workaround.
 
 Scenario preparation is also implemented. Two 2D Agent layouts, ten mobility/
 presence worlds and five separate traffic profiles expand into a deterministic
-148-case matrix across two policy baselines. The initial capability file marks
-14 cases runnable and 134 blocked with exact missing mechanisms.
-Frequency-qualified RF is now accepted; candidate freshness, load traffic,
-controlled BTM response, backhaul actions,
+148-case matrix across two policy baselines. The current capability file marks
+16 cases runnable and 132 blocked with exact missing mechanisms.
+Frequency-qualified RF, metric receipt time and same-band candidate collection
+are accepted; cross-band evidence, load traffic, controlled BTM response,
+backhaul actions,
 channel width and 20-client scale must not be inferred from configuration
 alone. See [optimizer-scenarios.md](optimizer-scenarios.md).
 
@@ -462,8 +470,9 @@ The optimizer tests intentionally progress in layers:
    transitions;
 4. actuator source/target validation and verifier convergence;
 5. hash-chain integrity and byte-deterministic replay; and
-6. the existing `two-ap-crossover.wmd` phase contract combined with a recorded
-   EasyMesh-observation stream, requiring exactly one recommendation; and
+6. the existing `two-ap-crossover.wmd` and isolated five-AP phase contracts
+   combined with measured-shaped EasyMesh streams, requiring exactly one
+   recommendation; and
 7. both 2.4-to-5 and 5-to-6 BSSID decisions against the ten-client small band
    world without reading its simulated SNR as policy input.
 

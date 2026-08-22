@@ -25,7 +25,7 @@ Do not duplicate host setup or acceptance procedures here.
 | `wpa_supplicant/` | build the client WNM supplicant |
 | `tests/p0-cold-reconstruction.sh` | reconstruct and accept the full lab repeatedly |
 | `tests/bpibroadband-memory-profile.py` | sample controller-container cgroup, PSS and storage state |
-| `tests/p0-churn-soak.py` | long-duration churn gate; currently deferred, not a routine check |
+| `tests/p0-churn-soak.py` | requirements-driven long-duration churn and memory gate |
 
 `gen-util.sh` derives the repository root from its own location, so the checkout
 may be placed anywhere. Generated images/state belong under the ignored `tmp/`

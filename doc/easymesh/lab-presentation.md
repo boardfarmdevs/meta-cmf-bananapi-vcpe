@@ -289,8 +289,8 @@ extender liveness/return. Highest-priority open items are:
 
 1. the historical raw-frame provider delivery miss, retained as a journal
    trigger after 143 clean post-fix steers;
-2. the deliberately deferred 12-hour memory/churn envelope;
-3. trustworthy candidate-link measurement exposure for the optimizer; and
+2. the in-progress three-target 12-hour memory/churn envelope;
+3. cross-band candidate-link measurement and client-capability exposure; and
 4. reproducible scale limits for the VM profiles.
 
 Bad observations produce bad policy conclusions. These are experimental

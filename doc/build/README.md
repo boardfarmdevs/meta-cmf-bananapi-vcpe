@@ -29,6 +29,23 @@ MACHINE=qemux86bpiap BPI_IMG_TYPE=nand \
 bitbake rdk-generic-ap-extender-image
 ```
 
+The controller WebUI Go server is intentionally carried in
+`unified-wifi-mesh/em-cli.tar.gz` because the stock CLI recipe cannot fetch its
+modules in this build. When an EasyMesh patch changes `src/rdkb-cli/main.go`,
+first compile `unified-wifi-mesh`, rebuild the checked-in helper from that
+workdir, and then build the image again:
+
+```sh
+bitbake unified-wifi-mesh -c compile
+../meta-cmf-bananapi-vcpe/gen/rebuild-em-cli-artifact.sh \
+  "$PWD/tmp/work/core2-32-rdk-linux/unified-wifi-mesh/1.0-r0"
+bitbake rdk-generic-broadband-image
+```
+
+Review and commit both the source patch and `em-cli.tar.gz`. Verify the helper
+hash recorded in `doc/easymesh/patch-set.md`; a successful image build alone
+does not prove that a changed Go handler was included.
+
 Optional: a local [repo mirror](../repo-mirror) makes creating and re-syncing
 trees faster.
 

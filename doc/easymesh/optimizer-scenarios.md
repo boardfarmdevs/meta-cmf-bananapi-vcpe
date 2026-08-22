@@ -34,10 +34,11 @@ There are two deliberately separate execution boundaries:
   closed-loop tests.
 
 Synthetic snapshots are marked `simulated://`, explicitly say they are not
-live-observer compatible, and cannot promote a live capability. They let the
-band policy and accept/reject/ignore response handling be developed before the
-hwsim candidate-measurement provider is complete without disguising evaluator
-truth as controller evidence.
+live-observer compatible, and cannot promote a live capability. They let
+cross-band policy and accept/reject/ignore response handling be developed
+before a cross-band measurement provider is complete without disguising
+evaluator truth as controller evidence. Same-band hwsim candidate collection
+is now live and is covered separately by the controller provider.
 
 ### Pre-association preference is bounded influence
 
@@ -116,11 +117,14 @@ jq -r '.cases[] | select(.status == "blocked") |
   scenarios/generated/home-suite.matrix.json
 ```
 
-The initial matrix contains 148 cases: 14 runnable and 134 blocked. It applies
+The current matrix contains 148 cases: 16 runnable and 132 blocked. It applies
 both the ordinary weak-link threshold baseline and the opt-in band-upgrade
 baseline to the same RF/traffic cases. The count is not a quality score. It
 shows that the Cartesian core and specialized scenario
-families exist while preserving the present lab boundary.
+families exist while preserving the present lab boundary. The two additional
+runnable cases are small-profile same-band slow-walk cases promoted by the
+accepted candidate-link and receipt-time path; band-steering cases remain
+blocked on the distinct cross-band capability.
 
 Create the runnable stationary latency plan for rev130:
 
@@ -143,8 +147,8 @@ until its additional roles have real containers and a profile is accepted.
 
 | Family | Present foundation | Required before a valid live claim |
 | --- | --- | --- |
-| ordinary client steering | atomic RF, current RCPI, BTM action and association verifier | candidate-link measurements with trustworthy receipt time |
-| band steering | per-band worlds, frequency-qualified RF control and band-aware observation/policy schemas | expose BSSID/band inventory plus fresh per-BSSID candidate measurements with receipt time |
+| ordinary client steering | atomic RF, current RCPI, same-band candidate RCPI with receipt time, BTM action and association verifier | scenario-specific recommend/act acceptance and longer stability evidence |
+| band steering | per-band worlds, frequency-qualified RF control, BSSID inventory and band-aware observation/policy schemas | fresh exact-BSSID cross-band measurements plus capability filtering |
 | pre-association steering | bounded decision state machine and failsafe semantics | probe-response observation/control adapter |
 | BTM `NoDisconnect` | action and outcome model | clients that deterministically accept, reject or ignore BTM |
 | load steering | traffic schedules | accepted `iperf3` driver and timestamped AP/BSS load metrics |
@@ -173,9 +177,10 @@ controller model and all 10 WLAN associations complete. This accepts the RF
 stimulus path at the current small profile; it does not claim an optimizer made
 band decisions.
 
-The optimizer then ranks target BSSIDs using reported candidate measurements.
-It does not simply choose the label “5 GHz” or “6 GHz.” A 2.4-to-5 or 5-to-6
-case remains blocked until both RF and measurement requirements exist.
+The optimizer ranks target BSSIDs using reported candidate measurements. It
+does not simply choose the label “5 GHz” or “6 GHz.” Same-band measurements
+are accepted; a 2.4-to-5 or 5-to-6 case remains blocked until exact cross-band
+measurement and client-capability requirements exist.
 
 `band-upgrade-policy.yaml` is the first conservative, explainable baseline. It
 normalizes the EasyMesh band enumeration (0=2.4, 1=5, 3=6 GHz), keeps the exact
@@ -187,23 +192,25 @@ still apply. It deliberately defaults off in `threshold-policy.yaml`.
 Those numbers are hypotheses for comparison, not EasyMesh-standard policy
 primitives and not a claim that a higher band is always better. Candidate
 inventory with an unknown RCPI cannot trigger the policy. The live band cases
-therefore remain blocked by candidate measurement and receipt-time capabilities
-even though deterministic 2.4/5/6 GHz RF stimulus now works.
+therefore remain blocked by cross-band measurement and capability filtering
+even though deterministic 2.4/5/6 GHz RF stimulus and trustworthy receipt
+times now work.
 
 The offline closed-loop runner already uses the same policy core against the
 small band-walk golden. It assigns deterministic synthetic device, BSSID and
 STA identities, converts directed station-to-Agent SNR through an explicit
 noise-floor/RCPI sensor model, applies accepted actions to association state,
 and leaves rejected or ignored actions unchanged. This tests policy logic and
-failure backoff; it does not clear the live candidate-measurement blocker.
+failure backoff; it does not clear the live cross-band-measurement blocker.
 
-The compact `/api/v1/topology` response still omits its fronthaul `BSSList`.
-Patch `0068` therefore adds the read-only `/api/v1/bsses` projection from the
-controller's serialized `get_sta` tree. Rev130 returns exactly 30 fronthaul
-identities: private and IoT BSSs on five devices across bands 0, 1 and 3. The
-observer normalizes those as 2.4, 5 and 6 GHz and produces 14 same-SSID target
-identities for each associated private client. All 140 candidate RCPI values
-remain explicitly unknown; inventory cannot trigger a steer.
+Patch `0068` adds the read-only `/api/v1/bsses` projection from the controller's
+serialized `get_sta` tree. Patch `0077` also joins the topology display to that
+authoritative per-Agent radio inventory instead of recursively borrowing a
+descendant's BSS list. Rev130 returns exactly 30 fronthaul identities: private
+and IoT BSSs on five devices across bands 0, 1 and 3. The observer normalizes
+those as 2.4, 5 and 6 GHz and produces 14 same-SSID target identities for each
+associated private client. Same-band entries receive active RCPI; cross-band
+inventory remains unknown and cannot trigger a band steer.
 
 ### Backhaul topology is a slower, separate loop
 
@@ -251,13 +258,15 @@ throughput claim until representative widths, traffic and a verifier exist.
 
 1. Keep the current 5-Agent/10-client small profile green.
 2. Add a traffic executor and accept latency, constant-load and burst evidence.
-3. Expose measurement receipt time and real target-BSSID measurements.
-4. Run threshold policy in recommend mode against stationary, crossover,
-   border and fast-transit cases.
-5. Enable exactly one live bounded steering transaction and score its outcome.
+3. **Complete for same-band:** retain real receipt time and exact target-BSSID
+   candidate measurements; add a separate cross-band provider.
+4. **Crossover complete:** continue threshold recommend testing against
+   stationary, border and fast-transit cases.
+5. **One bounded action complete:** repeat it under cooldown, rejection and
+   longer-soak conditions before increasing `--max-actions`.
 6. Generate and accept the 5/20 profile, then medium and stress manifests.
 7. **Frequency-qualified RF complete:** keep its apply/readback/restore
-   regression mandatory; candidate measurements still gate a band-steering
+   regression mandatory; cross-band measurements still gate a band-steering
    policy claim.
 8. Add backhaul and width action adapters as separate safety domains.
 

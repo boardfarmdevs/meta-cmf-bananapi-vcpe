@@ -424,8 +424,8 @@ Rev130 returned 30/30
 private/IoT BSSs and excluded every backhaul and zero BSSID. After warm-up, 300
 requests retained the same CLI PID; PSS changed from 84,897 to 84,337 KiB and
 VmData by only 320 KiB. The current prebuilt helper, including the later
-topology fix `0075`, has SHA-256
-`25f045c2fdb3c79ec7506c617c760da3f208ebb4f2ded0f1dae75b58bf6cab20`.
+topology inventory fix `0077`, has SHA-256
+`a17d07797ee231444f7b7805926a5339eb9bc527f5d02071cc68f276bffbf428`.
 
 Patch `0075` removes a positional tree-layout assumption in the topology API.
 The controller tree does not guarantee that `RadioList` is child index two;
@@ -437,6 +437,29 @@ rendered nodes with populated haul types, all three lab bands (`0`, `1`, `3`),
 and five band-1 backhaul edges, while retaining all 10 clients and 30 exposed
 fronthaul BSSs. The Go CLI is a separately cross-built artifact, so the source
 patch and `em-cli.tar.gz` must be updated together.
+
+Patch `0076` closes the controller command lifecycle exposed by sequential
+multi-Agent candidate collection. A correlated Unassociated STA Metrics
+response became externally readable before the active orchestration command
+was retired, so the next request was treated as already in progress and timed
+out. The response path now completes the matching command immediately after
+retaining its result. Rev130 then completed seven serialized transactions per
+ten-client cycle and returned all 40 expected same-band candidate links.
+
+Patch `0077` replaces the recursive `RadioList` fallback introduced by `0075`.
+The compact topology projection has no direct radio list below its Controller
+and colocated-Agent records; recursive search therefore borrowed the first
+descendant's BSSs and displayed several nodes as the same extender. The CLI now
+copies the flat `get_sta` Agent/radio inventory and joins it to topology nodes
+by exact AL MAC. Rev130 rendered Controller plus Agent-1 and four distinct
+extenders, all 10 clients, and the correct 2.4/5/6 GHz BSS groups. The one
+shared nonzero backhaul BSSID remains controller-model input; fronthaul BSSID
+ownership is unique.
+
+The Go server remains a separately cross-built checked-in artifact. A build
+that applies `main.go` patches but does not replace `em-cli.tar.gz` will compile
+the C++ library and still install the previous Go server. Verification must
+check the extracted binary hash above, not only the patched source tree.
 
 Patch `0046` closes the rare controller association-delivery miss exposed by
 the strict two-client carousel. Packet captures proved that two distinct
@@ -474,6 +497,15 @@ presentation boundaries:
 | `0066` | synchronize the validated Profile-3 value into all runtime radio objects before metrics validation |
 | `0067` | replay a complete explicitly submitted policy even when desired database state is unchanged |
 | `0068` | expose deterministic controller-owned fronthaul BSS identities to the external optimizer without fabricating candidate quality |
+| `0069` | complete the standard Unassociated STA Link Metrics query/response/API transaction instead of treating submission as a result |
+| `0070` | accept OneWifi's labelled NaSTA response subdocument at the Agent boundary |
+| `0071` | correlate candidate responses to the requesting Agent radio, STA and message ID |
+| `0072` | retain controller receipt time for associated-link reports so optimizer freshness is measurable |
+| `0073` | regenerate enrollee WSC transaction state before a bounded M1 retry |
+| `0074` | store candidate metrics on the correlated radio rather than a positional radio object |
+| `0075` | resolve topology radio lists by key rather than child position |
+| `0076` | retire a candidate command when its correlated response is retained, admitting the next serialized query |
+| `0077` | join topology nodes to the authoritative flat Agent/radio/BSS inventory by exact AL MAC |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -562,8 +594,9 @@ Three consecutive cold reconstructions passed in 805, 800 and 802 seconds with
 restarts and 10/10 traffic. A separate instrumented reconstruction established
 a 311.57 MiB cgroup peak and 266.10 MiB converged footprint under the 1 GiB
 controller limit, with no swap or memory-pressure/OOM event. See
-[memory-footprint.md](memory-footprint.md). The 12-hour churn/steady-state run
-is explicitly deferred and is not implied by these bounded results.
+[memory-footprint.md](memory-footprint.md). These bounded results did not imply
+a long-duration pass; the separate 12-hour run began on all three targets on
+2026-08-22 and remains in progress.
 
 The final metrics/uptime image (`20260821015142`) was then installed on rev130.
 Its controller artifact SHA-256 is
@@ -578,6 +611,39 @@ live-client convergence. A fresh 866-second run passed `5/15/50/14`, 10/10
 clients, 10/10 RCPI and association uptime, 120 seconds stable, zero monitored
 restarts and 10/10 traffic. Every BPI container had one `snmp_subagent`, and
 the controller recorded zero AP Metrics Response validation failures.
+
+The candidate-observation and topology-inventory roll-up was rebuilt from
+source commit `a38df5e52b27a00593b3ea04768e489294d14839` as image stamp
+`20260822061648`. The controller artifact SHA-256 is
+`c13f7f362c28b838aac3523715f5223ce4d17b0af88affe1f31e78109945a28a`;
+the extender artifact SHA-256 is
+`71b4f43c822e7cc460676d59d9cb72f3a828ea3fc85beeb634ebb6328c713eed`.
+Both rev120 and rev150 VMs were freshly redeployed from those files under
+`/home/rev/easymesh-lab/0821`. Their predecessor NVRAM bind directories were
+detached and retained for explicit later inventory, not deleted implicitly.
+
+Each VM then passed a managed cold reconstruction at `5/15/50/14`, 10/10
+clients, 10/10 RCPI, a 120-second stable window, zero monitored restarts and
+10/10 traffic. Their three-cycle optimizer smoke tests each observed five
+devices, ten clients, seven candidate transactions and all 40 same-band
+candidates per cycle. Maximum metric age stayed below 12.2 seconds and every
+station correctly remained `current_link_acceptable` at the baseline medium.
+
+The first rev150 cold-run gate correctly failed closed at 9/10 RCPI. Agent logs
+proved that the missing Agent had not received the earlier Policy Configuration
+Request; a complete idempotent replay immediately activated its five-second AP
+Metrics Response timer. Host-runtime commit `6336f3d` makes first-boot metrics
+convergence observe the actual client reports and automatically replay the
+complete policy while any remain missing. It does not declare success from
+controller desired state or ACK bookkeeping alone.
+
+A bounded rev130 churn shakedown completed two carousel workloads in 510.795
+seconds with candidate RCPI 88 at the controlled 25 dB point, exact medium
+restore, complete topology/model/traffic and zero restarts. The full 12-hour
+alternating carousel/outage campaign was then started as
+`easymesh-soak-0822.service` on rev130 and both VMs. This is in-progress
+evidence, not an acceptance result; only each final `summary.json` can close
+the long-growth gate.
 
 ## Remaining engineering debt
 

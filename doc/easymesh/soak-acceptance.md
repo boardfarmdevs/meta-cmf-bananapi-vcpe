@@ -48,14 +48,35 @@ memory behavior.
 
 ## Run and monitor
 
-The deployment procedure starts one persistent systemd unit per target:
+Create a writable evidence namespace and start one persistent transient
+systemd unit per target. Run it as the lab account so LXD and the wmediumd
+control socket use the same permissions as normal scenarios:
 
 ```sh
-sudo systemctl status easymesh-soak.service
-sudo journalctl -fu easymesh-soak.service
+SOAK_ID=0822
+SOAK_OUTPUT=/var/tmp/easymesh-soak/$SOAK_ID
+SOAK_REPO=/path/to/meta-cmf-bananapi-vcpe
+
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0755 "$SOAK_OUTPUT"
+sudo systemd-run \
+  --unit="easymesh-soak-$SOAK_ID" \
+  --description="EasyMesh 12-hour RF churn acceptance $SOAK_ID" \
+  --uid="$(id -un)" \
+  --property="WorkingDirectory=$SOAK_REPO" \
+  --setenv="EASYMESH_REPO=$SOAK_REPO" \
+  /usr/bin/python3 "$SOAK_REPO/gen/tests/p0-churn-soak.py" \
+    --duration 43200 \
+    --sample-interval 60 \
+    --settle 30 \
+    --workload alternating \
+    --outage-every 3 \
+    --output-root "$SOAK_OUTPUT"
+
+sudo systemctl status "easymesh-soak-$SOAK_ID.service"
+sudo journalctl -fu "easymesh-soak-$SOAK_ID.service"
 ```
 
-The underlying command is:
+For foreground diagnosis, the underlying command is:
 
 ```sh
 sudo /usr/bin/python3 <repo>/gen/tests/p0-churn-soak.py \
