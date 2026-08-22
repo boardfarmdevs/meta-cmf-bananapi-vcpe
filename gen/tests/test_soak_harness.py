@@ -158,6 +158,64 @@ def test_soak_traffic_check_is_sequential_and_ordered():
     assert [result["client"] for result in results] == list(soak.CLIENTS)
 
 
+def test_soak_accepts_an_explicit_mixed_client_set():
+    soak = load_script("p0-churn-soak.py")
+    clients = ("wlan-client", "wlan-client-010")
+
+    with patch.object(
+        soak, "traffic_one",
+        side_effect=lambda client: {"client": client, "returncode": 0},
+    ):
+        results = soak.traffic_check(clients)
+
+    assert [result["client"] for result in results] == list(clients)
+
+
+def test_soak_counts_unique_clients_by_ssid():
+    soak = load_script("p0-churn-soak.py")
+    topology = {
+        "nodes": [
+            {"STAList": [
+                {"staMAC": "02:00:00:00:09:00", "ssid": "private_ssid"},
+                {"staMAC": "02:00:00:00:13:00", "ssid": "iot_ssid"},
+            ]},
+            {"STAList": [
+                {"staMAC": "02:00:00:00:13:00", "ssid": "iot_ssid"},
+            ]},
+        ]
+    }
+
+    assert soak.topology_ssid_counts(topology) == {
+        "iot_ssid": 1,
+        "private_ssid": 1,
+    }
+
+
+def test_soak_carousel_command_selects_the_requested_cohort(tmp_path):
+    soak = load_script("p0-churn-soak.py")
+
+    command, cursor = soak.workload_command(
+        "carousel", tmp_path, 3, "iot_ssid"
+    )
+
+    assert cursor == 3
+    assert command[command.index("--ssid") + 1] == "iot_ssid"
+
+
+def test_carousel_selects_only_matching_cohort_bssids():
+    carousel = load_script("wmediumd-client-carousel.py")
+    radio = {
+        "interfaces": [
+            {"ssid": "private_ssid", "mac": "02:00:00:00:01:00"},
+            {"ssid": "iot_ssid", "mac": "02:00:00:00:02:00"},
+        ]
+    }
+
+    assert carousel.cohort_bssids(radio, "iot_ssid") == {
+        "02:00:00:00:02:00"
+    }
+
+
 @pytest.mark.parametrize("transport_status", [-15, 143])
 def test_carousel_retries_idempotent_link_state_after_transport_signal(
     transport_status,

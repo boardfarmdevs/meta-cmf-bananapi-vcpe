@@ -9,6 +9,7 @@ scenario restores the exact starting medium.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import datetime as dt
 import hashlib
 import json
@@ -266,7 +267,9 @@ def topology_counts(document: dict) -> dict[str, int]:
     }
 
 
-def association_consistency(document: dict) -> list[dict[str, object]]:
+def association_consistency(
+    document: dict, clients: tuple[str, ...] = CLIENTS
+) -> list[dict[str, object]]:
     bssid_owners = {
         str(bss.get("BSSID", "")).lower(): str(node.get("id", "")).lower()
         for node in document.get("nodes", [])
@@ -281,7 +284,7 @@ def association_consistency(document: dict) -> list[dict[str, object]]:
         if sta.get("staMAC")
     }
     result = []
-    for client in CLIENTS:
+    for client in clients:
         link = client_link(client)
         physical_owner = bssid_owners.get(str(link["bssid"])) if link["bssid"] else None
         api_owner = sta_owners.get(str(link["mac"])) if link["mac"] else None
@@ -320,11 +323,44 @@ def traffic_one(client: str) -> dict[str, object]:
     }
 
 
-def traffic_check() -> list[dict[str, object]]:
+def traffic_check(clients: tuple[str, ...] = CLIENTS) -> list[dict[str, object]]:
     # Ten simultaneous ``lxc exec`` scopes can be terminated by LXD/systemd
     # before ping runs, producing ten false traffic failures at once.  Health
     # acceptance values determinism over speed, so probe clients sequentially.
-    return [traffic_one(client) for client in CLIENTS]
+    return [traffic_one(client) for client in clients]
+
+
+def provisioned_clients() -> tuple[str, ...]:
+    text = run("lxc", "list", "-c", "n", "--format", "csv")
+    names = [
+        line.strip() for line in text.splitlines()
+        if re.fullmatch(r"wlan-client(?:-[0-9]{3})?", line.strip())
+    ]
+    return tuple(
+        sorted(
+            names,
+            key=lambda name: 0 if name == "wlan-client" else int(name.rsplit("-", 1)[1]),
+        )
+    )
+
+
+def provisioned_ssid_counts(clients: tuple[str, ...]) -> dict[str, int]:
+    values = [
+        run("lxc", "config", "get", client, "user.easymesh.ssid", check=False)
+        or "unknown"
+        for client in clients
+    ]
+    return dict(sorted(Counter(values).items()))
+
+
+def topology_ssid_counts(document: dict) -> dict[str, int]:
+    stations: dict[str, str] = {}
+    for node in document.get("nodes", []):
+        for sta in node.get("STAList") or []:
+            mac = str(sta.get("staMAC", "")).lower()
+            if mac:
+                stations[mac] = str(sta.get("ssid") or "unknown")
+    return dict(sorted(Counter(stations.values()).items()))
 
 
 def model_counts() -> dict[str, int]:
@@ -375,13 +411,14 @@ def select_outage_extender(cursor: int) -> tuple[str, int]:
 
 
 def workload_command(
-    kind: str, output: Path, outage_cursor: int
+    kind: str, output: Path, outage_cursor: int, ssid: str = "private_ssid"
 ) -> tuple[list[str], int]:
     if kind == "carousel":
         return [
             sys.executable,
             str(ROOT / "tests" / "wmediumd-client-carousel.py"),
             "--rounds", "1",
+            "--ssid", ssid,
             "--output-root", str(output / "carousel"),
         ], outage_cursor
     extender, outage_cursor = select_outage_extender(outage_cursor)
@@ -433,6 +470,9 @@ class Soak:
         self.peak_rss_kib = {"em_ctrl": 0, "em_cli": 0}
         self.workloads: list[dict[str, object]] = []
         self.outage_cursor = 0
+        self.carousel_cursor = 0
+        self.clients: tuple[str, ...] = ()
+        self.expected_ssids: dict[str, int] = {}
 
     def request_stop(self, signum, frame) -> None:
         self.stop_requested = True
@@ -458,20 +498,27 @@ class Soak:
         clients_document = fetch_json(self.args.clients_url)
         counts = topology_counts(topology)
         model = model_counts()
-        consistency = association_consistency(topology)
-        traffic = traffic_check()
+        consistency = association_consistency(topology, self.clients)
+        traffic = traffic_check(self.clients)
         services = service_states()
         journal = journal_usage()
         candidate = candidate_rcpi_check(self.args.socket, self.args.api_url)
         medium = medium_snapshot(self.args.socket)
         errors = []
-        if counts != {"nodes": 6, "clients": 10, "edges": 5}:
+        expected_clients = len(self.clients)
+        if counts != {"nodes": 6, "clients": expected_clients, "edges": 5}:
             errors.append(f"topology={counts}")
-        if model != {"devices": 5, "radios": 15, "bss": 50, "associated": 14}:
+        if model != {
+            "devices": 5, "radios": 15, "bss": 50,
+            "associated": expected_clients + 4,
+        }:
             errors.append(f"model={model}")
         client_count = live_client_api_count(clients_document)
-        if client_count != 10:
+        if client_count != expected_clients:
             errors.append(f"client_api={client_count}")
+        ssid_counts = topology_ssid_counts(topology)
+        if ssid_counts != self.expected_ssids:
+            errors.append(f"ssid_cohorts={ssid_counts}, expected={self.expected_ssids}")
         if any(not item["agreed"] for item in consistency):
             errors.append("physical/API association disagreement")
         if any(item["returncode"] or item["packet_loss_percent"] for item in traffic):
@@ -489,6 +536,7 @@ class Soak:
             "topology": counts,
             "model": model,
             "client_api_count": client_count,
+            "ssid_cohorts": ssid_counts,
             "consistency": consistency,
             "traffic": traffic,
             "services": services,
@@ -508,8 +556,17 @@ class Soak:
 
     def run_workload(self, kind: str, index: int, started: float, sample_due: float) -> float:
         assert self.output and self.recorder
+        if kind == "carousel":
+            cohorts = tuple(
+                ssid for ssid in ("private_ssid", "iot_ssid")
+                if self.expected_ssids.get(ssid, 0)
+            )
+            ssid = cohorts[self.carousel_cursor % len(cohorts)]
+            self.carousel_cursor += 1
+        else:
+            ssid = "private_ssid"
         command, self.outage_cursor = workload_command(
-            kind, self.output / "workloads", self.outage_cursor
+            kind, self.output / "workloads", self.outage_cursor, ssid
         )
         log = self.output / "workloads" / f"{index:04d}-{kind}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -597,6 +654,20 @@ class Soak:
         outcome = "failed"
         error_text = None
         try:
+            self.clients = provisioned_clients()
+            if not self.clients:
+                raise RuntimeError("no provisioned WLAN clients")
+            if self.args.expected_clients and len(self.clients) != self.args.expected_clients:
+                raise RuntimeError(
+                    f"provisioned clients={len(self.clients)}, "
+                    f"expected={self.args.expected_clients}"
+                )
+            self.expected_ssids = provisioned_ssid_counts(self.clients)
+            if "unknown" in self.expected_ssids:
+                raise RuntimeError(
+                    "client cohort metadata is incomplete: "
+                    f"{self.expected_ssids}"
+                )
             self.baseline_services = service_states()
             self.baseline_medium = medium_snapshot(self.args.socket)
             write_json(self.output / "services-baseline.json", self.baseline_services)
@@ -695,6 +766,10 @@ def main() -> int:
     parser.add_argument("--socket", default="/run/wmediumd-control.sock")
     parser.add_argument("--topology-url", default=TOPOLOGY_URL)
     parser.add_argument("--clients-url", default=CLIENTS_URL)
+    parser.add_argument(
+        "--expected-clients", type=int, default=0,
+        help="require an exact provisioned client count; 0 auto-discovers it",
+    )
     parser.add_argument("--api-url", default="http://127.0.0.1:8888/api/v1")
     parser.add_argument("--max-ctrl-rss-mib", type=int, default=256)
     parser.add_argument("--max-cli-rss-mib", type=int, default=192)
@@ -707,6 +782,8 @@ def main() -> int:
         parser.error("duration and sample interval must be positive; settle cannot be negative")
     if args.max_workloads < 0:
         parser.error("--max-workloads cannot be negative")
+    if args.expected_clients < 0:
+        parser.error("--expected-clients cannot be negative")
     if args.outage_every <= 0:
         parser.error("--outage-every must be positive")
     soak = Soak(args)

@@ -117,11 +117,11 @@ def topology_owner(document: dict, mac: str) -> str | None:
     return None
 
 
-def private_bssids(radio: dict) -> set[str]:
+def cohort_bssids(radio: dict, ssid: str) -> set[str]:
     return {
         item["mac"].lower()
         for item in radio.get("interfaces", [])
-        if item.get("ssid") == "private_ssid" and item.get("mac")
+        if item.get("ssid") == ssid and item.get("mac")
     }
 
 
@@ -403,22 +403,27 @@ class Carousel:
         )
 
         # The controller container also owns an hwsim radio, but its colocated
-        # Agent does not advertise the lab's private_ssid.  It is a topology
+        # Agent does not advertise the selected fronthaul SSID. It is a topology
         # identity, not a client-placement target for this scenario.
         mesh = [
             item for item in inventory["radios"]
-            if item["kind"] == "mesh" and private_bssids(item)
+            if item["kind"] == "mesh" and cohort_bssids(item, args.ssid)
         ]
-        stations = [item for item in inventory["radios"] if item["kind"] == "station"]
+        stations = [
+            item for item in inventory["radios"]
+            if item["kind"] == "station" and item.get("ssid") == args.ssid
+        ]
         if len(mesh) < 2 or not stations:
             raise RuntimeError(f"need at least two APs and one client; found {len(mesh)}/{len(stations)}")
 
         aps = []
         for item in mesh:
-            bssids = private_bssids(item)
+            bssids = cohort_bssids(item, args.ssid)
             identity = topology_ap_identity(document, bssids)
             if not bssids or not identity:
-                raise RuntimeError(f"{item['container']}: no live private BSS topology identity")
+                raise RuntimeError(
+                    f"{item['container']}: no live {args.ssid} BSS topology identity"
+                )
             node_id, node_name = identity
             aps.append(
                 {**item, "bssids": bssids, "node_id": node_id, "node_name": node_name}
@@ -440,7 +445,7 @@ class Carousel:
             target = bssid_to_ap.get(bssid) if bssid else None
             if not target:
                 raise RuntimeError(
-                    f"{client['container']}: not associated to a known private BSS ({bssid})"
+                    f"{client['container']}: not associated to a known {args.ssid} BSS ({bssid})"
                 )
             original_targets[client["container"]] = target
 
@@ -768,6 +773,10 @@ class Carousel:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Visually rotate WLAN client groups through every EasyMesh AP"
+    )
+    parser.add_argument(
+        "--ssid", choices=("private_ssid", "iot_ssid"), default="private_ssid",
+        help="client cohort and matching fronthaul BSS set to move",
     )
     parser.add_argument("--rounds", type=int, default=2,
                         help="full one-hop rotations; 0 runs until Ctrl-C (default: 2)")
