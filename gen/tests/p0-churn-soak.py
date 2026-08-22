@@ -9,7 +9,6 @@ scenario restores the exact starting medium.
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import datetime as dt
 import hashlib
 import json
@@ -299,11 +298,19 @@ def association_consistency(document: dict) -> list[dict[str, object]]:
 
 def traffic_one(client: str) -> dict[str, object]:
     started = time.monotonic()
-    result = subprocess.run(
-        ("lxc", "exec", client, "--", "ping", "-q", "-c", "3", "-W", "1", "10.0.0.1"),
-        text=True,
-        capture_output=True,
-    )
+    for attempt in range(1, 4):
+        result = subprocess.run(
+            (
+                "lxc", "exec", client, "--", "ping", "-q", "-c", "3",
+                "-W", "1", "10.0.0.1",
+            ),
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode >= 0:
+            break
+        if attempt < 3:
+            time.sleep(0.5 * attempt)
     match = re.search(r"(\d+)% packet loss", result.stdout + result.stderr)
     return {
         "client": client,
@@ -314,8 +321,10 @@ def traffic_one(client: str) -> dict[str, object]:
 
 
 def traffic_check() -> list[dict[str, object]]:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CLIENTS)) as pool:
-        return list(pool.map(traffic_one, CLIENTS))
+    # Ten simultaneous ``lxc exec`` scopes can be terminated by LXD/systemd
+    # before ping runs, producing ten false traffic failures at once.  Health
+    # acceptance values determinism over speed, so probe clients sequentially.
+    return [traffic_one(client) for client in CLIENTS]
 
 
 def model_counts() -> dict[str, int]:

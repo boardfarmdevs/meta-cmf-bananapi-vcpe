@@ -115,6 +115,39 @@ def test_outage_read_preserves_a_real_command_failure_without_retry():
     probe.assert_called_once()
 
 
+def test_soak_traffic_retries_transport_signal_but_not_ping_failure():
+    soak = load_script("p0-churn-soak.py")
+    terminated = subprocess.CompletedProcess(["lxc", "exec"], -15, "", "lost")
+    ping_failed = subprocess.CompletedProcess(
+        ["lxc", "exec"], 1, "3 packets transmitted, 0 received, 100% packet loss\n", ""
+    )
+
+    with patch.object(
+        soak.subprocess, "run", side_effect=[terminated, ping_failed]
+    ) as probe, patch.object(soak.time, "sleep") as sleep:
+        result = soak.traffic_one("wlan-client")
+
+    assert probe.call_count == 2
+    sleep.assert_called_once_with(0.5)
+    assert result["returncode"] == 1
+    assert result["packet_loss_percent"] == 100
+
+
+def test_soak_traffic_check_is_sequential_and_ordered():
+    soak = load_script("p0-churn-soak.py")
+    observed = []
+
+    def traffic(client):
+        observed.append(client)
+        return {"client": client, "returncode": 0, "packet_loss_percent": 0}
+
+    with patch.object(soak, "traffic_one", side_effect=traffic):
+        results = soak.traffic_check()
+
+    assert observed == list(soak.CLIENTS)
+    assert [result["client"] for result in results] == list(soak.CLIENTS)
+
+
 def test_stability_window_can_follow_a_separate_recovery_interval(monkeypatch):
     outage = load_script("wmediumd-extender-outage.py")
 
