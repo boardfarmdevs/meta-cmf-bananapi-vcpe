@@ -1,0 +1,74 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: distinguish IoT clients in topology
+
+The mixed-client lab puts a second cohort on iot_ssid.  Rendering every
+station as the default phone makes the two workloads impossible to distinguish
+during a live optimizer demonstration.
+
+Classify only from the authoritative BSS-derived SSID already carried by the
+topology STA.  Use an IOT prefix and a dedicated icon for iot_ssid while
+retaining the existing MAC-derived stable identity.  Do not infer a device
+class from arbitrary client MACs.
+
+Upstream-Status: Inappropriate [lab WebUI presentation]
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 13 ++++++++-----
+ 2 files changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2040,7 +2040,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=metrics-reporting-1"></script>
++    <script src="static/script.js?v=mixed-client-cohorts-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3062,8 +3062,8 @@
+             .attr('stroke', d => bandColors[sta.band] || '#000');
+ 
+           // Draw STA node
+-          const iconUrl = self.getClientIcon(sta.clientType);
++          const iconUrl = self.getClientIcon(sta.clientType, sta.ssid);
+           const staIdentity = self.getSTAIdentity(sta);
+ 
+           staElement.append('image')
+            .attr('xlink:href', iconUrl)
+@@ -3079,3 +3079,4 @@
+               tooltip.style('display', 'block')
+-              .html(`<b>${staIdentity}</b><br>Type: ${sta.clientType || 'Unknown'}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}`);
++              .html(`<b>${staIdentity}</b><br>Type: ${sta.ssid === 'iot_ssid' ?
++                'IoT device' : (sta.clientType || 'Unknown')}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}`);
+             })
+@@ -3330,19 +3331,21 @@
+ 
+     if (!validMac) return 'STA';
+ 
++    const prefix = sta?.ssid === 'iot_ssid' ? 'IOT' : 'STA';
+     const isLabClient = octets[0] === '02' && octets[1] === '00' &&
+       octets[2] === '00' && octets[3] === '00' && octets[5] === '00';
+-    if (isLabClient) return `STA-${octets[4]}`;
++    if (isLabClient) return `${prefix}-${octets[4]}`;
+ 
+-    return `STA-${octets.slice(-3).join(':')}`;
++    return `${prefix}-${octets.slice(-3).join(':')}`;
+   }
+ 
+   /**
+    * get the icon for STA based on STA types
+    */
+-  getClientIcon(clientType) {
++  getClientIcon(clientType, ssid = '') {
+     const type = clientType?.toLowerCase() || '';
+ 
++    if (ssid === 'iot_ssid') return 'static/icons/iot-device.svg';
+     if (type.includes('ipad')) return'static/icons/ipad.png';
+     if (type.includes('iphone')) return 'static/icons/iphone.png';
+     if (type.includes('android')) return 'static/icons/android.png';

@@ -80,6 +80,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0076-controller-complete-candidate-command-on-response.patch \
     file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
     file://0078-topology-response-resolve-owner-by-association-age.patch \
+    file://0079-cli-distinguish-iot-clients.patch \
     "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -593,7 +594,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -615,6 +616,8 @@ do_install_append_qemux86bpibroadband() {
         ${S}/src/rdkb-cli/static/script.js \
         ${S}/src/rdkb-cli/static/style.css \
         ${D}/usr/ccsp/EasyMesh/static/
+    install -m 0644 ${WORKDIR}/iot-device.svg \
+        ${D}/usr/ccsp/EasyMesh/static/icons/iot-device.svg
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
 
