@@ -21,7 +21,7 @@ Every preflight, post-workload and final gate must satisfy all of these:
 | controller model | 5 devices, 15 radios, 50 BSS records and 14 associated records |
 | association truth | all 10 physical client links agree with controller/API ownership |
 | traffic | all 10 clients complete three pings to `10.0.0.1` with zero loss |
-| processes | every monitored unit remains active with the same PID set and zero additional restarts |
+| processes | every monitored unit remains active with the same main PID and zero additional restarts; transient child commands in the unit cgroup are recorded but are not daemon restarts |
 | medium | same wmediumd instance; pair matrix and sparse frequency overrides restore byte-equivalently |
 | candidate RCPI | a standard query at controlled 25 dB SNR returns RCPI 88 through the read-only hwsim provider, then restores the exact override state |
 | logs | controller journal remains at or below 24 MiB |
@@ -40,6 +40,16 @@ third workload is a full RF isolation/recovery of an extender. Each scenario
 must restore its medium in a `finally` path before the next health gate. The
 candidate-RCPI check also uses a temporary frequency-qualified override and
 proves that the sparse override set is identical before and after the query.
+
+Extender recovery has two separate bounds: clients and controller ownership
+must regain agreement within 120 seconds, and that agreement must then remain
+continuous for 75 seconds. The stability interval is not subtracted from the
+recovery allowance. Traffic probes are deliberately sequential. Running ten
+simultaneous `lxc exec` scopes can cause LXD to terminate the transports before
+their pings execute, which is not WLAN packet loss. Read-only probes retry only
+signal-derived transport statuses (negative signal status or `128 + signal`);
+ordinary command and ping failures retain their original status and fail the
+gate.
 
 The soak therefore exercises onboarding state, steering, association
 reconciliation, extender liveness/aging, return onboarding, the candidate
@@ -91,6 +101,27 @@ sudo /usr/bin/python3 <repo>/gen/tests/p0-churn-soak.py \
 Do not claim acceptance from a running unit. A run passes only when its final
 `summary.json` says `outcome: passed` and `growth.acceptance_eligible: true`.
 An interrupted run remains useful diagnostic evidence but is not acceptance.
+
+## 0822 campaign status
+
+The first three-target attempt was diagnostically useful but is not an
+acceptance result. It exposed three harness-boundary defects: exact cgroup PID
+membership rejected legitimate OneWifi helper children, recovery and the
+75-second stability window shared one undersized timeout, and VM LXD transport
+terminations were sometimes reported as status 143 and misclassified as WLAN
+traffic failure. Focused reruns proved exact medium restore, continuous client
+ownership, 10/10 traffic and unchanged controller services after correcting
+those boundaries.
+
+The final byte-identical rerun started on 2026-08-22 under
+`easymesh-soak-0822-final.service`. Its evidence roots are:
+
+- rev130: `/var/tmp/easymesh-soak/0822-final/20260822T162313Z-p0-churn-soak`;
+- rev150 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162314Z-p0-churn-soak`;
+- rev120 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162315Z-p0-churn-soak`.
+
+All three passed preflight and entered their first carousel. They remain
+running, not passed, until each final summary closes every acceptance gate.
 
 ## Candidate measurement boundary
 

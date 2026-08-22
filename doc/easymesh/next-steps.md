@@ -52,9 +52,12 @@ be used to claim policy quality until the preceding acceptance gates pass.
    - **Three-run reconstruction gate closed on 2026-08-19:** consecutive runs
      passed in 805, 800 and 802 seconds with `5/15/50/14`, 10/10 live clients,
      a 120-second stable window, zero monitored restarts and 10/10 traffic.
-   - A 12-hour alternating carousel/outage soak was started on rev130 and both
-     0821 VMs on 2026-08-22. It remains in progress; do not treat a running
-     unit or the three cold runs as a completed acceptance result.
+   - The first 12-hour attempt exposed soak-harness boundary defects rather
+     than a valid acceptance result. After focused three-target regression, a
+     byte-identical final alternating carousel/outage rerun started as
+     `easymesh-soak-0822-final.service` on rev130 and both 0821 VMs. It remains
+     in progress; do not treat a running unit or the three cold runs as a
+     completed acceptance result. See [soak-acceptance.md](soak-acceptance.md).
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
    unsupported startup clones and valid cloned frames rejected during normal
    scan/channel receive-state gaps. wmediumd now requires current frequency
