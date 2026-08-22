@@ -54,10 +54,11 @@ be used to claim policy quality until the preceding acceptance gates pass.
      a 120-second stable window, zero monitored restarts and 10/10 traffic.
    - The first 12-hour attempt exposed soak-harness boundary defects rather
      than a valid acceptance result. After focused three-target regression, a
-     byte-identical final alternating carousel/outage rerun started as
-     `easymesh-soak-0822-final.service` on rev130 and both 0821 VMs. It remains
-     in progress; do not treat a running unit or the three cold runs as a
-     completed acceptance result. See [soak-acceptance.md](soak-acceptance.md).
+     byte-identical final alternating carousel/outage rerun started from zero
+     at commit `2a15c95` as `easymesh-soak-0822-final2.service` on rev130 and
+     both 0821 VMs. It remains in progress; do not treat a running unit or the
+     three cold runs as a completed acceptance result. See
+     [soak-acceptance.md](soak-acceptance.md).
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
    unsupported startup clones and valid cloned frames rejected during normal
    scan/channel receive-state gaps. wmediumd now requires current frequency

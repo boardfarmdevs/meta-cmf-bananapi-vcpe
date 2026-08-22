@@ -113,15 +113,33 @@ traffic failure. Focused reruns proved exact medium restore, continuous client
 ownership, 10/10 traffic and unchanged controller services after correcting
 those boundaries.
 
-The final byte-identical rerun started on 2026-08-22 under
-`easymesh-soak-0822-final.service`. Its evidence roots are:
+The first corrected rerun under `easymesh-soak-0822-final.service` was stopped
+deliberately after rev120 exposed one remaining VM transport boundary while
+restoring an idempotent client link-up. Rev130 and rev150 were interrupted only
+after their active workloads restored the medium. Those evidence roots remain
+diagnostic records and are not acceptance results:
 
 - rev130: `/var/tmp/easymesh-soak/0822-final/20260822T162313Z-p0-churn-soak`;
 - rev150 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162314Z-p0-churn-soak`;
 - rev120 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162315Z-p0-churn-soak`.
 
-All three passed preflight and entered their first carousel. They remain
-running, not passed, until each final summary closes every acceptance gate.
+The link-state restore now retries only signal-derived LXD transport loss; a
+real link command failure remains a hard failure. A focused rev120 carousel
+then passed with both `placement_restored: true` and `medium_restored: true`.
+
+The authoritative byte-identical rerun started from zero on 2026-08-22 at
+commit `2a15c95` under `easymesh-soak-0822-final2.service`. Its evidence roots
+are:
+
+- rev130: `/var/tmp/easymesh-soak/0822-final2/20260822T163423Z-p0-churn-soak`;
+- rev120 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`;
+- rev150 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`.
+
+All three passed preflight with the complete `5/15/50/14` model, ten clients,
+10/10 physical/API ownership agreement, 10/10 traffic, a successful candidate
+RCPI transaction, exact starting-medium fingerprints and no service errors.
+They are running, not passed, until each final summary closes every acceptance
+gate.
 
 ## Candidate measurement boundary
 
