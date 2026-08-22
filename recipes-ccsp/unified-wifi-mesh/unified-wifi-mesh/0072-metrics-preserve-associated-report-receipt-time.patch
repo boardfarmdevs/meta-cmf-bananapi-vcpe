@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Fri, 21 Aug 2026 18:10:00 -0700
+Subject: [PATCH] metrics: preserve associated report receipt time
+
+The controller updates associated-station RCPI when it receives an Associated
+STA Link Metrics Response, but it leaves the STA timestamp unchanged.  The CLI
+then substitutes the API read time, making an arbitrarily old cached RCPI look
+fresh to an external optimizer.
+
+Stamp the STA model at response receipt and expose that model timestamp as
+client_metrics.last_updated.  Invalid or absent timestamps remain the Go zero
+time, so consumers can fail closed rather than infer freshness.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/em/metrics/em_metrics.cpp | 15 +++++++++++++++
+ src/rdkb-cli/main.go          |  8 +++++++-
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -38,6 +38,7 @@
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <vector>
++#include <time.h>
+ #include <openssl/rand.h>
+ #include "em_metrics.h"
+ #include "em_msg.h"
+@@ -72,6 +73,16 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         return -1;
+     }
+ 
++    char received_at[64] = {0};
++    time_t now = time(NULL);
++    struct tm utc;
++    if (now != (time_t)-1 && gmtime_r(&now, &utc) != NULL) {
++        if (strftime(received_at, sizeof(received_at),
++                     "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
++            received_at[0] = '\0';
++        }
++    }
++
+     for (i = 0; i < sta_metrics->num_bssids; i++) {
+         metrics = &sta_metrics->assoc_link_metrics[i];
+         sta = dm->find_sta(sta_metrics->sta_mac, metrics->bssid);
+@@ -83,6 +94,10 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
+         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+         sta->m_sta_info.rcpi = metrics->rcpi;
++        if (received_at[0] != '\0') {
++            snprintf(sta->m_sta_info.timestamp, sizeof(sta->m_sta_info.timestamp),
++                     "%s", received_at);
++        }
+     }
+ 
+     return 0;
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3434,10 +3434,16 @@ func loadDetailedLiveClients() ([]Client, error) {
+ 
+ 					metrics := ClientMetrics{}
+ 					rcpi := getKeyIntValue(sta, "RCPI")
++					metricObservedAt := time.Time{}
++					if rawTimestamp := getTreeValue(sta, "TimeStamp"); rawTimestamp != "" {
++						if parsed, parseErr := time.Parse(time.RFC3339Nano, rawTimestamp); parseErr == nil {
++							metricObservedAt = parsed.UTC()
++						}
++					}
+ 					if rcpi > 0 && rcpi <= 220 {
+ 						metrics.RCPI = rcpi
+ 						metrics.RSSI = rcpi/2 - 110
+-						metrics.LastUpdated = observedAt
++						metrics.LastUpdated = metricObservedAt
+ 					}
+ 					metrics.AssociationUptime = int64(getKeyIntValue(sta, "LastConnectTime"))
+ 
+-- 
+2.43.0

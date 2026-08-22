@@ -73,6 +73,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0069-candidate-rcpi-complete-unassociated-transaction.patch \
     file://0070-agent-accept-onewifi-nasta-response.patch \
     file://0071-agent-correlate-candidate-metrics-response.patch \
+    file://0072-metrics-preserve-associated-report-receipt-time.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
