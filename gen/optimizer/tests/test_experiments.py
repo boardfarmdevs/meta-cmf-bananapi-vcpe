@@ -21,8 +21,8 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     verify_matrix(first)
     assert first["summary"] == {
         "cases": 148,
-        "runnable": 14,
-        "blocked": 134,
+        "runnable": 16,
+        "blocked": 132,
         "worlds": 10,
         "traffic_profiles": 5,
         "policies": 2,
@@ -32,7 +32,10 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     assert len(band) == 6
     assert all(item["status"] == "blocked" for item in band)
     assert all("frequency-qualified-snr" not in item["missing_capabilities"] for item in band)
-    assert all("candidate-link-metrics" in item["missing_capabilities"] for item in band)
+    assert all(
+        "cross-band-candidate-link-metrics" in item["missing_capabilities"]
+        for item in band
+    )
     assert all("band-candidate-inventory" not in item["missing_capabilities"] for item in band)
     assert all(item["truth_boundary"]["optimizer_inputs"] == "EasyMesh observations only" for item in first["cases"])
 

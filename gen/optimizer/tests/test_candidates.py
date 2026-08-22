@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from optimizer.candidates import (
     CandidateMetricsError,
     ControllerCandidateProvider,
     operating_class,
 )
 from optimizer.model import CandidateObservation, ClientObservation
+import pytest
 
 
 STA = "02:00:00:00:03:00"
@@ -207,6 +210,50 @@ def test_queries_for_two_radios_are_not_combined():
     assert {item.bssid for item in measured} == {BSSID, second_bssid}
 
 
+def test_provider_splits_requests_at_controller_eight_sta_limit():
+    clients = []
+    candidates = []
+    for index in range(9):
+        station = f"02:00:00:00:{index + 16:02x}:00"
+        clients.append(replace(client(), sta_mac=station))
+        candidates.append(replace(inventory(), sta_mac=station))
+
+    calls = []
+
+    def request(_url, payload):
+        calls.append(payload)
+        stations = [
+            station
+            for opclass in payload["UnassocStaQueryList"]
+            for channel in opclass["channels"]
+            for station in channel["sta_macs"]
+        ]
+        result = response()
+        result["metrics"] = [
+            {**result["metrics"][0], "sta": station}
+            for station in stations
+        ]
+        return result
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=request, allow_simulated=True
+    )
+    measured = list(provider(
+        tuple(clients), tuple(candidates), bsses(),
+        "2026-08-21T20:00:01.000Z",
+    ))
+    batch_sizes = [
+        sum(
+            len(channel["sta_macs"])
+            for opclass in call["UnassocStaQueryList"]
+            for channel in opclass["channels"]
+        )
+        for call in calls
+    ]
+    assert batch_sizes == [8, 1]
+    assert len(measured) == 9
+
+
 def test_cross_band_inventory_is_not_misreported_as_candidate_measurement():
     raw = bsses()
     raw[0]["band"] = 3
@@ -231,3 +278,46 @@ def test_cross_band_inventory_is_not_misreported_as_candidate_measurement():
         (client(),), (cross_band,), raw, "2026-08-21T20:00:01.000Z"
     )) == []
     assert calls == []
+
+
+def test_failed_query_records_agent_radio_and_failed_transaction():
+    def fail(_url, _payload):
+        raise CandidateMetricsError("HTTP 504")
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=fail, allow_simulated=True
+    )
+    with pytest.raises(
+        CandidateMetricsError,
+        match=f"agent {AGENT} radio {RADIO}: HTTP 504",
+    ):
+        list(provider(
+            (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
+        ))
+    assert provider.last_raw == [{
+        "request": {
+            "AlMac": AGENT,
+            "UnassocStaQueryList": [{
+                "opclass": 115,
+                "channels": [{"channel": 36, "sta_macs": [STA]}],
+            }],
+        },
+        "query_radio": RADIO,
+        "error": "HTTP 504",
+    }]
+
+
+def test_partial_success_response_is_rejected():
+    second_sta = "02:00:00:00:04:00"
+    clients = (client(), replace(client(), sta_mac=second_sta))
+    candidates = (inventory(), replace(inventory(), sta_mac=second_sta))
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: response(),
+        allow_simulated=True,
+    )
+
+    with pytest.raises(CandidateMetricsError, match=f"omitted {second_sta}"):
+        list(provider(
+            clients, candidates, bsses(), "2026-08-21T20:00:01.000Z"
+        ))

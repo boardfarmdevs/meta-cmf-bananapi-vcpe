@@ -8,6 +8,9 @@ Implemented now:
 
 - raw endpoint records plus normalized immutable snapshots from `/topology`,
   `/clients`, `/devices` and `/bsses`;
+- active same-band candidate RCPI collection through the controller's
+  Unassociated STA Link Metrics endpoint, mapped from Agent/RUID to exact
+  target BSSID;
 - explicit unknown freshness and missing candidate-measurement handling;
 - a pure threshold/margin/hold/dwell/cooldown decision engine;
 - explicit association-timeout outcome and bounded exponential failure backoff;
@@ -20,20 +23,27 @@ Implemented now:
 - deterministic replay state;
 - a hash-chained JSON-lines experiment journal;
 - a narrow `gen/steer.sh` actuator and bounded association verifier; and
-- unit, adapter, replay and existing two-AP configurator-scenario tests.
+- unit, adapter, replay, isolated five-AP crossover and existing configurator
+  scenario tests.
 
 The scenario preparation layer also expands ten checked-in golden RF worlds,
 five independent traffic profiles, policy configurations and seeds into a
 hash-verified case matrix. Missing lab abilities remain explicit per-case
 blockers. The live observer never reads simulated RF truth.
 
-The live controller API currently serializes `client_metrics.last_updated` at
-read time; it is not the exact report timestamp. It also does not expose target
-link quality. Consequently live `recommend` and `act` safely emit no action
-until P1 adds trustworthy read-only freshness and candidate-measurement
-adapters. Recorded fixtures may contain those facts when their source is a real
-EasyMesh measurement such as a Beacon Metrics Response. wmediumd SNR is never
-accepted as an optimizer observation.
+The live controller supplies the associated-report receipt time and an active
+same-band candidate query with per-result receipt time. In the hwsim lab the
+candidate provider is explicitly identified as simulated-radio infrastructure,
+so it requires `--allow-simulated-candidates`. A physical deployment must
+report its operating channel and must not use that opt-in. Cross-band decisions
+still require Beacon/Probe/capability observations; candidate inventory alone
+is never treated as link quality. wmediumd SNR is never accepted as an
+optimizer observation.
+
+The complete operator and extension contract is in
+[`optimizer-manual.md`](../../doc/easymesh/optimizer-manual.md). It documents
+plain snapshot input, replay sequences, live adapters, new typed metrics, new
+algorithms, scenario authoring and acceptance.
 
 For offline algorithm tests only, `simulate` intentionally translates a
 verified golden world through a declared receiver-noise/RCPI sensor model into
@@ -70,10 +80,35 @@ em-optimizer replay \
   --journal /tmp/em-replay.jsonl
 ```
 
+Evaluate a team-supplied plain JSON snapshot without live I/O or action:
+
+```sh
+em-optimizer evaluate \
+  --input scenarios/examples/normalized-snapshot.json \
+  --policy configs/threshold-policy.yaml \
+  --output /tmp/em-evaluation.json \
+  --state-out /tmp/em-state.json
+```
+
+Collect live same-band candidate measurements and make recommendations:
+
+```sh
+em-optimizer recommend \
+  --base-url http://127.0.0.1:8888 \
+  --candidate-provider controller \
+  --allow-simulated-candidates \
+  --policy configs/threshold-policy.yaml \
+  --count 10 --interval 1 \
+  --journal /tmp/em-recommend.jsonl
+```
+
+The provider serializes Agent/radio work and splits each transaction at the
+controller's eight-STA limit. The accepted five-Agent/ten-client profile is
+seven transactions and 40 complete same-band target measurements per cycle.
+
 Use `configs/band-upgrade-policy.yaml` to compare conservative 2.4-to-5 and
-5-to-6 BSSID upgrades. Live recommendations remain inhibited until the
-candidate adapter supplies fresh per-BSSID measurements; band inventory alone
-is never treated as link quality.
+5-to-6 BSSID upgrades offline. The live Unassociated STA query is same-band;
+band inventory alone is never treated as cross-band link quality.
 
 Run a deterministic band-walk with one client ignoring BTM requests:
 
@@ -117,8 +152,11 @@ forces a 2.4 GHz response plus cooldown. There is deliberately no live probe
 control adapter yet.
 
 `act` requires both a policy-produced recommendation and the explicit
-`--yes-act` flag. At the present interface stage it remains inhibited by
-unknown freshness/missing candidate metrics during ordinary live observation.
+`--yes-act` flag. It defaults to `--max-actions 1` and exits after that action
+attempt and its bounded verification. A failed candidate collection cycle is
+never evaluated or acted upon. Recommend mode records an emitted choice as a
+recommendation, not a pending action, and suppresses the unchanged choice on
+later cycles with `recommendation_unchanged`.
 
 Build and inspect the scenario matrix:
 

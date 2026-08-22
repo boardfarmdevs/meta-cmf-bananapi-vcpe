@@ -6,18 +6,16 @@
       ],
       "id": "asymmetric-link--home-five-agent--asymmetric-link--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -87,18 +85,16 @@
       ],
       "id": "asymmetric-link--home-five-agent--asymmetric-link--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -178,7 +174,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "ap-load-metrics",
@@ -264,7 +260,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "ap-load-metrics",
@@ -351,7 +347,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "ap-load-metrics",
@@ -447,7 +443,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "ap-load-metrics",
@@ -543,7 +539,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "ap-load-metrics",
@@ -639,7 +635,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "ap-load-metrics",
@@ -725,18 +721,17 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--band-walk-small--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-small",
@@ -809,18 +804,17 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-small",
@@ -893,19 +887,18 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -987,19 +980,18 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1081,19 +1073,18 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1175,19 +1166,18 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1268,18 +1258,17 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--band-walk-small--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-small",
@@ -1351,18 +1340,17 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-small",
@@ -1434,19 +1422,18 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1527,19 +1514,18 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1620,19 +1606,18 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1713,19 +1698,18 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
+        "cross-band-candidate-link-metrics",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
         "btm-steering",
-        "candidate-link-metrics",
+        "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
         "scale-profile-home20",
@@ -1807,19 +1791,17 @@
       ],
       "id": "border-hysteresis--home-five-agent--border-hover--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -1892,19 +1874,17 @@
       ],
       "id": "border-hysteresis--home-five-agent--border-hover--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -1982,7 +1962,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
@@ -2061,7 +2041,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
@@ -2141,7 +2121,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -2231,7 +2211,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -2321,7 +2301,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -2402,7 +2382,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -2482,7 +2462,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -2553,7 +2533,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -2624,7 +2604,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -2704,7 +2684,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -2785,7 +2765,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -2866,7 +2846,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -2946,7 +2926,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3035,7 +3015,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3124,7 +3104,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3204,7 +3184,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3282,7 +3262,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3351,7 +3331,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3420,7 +3400,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3498,7 +3478,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3578,7 +3558,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3658,7 +3638,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3739,7 +3719,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -3831,7 +3811,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -3923,7 +3903,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4006,7 +3986,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4088,7 +4068,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4161,7 +4141,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4234,7 +4214,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4316,7 +4296,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4399,7 +4379,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4482,7 +4462,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4565,7 +4545,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4657,7 +4637,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4749,7 +4729,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4832,7 +4812,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -4914,7 +4894,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -4987,7 +4967,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5060,7 +5040,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5142,7 +5122,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5225,7 +5205,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5308,7 +5288,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5390,7 +5370,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5478,7 +5458,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5566,7 +5546,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5645,7 +5625,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5722,7 +5702,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5790,7 +5770,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -5858,7 +5838,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -5935,7 +5915,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6014,7 +5994,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6093,7 +6073,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6173,7 +6153,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6264,7 +6244,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6355,7 +6335,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6437,7 +6417,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6518,7 +6498,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6590,7 +6570,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6662,7 +6642,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6743,7 +6723,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6825,7 +6805,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -6907,7 +6887,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -6989,7 +6969,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7089,7 +7069,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -7189,7 +7169,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7280,7 +7260,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -7370,7 +7350,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7451,7 +7431,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -7532,7 +7512,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7622,7 +7602,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -7713,7 +7693,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7804,7 +7784,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -7895,7 +7875,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -7994,7 +7974,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8093,7 +8073,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -8183,7 +8163,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8272,7 +8252,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -8352,7 +8332,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8432,7 +8412,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -8521,7 +8501,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8611,7 +8591,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -8701,7 +8681,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8790,7 +8770,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -8877,7 +8857,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -8964,7 +8944,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9042,7 +9022,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9118,7 +9098,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9185,7 +9165,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9252,7 +9232,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9328,7 +9308,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9406,7 +9386,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9484,7 +9464,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9563,7 +9543,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9662,7 +9642,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9761,7 +9741,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -9851,7 +9831,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -9940,7 +9920,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -10020,7 +10000,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -10100,7 +10080,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -10189,7 +10169,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -10279,7 +10259,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -10369,7 +10349,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -10458,7 +10438,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "current-link-metrics",
@@ -10539,7 +10519,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "current-link-metrics",
@@ -10618,7 +10598,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
@@ -10695,7 +10675,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
@@ -10768,19 +10748,17 @@
       ],
       "id": "fast-transit--home-five-agent--fast-transit--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -10851,19 +10829,17 @@
       ],
       "id": "fast-transit--home-five-agent--fast-transit--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -10936,21 +10912,19 @@
       "id": "flash-crowd-load--home-five-agent--flash-crowd--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
         "ap-load-metrics",
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "ap-load-metrics",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -11032,21 +11006,19 @@
       "id": "flash-crowd-load--home-five-agent--flash-crowd--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
         "ap-load-metrics",
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "ap-load-metrics",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -11134,7 +11106,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "ap-load-metrics",
@@ -11214,7 +11186,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "ap-load-metrics",
@@ -11292,7 +11264,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -11361,7 +11333,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -11425,20 +11397,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent--band-walk-small--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-small",
         "traffic-iperf3"
       ],
@@ -11509,20 +11479,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent--band-walk-small--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-small",
         "traffic-iperf3"
       ],
@@ -11592,27 +11560,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent--band-walk-small--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -11675,27 +11640,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent--band-walk-small--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -11759,21 +11721,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -11853,21 +11813,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -11947,20 +11905,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -12040,20 +11996,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -12133,21 +12087,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -12227,21 +12179,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-iperf3"
       ],
@@ -12321,20 +12271,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "af1be1fbfdfae3b37398c557605189fd3270bdfed1eb4c87a94a8a9fece103e0"
+        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -12414,20 +12362,18 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "candidate-link-metrics",
-        "measurement-receipt-time",
         "scale-profile-home20"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "ca6c301a5890c2813bee27bad020c773b8cff558bd12a8774385a9309f3f1c89"
+        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
-        "candidate-link-metrics",
         "measurement-receipt-time",
+        "same-band-candidate-link-metrics",
         "scale-profile-home20",
         "traffic-ping"
       ],
@@ -12555,17 +12501,17 @@
       "runnable": 0
     },
     "slow-walk-steering": {
-      "blocked": 12,
-      "runnable": 0
+      "blocked": 10,
+      "runnable": 2
     }
   },
-  "matrix_sha256": "5c3d1a55aac3c8a7da55a0a97d3456d76b69b479a69f8aefb3c8000f02f02aa1",
+  "matrix_sha256": "958739c79b307d710ea6ed9b9e3de705548c1ca19bd9d0e2a8a1ccac811ae9c0",
   "schema": "optimizer.experiment-matrix.v1",
   "source": {
     "capabilities": "capabilities-current.json",
-    "capabilities_sha256": "c19b01aadd04342dafb7564b1af81c45a2c2bac0ab7177d7243584e69cb417ee",
+    "capabilities_sha256": "92c6d91d1025fb8c4e5a7ece3da408ef3659ac01dc2c0f53bdb55a857b504eff",
     "scenario_catalog": "scenario-catalog.json",
-    "scenario_catalog_sha256": "58ec2d56ec220ca929b434a6eaf18b06148d49cf1284005ca13618d25711e43f",
+    "scenario_catalog_sha256": "5cb0a5b55dbdb1e308aeb35247a2ca1d7448ef9b466aca1b507195aa355f5653",
     "spec": "home-suite.json",
     "spec_sha256": "05db5452d079f1afb69437b3a7686ac7a833cad4f7c54a8b5c965ad19188df4e",
     "traffic_suite": "traffic-profiles.json",
@@ -12573,10 +12519,10 @@
   },
   "suite": "home-policy-research-v1",
   "summary": {
-    "blocked": 134,
+    "blocked": 132,
     "cases": 148,
     "policies": 2,
-    "runnable": 14,
+    "runnable": 16,
     "seeds": 1,
     "traffic_profiles": 5,
     "worlds": 10

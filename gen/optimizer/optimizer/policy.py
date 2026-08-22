@@ -22,7 +22,7 @@ class PolicyConfig:
     post_steer_cooldown_seconds: float = 30
     failure_backoff_seconds: float = 60
     maximum_failure_backoff_seconds: float = 600
-    reject_stale_metrics_after_seconds: float = 7
+    reject_stale_metrics_after_seconds: float = 15
     band_upgrade_enabled: bool = False
     minimum_band_upgrade_target_rcpi: int = 120
     maximum_band_upgrade_loss_rcpi: int = 8
@@ -275,6 +275,29 @@ class ThresholdPolicy:
             return (
                 Decision(action="none", reason="candidate_gain_too_small", scores=scores, **base),
                 stable,
+            )
+
+        if (
+            old.phase == "recommended"
+            and old.source_bssid == client.connected_bssid
+            and old.target_bssid == best.bssid
+        ):
+            held = (
+                (now - parse_time(old.condition_since)).total_seconds()
+                if old.condition_since else 0
+            )
+            return (
+                Decision(
+                    action="none",
+                    reason="recommendation_unchanged",
+                    target_bssid=best.bssid,
+                    target_band=best.band,
+                    target_rcpi=best.rcpi,
+                    hold_seconds=held,
+                    scores=scores,
+                    **base,
+                ),
+                old,
             )
 
         same_condition = (

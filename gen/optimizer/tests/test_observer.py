@@ -175,3 +175,37 @@ def test_controller_inventory_keeps_cross_band_bssid_candidates():
         for item in result.candidates
     )
     assert all(item.device_name == "Extender-1" for item in result.candidates)
+
+
+def test_bss_inventory_supplies_client_context_when_topology_lags():
+    payloads = {
+        "/api/v1/topology": {"nodes": []},
+        "/api/v1/clients": {"clients": [{
+            "mac": "02:00:00:00:03:00",
+            "connected_ap_mac": "02:00:00:00:09:20",
+            "connected_bssid": "02:00:00:aa:aa:01",
+            "client_metrics": {"rcpi": 138, "association_uptime_seconds": 42},
+        }]},
+        "/api/v1/devices": {"devices": [{
+            "mac": "02:00:00:00:09:20", "role": "Extender-1",
+        }]},
+        "/api/v1/bsses": {"bsses": [
+            {"bssid": "02:00:00:aa:aa:01", "device_id": "02:00:00:00:09:20",
+             "radio_id": "02:00:00:00:09:00", "band": 1, "channel": 36,
+             "ssid": "private_ssid", "haul_type": "Fronthaul"},
+            {"bssid": "02:00:00:bb:bb:01", "device_id": "02:00:00:00:08:20",
+             "radio_id": "02:00:00:00:08:00", "band": 1, "channel": 36,
+             "ssid": "private_ssid", "haul_type": "Fronthaul"},
+        ]},
+    }
+    observer = ControllerObserver(
+        "http://controller",
+        fetcher=lambda url: payloads[url.removeprefix("http://controller")],
+        clock=lambda: datetime(2026, 8, 20, 20, 0, tzinfo=timezone.utc),
+    )
+
+    result = observer.observe()
+
+    assert result.clients[0].band == "5"
+    assert result.clients[0].connected_device_name == "Extender-1"
+    assert [item.bssid for item in result.candidates] == ["02:00:00:bb:bb:01"]

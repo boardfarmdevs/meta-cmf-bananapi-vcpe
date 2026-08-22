@@ -23,6 +23,11 @@ JsonRequester = Callable[[str, dict[str, Any]], dict[str, Any]]
 # opt-in.  A physical deployment must report its actual operating channel.
 LAB_CONTROL_CHANNELS = {"2.4": 6, "5": 36, "6": 5}
 
+# The unified-wifi-mesh data model stores at most EM_MAX_UNASSOC_STA (eight)
+# response entries.  Sending a larger request makes the current Agent omit a
+# correlated response, so keep every transaction within that real boundary.
+MAX_UNASSOC_STAS_PER_QUERY = 8
+
 
 class CandidateMetricsError(RuntimeError):
     """The controller could not produce a trustworthy candidate snapshot."""
@@ -160,64 +165,112 @@ class ControllerCandidateProvider:
         measured: list[CandidateObservation] = []
         self.last_raw = []
         for (agent, query_radio), groups in sorted(query_groups.items()):
-            by_opclass: dict[int, list[dict[str, Any]]] = {}
-            for (opclass, channel), stations in sorted(groups.items()):
-                by_opclass.setdefault(opclass, []).append(
-                    {"channel": channel, "sta_macs": sorted(stations)}
-                )
-            payload = {
-                "AlMac": agent,
-                "UnassocStaQueryList": [
-                    {"opclass": opclass, "channels": channels}
-                    for opclass, channels in sorted(by_opclass.items())
-                ],
-            }
-            response = self.requester(self.url, payload)
-            self.last_raw.append({
-                "request": payload,
-                "query_radio": query_radio,
-                "response": response,
-            })
-            if response.get("success") is not True:
-                raise CandidateMetricsError(
-                    f"candidate query for {agent} was not successful: {response}"
-                )
-            if response.get("simulated") is True and not self.allow_simulated:
-                raise CandidateMetricsError(
-                    "controller returned simulated candidate metrics; "
-                    "use --allow-simulated-candidates only in the hwsim lab"
-                )
-            provider = str(response.get("provider") or "unknown")
-            simulated = response.get("simulated") is True
-            source = f"easy_mesh_unassociated_sta_link_metrics:{provider}"
-            if simulated:
-                source += ":simulated"
-
-            for metric in response.get("metrics", []):
-                metric_agent = normalize_mac(metric["agent_al"])
-                radio = normalize_mac(metric["ruid"])
-                sta = normalize_mac(metric["sta"])
-                opclass = int(metric["opclass"])
-                channel = int(metric["channel"])
-                rcpi = int(metric["rcpi"])
-                if metric_agent != agent:
-                    raise CandidateMetricsError(
-                        f"candidate response agent {metric_agent} does not match {agent}"
+            entries = [
+                (opclass, channel, station)
+                for (opclass, channel), stations in sorted(groups.items())
+                for station in sorted(stations)
+            ]
+            batches = [
+                entries[offset:offset + MAX_UNASSOC_STAS_PER_QUERY]
+                for offset in range(0, len(entries), MAX_UNASSOC_STAS_PER_QUERY)
+            ]
+            for batch in batches:
+                by_opclass: dict[int, dict[int, list[str]]] = {}
+                for opclass, channel, station in batch:
+                    by_opclass.setdefault(opclass, {}).setdefault(channel, []).append(
+                        station
                     )
-                if not 0 <= rcpi <= 220:
-                    raise CandidateMetricsError(f"candidate RCPI is invalid: {rcpi}")
-                mapped = targets.get((agent, radio, sta, opclass, channel), [])
-                for candidate in mapped:
-                    measured.append(
-                        CandidateObservation(
-                            sta_mac=sta,
-                            bssid=candidate.bssid,
-                            device_id=candidate.device_id,
-                            device_name=candidate.device_name,
-                            rcpi=rcpi,
-                            metric_observed_at=_metric_time(metric.get("received_at_ms")),
-                            measurement_source=source,
-                            band=candidate.band,
+                payload = {
+                    "AlMac": agent,
+                    "UnassocStaQueryList": [
+                        {
+                            "opclass": opclass,
+                            "channels": [
+                                {"channel": channel, "sta_macs": stations}
+                                for channel, stations in sorted(channels.items())
+                            ],
+                        }
+                        for opclass, channels in sorted(by_opclass.items())
+                    ],
+                }
+                transaction = {
+                    "request": payload,
+                    "query_radio": query_radio,
+                }
+                self.last_raw.append(transaction)
+                try:
+                    response = self.requester(self.url, payload)
+                except CandidateMetricsError as error:
+                    transaction["error"] = str(error)
+                    raise CandidateMetricsError(
+                        f"candidate query failed for agent {agent} radio "
+                        f"{query_radio}: {error}"
+                    ) from error
+                transaction["response"] = response
+                if response.get("success") is not True:
+                    raise CandidateMetricsError(
+                        f"candidate query for {agent} was not successful: {response}"
+                    )
+                if response.get("simulated") is True and not self.allow_simulated:
+                    raise CandidateMetricsError(
+                        "controller returned simulated candidate metrics; "
+                        "use --allow-simulated-candidates only in the hwsim lab"
+                    )
+                provider = str(response.get("provider") or "unknown")
+                simulated = response.get("simulated") is True
+                source = f"easy_mesh_unassociated_sta_link_metrics:{provider}"
+                if simulated:
+                    source += ":simulated"
+
+                expected = {
+                    (agent, query_radio, station, opclass, channel)
+                    for opclass, channel, station in batch
+                }
+                received: set[tuple[str, str, str, int, int]] = set()
+                for metric in response.get("metrics", []):
+                    metric_agent = normalize_mac(metric["agent_al"])
+                    radio = normalize_mac(metric["ruid"])
+                    sta = normalize_mac(metric["sta"])
+                    opclass = int(metric["opclass"])
+                    channel = int(metric["channel"])
+                    rcpi = int(metric["rcpi"])
+                    if metric_agent != agent:
+                        raise CandidateMetricsError(
+                            f"candidate response agent {metric_agent} does not match {agent}"
                         )
+                    if not 0 <= rcpi <= 220:
+                        raise CandidateMetricsError(f"candidate RCPI is invalid: {rcpi}")
+                    response_key = (metric_agent, radio, sta, opclass, channel)
+                    if response_key not in expected:
+                        raise CandidateMetricsError(
+                            "candidate response contains an unexpected measurement: "
+                            f"{sta}@{radio} opclass={opclass} channel={channel}"
+                        )
+                    received.add(response_key)
+                    mapped = targets.get(response_key, [])
+                    for candidate in mapped:
+                        measured.append(
+                            CandidateObservation(
+                                sta_mac=sta,
+                                bssid=candidate.bssid,
+                                device_id=candidate.device_id,
+                                device_name=candidate.device_name,
+                                rcpi=rcpi,
+                                metric_observed_at=_metric_time(
+                                    metric.get("received_at_ms")
+                                ),
+                                measurement_source=source,
+                                band=candidate.band,
+                            )
+                        )
+                missing = sorted(expected - received)
+                if missing:
+                    missing_text = ", ".join(
+                        f"{sta}@{radio}/opclass-{opclass}/channel-{channel}"
+                        for _agent, radio, sta, opclass, channel in missing
+                    )
+                    raise CandidateMetricsError(
+                        f"candidate response for agent {agent} radio {query_radio} "
+                        f"omitted {missing_text}"
                     )
         return measured

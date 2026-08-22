@@ -140,3 +140,11 @@ def parse_backoff_seconds(value, seconds):
     from optimizer.model import parse_time
 
     return int((parse_time(value) - parse_time(snapshot(seconds).observed_at)).total_seconds())
+
+
+def test_parse_time_accepts_rfc3339_nanoseconds():
+    from optimizer.model import parse_time
+
+    parsed = parse_time("2026-08-22T02:31:31.496925791+00:00")
+
+    assert parsed.isoformat() == "2026-08-22T02:31:31.496925+00:00"

@@ -16,7 +16,7 @@
       "description": "Ten clients cross several candidate cells slowly.",
       "world_tags_all": ["slow-walk"],
       "traffic_profiles": ["latency-probe", "constant-load"],
-      "requirements": ["candidate-link-metrics", "measurement-receipt-time", "btm-steering", "association-verification"],
+      "requirements": ["same-band-candidate-link-metrics", "measurement-receipt-time", "btm-steering", "association-verification"],
       "expected_behavior": ["bounded moves after hold and margin", "no ping-pong"]
     },
     {
@@ -25,7 +25,7 @@
       "description": "Clients repeatedly cross wall and cell borders near policy thresholds.",
       "world_tags_all": ["border-hover"],
       "traffic_profiles": ["latency-probe"],
-      "requirements": ["candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
+      "requirements": ["same-band-candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
       "expected_behavior": ["hysteresis suppresses repeated steering", "short wall jumps do not cause oscillation"]
     },
     {
@@ -34,7 +34,7 @@
       "description": "The candidate opportunity may be shorter than roam cost.",
       "world_tags_all": ["fast-transit"],
       "traffic_profiles": ["latency-probe"],
-      "requirements": ["candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
+      "requirements": ["same-band-candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
       "expected_behavior": ["abstain when expected benefit horizon is too short"]
     },
     {
@@ -43,7 +43,7 @@
       "description": "Station-originated signal is weaker than AP-originated signal.",
       "world_tags_all": ["asymmetric"],
       "traffic_profiles": ["latency-probe"],
-      "requirements": ["candidate-link-metrics", "measurement-receipt-time"],
+      "requirements": ["same-band-candidate-link-metrics", "measurement-receipt-time"],
       "expected_behavior": ["do not silently treat uplink and downlink as the same fact"]
     },
     {
@@ -52,7 +52,7 @@
       "description": "Ten clients and their traffic appear together.",
       "world_tags_all": ["flash-crowd"],
       "traffic_profiles": ["traffic-flash-crowd"],
-      "requirements": ["candidate-link-metrics", "measurement-receipt-time", "ap-load-metrics", "btm-steering"],
+      "requirements": ["same-band-candidate-link-metrics", "measurement-receipt-time", "ap-load-metrics", "btm-steering"],
       "expected_behavior": ["serialize moves", "avoid moving the cohort onto one target"]
     },
     {
@@ -79,7 +79,7 @@
       "description": "Compare same-mesh 2.4 and 5 GHz candidates before a BTM action.",
       "world_tags_all": ["slow-walk"],
       "traffic_profiles": ["latency-probe"],
-      "requirements": ["frequency-qualified-snr", "band-candidate-inventory", "candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
+      "requirements": ["frequency-qualified-snr", "band-candidate-inventory", "cross-band-candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
       "expected_behavior": ["choose a BSSID, not merely a band", "retain 2.4 GHz when 5 GHz benefit is insufficient"]
     },
     {
@@ -88,7 +88,7 @@
       "description": "Compare same-mesh 5 and 6 GHz candidates under shorter 6 GHz reach.",
       "world_tags_all": ["slow-walk"],
       "traffic_profiles": ["latency-probe"],
-      "requirements": ["frequency-qualified-snr", "band-candidate-inventory", "candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
+      "requirements": ["frequency-qualified-snr", "band-candidate-inventory", "cross-band-candidate-link-metrics", "measurement-receipt-time", "btm-steering"],
       "expected_behavior": ["prefer 6 GHz only while measured benefit and persistence justify it"]
     },
     {

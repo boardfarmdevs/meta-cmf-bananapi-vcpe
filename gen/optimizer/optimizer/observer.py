@@ -115,11 +115,33 @@ class ControllerObserver:
             if item.get("mac")
         }
         bsses = _bss_inventory(bsses_payload, device_names)
+        bss_by_id = {item["bssid"]: item for item in bsses}
 
         clients: list[ClientObservation] = []
+        client_context: dict[str, dict[str, Any]] = {}
         for item in clients_payload.get("clients", []):
             mac = normalize_mac(item["mac"])
-            placement = context.get(mac, {})
+            topology_placement = context.get(mac, {})
+            connected_bssid = normalize_mac(item["connected_bssid"])
+            connected_bss = bss_by_id.get(connected_bssid, {})
+            device_id = (
+                item.get("connected_ap_mac")
+                or connected_bss.get("device_id")
+                or topology_placement.get("device_id")
+                or ""
+            ).lower()
+            placement = {
+                "device_id": device_id,
+                "device_name": (
+                    device_names.get(device_id)
+                    or connected_bss.get("device_name")
+                    or topology_placement.get("device_name")
+                    or ""
+                ),
+                "band": connected_bss.get("band") or topology_placement.get("band"),
+                "ssid": connected_bss.get("ssid") or topology_placement.get("ssid") or "",
+            }
+            client_context[mac] = placement
             metrics = item.get("client_metrics") or {}
             raw_rcpi = metrics.get("rcpi")
             rcpi = int(raw_rcpi) if raw_rcpi not in (None, 0) else None
@@ -140,7 +162,7 @@ class ControllerObserver:
                         or ""
                     ).lower(),
                     connected_device_name=placement.get("device_name") or "",
-                    connected_bssid=normalize_mac(item["connected_bssid"]),
+                    connected_bssid=connected_bssid,
                     rcpi=rcpi,
                     association_uptime_seconds=int(
                         metrics.get("association_uptime_seconds") or 0
@@ -154,7 +176,7 @@ class ControllerObserver:
 
         candidates: list[CandidateObservation] = []
         for client in normalized_clients:
-            placement = context.get(client.sta_mac, {})
+            placement = client_context.get(client.sta_mac, {})
             for bss in bsses:
                 if bss["bssid"] == client.connected_bssid:
                     continue

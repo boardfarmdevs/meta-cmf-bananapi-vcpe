@@ -45,7 +45,11 @@ def normalize_band(value: Any) -> str | None:
 def parse_time(value: str) -> datetime:
     if not value:
         raise ValueError("timestamp is empty")
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    normalized = value.replace("Z", "+00:00")
+    # Go's RFC3339Nano encoder can emit up to nine fractional digits, while
+    # datetime.fromisoformat() accepts microseconds (six digits) at most.
+    normalized = re.sub(r"(\.\d{6})\d+(?=[+-]\d\d:\d\d$)", r"\1", normalized)
+    parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
         raise ValueError(f"timestamp has no timezone: {value!r}")
     return parsed.astimezone(timezone.utc)

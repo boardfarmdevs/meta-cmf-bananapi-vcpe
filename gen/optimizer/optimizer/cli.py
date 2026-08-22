@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
 import time
 
 from .actuator import SteerActuator
-from .candidates import ControllerCandidateProvider
+from .candidates import CandidateMetricsError, ControllerCandidateProvider
 from .config import load_policy
 from .experiments import ExperimentError, build_matrix
 from .traffic import compile_traffic_plan, load_json
@@ -30,6 +31,30 @@ from .verifier import OutcomeVerifier
 def _record_cycle(journal: Journal, snapshot: Snapshot, evaluation) -> None:
     journal.append("snapshot", snapshot.to_dict(), recorded_at=snapshot.observed_at)
     journal.append("evaluation", evaluation.to_dict(), recorded_at=snapshot.observed_at)
+
+
+def _recommendation_state(prior: PolicyState, evaluation) -> PolicyState:
+    """Retain eligibility without pretending a recommendation was executed."""
+    state = evaluation.state
+    for decision in evaluation.decisions:
+        if decision.action != "steer":
+            continue
+        proposed = state.for_sta(decision.sta_mac)
+        previous = prior.for_sta(decision.sta_mac)
+        state = state.replace(replace(
+            proposed,
+            phase="recommended",
+            pending_since=None,
+            last_action_at=previous.last_action_at,
+        ))
+    return state
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
 
 
 def _live(args, mode: str) -> int:
@@ -62,12 +87,37 @@ def _live(args, mode: str) -> int:
         if mode == "act"
         else None
     )
+    action_attempts = 0
     for index in range(args.count):
-        snapshot = observer.observe()
+        try:
+            snapshot = observer.observe()
+        except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
+            journal.append(
+                "observation_error",
+                {
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                    "candidate_transactions": (
+                        candidate_provider.last_raw if candidate_provider else []
+                    ),
+                },
+            )
+            print(f"em-optimizer: observation failed: {error}", file=sys.stderr)
+            if args.observation_error_policy == "stop":
+                raise SystemExit(2) from error
+            if index + 1 < args.count:
+                time.sleep(args.interval)
+            continue
         journal.append("raw_observation", observer.last_raw, recorded_at=snapshot.observed_at)
         journal.append("snapshot", snapshot.to_dict(), recorded_at=snapshot.observed_at)
         if policy:
-            evaluation = policy.evaluate(snapshot, state)
+            prior_state = state
+            evaluation = policy.evaluate(snapshot, prior_state)
+            if mode == "recommend":
+                evaluation = replace(
+                    evaluation,
+                    state=_recommendation_state(prior_state, evaluation),
+                )
             state = evaluation.state
             journal.append("evaluation", evaluation.to_dict(), recorded_at=snapshot.observed_at)
             for decision in evaluation.decisions:
@@ -78,6 +128,7 @@ def _live(args, mode: str) -> int:
                     if not args.yes_act:
                         raise SystemExit("act mode requires --yes-act")
                     result = actuator.execute(decision, snapshot)
+                    action_attempts += 1
                     journal.append("action", result.to_dict())
                     if result.success:
                         verified = verifier.verify(
@@ -86,6 +137,8 @@ def _live(args, mode: str) -> int:
                             timeout_seconds=policy.config.steer_timeout_seconds,
                         )
                         journal.append("verification", verified.to_dict())
+                    if action_attempts >= args.max_actions:
+                        return 0
         if index + 1 < args.count:
             time.sleep(args.interval)
     return 0
@@ -109,6 +162,36 @@ def _replay(args) -> int:
     return 0
 
 
+def _evaluate(args) -> int:
+    """Evaluate one operator-supplied normalized snapshot without live I/O."""
+    try:
+        value = load_json(args.input)
+        snapshot = Snapshot.from_dict(value)
+        state = (
+            PolicyState.from_dict(load_json(args.state_in))
+            if args.state_in
+            else PolicyState()
+        )
+        evaluation = ThresholdPolicy(load_policy(args.policy)).evaluate(snapshot, state)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"em-optimizer: invalid snapshot input: {error}") from error
+
+    output = {
+        "schema": "optimizer.evaluation.v1",
+        "snapshot": snapshot.to_dict(),
+        "evaluation": evaluation.to_dict(),
+    }
+    Path(args.output).write_text(
+        json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if args.state_out:
+        Path(args.state_out).write_text(
+            json.dumps(evaluation.state.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="em-optimizer")
     sub = result.add_subparsers(dest="mode", required=True)
@@ -124,6 +207,15 @@ def parser() -> argparse.ArgumentParser:
             default="off",
         )
         command.add_argument("--allow-simulated-candidates", action="store_true")
+        command.add_argument(
+            "--observation-error-policy",
+            choices=("stop", "continue"),
+            default="stop",
+            help=(
+                "stop on a candidate collection error (default), or record the "
+                "failed cycle and continue without evaluating or acting"
+            ),
+        )
         command.add_argument(
             "--trust-api-metric-timestamp",
             action=argparse.BooleanOptionalAction,
@@ -142,10 +234,25 @@ def parser() -> argparse.ArgumentParser:
                 default=str(Path(__file__).resolve().parents[2] / "steer.sh"),
             )
             command.add_argument("--yes-act", action="store_true")
+            command.add_argument(
+                "--max-actions",
+                type=_positive_int,
+                default=1,
+                help="maximum actuator attempts in this run (default: 1)",
+            )
     replay = sub.add_parser("replay")
     replay.add_argument("--input", required=True)
     replay.add_argument("--journal", required=True)
     replay.add_argument("--policy", required=True)
+    evaluate = sub.add_parser(
+        "evaluate",
+        help="evaluate one normalized snapshot supplied as plain JSON",
+    )
+    evaluate.add_argument("--input", required=True)
+    evaluate.add_argument("--output", required=True)
+    evaluate.add_argument("--policy", required=True)
+    evaluate.add_argument("--state-in")
+    evaluate.add_argument("--state-out")
     matrix = sub.add_parser("matrix")
     matrix.add_argument("--spec", required=True)
     matrix.add_argument("--output", required=True)
@@ -267,6 +374,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.mode == "replay":
         return _replay(args)
+    if args.mode == "evaluate":
+        return _evaluate(args)
     return _live(args, args.mode)
 
 
