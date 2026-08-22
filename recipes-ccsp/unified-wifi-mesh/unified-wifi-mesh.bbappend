@@ -81,6 +81,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
     file://0078-topology-response-resolve-owner-by-association-age.patch \
     file://0079-cli-distinguish-iot-clients.patch \
+    file://0080-cli-place-clients-inside-ssid-bubbles.patch \
     "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

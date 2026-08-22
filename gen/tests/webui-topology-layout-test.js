@@ -41,6 +41,43 @@ assert.deepEqual(labels, ['802.11ax', '802.11ax', '802.11be', '802.11be']);
 assert.deepEqual(topology, original, 'formatting changed the topology API model');
 assert.equal(controller.topologySignature(topology), before);
 
+const cohortStations = [
+  { staMAC: '02:00:00:00:09:00', ssid: 'private_ssid' },
+  { staMAC: '02:00:00:00:0a:00', ssid: 'private_ssid' },
+  { staMAC: '02:00:00:00:13:00', ssid: 'iot_ssid' }
+];
+const cohortHauls = [
+  { name: 'Fronthaul', ssid: 'private_ssid' },
+  { name: 'Iot', ssid: 'iot_ssid' },
+  { name: 'Backhaul', ssid: 'mesh_backhaul' }
+];
+const geometry = controller.topologyHaulGeometry(cohortHauls, cohortStations);
+const privateBubble = geometry.find(item => item.ssid === 'private_ssid');
+const iotBubble = geometry.find(item => item.ssid === 'iot_ssid');
+assert.ok(privateBubble.radius >= 110 && iotBubble.radius >= 110,
+  'client SSID bubbles were not enlarged');
+assert.notDeepEqual(privateBubble.offset, iotBubble.offset,
+  'private and IoT bubbles share the same center');
+assert.ok(Math.hypot(
+  privateBubble.offset.x - iotBubble.offset.x,
+  privateBubble.offset.y - iotBubble.offset.y
+) >= privateBubble.radius + iotBubble.radius + 12,
+  'private and IoT bubbles overlap or lack a readable gap');
+for (const station of cohortStations) {
+  const placement = controller.topologySTAPlacement(station, cohortStations, geometry);
+  const bubble = geometry.find(item => item.ssid === station.ssid);
+  const distance = Math.hypot(
+    placement.to.x - bubble.offset.x,
+    placement.to.y - bubble.offset.y
+  );
+  assert.ok(distance + placement.iconSize / 2 + 28 <= bubble.radius + 0.001,
+    `${station.staMAC} was placed outside ${station.ssid}`);
+}
+assert.ok(controller.topologyNodeExtent({
+  haulTypes: cohortHauls,
+  STAList: cohortStations
+}) > 240, 'expanded SSID groups did not increase D3 collision spacing');
+
 const renderTopology = controller.topologyRenderSnapshot(topology);
 renderTopology.nodes[0].x = 123;
 renderTopology.nodes[0].fx = 123;
