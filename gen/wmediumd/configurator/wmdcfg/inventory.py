@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,19 @@ MESH_NAME = re.compile(r"^(bpibroadband|bpiap(?:-\d{3})?)$")
 CLIENT_NAME = re.compile(r"^wlan-client(?:-\d{3})?$")
 
 
-def _run(*args: str) -> str:
-    result = subprocess.run(args, check=True, text=True, capture_output=True)
-    return result.stdout.strip()
+def _run(*args: str, attempts: int = 3) -> str:
+    """Run a read-only inventory probe with bounded LXC transport recovery."""
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    for attempt in range(1, attempts + 1):
+        try:
+            result = subprocess.run(args, check=True, text=True, capture_output=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    raise AssertionError("unreachable")
 
 
 def _exec(container: str, command: str) -> str:

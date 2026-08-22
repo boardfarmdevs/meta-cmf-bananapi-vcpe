@@ -1,6 +1,19 @@
+import subprocess
 from unittest.mock import patch
 
-from wmdcfg.inventory import discover
+from wmdcfg.inventory import _run, discover
+
+
+def test_inventory_probe_retries_a_lost_lxc_exec_transport():
+    failed = subprocess.CalledProcessError(-15, ["lxc", "exec"])
+    completed = subprocess.CompletedProcess(["lxc", "exec"], 0, "ready\n", "")
+    with patch("wmdcfg.inventory.subprocess.run", side_effect=[failed, completed]) as run, patch(
+        "wmdcfg.inventory.time.sleep"
+    ) as sleep:
+        assert _run("lxc", "exec", "mesh", attempts=2) == "ready"
+
+    assert run.call_count == 2
+    sleep.assert_called_once_with(0.5)
 
 
 def test_discover_ignores_stopped_matching_containers():
