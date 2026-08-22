@@ -182,10 +182,48 @@ ps -p "$pid" -o pcpu=,etimes= | awk '{printf "cpu_percent=%s\nelapsed_seconds=%s
     return values
 
 
-def memory_sample() -> dict[str, dict[str, object]]:
+def wmediumd_process_sample(pidfile: Path) -> dict[str, object]:
+    pid = int(pidfile.read_text().strip())
+    status = Path(f"/proc/{pid}/status").read_text()
+    values: dict[str, object] = {"pid": pid}
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            values["Rss"] = int(line.split()[1])
+        elif line.startswith("Threads:"):
+            values["Threads"] = int(line.split()[1])
+    process = run("ps", "-p", str(pid), "-o", "pcpu=,etimes=")
+    cpu, elapsed = process.split()
+    values["cpu_percent"] = float(cpu)
+    values["elapsed_seconds"] = int(elapsed)
+
+    # Resolve this process's socket inodes before reading namespace-wide
+    # /proc/<pid>/net/netlink, then sum only their receive-drop counters.
+    command = r'''
+pid=$1
+drops=0
+for inode in $(ls -l "/proc/$pid/fd" 2>/dev/null \
+        | sed -n 's/.*socket:\[\([0-9]*\)\]/\1/p'); do
+    value=$(awk -v inode="$inode" '$10 == inode {print $9}' \
+        "/proc/$pid/net/netlink" 2>/dev/null)
+    [ -n "$value" ] && drops=$((drops + value))
+done
+printf 'netlink_drops=%s\n' "$drops"
+'''
+    netlink = run(
+        "sudo", "-n", "sh", "-c", command, "sh", str(pid), check=False
+    )
+    match = re.search(r"netlink_drops=(\d+)", netlink)
+    if not match:
+        raise RuntimeError("cannot read wmediumd netlink drop counters")
+    values["netlink_drops"] = int(match.group(1))
+    return values
+
+
+def memory_sample(pidfile: Path) -> dict[str, dict[str, object]]:
     return {
         "em_ctrl": process_memory("em_ctrl.service"),
         "em_cli": process_memory("em_cli.service"),
+        "wmediumd": wmediumd_process_sample(pidfile),
     }
 
 
@@ -467,7 +505,9 @@ class Soak:
         self.baseline_services: dict[str, dict[str, dict[str, object]]] = {}
         self.baseline_medium: dict[str, object] = {}
         self.memory_samples: list[dict[str, object]] = []
-        self.peak_rss_kib = {"em_ctrl": 0, "em_cli": 0}
+        self.peak_rss_kib = {"em_ctrl": 0, "em_cli": 0, "wmediumd": 0}
+        self.peak_cpu_percent = {"wmediumd": 0.0}
+        self.baseline_netlink_drops: int | None = None
         self.workloads: list[dict[str, object]] = []
         self.outage_cursor = 0
         self.carousel_cursor = 0
@@ -480,18 +520,32 @@ class Soak:
             self.recorder.write("stop_requested", signal=signum)
 
     def sample_memory(self, elapsed: float, phase: str) -> None:
-        memory = memory_sample()
+        memory = memory_sample(self.args.wmediumd_pidfile)
         item = {"elapsed_seconds": round(elapsed, 3), "phase": phase, "memory": memory}
         self.memory_samples.append(item)
         for process, values in memory.items():
             rss = int(values["Rss"])
             self.peak_rss_kib[process] = max(self.peak_rss_kib[process], rss)
+        wmediumd_cpu = float(memory["wmediumd"]["cpu_percent"])
+        self.peak_cpu_percent["wmediumd"] = max(
+            self.peak_cpu_percent["wmediumd"], wmediumd_cpu
+        )
+        drops = int(memory["wmediumd"]["netlink_drops"])
+        if self.baseline_netlink_drops is None:
+            self.baseline_netlink_drops = drops
         assert self.recorder
         self.recorder.write("memory", **item)
         if self.peak_rss_kib["em_ctrl"] > self.args.max_ctrl_rss_mib * 1024:
             raise RuntimeError("em_ctrl exceeded its RSS limit")
         if self.peak_rss_kib["em_cli"] > self.args.max_cli_rss_mib * 1024:
             raise RuntimeError("em_cli exceeded its RSS limit")
+        if self.peak_rss_kib["wmediumd"] > self.args.max_wmediumd_rss_mib * 1024:
+            raise RuntimeError("wmediumd exceeded its RSS limit")
+        if drops > self.baseline_netlink_drops:
+            raise RuntimeError(
+                "wmediumd netlink receive drops increased "
+                f"{self.baseline_netlink_drops}->{drops}"
+            )
 
     def health(self, elapsed: float, phase: str) -> dict[str, object]:
         topology = fetch_json(self.args.topology_url)
@@ -720,6 +774,7 @@ class Soak:
                 "workload_count": len(self.workloads),
                 "workloads": self.workloads,
                 "peak_rss_kib": self.peak_rss_kib,
+                "peak_cpu_percent": self.peak_cpu_percent,
                 "growth": growth,
                 "oom": oom,
                 "coredumps": cores,
@@ -740,6 +795,7 @@ class Soak:
                 "workload_count": len(self.workloads),
                 "workloads": self.workloads,
                 "peak_rss_kib": self.peak_rss_kib,
+                "peak_cpu_percent": self.peak_cpu_percent,
             }
             write_json(self.output / "summary.json", summary)
             print(f"FAILED artifacts={self.output}: {error_text}", file=sys.stderr)
@@ -773,6 +829,11 @@ def main() -> int:
     parser.add_argument("--api-url", default="http://127.0.0.1:8888/api/v1")
     parser.add_argument("--max-ctrl-rss-mib", type=int, default=256)
     parser.add_argument("--max-cli-rss-mib", type=int, default=192)
+    parser.add_argument("--max-wmediumd-rss-mib", type=int, default=64)
+    parser.add_argument(
+        "--wmediumd-pidfile", type=Path,
+        default=Path("/run/meta-cmf-wmediumd/wmediumd.pid"),
+    )
     parser.add_argument("--max-pss-growth-mib", type=int, default=64)
     parser.add_argument("--growth-anchor-hours", type=float, default=1)
     parser.add_argument("--max-journal-mib", type=int, default=24)
