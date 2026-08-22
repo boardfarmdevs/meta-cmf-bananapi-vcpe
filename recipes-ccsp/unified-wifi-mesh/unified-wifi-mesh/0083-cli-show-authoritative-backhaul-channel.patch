@@ -1,0 +1,278 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] EasyMesh: show authoritative backhaul band and channel
+
+Expose current operating-channel data in the BSS and STA inventory trees and
+persist updates received through Operating Channel Report. During the startup
+window before such a report is available, derive a colocated Agent link channel
+from the live kernel radio state, cached for five seconds.
+
+Display backhaul labels as band plus channel, keep client signal values in hover
+details, and fit a completed optimized layout before applying a deferred refresh
+so the two-second poll cannot cause a second zoom jump.
+
+Upstream-Status: Inappropriate [RDK-B lab WebUI and local fallback]
+---
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2037,7 +2037,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-draggable-clients-2"></script>
++    <script src="static/script.js?v=topology-band-channel-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2454,11 +2454,13 @@
+       });
+ 
+       this.topologyLayoutInProgress = false;
+-      if (this.topologyRenderPending) {
+-        this.topologyRenderPending = false;
+-        this.updateTopologyVisualization();
+-      }
++      const renderPending = this.topologyRenderPending;
++      this.topologyRenderPending = false;
++      // Fit the simulation that just completed. If a two-second API refresh
++      // was deferred, redraw it afterwards using these cached positions and
++      // zoom rather than fitting an SVG whose first tick has not run yet.
+       this.fitTopologyToView();
++      if (renderPending) this.updateTopologyVisualization();
+       if (button) button.disabled = false;
+       this.showNotification('Topology diagram arranged', 'success');
+     });
+@@ -3305,19 +3307,6 @@
+             .style('pointer-events', 'none')
+             .text(staIdentity);
+ 
+-          staElement.append('text')
+-            .attr('class', 'sta-signal-label')
+-            .attr('x', to.x)
+-            .attr('y', to.y + data.iconSize / 2 + 23)
+-            .attr('text-anchor', 'middle')
+-            .attr('font-size', '9px')
+-            .attr('font-weight', '700')
+-            .attr('fill', data.signal.color)
+-            .attr('stroke', '#fff')
+-            .attr('stroke-width', 3)
+-            .attr('paint-order', 'stroke')
+-            .style('pointer-events', 'none')
+-            .text(`${data.signal.band} · ${data.signal.label}`);
+         });
+ 
+       }
+@@ -3373,8 +3362,12 @@
+     .append('g')
+     .attr('class', 'channel-label');
+ 
+-    channelLabels.append('circle')
+-    .attr('r', 13)
++    channelLabels.append('rect')
++    .attr('x', -35)
++    .attr('y', -12)
++    .attr('width', 70)
++    .attr('height', 24)
++    .attr('rx', 12)
+     .attr('fill', '#fff')
+     .attr('stroke-width', 2)
+     .attr('stroke', d => bandColors[d.band] || '#000');
+@@ -3384,7 +3377,7 @@
+     .attr('dominant-baseline', 'middle')
+     .attr('font-size', '10px')
+     .attr('font-weight', 'bold')
+-    .text(d => d.channel);
++    .text(d => `${self.topologyBandLabel(d.band)} · ch ${Number(d.channel) > 0 ? d.channel : '?'}`);
+ 
+     simulation.on('tick', () => {
+       node.attr('transform', d => `translate(${d.x},${d.y})`);
+@@ -3463,9 +3456,6 @@
+       selection.select('text.sta-identity-label')
+         .attr('x', d.to.x)
+         .attr('y', d.to.y + d.iconSize / 2 + 11);
+-      selection.select('text.sta-signal-label')
+-        .attr('x', d.to.x)
+-        .attr('y', d.to.y + d.iconSize / 2 + 23);
+     }
+ 
+     function staDragStarted(event) {
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -97,6 +97,7 @@
+ 	"net"
+ 	"net/http"
+ 	"os"
++	"os/exec"
+ 	"regexp"
+ 	"reflect"
+ 	"sort"
+@@ -112,8 +113,15 @@
+ 
+ const remoteCtrl_Addr_path = "/nvram/remoteCtrl.json"
+ var nonHex = regexp.MustCompile(`[^a-fA-F0-9]`)
++var iwChannelLine = regexp.MustCompile(`channel\s+([0-9]+)\s+\(([0-9]+)\s+MHz\)`)
+ var timerCount = 0
+ 
++var topologyRadioChannelCache = struct {
++	sync.Mutex
++	updated  time.Time
++	channels map[int]int
++}{channels: make(map[int]int)}
++
+ // ===== SIMPLIFIED DATA MODELS =====
+ 
+ type RemoteIPConfig struct {
+@@ -4764,6 +4772,7 @@
+         http.Error(w, "Controller radio inventory unavailable", http.StatusServiceUnavailable)
+         return
+     }
++    localRadioChannels := loadLocalRadioChannels()
+ 
+     // Helper to create STA list with circular layout
+     createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
+@@ -4876,6 +4885,8 @@
+             // parse the band with extender connected
+             childRadios := radioInventory[strings.ToLower(childID)]
+             band, channel = getBandAndChannelFromRadios(childRadios)
++            channel = resolveTopologyBackhaulChannel(deviceName == "Agent-1",
++                band, channel, localRadioChannels)
+ 
+            edges = append(edges, map[string]interface{}{
+                 "from":     deviceID,
+@@ -5133,6 +5144,60 @@
+     return -1, 0
+ }
+ 
++// loadLocalRadioChannels reads the colocated Agent's actual kernel radio
++// state. EasyMesh Operating Channel Reports remain the primary source; this
++// bounded cache fills the startup gap before the Controller has received one.
++func loadLocalRadioChannels() map[int]int {
++	topologyRadioChannelCache.Lock()
++	defer topologyRadioChannelCache.Unlock()
++
++	if time.Since(topologyRadioChannelCache.updated) < 5*time.Second &&
++		len(topologyRadioChannelCache.channels) > 0 {
++		return topologyRadioChannelCache.channels
++	}
++
++	channels := make(map[int]int)
++	output, err := exec.Command("/usr/sbin/iw", "dev").Output()
++	if err == nil {
++		for _, match := range iwChannelLine.FindAllStringSubmatch(string(output), -1) {
++			channel, channelErr := strconv.Atoi(match[1])
++			frequency, frequencyErr := strconv.Atoi(match[2])
++			if channelErr != nil || frequencyErr != nil || channel <= 0 {
++				continue
++			}
++			band := -1
++			switch {
++			case frequency >= 2400 && frequency < 2500:
++				band = 0
++			case frequency >= 4900 && frequency < 5925:
++				band = 1
++			case frequency >= 5925 && frequency <= 7125:
++				band = 3
++			}
++			if band >= 0 {
++				channels[band] = channel
++			}
++		}
++	}
++
++	topologyRadioChannelCache.channels = channels
++	topologyRadioChannelCache.updated = time.Now()
++	return topologyRadioChannelCache.channels
++}
++
++func resolveTopologyBackhaulChannel(localParent bool, band, reported int,
++	localChannels map[int]int) int {
++	if reported > 0 {
++		return reported
++	}
++	if localParent {
++		if channel := localChannels[band]; channel > 0 {
++			return channel
++		}
++	}
++	return 0
++}
++
+ /* func: getBandAndChannelFromRadioTree()
+  * Description:
+  * this function Parse the RadioList node and get the band info
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -3525,8 +3525,10 @@
+ int dm_easy_mesh_ctrl_t::get_bss_config(cJSON *parent, char *key)
+ {
+     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
++    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
+     int i, j;
+     char *tmp;
++    em_long_string_t op_key;
+ 
+     net_obj = cJSON_AddObjectToObject(parent, "Network");
+     dm_network_list_t::get_config(net_obj, key, true);
+@@ -3542,6 +3544,15 @@
+         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
+             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
+             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
++            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
++            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
++            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
++            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
++            channel_obj = current_op_class_obj == NULL ? NULL :
++                cJSON_GetObjectItem(current_op_class_obj, "Channel");
++            if (cJSON_IsNumber(channel_obj)) {
++                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
++            }
+             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
+             dm_bss_list_t::get_config(bss_list_obj, tmp);
+         }
+@@ -3651,8 +3662,10 @@
+ {
+     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
+     cJSON *bss_obj, *sta_list_obj, *link_report_obj;
++    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
+     int i, j, k;
+     char *tmp;
++    em_long_string_t op_key;
+     dm_device_t *pdev;
+     mac_addr_str_t bss_str, mac_str, ruid_str;
+     mac_address_t device_mac;
+@@ -3742,6 +3755,15 @@
+         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
+             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
+             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
++            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
++            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
++            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
++            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
++            channel_obj = current_op_class_obj == NULL ? NULL :
++                cJSON_GetObjectItem(current_op_class_obj, "Channel");
++            if (cJSON_IsNumber(channel_obj)) {
++                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
++            }
+             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
+             dm_bss_list_t::get_config(bss_list_obj, tmp, true);
+ 
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1630,6 +1630,10 @@
+         dm->set_num_op_class(dm->get_num_op_class() + 1);
+         dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
+         dm->set_db_cfg_param(db_cfg_type_radio_list_update, "");
++    } else {
++        // Existing current-operating-class rows changed in memory as well.
++        // Persist those updates so channel data survives Controller restart.
++        dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
+     }
+ 
+     // Find the per-radio EM instance by RUID and set its state
+@@ -2441,4 +2445,3 @@
+ {
+ 
+ }
+-

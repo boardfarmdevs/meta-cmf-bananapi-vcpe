@@ -83,7 +83,9 @@ EASYMESH_CORE_PATCHES = " \
     file://0079-cli-distinguish-iot-clients.patch \
     file://0080-cli-place-clients-inside-ssid-bubbles.patch \
     file://0081-cli-show-live-client-signal-in-topology.patch \
-    "
+    file://0082-cli-drag-clients-and-highlight-steering.patch \
+    file://0083-cli-show-authoritative-backhaul-channel.patch \
+"
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t
