@@ -129,11 +129,11 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
  
 -                if (dm->get_sta_info(sta_info.id, sta_info.bssid, sta_info.radiomac,
 -                                     em_target_sta_map_consolidated) != NULL) {
-+                dm_sta_t *existing = dm->get_sta_info(
++                em_sta_info_t *existing = dm->get_sta_info(
 +                        sta_info.id, sta_info.bssid, sta_info.radiomac,
 +                        em_target_sta_map_consolidated);
 +                if (!conflicting_claim && existing != NULL &&
-+                        existing->m_sta_info.associated) {
++                        existing->associated) {
                      continue;
                  }
  
