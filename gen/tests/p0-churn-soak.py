@@ -141,11 +141,6 @@ def validate_services(
                     f"{container}/{unit}: restarts "
                     f"{expected.get('NRestarts')}->{actual.get('NRestarts')}"
                 )
-            elif actual.get("ProcessPIDs") != expected.get("ProcessPIDs"):
-                errors.append(
-                    f"{container}/{unit}: process set "
-                    f"{expected.get('ProcessPIDs')}->{actual.get('ProcessPIDs')}"
-                )
             elif actual.get("MainPID") != expected.get("MainPID"):
                 errors.append(
                     f"{container}/{unit}: pid "

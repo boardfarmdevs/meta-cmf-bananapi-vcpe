@@ -179,7 +179,13 @@ def main() -> int:
     parser.add_argument("--prepare-timeout", type=int, default=90)
     parser.add_argument("--client-timeout", type=int, default=90)
     parser.add_argument("--node-timeout", type=int, default=90)
-    parser.add_argument("--recovery-timeout", type=int, default=120)
+    parser.add_argument(
+        "--recovery-timeout", type=int, default=120,
+        help=(
+            "seconds allowed for client/controller convergence before the "
+            "requested stability window begins"
+        ),
+    )
     parser.add_argument(
         "--stability-window", type=int, default=75,
         help="seconds all physical/API client ownership must remain consistent",
@@ -205,8 +211,8 @@ def main() -> int:
         parser.error("--prepare-timeout must be greater than zero")
     if args.stability_window <= 0:
         parser.error("--stability-window must be greater than zero")
-    if args.stability_window >= args.recovery_timeout:
-        parser.error("--stability-window must be shorter than --recovery-timeout")
+    if args.recovery_timeout <= 0:
+        parser.error("--recovery-timeout must be greater than zero")
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = args.output_root / f"{stamp}-{args.extender}"
@@ -508,11 +514,19 @@ def main() -> int:
         observations = client_consistency(document, stations)
         return observations if all(item["agreed"] for item in observations) else None
 
+    # Recovery and stability are separate requirements.  The former timeout
+    # bounds how long the stack may take to regain agreement; it must not also
+    # consume the continuous stability window.  Allowing their sum means a
+    # stable interval has to begin within recovery_timeout seconds.
     convergence_ms, final_consistency = wait_stable(
-        args.recovery_timeout, 1.0, args.stability_window, clients_converged
+        args.recovery_timeout + args.stability_window,
+        1.0,
+        args.stability_window,
+        clients_converged,
     )
     recorder.write(
         "all_clients_converged", elapsed_ms=convergence_ms,
+        recovery_timeout_seconds=args.recovery_timeout,
         stability_window_seconds=args.stability_window,
         observations=final_consistency,
     )
