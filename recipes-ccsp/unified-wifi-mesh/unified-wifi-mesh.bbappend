@@ -79,6 +79,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0075-cli-key-topology-radio-tree-by-name.patch \
     file://0076-controller-complete-candidate-command-on-response.patch \
     file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
+    file://0078-topology-response-resolve-owner-by-association-age.patch \
     "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
