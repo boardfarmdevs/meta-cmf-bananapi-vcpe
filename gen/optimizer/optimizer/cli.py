@@ -48,7 +48,20 @@ def _live(args, mode: str) -> int:
     policy = ThresholdPolicy(load_policy(args.policy)) if mode != "observe" else None
     state = PolicyState()
     actuator = SteerActuator(args.steer_script) if mode == "act" else None
-    verifier = OutcomeVerifier(observer) if mode == "act" else None
+    # Verification only needs the resulting association. Re-running the active
+    # candidate measurement transaction on every verification poll needlessly
+    # serializes behind the controller state machine and can consume the whole
+    # steer timeout.
+    verifier = (
+        OutcomeVerifier(
+            ControllerObserver(
+                args.base_url,
+                trust_api_metric_timestamp=args.trust_api_metric_timestamp,
+            )
+        )
+        if mode == "act"
+        else None
+    )
     for index in range(args.count):
         snapshot = observer.observe()
         journal.append("raw_observation", observer.last_raw, recorded_at=snapshot.observed_at)
@@ -111,7 +124,16 @@ def parser() -> argparse.ArgumentParser:
             default="off",
         )
         command.add_argument("--allow-simulated-candidates", action="store_true")
-        command.add_argument("--trust-api-metric-timestamp", action="store_true")
+        command.add_argument(
+            "--trust-api-metric-timestamp",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help=(
+                "consume the controller's associated-report receipt timestamp "
+                "(default: enabled; use --no-trust-api-metric-timestamp for an "
+                "older controller image)"
+            ),
+        )
         if mode != "observe":
             command.add_argument("--policy", required=True)
         if mode == "act":

@@ -56,7 +56,13 @@ class OutcomeVerifier:
                 traffic = self.traffic_probe(sta_mac) if self.traffic_probe else None
                 return VerificationResult(
                     success=traffic is not False,
-                    reason="association_and_traffic_converged" if traffic is not False else "traffic_failed",
+                    reason=(
+                        "target_association_observed"
+                        if traffic is None
+                        else "association_and_traffic_converged"
+                        if traffic
+                        else "traffic_failed"
+                    ),
                     polls=polls,
                     elapsed_seconds=self.monotonic() - started,
                     final_bssid=final_bssid,

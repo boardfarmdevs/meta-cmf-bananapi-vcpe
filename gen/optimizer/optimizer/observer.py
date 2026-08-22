@@ -80,7 +80,7 @@ class ControllerObserver:
         *,
         fetcher: JsonFetcher | None = None,
         candidate_provider: CandidateProvider | None = None,
-        trust_api_metric_timestamp: bool = False,
+        trust_api_metric_timestamp: bool = True,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -95,13 +95,13 @@ class ControllerObserver:
         return self.fetcher(f"{self.base_url}{path}")
 
     def observe(self) -> Snapshot:
-        observed_at = format_time(self.clock())
+        sample_started_at = format_time(self.clock())
         topology = self._get("/api/v1/topology")
         clients_payload = self._get("/api/v1/clients")
         devices_payload = self._get("/api/v1/devices")
         bsses_payload = self._get("/api/v1/bsses")
         self.last_raw = {
-            "sampled_at": observed_at,
+            "sample_started_at": sample_started_at,
             "topology": topology,
             "clients": clients_payload,
             "devices": devices_payload,
@@ -179,7 +179,7 @@ class ControllerObserver:
                     normalized_clients,
                     inventory,
                     bsses_payload.get("bsses", []),
-                    observed_at,
+                    sample_started_at,
                 )
             )
             measured_keys = {(item.sta_mac, item.bssid) for item in measured}
@@ -191,6 +191,14 @@ class ControllerObserver:
             provider_raw = getattr(self.candidate_provider, "last_raw", None)
             if provider_raw is not None:
                 self.last_raw["candidate_transactions"] = provider_raw
+
+        # Active candidate queries finish after the passive API reads. The
+        # immutable snapshot represents the completed observation interval;
+        # dating it at interval start would make freshly received candidate
+        # timestamps appear to come from the future and fail the freshness
+        # gate.
+        observed_at = format_time(self.clock())
+        self.last_raw["sampled_at"] = observed_at
 
         mesh_devices = sum(
             1 for item in devices if (item.get("role") or "").lower() != "controller"
