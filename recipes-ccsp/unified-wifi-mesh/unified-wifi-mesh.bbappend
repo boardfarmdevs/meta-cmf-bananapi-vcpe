@@ -76,6 +76,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0072-metrics-preserve-associated-report-receipt-time.patch \
     file://0073-wsc-retry-with-fresh-enrollee-transaction.patch \
     file://0074-candidate-metrics-store-on-correlated-radio.patch \
+    file://0075-cli-key-topology-radio-tree-by-name.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

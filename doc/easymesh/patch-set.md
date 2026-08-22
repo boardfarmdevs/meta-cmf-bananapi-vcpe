@@ -423,8 +423,20 @@ absent from the controller tree is omitted rather than represented as zero.
 Rev130 returned 30/30
 private/IoT BSSs and excluded every backhaul and zero BSSID. After warm-up, 300
 requests retained the same CLI PID; PSS changed from 84,897 to 84,337 KiB and
-VmData by only 320 KiB. The committed prebuilt helper containing `0068` has
-SHA-256 `42d22772f4173bf979c98617d4b4823d4ca05c1c2093d5356c737a024004e764`.
+VmData by only 320 KiB. The current prebuilt helper, including the later
+topology fix `0075`, has SHA-256
+`25f045c2fdb3c79ec7506c617c760da3f208ebb4f2ded0f1dae75b58bf6cab20`.
+
+Patch `0075` removes a positional tree-layout assumption in the topology API.
+The controller tree does not guarantee that `RadioList` is child index two;
+using that index made `/api/v1/topology` emit empty `haulTypes`, edge band
+`-1`, and channel `0` even though the live model still contained 5 devices,
+15 radios, and all BSS records. The adapter now resolves `RadioList` by key in
+both device and child records. On rev130, the same live topology changed to six
+rendered nodes with populated haul types, all three lab bands (`0`, `1`, `3`),
+and five band-1 backhaul edges, while retaining all 10 clients and 30 exposed
+fronthaul BSSs. The Go CLI is a separately cross-built artifact, so the source
+patch and `em-cli.tar.gz` must be updated together.
 
 Patch `0046` closes the rare controller association-delivery miss exposed by
 the strict two-client carousel. Packet captures proved that two distinct
