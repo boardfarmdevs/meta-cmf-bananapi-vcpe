@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import hashlib
 import json
@@ -321,9 +322,10 @@ def association_consistency(
         for sta in (node.get("STAList") or [])
         if sta.get("staMAC")
     }
+    with ThreadPoolExecutor(max_workers=min(8, len(clients))) as executor:
+        links = list(executor.map(client_link, clients))
     result = []
-    for client in clients:
-        link = client_link(client)
+    for link in links:
         physical_owner = bssid_owners.get(str(link["bssid"])) if link["bssid"] else None
         api_owner = sta_owners.get(str(link["mac"])) if link["mac"] else None
         result.append(
@@ -362,10 +364,11 @@ def traffic_one(client: str) -> dict[str, object]:
 
 
 def traffic_check(clients: tuple[str, ...] = CLIENTS) -> list[dict[str, object]]:
-    # Ten simultaneous ``lxc exec`` scopes can be terminated by LXD/systemd
-    # before ping runs, producing ten false traffic failures at once.  Health
-    # acceptance values determinism over speed, so probe clients sequentially.
-    return [traffic_one(client) for client in clients]
+    # Ten simultaneous ``lxc exec`` scopes have previously been terminated by
+    # LXD/systemd before ping runs. Four is a measured-safe bounded fan-out and
+    # keeps health-gate time practical at the 20/50/100-client profiles.
+    with ThreadPoolExecutor(max_workers=min(4, len(clients))) as executor:
+        return list(executor.map(traffic_one, clients))
 
 
 def provisioned_clients() -> tuple[str, ...]:
@@ -383,11 +386,14 @@ def provisioned_clients() -> tuple[str, ...]:
 
 
 def provisioned_ssid_counts(clients: tuple[str, ...]) -> dict[str, int]:
-    values = [
-        run("lxc", "config", "get", client, "user.easymesh.ssid", check=False)
-        or "unknown"
-        for client in clients
-    ]
+    def intent(client: str) -> str:
+        return (
+            run("lxc", "config", "get", client, "user.easymesh.ssid", check=False)
+            or "unknown"
+        )
+
+    with ThreadPoolExecutor(max_workers=min(8, len(clients))) as executor:
+        values = list(executor.map(intent, clients))
     return dict(sorted(Counter(values).items()))
 
 
@@ -803,7 +809,7 @@ class Soak:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the 12-hour P0 RF churn soak")
+    parser = argparse.ArgumentParser(description="Run the duration-bound P0 RF churn soak")
     parser.add_argument("--duration", type=float, default=12 * 3600, help="seconds")
     parser.add_argument("--sample-interval", type=float, default=60)
     parser.add_argument("--settle", type=float, default=30)

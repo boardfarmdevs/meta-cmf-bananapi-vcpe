@@ -69,15 +69,15 @@ def natural_key(value: str) -> list[object]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
 
 
-def sta_label(mac: str) -> str:
+def sta_label(mac: str, prefix: str = "STA") -> str:
     octets = mac.upper().split(":")
     if (
         len(octets) == 6
         and octets[:4] == ["02", "00", "00", "00"]
         and octets[5] == "00"
     ):
-        return f"STA-{octets[4]}"
-    return f"STA-{'-'.join(octets[-3:])}" if len(octets) == 6 else "STA"
+        return f"{prefix}-{octets[4]}"
+    return f"{prefix}-{'-'.join(octets[-3:])}" if len(octets) == 6 else prefix
 
 
 def client_mac(container: str) -> str:
@@ -206,6 +206,22 @@ def assignment_reached(observation: dict, targets: dict[str, str]) -> bool:
     )
 
 
+def radio_assignment_reached(observation: dict, targets: dict[str, str]) -> bool:
+    return all(
+        item["actual_ap"] == targets[item["client"]]
+        for item in observation["stations"]
+    )
+
+
+def assignment_mismatches(observation: dict, targets: dict[str, str]) -> set[str]:
+    return {
+        item["client"]
+        for item in observation["stations"]
+        if item["actual_ap"] != targets[item["client"]]
+        or item["topology_ap"] != targets[item["client"]]
+    }
+
+
 def radio_disconnected(observation: dict) -> bool:
     return all(item["bssid"] is None for item in observation["stations"])
 
@@ -281,6 +297,26 @@ class Carousel:
             self.last_observation = last
             if complete:
                 return round((time.monotonic() - started) * 1000), last
+            time.sleep(0.5)
+        raise RuntimeError(f"timed out waiting for {description}; last={last}")
+
+    def wait_for_stable(
+        self, timeout: float, stable_for: float,
+        predicate: Callable[[], tuple[bool, dict]], description: str,
+    ) -> tuple[int, dict]:
+        started = time.monotonic()
+        stable_since: float | None = None
+        last: dict = {}
+        while time.monotonic() - started < timeout:
+            complete, last = predicate()
+            self.last_wait_description = description
+            self.last_observation = last
+            if complete:
+                stable_since = stable_since or time.monotonic()
+                if time.monotonic() - stable_since >= stable_for:
+                    return round((time.monotonic() - started) * 1000), last
+            else:
+                stable_since = None
             time.sleep(0.5)
         raise RuntimeError(f"timed out waiting for {description}; last={last}")
 
@@ -433,7 +469,8 @@ class Carousel:
         clients = []
         for item in sorted(stations, key=lambda entry: natural_key(entry["container"])):
             mac = client_mac(item["container"])
-            clients.append({**item, "mac": mac, "label": sta_label(mac)})
+            prefix = "IOT" if args.ssid == "iot_ssid" else "STA"
+            clients.append({**item, "mac": mac, "label": sta_label(mac, prefix)})
 
         bssid_to_ap = {
             bssid: ap["container"] for ap in aps for bssid in ap["bssids"]
@@ -487,7 +524,7 @@ class Carousel:
             "preflight", aps=[ap["node_name"] for ap in aps],
             clients=[client["label"] for client in clients], groups=scenario["groups"],
         )
-        print("\nOpen the Network Topology tab and watch the printed STA labels.", flush=True)
+        print("\nOpen the Network Topology tab and watch the printed client labels.", flush=True)
         print("Each BLACKOUT disconnects one group; ARRIVAL moves it to the next AP.\n", flush=True)
 
         touched = {
@@ -564,12 +601,12 @@ class Carousel:
                 elapsed, formed = self.wait_for(
                     args.connect_timeout,
                     lambda: (
-                        assignment_reached(
+                        radio_assignment_reached(
                             (value := observe(clients, bssid_to_ap, node_to_ap,
                                               args.topology_url)), formation_targets
                         ), value
                     ),
-                    "complete carousel formation",
+                    "complete radio carousel formation",
                 )
                 self.recorder.write("formation_converged", elapsed_ms=elapsed,
                                     observation=formed)
@@ -701,7 +738,7 @@ class Carousel:
                         elapsed, returned = self.wait_for(
                             args.return_timeout,
                             lambda group=group, targets=targets: (
-                                assignment_reached(
+                                radio_assignment_reached(
                                     (value := observe(group, bssid_to_ap, node_to_ap,
                                                       args.topology_url)), targets
                                 ), value
@@ -713,16 +750,109 @@ class Carousel:
                             "placement_group_restored", group=group_index + 1,
                             elapsed_ms=elapsed, observation=returned,
                         )
-                    elapsed, returned = self.wait_for(
-                        args.return_timeout,
-                        lambda: (
-                            assignment_reached(
-                                (value := observe(clients, bssid_to_ap, node_to_ap,
-                                                  args.topology_url)), original_targets
-                            ), value
-                        ),
-                        "preflight client placement", allow_stop=False,
-                    )
+
+                    # A delayed association notification can overwrite a
+                    # newer controller parent after an individual group has
+                    # already converged. Require the complete placement to be
+                    # stable, and repair only mismatched stations by bouncing
+                    # them through a different RF-reachable AP and back. A
+                    # simple wlan0 down/up on the same BSSID is insufficient
+                    # because it need not produce a new parent transition.
+                    repair_timeout = min(args.return_timeout, 30)
+                    for repair_attempt in range(1, 4):
+                        try:
+                            elapsed, returned = self.wait_for_stable(
+                                repair_timeout, args.restore_settle,
+                                lambda: (
+                                    assignment_reached(
+                                        (value := observe(
+                                            clients, bssid_to_ap, node_to_ap,
+                                            args.topology_url,
+                                        )), original_targets
+                                    ), value
+                                ),
+                                "stable preflight client placement",
+                            )
+                            break
+                        except RuntimeError:
+                            current = observe(
+                                clients, bssid_to_ap, node_to_ap, args.topology_url
+                            )
+                            names = assignment_mismatches(current, original_targets)
+                            repair = [
+                                client for client in clients
+                                if client["container"] in names
+                            ]
+                            if not repair or repair_attempt == 3:
+                                raise
+                            alternate_targets = {}
+                            for client in repair:
+                                original_index = next(
+                                    index for index, ap in enumerate(aps)
+                                    if ap["container"]
+                                    == original_targets[client["container"]]
+                                )
+                                alternate_targets[client["container"]] = aps[
+                                    (original_index + 1) % len(aps)
+                                ]["container"]
+                            self.recorder.write(
+                                "placement_repair_started", attempt=repair_attempt,
+                                clients=[client["label"] for client in repair],
+                                observation=current,
+                            )
+                            set_client_link(repair, "down")
+                            generation += 1
+                            control.apply(
+                                generation,
+                                matrix_updates(
+                                    repair, aps, alternate_targets,
+                                    args.strong_snr, args.outage_snr,
+                                ),
+                            )
+                            set_client_link(repair, "up")
+                            self.wait_for(
+                                repair_timeout,
+                                lambda: (
+                                    assignment_reached(
+                                        (value := observe(
+                                            repair, bssid_to_ap, node_to_ap,
+                                            args.topology_url,
+                                        )), alternate_targets
+                                    ), value
+                                ),
+                                "placement repair alternate AP", allow_stop=False,
+                            )
+                            repair_targets = {
+                                client["container"]:
+                                original_targets[client["container"]]
+                                for client in repair
+                            }
+                            set_client_link(repair, "down")
+                            generation += 1
+                            control.apply(
+                                generation,
+                                matrix_updates(
+                                    repair, aps, repair_targets,
+                                    args.strong_snr, args.outage_snr,
+                                ),
+                            )
+                            set_client_link(repair, "up")
+                            self.wait_for(
+                                repair_timeout,
+                                lambda: (
+                                    assignment_reached(
+                                        (value := observe(
+                                            repair, bssid_to_ap, node_to_ap,
+                                            args.topology_url,
+                                        )), repair_targets
+                                    ), value
+                                ),
+                                "placement repair original AP", allow_stop=False,
+                            )
+                            self.recorder.write(
+                                "placement_repair_completed", attempt=repair_attempt,
+                                clients=[client["label"] for client in repair],
+                            )
                     placement_restored = True
                     self.recorder.write("placement_restored", elapsed_ms=elapsed,
                                         observation=returned)
@@ -788,6 +918,10 @@ def main() -> int:
     parser.add_argument("--disconnect-timeout", type=float, default=30)
     parser.add_argument("--connect-timeout", type=float, default=60)
     parser.add_argument("--return-timeout", type=float, default=90)
+    parser.add_argument(
+        "--restore-settle", type=float, default=6,
+        help="seconds the final client/API placement must remain stable",
+    )
     parser.add_argument("--socket", default="/run/wmediumd-control.sock")
     parser.add_argument(
         "--topology-url", default="http://127.0.0.1:8888/api/v1/topology"
@@ -806,6 +940,7 @@ def main() -> int:
         value < 0 for value in (
             args.formation_hold, args.blackout_hold, args.arrival_hold,
             args.disconnect_timeout, args.connect_timeout, args.return_timeout,
+            args.restore_settle,
         )
     ):
         parser.error("holds and timeouts cannot be negative")

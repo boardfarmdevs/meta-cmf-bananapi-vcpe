@@ -103,8 +103,10 @@ em-optimizer recommend \
 ```
 
 The provider serializes Agent/radio work and splits each transaction at the
-controller's eight-STA limit. The accepted five-Agent/ten-client profile is
-seven transactions and 40 complete same-band target measurements per cycle.
+controller's eight-STA limit. The last fully measured provider-cycle
+acceptance used ten clients: seven transactions and 40 complete same-band
+target measurements per cycle. The current small lab contains 20 clients;
+repeat that cycle-level acceptance before using all 20 in an acting run.
 
 Use `configs/band-upgrade-policy.yaml` to compare conservative 2.4-to-5 and
 5-to-6 BSSID upgrades offline. The live Unassociated STA query is same-band;

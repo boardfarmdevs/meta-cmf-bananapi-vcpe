@@ -4,6 +4,16 @@ set -euo pipefail
 exec </dev/null
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
+ping_count=${HEALTH_PING_COUNT:-10}
+ping_interval=${HEALTH_PING_INTERVAL:-1}
+ping_max_loss=${HEALTH_PING_MAX_LOSS:-0}
+
+[[ "$ping_count" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "HEALTH_PING_COUNT must be a positive integer" >&2; exit 2; }
+[[ "$ping_interval" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || { echo "HEALTH_PING_INTERVAL must be a non-negative number" >&2; exit 2; }
+[[ "$ping_max_loss" =~ ^([0-9]|[1-9][0-9]|100)$ ]] \
+    || { echo "HEALTH_PING_MAX_LOSS must be an integer from 0 through 100" >&2; exit 2; }
 
 echo TOPOLOGY
 curl -fsS http://127.0.0.1:8888/api/v1/topology | jq -r '
@@ -37,15 +47,24 @@ for unit in em_ctrl em_cli; do
 done
 
 echo CONNECTIVITY
+traffic_fail=0
+declare -a traffic_pids=()
 while read -r client; do
     (
-        loss=$(lxc exec "$client" -- ping -q -c 40 -i 0.05 -W 1 10.0.0.1 \
+        loss=$(lxc exec "$client" -- ping -q -c "$ping_count" \
+            -i "$ping_interval" -W 2 10.0.0.1 \
             | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
         echo "$client ${loss:-FAIL}"
+        loss_value=${loss%%%}
+        [[ "$loss_value" =~ ^[0-9]+$ ]] \
+            && [ "$loss_value" -le "$ping_max_loss" ]
     ) &
+    traffic_pids+=("$!")
 done < <(lxc list -c n --format csv \
     | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
-wait
+for pid in "${traffic_pids[@]}"; do
+    wait "$pid" || traffic_fail=1
+done
 
 if [ -s "$results" ]; then
     echo MATRIX
@@ -68,5 +87,9 @@ free -h | sed -n '1,2p'
 
 [ "$restart_fail" = 0 ] || {
     echo "FAIL: one or more monitored services restarted" >&2
+    exit 1
+}
+[ "$traffic_fail" = 0 ] || {
+    echo "FAIL: one or more WLAN clients exceeded ${ping_max_loss}% packet loss" >&2
     exit 1
 }

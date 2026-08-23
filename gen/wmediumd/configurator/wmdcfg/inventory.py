@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,7 @@ def _parse_iw(text: str) -> list[dict[str, Any]]:
     return interfaces
 
 
-def discover() -> dict[str, Any]:
+def discover(client_names: set[str] | None = None) -> dict[str, Any]:
     # A scaled lab intentionally retains stopped containers across cold-start
     # reconstruction and extender-outage tests.  ``lxc exec`` cannot inspect a
     # stopped instance, so inventory must describe the active RF world rather
@@ -72,14 +73,19 @@ def discover() -> dict[str, Any]:
             for line in _run("lxc", "list", "-c", "ns", "--format", "csv").splitlines()
             for name, _, state in [line.partition(",")]
             if state.strip().upper() == "RUNNING"
-            and (MESH_NAME.fullmatch(name) or CLIENT_NAME.fullmatch(name))
+            and (
+                MESH_NAME.fullmatch(name)
+                or (
+                    CLIENT_NAME.fullmatch(name)
+                    and (client_names is None or name in client_names)
+                )
+            )
         ],
         key=lambda name: [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)],
     )
     if not names:
         raise ScenarioError("no active EasyMesh or WLAN client containers found")
-    radios = []
-    for name in names:
+    def inspect(name: str) -> dict[str, Any]:
         permanent = _exec(
             name, "cat /sys/class/ieee80211/*/macaddress 2>/dev/null | head -1"
         ).lower()
@@ -104,7 +110,14 @@ def discover() -> dict[str, Any]:
                 else "private" if item["ssid"] == "private_ssid"
                 else "other"
             )
-        radios.append(item)
+        return item
+
+    # LXC process startup dominates discovery at scale. Container probes are
+    # independent and read-only, while executor.map retains deterministic name
+    # order. Eight workers avoids turning a 50/100-client inventory into a
+    # serial minute-long operation without flooding the LXD daemon.
+    with ThreadPoolExecutor(max_workers=min(8, len(names))) as executor:
+        radios = list(executor.map(inspect, names))
     return {
         "schema": "wmdcfg.inventory.v1",
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),

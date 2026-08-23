@@ -21,8 +21,8 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     verify_matrix(first)
     assert first["summary"] == {
         "cases": 148,
-        "runnable": 16,
-        "blocked": 132,
+        "runnable": 56,
+        "blocked": 92,
         "worlds": 10,
         "traffic_profiles": 5,
         "policies": 2,
@@ -38,6 +38,16 @@ def test_home_matrix_is_deterministic_and_capability_gated():
     )
     assert all("band-candidate-inventory" not in item["missing_capabilities"] for item in band)
     assert all(item["truth_boundary"]["optimizer_inputs"] == "EasyMesh observations only" for item in first["cases"])
+    twenty_client = [
+        item for item in first["cases"]
+        if item["world"]["counts"]["stations"] == 20
+    ]
+    assert twenty_client
+    assert all(
+        "scale-profile-small" in item["requirements"]
+        and "scale-profile-small" not in item["missing_capabilities"]
+        for item in twenty_client
+    )
 
 
 def test_world_layout_is_a_real_matrix_axis():

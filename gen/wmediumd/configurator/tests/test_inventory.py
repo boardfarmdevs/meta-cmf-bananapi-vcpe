@@ -53,3 +53,39 @@ def test_discover_ignores_stopped_matching_containers():
     assert station["associated_bssid"] == "02:00:00:10:00:01"
     assert station["ssid"] == "iot_ssid"
     assert station["cohort"] == "iot"
+
+
+def test_discover_can_limit_station_probes_without_omitting_mesh_radios():
+    listing = "\n".join(
+        (
+            "bpibroadband,RUNNING",
+            "bpiap,RUNNING",
+            "wlan-client,RUNNING",
+            "wlan-client-001,RUNNING",
+        )
+    )
+    inspected: set[str] = set()
+
+    def inspect(container: str, command: str) -> str:
+        inspected.add(container)
+        if "macaddress" in command:
+            return {
+                "bpibroadband": "02:00:00:00:00:01",
+                "bpiap": "02:00:00:00:00:02",
+                "wlan-client-001": "02:00:00:00:00:04",
+            }[container]
+        if command.startswith("iw dev wlan0 link"):
+            return "Connected to 02:00:00:10:00:01\n\tSSID: private_ssid"
+        return ""
+
+    with patch("wmdcfg.inventory._run", return_value=listing), patch(
+        "wmdcfg.inventory._exec", side_effect=inspect
+    ):
+        inventory = discover({"wlan-client-001"})
+
+    assert [radio["container"] for radio in inventory["radios"]] == [
+        "bpiap",
+        "bpibroadband",
+        "wlan-client-001",
+    ]
+    assert inspected == {"bpiap", "bpibroadband", "wlan-client-001"}

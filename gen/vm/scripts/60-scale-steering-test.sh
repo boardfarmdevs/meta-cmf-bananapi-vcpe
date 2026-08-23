@@ -4,11 +4,20 @@ set -euo pipefail
 # LXC may otherwise consume Vagrant's trailing remote-shell control input.
 exec </dev/null
 
-# Run inside the Vagrant guest after the 4-extender/10-client scale topology is
-# healthy. Every client is steered twice while traffic is flowing. The radio
-# link, controller database, WebUI API, loss, and service restart counters are
-# recorded independently so a command response alone cannot produce a pass.
-rounds=${1:-2}
+# Run inside the Vagrant guest after the mixed-client scale topology is healthy.
+# Every client in the selected SSID cohort is steered while traffic is flowing.
+# The radio link, controller database, WebUI API, loss, and service restart
+# counters are recorded independently so a command response alone cannot pass.
+rounds=2
+ssid=private_ssid
+if [[ "${1:-}" =~ ^[0-9]+$ ]]; then rounds=$1; shift; fi
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --ssid) ssid=$2; shift 2 ;;
+        *) echo "usage: $0 [rounds] [--ssid private_ssid|iot_ssid]" >&2; exit 2 ;;
+    esac
+done
+case "$ssid" in private_ssid|iot_ssid) ;; *) echo "unsupported SSID: $ssid" >&2; exit 2;; esac
 repo=${EASYMESH_REPO:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
 results=/home/vagrant/.local/state/easymesh-vagrant/steering-scale.csv
 mkdir -p "$(dirname "$results")"
@@ -72,16 +81,26 @@ client_bssid() {
     return 1
 }
 
-mapfile -t clients < <(lxc list -c n --format csv \
-    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
-mapfile -t target_rows < <(curl -fsS http://127.0.0.1:8888/api/v1/topology \
-    | jq -r '.nodes[] as $node | $node.haulTypes[]?
-        | select(.name == "Fronthaul") | .BSSList[]
-        | select(.Band == 1) | [$node.name, .BSSID] | @tsv' \
-    | sort -V)
+mapfile -t clients < <(
+    while read -r client; do
+        [ -n "$client" ] || continue
+        intent=$(lxc config get "$client" user.easymesh.ssid 2>/dev/null || true)
+        [ -n "$intent" ] || intent=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
+            | sed -n 's/^[[:space:]]*SSID: //p' | head -1)
+        [ "$intent" != "$ssid" ] || echo "$client"
+    done < <(lxc list -c n --format csv \
+        | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
+)
+topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
+bsses=$(curl -fsS http://127.0.0.1:8888/api/v1/bsses)
+mapfile -t target_rows < <(jq -nr \
+    --argjson topology "$topology" --argjson bsses "$bsses" --arg ssid "$ssid" '
+      $bsses.bsses[] | select(.ssid == $ssid and .band == 1) as $bss
+      | [([$topology.nodes[] | select(.id == $bss.device_id) | .name][0]
+          // $bss.device_id), $bss.bssid] | @tsv' | sort -V)
 
-if [ "${#clients[@]}" -ne 10 ] || [ "${#target_rows[@]}" -ne 5 ]; then
-    echo "expected 10 clients and 5 target agents; found ${#clients[@]} and ${#target_rows[@]}" >&2
+if [ "${#clients[@]}" -eq 0 ] || [ "${#target_rows[@]}" -ne 5 ]; then
+    echo "expected a non-empty $ssid cohort and 5 target agents; found ${#clients[@]} and ${#target_rows[@]}" >&2
     exit 1
 fi
 

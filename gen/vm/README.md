@@ -83,10 +83,11 @@ Internet service.
 Do not begin steering work until `sudo easymesh-labctl check` passes:
 
 - Boardfarm: 60/60 connectivity checks;
-- EasyMesh database: `5/15/50/14`;
-- WebUI: controller, colocated agent, four extenders and 10/10 clients;
+- EasyMesh database: `5/15/50/24`;
+- WebUI: controller, colocated agent, four extenders, 10 private clients and
+  10 IoT clients;
 - zero OneWifi/EasyMesh service restarts; and
-- WLAN gateway traffic from all ten clients.
+- WLAN gateway traffic from all 20 clients.
 
 ## Operational details that must be decided before handoff
 

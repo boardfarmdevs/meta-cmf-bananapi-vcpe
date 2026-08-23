@@ -65,7 +65,10 @@ def request_json(url: str, payload: dict | None = None) -> tuple[int, dict]:
 
 
 def select_pair(client: str, requested_target: str | None) -> tuple[dict, dict]:
-    inventory = discover()["radios"]
+    # Candidate RCPI needs one station and the mesh radios, not every other
+    # client. Keeping this probe O(mesh) prevents the health gate from growing
+    # linearly with the 20/50/100-client profiles.
+    inventory = discover({client})["radios"]
     by_name = {item["container"]: item for item in inventory}
     station = by_name.get(client)
     if station is None or station["kind"] != "station":

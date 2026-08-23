@@ -563,7 +563,17 @@ check_and_create_virt_wlan() {
     # destroyed every running container's Wi-Fi. mv.sh's hwsim_attach_radios
     # hands free pool radios to containers as LXD physical NICs; they return to
     # the pool automatically on container delete.)
-    local size="${HWSIM_POOL_SIZE:-32}"
+    local size
+    if [ -n "${HWSIM_POOL_SIZE:-}" ]; then
+        size="$HWSIM_POOL_SIZE"
+    elif [ -r /sys/module/mac80211_hwsim/parameters/radios ]; then
+        # An already-running medium or large profile is authoritative. Reusing
+        # the live size keeps one-client operations from rejecting a valid
+        # 64-radio pool merely because the fresh-install default is 32.
+        size=$(cat /sys/module/mac80211_hwsim/parameters/radios)
+    else
+        size=32
+    fi
     # Freeze the supported runtime defaults by kernel generation. Linux 7.0 is
     # the tri-band platform: it needs three concurrent channel contexts plus
     # custom_03 (regtest=5) so 6 GHz is IR-capable. Linux 6.8 remains the
@@ -695,7 +705,7 @@ main
 # Pre-sized pool: load the module once; radios cycle host<->container via LXD
 # physical NICs and return to the host automatically on container delete. A
 # radio is "free" iff its virt-wlan* netdev is present in the HOST netns.
-HWSIM_POOL_SIZE="${HWSIM_POOL_SIZE:-32}"
+HWSIM_POOL_SIZE="${HWSIM_POOL_SIZE:-$(cat /sys/module/mac80211_hwsim/parameters/radios 2>/dev/null || echo 32)}"
 # The pool is ensured by check_and_create_virt_wlan (idempotent, defined above,
 # called from main). The helpers below are the per-container allocator for mv.sh.
 

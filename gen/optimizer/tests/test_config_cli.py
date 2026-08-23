@@ -17,7 +17,7 @@ def test_example_policy_loads_without_external_yaml_dependency():
     config = load_policy(Path(__file__).parents[1] / "configs" / "threshold-policy.yaml")
     assert config.policy_version == 1
     assert config.current_rcpi_below == 100
-    assert config.expected_clients == 10
+    assert config.expected_clients == 20
     assert config.band_upgrade_enabled is False
 
     band = load_policy(Path(__file__).parents[1] / "configs" / "band-upgrade-policy.yaml")
@@ -28,7 +28,9 @@ def test_example_policy_loads_without_external_yaml_dependency():
 def test_replay_is_byte_deterministic(tmp_path):
     source = tmp_path / "capture.jsonl"
     journal = Journal(source)
-    for item in (snapshot(0), snapshot(5), snapshot(6)):
+    for item in (
+        snapshot(0, clients=20), snapshot(5, clients=20), snapshot(6, clients=20)
+    ):
         journal.append("snapshot", item.to_dict(), recorded_at=item.observed_at)
 
     policy = Path(__file__).parents[1] / "configs" / "threshold-policy.yaml"
@@ -47,7 +49,9 @@ def test_evaluate_accepts_plain_snapshot_and_persists_state(tmp_path):
     source = tmp_path / "snapshot.json"
     output = tmp_path / "evaluation.json"
     state = tmp_path / "state.json"
-    source.write_text(json.dumps(snapshot(0).to_dict()), encoding="utf-8")
+    source.write_text(
+        json.dumps(snapshot(0, clients=20).to_dict()), encoding="utf-8"
+    )
     policy = Path(__file__).parents[1] / "configs" / "threshold-policy.yaml"
 
     assert main([

@@ -170,7 +170,8 @@ sudo --preserve-env=SSH_AUTH_SOCK gen/vm/thin/install-lab.sh
 
 This phase installs Docker, pinned LXD and uv revisions, CPython 3.13.15, the
 locked Python environment, Boardfarm, LXD images, EasyMesh, hwsim and
-wmediumd. It creates four extenders and ten clients, performs the complete
+wmediumd. It creates four extenders, ten private clients and ten IoT clients,
+performs the complete
 acceptance audit, and leaves the accepted lab running. Re-running the installer
 reuses valid downloads and exact Git checkouts.
 

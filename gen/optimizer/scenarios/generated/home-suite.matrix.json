@@ -5,24 +5,22 @@
         "do not silently treat uplink and downlink as the same fact"
       ],
       "id": "asymmetric-link--home-five-agent--asymmetric-link--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "asymmetric-link",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -84,24 +82,22 @@
         "do not silently treat uplink and downlink as the same fact"
       ],
       "id": "asymmetric-link--home-five-agent--asymmetric-link--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "asymmetric-link",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -174,7 +170,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "ap-load-metrics",
@@ -260,7 +256,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "ap-load-metrics",
@@ -341,20 +337,19 @@
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
         "frequency-qualified-snr",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "backhaul-topology-band",
@@ -437,20 +432,19 @@
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
         "frequency-qualified-snr",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "backhaul-topology-band",
@@ -533,20 +527,19 @@
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
         "frequency-qualified-snr",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "backhaul-topology-band",
@@ -629,20 +622,19 @@
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "ap-load-metrics",
         "backhaul-band-control",
         "backhaul-link-metrics",
         "frequency-qualified-snr",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "backhaul-topology-band",
@@ -726,7 +718,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -809,7 +801,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -887,13 +879,12 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -901,7 +892,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-24-to-5",
@@ -980,13 +971,12 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -994,7 +984,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-24-to-5",
@@ -1073,13 +1063,12 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1087,7 +1076,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-24-to-5",
@@ -1166,13 +1155,12 @@
       ],
       "id": "band-steer-24-to-5--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1180,7 +1168,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-24-to-5",
@@ -1263,7 +1251,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1345,7 +1333,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1422,13 +1410,12 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1436,7 +1423,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-5-to-6",
@@ -1514,13 +1501,12 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1528,7 +1514,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-5-to-6",
@@ -1606,13 +1592,12 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1620,7 +1605,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-5-to-6",
@@ -1698,13 +1683,12 @@
       ],
       "id": "band-steer-5-to-6--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "cross-band-candidate-link-metrics",
-        "scale-profile-home20"
+        "cross-band-candidate-link-metrics"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -1712,7 +1696,7 @@
         "cross-band-candidate-link-metrics",
         "frequency-qualified-snr",
         "measurement-receipt-time",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "band-steer-5-to-6",
@@ -1790,25 +1774,23 @@
         "short wall jumps do not cause oscillation"
       ],
       "id": "border-hysteresis--home-five-agent--border-hover--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "border-hysteresis",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -1873,25 +1855,23 @@
         "short wall jumps do not cause oscillation"
       ],
       "id": "border-hysteresis--home-five-agent--border-hover--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "border-hysteresis",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -1962,7 +1942,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
@@ -2041,7 +2021,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
@@ -2115,18 +2095,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2205,18 +2184,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2295,18 +2273,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2376,18 +2353,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2456,23 +2432,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -2527,23 +2501,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -2598,24 +2570,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -2678,24 +2648,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -2759,18 +2727,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2840,18 +2807,17 @@
       ],
       "id": "cartesian-home--home-five-agent--asymmetric-link--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -2926,7 +2892,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -3015,7 +2981,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -3104,7 +3070,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -3184,7 +3150,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -3262,7 +3228,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -3331,7 +3297,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -3400,7 +3366,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -3478,7 +3444,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -3558,7 +3524,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -3638,7 +3604,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -3713,18 +3679,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -3805,18 +3770,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -3897,18 +3861,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -3980,18 +3943,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4062,23 +4024,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--border-hover--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -4135,23 +4095,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--border-hover--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -4208,24 +4166,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--border-hover--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -4290,24 +4246,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--border-hover--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -4373,18 +4327,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4456,18 +4409,17 @@
       ],
       "id": "cartesian-home--home-five-agent--border-hover--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4539,18 +4491,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4631,18 +4582,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4723,18 +4673,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4806,18 +4755,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -4888,23 +4836,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -4961,23 +4907,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -5034,24 +4978,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -5116,24 +5058,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -5199,18 +5139,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -5282,18 +5221,17 @@
       ],
       "id": "cartesian-home--home-five-agent--disappear-reappear--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -5370,7 +5308,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -5458,7 +5396,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -5546,7 +5484,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -5625,7 +5563,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -5702,7 +5640,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -5770,7 +5708,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -5838,7 +5776,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -5915,7 +5853,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -5994,7 +5932,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -6073,7 +6011,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -6147,18 +6085,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6238,18 +6175,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6329,18 +6265,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6411,18 +6346,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6492,23 +6426,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -6564,23 +6496,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -6636,24 +6566,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -6717,24 +6645,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -6799,18 +6725,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6881,18 +6806,17 @@
       ],
       "id": "cartesian-home--home-five-agent--fast-transit--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -6963,18 +6887,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7063,18 +6986,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7163,18 +7085,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7254,18 +7175,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7344,23 +7264,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -7425,23 +7343,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -7506,24 +7422,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -7596,24 +7510,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -7687,18 +7599,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7778,18 +7689,17 @@
       ],
       "id": "cartesian-home--home-five-agent--flash-crowd--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7869,18 +7779,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -7968,18 +7877,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -8067,18 +7975,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -8157,18 +8064,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -8246,23 +8152,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -8326,23 +8230,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -8406,24 +8308,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -8495,24 +8395,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -8585,18 +8483,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -8675,18 +8572,17 @@
       ],
       "id": "cartesian-home--home-five-agent--slow-walk-ten--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -8770,7 +8666,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -8857,7 +8753,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -8944,7 +8840,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -9022,7 +8918,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -9098,7 +8994,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -9165,7 +9061,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -9232,7 +9128,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -9308,7 +9204,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -9386,7 +9282,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
@@ -9464,7 +9360,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
@@ -9537,18 +9433,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--bursty-apps--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -9636,18 +9531,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--bursty-apps--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -9735,18 +9629,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -9825,18 +9718,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -9914,23 +9806,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--idle-keepalive--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -9994,23 +9884,21 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--idle-keepalive--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20"
+        "scale-profile-small"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "none",
         "id": "idle-keepalive",
@@ -10074,24 +9962,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10163,24 +10049,22 @@
         "never feed world truth into policy"
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "cartesian-home",
       "scenario_class": "benchmark-matrix",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10253,18 +10137,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -10343,18 +10226,17 @@
       ],
       "id": "cartesian-home--home-five-agent-shifted--slow-walk-ten--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
         "rf-atomic-generations",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "cartesian-home",
@@ -10432,23 +10314,21 @@
         "treat reappearance as fresh association"
       ],
       "id": "client-disappearance--home-five-agent--disappear-reappear--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "current-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "client-disappearance",
       "scenario_class": "liveness",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10513,23 +10393,21 @@
         "treat reappearance as fresh association"
       ],
       "id": "client-disappearance--home-five-agent--disappear-reappear--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "current-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "client-disappearance",
       "scenario_class": "liveness",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10598,7 +10476,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
@@ -10675,7 +10553,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
@@ -10747,25 +10625,23 @@
         "abstain when expected benefit horizon is too short"
       ],
       "id": "fast-transit--home-five-agent--fast-transit--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "fast-transit",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10828,25 +10704,23 @@
         "abstain when expected benefit horizon is too short"
       ],
       "id": "fast-transit--home-five-agent--fast-transit--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "fast-transit",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -10912,20 +10786,19 @@
       "id": "flash-crowd-load--home-five-agent--flash-crowd--traffic-flash-crowd--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
         "ap-load-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "ap-load-metrics",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "flash-crowd-load",
@@ -11006,20 +10879,19 @@
       "id": "flash-crowd-load--home-five-agent--flash-crowd--traffic-flash-crowd--threshold-policy--seed-1701",
       "missing_capabilities": [
         "ap-load-metrics",
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "ap-load-metrics",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "flash-crowd-load",
@@ -11106,7 +10978,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "ap-load-metrics",
@@ -11186,7 +11058,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "ap-load-metrics",
@@ -11264,7 +11136,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -11333,7 +11205,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "band-candidate-inventory",
@@ -11402,7 +11274,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
@@ -11484,7 +11356,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
@@ -11564,7 +11436,7 @@
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
@@ -11644,7 +11516,7 @@
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
@@ -11721,20 +11593,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "slow-walk-steering",
@@ -11813,20 +11684,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "slow-walk-steering",
@@ -11904,26 +11774,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -11995,26 +11863,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -12087,20 +11953,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--constant-load--band-upgrade-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "slow-walk-steering",
@@ -12179,20 +12044,19 @@
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--constant-load--threshold-policy--seed-1701",
       "missing_capabilities": [
-        "scale-profile-home20",
         "traffic-iperf3"
       ],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-iperf3"
       ],
       "scenario": "slow-walk-steering",
@@ -12270,26 +12134,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--latency-probe--band-upgrade-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "band-upgrade-policy",
         "path": "../configs/band-upgrade-policy.yaml",
-        "sha256": "0b9933af208790247ab73b607a5d4390eabaa992e7b74d8c433f4c4b4660317e"
+        "sha256": "79aeaafecaf710750ec980f417d7adc7d2853a3cfa9a5a082f353f9fe58dd6a1"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -12361,26 +12223,24 @@
         "no ping-pong"
       ],
       "id": "slow-walk-steering--home-five-agent-shifted--slow-walk-ten--latency-probe--threshold-policy--seed-1701",
-      "missing_capabilities": [
-        "scale-profile-home20"
-      ],
+      "missing_capabilities": [],
       "policy": {
         "id": "threshold-policy",
         "path": "../configs/threshold-policy.yaml",
-        "sha256": "cca6748bd4c604cdf1ac95f8b0f00f880225843b766b5cc11374957531e0e2dc"
+        "sha256": "e1a3d8b6e598aacf931eea154f42b925b8359969b8432bb9f37b483cd8a58f90"
       },
       "requirements": [
         "association-verification",
         "btm-steering",
         "measurement-receipt-time",
         "same-band-candidate-link-metrics",
-        "scale-profile-home20",
+        "scale-profile-small",
         "traffic-ping"
       ],
       "scenario": "slow-walk-steering",
       "scenario_class": "client-steering",
       "seed": 1701,
-      "status": "blocked",
+      "status": "runnable",
       "traffic": {
         "driver": "ping",
         "id": "latency-probe",
@@ -12449,8 +12309,8 @@
   ],
   "coverage": {
     "asymmetric-link": {
-      "blocked": 2,
-      "runnable": 0
+      "blocked": 0,
+      "runnable": 2
     },
     "backhaul-topology-band": {
       "blocked": 6,
@@ -12465,28 +12325,28 @@
       "runnable": 0
     },
     "border-hysteresis": {
-      "blocked": 2,
-      "runnable": 0
+      "blocked": 0,
+      "runnable": 2
     },
     "btm-no-disconnect": {
       "blocked": 2,
       "runnable": 0
     },
     "cartesian-home": {
-      "blocked": 88,
-      "runnable": 12
+      "blocked": 60,
+      "runnable": 40
     },
     "client-disappearance": {
-      "blocked": 2,
-      "runnable": 0
+      "blocked": 0,
+      "runnable": 2
     },
     "extender-loss-recovery": {
       "blocked": 0,
       "runnable": 2
     },
     "fast-transit": {
-      "blocked": 2,
-      "runnable": 0
+      "blocked": 0,
+      "runnable": 2
     },
     "flash-crowd-load": {
       "blocked": 2,
@@ -12501,15 +12361,15 @@
       "runnable": 0
     },
     "slow-walk-steering": {
-      "blocked": 10,
-      "runnable": 2
+      "blocked": 6,
+      "runnable": 6
     }
   },
-  "matrix_sha256": "958739c79b307d710ea6ed9b9e3de705548c1ca19bd9d0e2a8a1ccac811ae9c0",
+  "matrix_sha256": "19bc3838c3604c553a65d890f7197abe68b89be42d521a82775639d791c6058e",
   "schema": "optimizer.experiment-matrix.v1",
   "source": {
     "capabilities": "capabilities-current.json",
-    "capabilities_sha256": "92c6d91d1025fb8c4e5a7ece3da408ef3659ac01dc2c0f53bdb55a857b504eff",
+    "capabilities_sha256": "714f6227489c422e3672260f183173a95e5a86e5b180e2859557aac2ecaa4db4",
     "scenario_catalog": "scenario-catalog.json",
     "scenario_catalog_sha256": "5cb0a5b55dbdb1e308aeb35247a2ca1d7448ef9b466aca1b507195aa355f5653",
     "spec": "home-suite.json",
@@ -12519,10 +12379,10 @@
   },
   "suite": "home-policy-research-v1",
   "summary": {
-    "blocked": 132,
+    "blocked": 92,
     "cases": 148,
     "policies": 2,
-    "runnable": 16,
+    "runnable": 56,
     "seeds": 1,
     "traffic_profiles": 5,
     "worlds": 10

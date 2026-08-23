@@ -143,7 +143,7 @@ def test_soak_traffic_retries_transport_signal_but_not_ping_failure(
     assert result["packet_loss_percent"] == 100
 
 
-def test_soak_traffic_check_is_sequential_and_ordered():
+def test_soak_traffic_check_is_bounded_and_result_ordered():
     soak = load_script("p0-churn-soak.py")
     observed = []
 
@@ -154,7 +154,7 @@ def test_soak_traffic_check_is_sequential_and_ordered():
     with patch.object(soak, "traffic_one", side_effect=traffic):
         results = soak.traffic_check()
 
-    assert observed == list(soak.CLIENTS)
+    assert sorted(observed) == sorted(soak.CLIENTS)
     assert [result["client"] for result in results] == list(soak.CLIENTS)
 
 
@@ -214,6 +214,13 @@ def test_carousel_selects_only_matching_cohort_bssids():
     assert carousel.cohort_bssids(radio, "iot_ssid") == {
         "02:00:00:00:02:00"
     }
+
+
+def test_carousel_client_label_uses_the_selected_cohort_prefix():
+    carousel = load_script("wmediumd-client-carousel.py")
+
+    assert carousel.sta_label("02:00:00:00:13:00") == "STA-13"
+    assert carousel.sta_label("02:00:00:00:13:00", "IOT") == "IOT-13"
 
 
 @pytest.mark.parametrize("transport_status", [-15, 143])

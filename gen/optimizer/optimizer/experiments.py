@@ -82,11 +82,9 @@ def _scale_requirement(world: dict[str, Any]) -> str:
     counts = world.get("counts", {})
     agents = int(counts.get("agents", 0))
     stations = int(counts.get("stations", 0))
-    if agents <= 5 and stations <= 10:
-        return "scale-profile-small"
     if agents <= 5 and stations <= 20:
-        return "scale-profile-home20"
-    if agents <= 9 and stations <= 40:
+        return "scale-profile-small"
+    if agents <= 5 and stations <= 50:
         return "scale-profile-medium"
     return "scale-profile-stress"
 
