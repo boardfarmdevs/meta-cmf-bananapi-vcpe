@@ -12,17 +12,21 @@ controller_sha256=${CONTROLLER_SHA256:?set CONTROLLER_SHA256}
 extender_sha256=${EXTENDER_SHA256:?set EXTENDER_SHA256}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:?set EXPECTED_WMEDIUMD_SHA256}
 evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/vagrant/easymesh-evidence}
-hwsim_radios=${HWSIM_RADIOS:-32}
+hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-32}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 evidence="$evidence_root/$run_id"
 
-case "$hwsim_radios" in
-    ''|*[!0-9]*) echo 'HWSIM_RADIOS must be an integer' >&2; exit 2 ;;
+case "$hwsim_pool_radios" in
+    ''|*[!0-9]*) echo 'EASYMESH_HWSIM_POOL_RADIOS must be an integer' >&2; exit 2 ;;
 esac
-if [ "$hwsim_radios" -lt 25 ]; then
+if [ "$hwsim_pool_radios" -lt 25 ]; then
     echo 'the accepted five-node/20-client profile requires at least 25 hwsim radios' >&2
     exit 2
 fi
+# bpi.sh intentionally gives HWSIM_RADIOS a different meaning: the number of
+# PHYs assigned to one mesh container.  Never leak a caller's pool-size value
+# into child deployment commands; each tri-band BPI node uses one hwsim PHY.
+unset HWSIM_RADIOS
 
 mkdir -p "$evidence"
 exec > >(tee "$evidence/deploy.log") 2>&1
@@ -68,17 +72,17 @@ done < <(lxc list -c n --format csv \
 # to upgrade an older thin VM from its historical 24-radio pool.  Persist the
 # requested size and install the current naming helper before the reload so a
 # later VM reboot reconstructs the same pool.
-printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_radios" \
+printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_pool_radios" \
     | sudo tee /etc/modprobe.d/easymesh-hwsim.conf >/dev/null
 sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool" \
     /usr/local/sbin/easymesh-hwsim-pool
 sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool.service" \
     /etc/systemd/system/easymesh-hwsim-pool.service
-if [ "$(cat /sys/module/mac80211_hwsim/parameters/radios)" != "$hwsim_radios" ] \
+if [ "$(cat /sys/module/mac80211_hwsim/parameters/radios)" != "$hwsim_pool_radios" ] \
     || [ "$(cat /sys/module/mac80211_hwsim/parameters/channels)" != 3 ] \
     || [ "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" != 5 ]; then
     sudo modprobe -r mac80211_hwsim
-    sudo modprobe mac80211_hwsim radios="$hwsim_radios" channels=3 regtest=5
+    sudo modprobe mac80211_hwsim radios="$hwsim_pool_radios" channels=3 regtest=5
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-hwsim-pool.service
