@@ -15,10 +15,11 @@ state remains the ownership boundary, so reception of M2 changes state and
 stops retries immediately. All other Agent states keep the existing
 orchestration-command guard.
 
-The M1 encoder also used the active command to obtain the local AL MAC. Use the
-radio's persistent data-model accessor instead, since a recovery transaction
-intentionally outlives that command. The value is identical during ordinary
-onboarding and remains valid afterward.
+The M1 encoder also used the active command to obtain its local AL MAC and
+device-identity attributes. Use the radio's persistent data-model accessors
+instead, since a recovery transaction intentionally outlives that command.
+The values are identical during ordinary onboarding and remain valid
+afterward.
 
 This recovered a reproducible tri-band extender that otherwise remained at
 three radios, nine BSS records and only two operational fronthaul BSSs after
@@ -26,9 +27,9 @@ one of its three initial M2 frames was lost.
 
 Upstream-Status: Inappropriate [hwsim lab protocol recovery]
 ---
- src/em/config/em_configuration.cpp |  2 +-
+ src/em/config/em_configuration.cpp | 14 +++++++-------
  src/em/em.cpp                       | 10 ++++++++++
- 2 files changed, 11 insertions(+), 1 deletion(-)
+ 2 files changed, 17 insertions(+), 7 deletions(-)
 
 diff --git a/src/em/em.cpp b/src/em/em.cpp
 index 52e6d7a..64130ad 100644
@@ -55,6 +56,24 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
 index 42d97f4..99af3fd 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
+@@ -3653 +3653 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-	str = get_current_cmd()->get_manufacturer();
++	str = get_manufacturer();
+@@ -3664 +3664 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-	str = get_current_cmd()->get_manufacturer_model();
++	str = get_manufacturer_model();
+@@ -3675 +3675 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-	str = get_current_cmd()->get_manufacturer_model();
++	str = get_manufacturer_model();
+@@ -3686 +3686 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-	str = get_current_cmd()->get_serial_number();
++	str = get_serial_number();
+@@ -3699 +3699 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-    memcpy(attr->val, get_current_cmd()->get_primary_device_type(), size);
++    memcpy(attr->val, get_primary_device_type(), size);
+@@ -3707 +3707 @@ unsigned short em_configuration_t::create_m1_msg(unsigned char *buff)
+-	str = get_current_cmd()->get_manufacturer_model();
++	str = get_manufacturer_model();
 @@ -4431 +4431 @@ int em_configuration_t::create_autoconfig_wsc_m1_msg(unsigned char *buff, unsign
 -    memcpy(tmp, get_current_cmd()->get_al_interface_mac(), sizeof(mac_address_t));
 +    memcpy(tmp, get_al_interface_mac(), sizeof(mac_address_t));

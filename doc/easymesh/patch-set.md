@@ -567,9 +567,10 @@ silently discarded their protocol timer ticks. Unified-mesh `0108` services
 only this self-clearing per-radio recovery state before that guard. Receipt of
 M2 changes the state and stops retries; every other Agent state retains the
 existing orchestration ownership rule. The retry M1 is encoded with the
-persistent radio data model's local AL MAC rather than dereferencing the ended
-command; a captured rev120 core located the former null access exactly at that
-source-address copy.
+persistent radio data model's local AL MAC and device identity rather than
+dereferencing the ended command. Captured rev120 cores located the former null
+accesses first at the source-address copy and then in the M1 manufacturer
+attribute.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
