@@ -516,6 +516,7 @@ presentation boundaries:
 | `0105` | serialize concurrent per-radio WSC M2 parsing and re-arm bounded WSC recovery when a OneWifi subdoc is not confirmed |
 | `0106` | initialize and validate the one-octet Profile TLV and serialize concurrent controller Autoconfiguration Search/WSC model selection |
 | `0107` | serialize per-radio WSC subdocs through OneWifi apply callbacks and release deferred radios through bounded fresh-M1 recovery |
+| `0108` | service a radio's bounded WSC M2-loss recovery from protocol state even after the shared device-init orchestration ends |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -556,6 +557,14 @@ radio identities, and releases one radio into `wsc_m2_pending` for each apply
 callback. A 30-second callback watchdog covers a lost completion. The existing
 bounded retry obtains a fresh M2 for the released radio; the patch neither
 parallelizes OneWifi writes nor declares configuration before confirmation.
+
+A full fresh rev120 acceptance run then reproduced loss of two initial M2
+deliveries. The affected radio objects remained in `wsc_m2_pending`, but the
+shared device-init orchestration lifetime had ended and the orchestration guard
+silently discarded their protocol timer ticks. Unified-mesh `0108` services
+only this self-clearing per-radio recovery state before that guard. Receipt of
+M2 changes the state and stops retries; every other Agent state retains the
+existing orchestration ownership rule.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
