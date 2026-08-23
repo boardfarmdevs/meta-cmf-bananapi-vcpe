@@ -37,21 +37,32 @@ test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest
 # the host namespace are visible below. Rename and validate that subset; the
 # module parameters above validate the size of the complete persistent pool.
 for phy in /sys/class/ieee80211/phy*; do
-    netdev=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n' | head -1)
-    case "$netdev" in
-    wlan[0-9]*)
-        ip link set "$netdev" down
-        ip link set "$netdev" name "virt-$netdev"
-        ip link set "virt-$netdev" up
-        ;;
-    virt-wlan[0-9]*)
-        ip link set "$netdev" up
-        ;;
-    *)
-        echo "unexpected hwsim pool interface on ${phy##*/}: $netdev" >&2
+    netdevs=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+    netdev=$(printf '%s\n' "$netdevs" | grep -m1 '^virt-wlan[0-9]\+$' || true)
+    if [ -z "$netdev" ]; then
+        netdev=$(printf '%s\n' "$netdevs" | grep -m1 '^wlan[0-9]\+$' || true)
+        if [ -n "$netdev" ]; then
+            ip link set "$netdev" down
+            ip link set "$netdev" name "virt-$netdev"
+            netdev="virt-$netdev"
+        fi
+    fi
+    if [ -z "$netdev" ]; then
+        echo "no stable hwsim pool interface on ${phy##*/}: $netdevs" >&2
         exit 1
-        ;;
-    esac
+    fi
+    netdevs=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+
+    # A stopped or interrupted container returns its complete wiphy, including
+    # OneWifi-created VAPs.  This helper only runs before normal LXD startup or
+    # at the explicit idle point in the fresh redeployer, so those extra VAPs
+    # cannot belong to a live node and must not poison the reusable pool.
+    while read -r stale; do
+        [ -n "$stale" ] || continue
+        [ "$stale" = "$netdev" ] && continue
+        iw dev "$stale" del
+    done <<< "$netdevs"
+    ip link set "$netdev" up
 done
 
 host_phys=$(find /sys/class/ieee80211 -mindepth 1 -maxdepth 1 -name 'phy*' | wc -l)
