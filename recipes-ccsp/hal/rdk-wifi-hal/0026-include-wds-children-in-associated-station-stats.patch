@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000026 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 04:05:00 -0700
+Subject: [PATCH] banana-pi: include WDS children in associated station stats
+
+When a 4-address backhaul peer becomes authorized, mac80211 moves its station
+record from the AP netdev (for example wifi1.1) to the dynamic AP/VLAN netdev
+created for that peer (wifi1.1.sta1).  The BananaPi implementation of
+wifi_getApAssociatedDeviceDiagnosticResult3() dumped only the AP netdev.  It
+therefore returned an empty array for every established wireless backhaul,
+leaving OneWifi and EasyMesh with the last pre-reparent RCPI indefinitely.
+
+Dump both the AP netdev and its dynamic `.sta*` children.  Remember the
+ifindex that owned each station so the follow-up GET_STATION request is sent
+to the same netdev, and de-duplicate a peer visible on both interfaces during
+the short kernel transition.  Ordinary AP clients continue through the
+existing parent-interface path.
+
+Upstream-Status: Pending
+---
+ platform/banana-pi/platform.c | 70 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 61 insertions(+), 9 deletions(-)
+
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+index 1111111..2222222 100644
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -38,8 +38,14 @@
+ #define INVALID_KEY  "12345678"
+ 
++typedef struct {
++    mac_address_t mac;
++    unsigned int ifindex;
++} sta_entry_t;
++
+ typedef struct {
+-    mac_address_t *macs;
++    sta_entry_t *entries;
+     unsigned int num;
++    unsigned int query_ifindex;
+ } sta_list_t;
+ 
+ int wifi_nvram_defaultRead(char *in,char *out)
+@@ -682,6 +688,8 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+ {
+     struct nlattr *tb[NL80211_ATTR_MAX + 1];
+     struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
++    sta_entry_t *entries;
++    unsigned int i;
+     sta_list_t *sta_list = (sta_list_t *)arg;
+ 
+     if (nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0), genlmsg_attrlen(gnlh, 0),
+@@ -692,11 +700,24 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+     }
+ 
+     if (tb[NL80211_ATTR_MAC]) {
+-        sta_list->macs = realloc(sta_list->macs, (sta_list->num + 1) * sizeof(mac_address_t));
+-        if (sta_list->macs) {
+-            memcpy(sta_list->macs[sta_list->num], nla_data(tb[NL80211_ATTR_MAC]), sizeof(mac_address_t));
+-            sta_list->num++;
++        for (i = 0; i < sta_list->num; i++) {
++            if (memcmp(sta_list->entries[i].mac, nla_data(tb[NL80211_ATTR_MAC]),
++                    sizeof(mac_address_t)) == 0) {
++                return NL_OK;
++            }
++        }
++
++        entries = realloc(sta_list->entries,
++            (sta_list->num + 1) * sizeof(sta_entry_t));
++        if (entries == NULL) {
++            wifi_hal_stats_error_print("%s:%d Failed to grow sta list\n", __func__, __LINE__);
++            return NL_STOP;
+         }
++        sta_list->entries = entries;
++        memcpy(sta_list->entries[sta_list->num].mac, nla_data(tb[NL80211_ATTR_MAC]),
++            sizeof(mac_address_t));
++        sta_list->entries[sta_list->num].ifindex = sta_list->query_ifindex;
++        sta_list->num++;
+     }
+ 
+     return NL_OK;
+@@ -706,6 +725,7 @@ static int get_sta_list(wifi_interface_info_t *interface, sta_list_t *sta_list)
+     int ret;
+     struct nl_msg *msg = NULL;
+ 
++    sta_list->query_ifindex = interface->index;
+     msg = nl80211_drv_cmd_msg(g_wifi_hal.nl80211_id, interface, NLM_F_DUMP, NL80211_CMD_GET_STATION);
+     if (msg == NULL) {
+         wifi_hal_stats_error_print("%s:%d Failed to create NL command\n", __func__, __LINE__);
+@@ -869,8 +889,13 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex,
+ {
+     int ret;
+     unsigned int i;
++    size_t prefix_len;
++    char child_prefix[32];
+     sta_list_t sta_list = {};
++    struct if_nameindex *ifaces = NULL;
++    struct if_nameindex *iface;
+     wifi_interface_info_t *interface;
++    wifi_interface_info_t query_interface;
+ 
+     interface = get_interface_by_vap_index(apIndex);
+     if (interface == NULL) {
+@@ -884,6 +908,28 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex,
+         goto exit;
+     }
+ 
++    /* A 4-address peer is represented by an AP/VLAN child once authorized.
++     * Its station row is no longer returned by a dump of the parent AP. */
++    snprintf(child_prefix, sizeof(child_prefix), "%s.sta", interface->name);
++    prefix_len = strlen(child_prefix);
++    ifaces = if_nameindex();
++    if (ifaces != NULL) {
++        for (iface = ifaces; iface->if_index != 0 && iface->if_name != NULL; iface++) {
++            if (strncmp(iface->if_name, child_prefix, prefix_len) != 0) {
++                continue;
++            }
++            memcpy(&query_interface, interface, sizeof(query_interface));
++            snprintf(query_interface.name, sizeof(query_interface.name), "%s", iface->if_name);
++            query_interface.index = iface->if_index;
++            ret = get_sta_list(&query_interface, &sta_list);
++            if (ret < 0) {
++                wifi_hal_stats_error_print("%s:%d Failed to get sta list from %s\n",
++                    __func__, __LINE__, iface->if_name);
++                goto exit;
++            }
++        }
++    }
++
+     *associated_dev_array = sta_list.num ?
+         calloc(sta_list.num, sizeof(wifi_associated_dev3_t)) : NULL;
+     *output_array_size = sta_list.num;
+@@ -891,5 +937,9 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex,
+     for (i = 0; i < sta_list.num; i++) {
+-        ret = get_sta_stats(interface, sta_list.macs[i], &(*associated_dev_array)[i]);
++        memcpy(&query_interface, interface, sizeof(query_interface));
++        query_interface.index = sta_list.entries[i].ifindex;
++        if_indextoname(query_interface.index, query_interface.name);
++        ret = get_sta_stats(&query_interface, sta_list.entries[i].mac,
++            &(*associated_dev_array)[i]);
+         if (ret < 0) {
+             wifi_hal_stats_error_print("%s:%d Failed to get sta stats\n", __func__, __LINE__);
+             free(*associated_dev_array);
+@@ -904,7 +956,10 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex,
+     }
+ 
+ exit:
+-    free(sta_list.macs);
++    if (ifaces != NULL) {
++        if_freenameindex(ifaces);
++    }
++    free(sta_list.entries);
+     return ret;
+ }
+ 
+-- 
+2.43.0

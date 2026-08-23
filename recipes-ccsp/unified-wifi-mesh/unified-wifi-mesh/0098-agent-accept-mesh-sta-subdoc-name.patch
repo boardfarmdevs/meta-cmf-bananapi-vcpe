@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000098 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 03:25:00 -0700
+Subject: [PATCH] agent: accept emitted mesh STA subdocument name
+
+OneWifi publishes a confirmed mesh-STA connection-status snapshot with the
+canonical WebConfig display name `mesh sta`.  The EasyMesh RBUS callback
+accepted only the underscore form and the older `mesh backhaul sta` alias,
+so it logged and discarded every live reparent update.  The kernel and
+OneWifi cache changed parent while the Agent continued advertising the old
+upstream BSSID indefinitely.
+
+Accept the name emitted by OneWifi in the existing mesh-STA callback path.
+Keep the older aliases for compatibility.
+
+Upstream-Status: Pending
+---
+ src/agent/em_agent.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 1111111..2222222 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -2009,7 +2009,8 @@ void em_agent_t::onewifi_cb(char *event_name, bus_data_prop_t *data, void *userD
+         (strcmp(subdoc_name->valuestring, "radio_5G") == 0) || (strcmp(subdoc_name->valuestring, "radio_2.4G") == 0)) {
+         g_agent.io_process(em_bus_event_type_onewifi_radio_cb, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+ 
+-    } else if ((strcmp(subdoc_name->valuestring, "mesh_sta") == 0) || 
++    } else if ((strcmp(subdoc_name->valuestring, "mesh_sta") == 0) ||
++               (strcmp(subdoc_name->valuestring, "mesh sta") == 0) ||
+                (strcmp(subdoc_name->valuestring, "mesh backhaul sta") == 0)) {
+         g_agent.io_process(em_bus_event_type_onewifi_mesh_sta_cb, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+ 
+-- 
+2.43.0

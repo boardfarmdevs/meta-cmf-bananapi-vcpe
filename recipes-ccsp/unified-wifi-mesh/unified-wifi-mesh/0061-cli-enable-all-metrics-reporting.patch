@@ -19,15 +19,15 @@ so the operator sees an end-to-end result rather than only request admission.
 Upstream-Status: Pending
 Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
- src/rdkb-cli/main.go          | 78 ++++++++++++++++++++++++++++++++++++
+ src/rdkb-cli/main.go          | 98 ++++++++++++++++++++++++++++++++++++
  src/rdkb-cli/static/index.html |  6 ++-
  src/rdkb-cli/static/script.js | 60 ++++++++++++++++++++++++++++
- 3 files changed, 143 insertions(+), 1 deletion(-)
+ 3 files changed, 163 insertions(+), 1 deletion(-)
 
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -2226,6 +2226,83 @@ func getWirelessSettingsHandler(w http.ResponseWriter, r *http.Request) {
+@@ -2226,6 +2226,104 @@ func getWirelessSettingsHandler(w http.ResponseWriter, r *http.Request) {
  }
  
  // ===== WIRELESS Policy HANDLERS =====
@@ -96,6 +96,27 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 +            return
 +        }
 +        time.Sleep(2 * time.Second)
++    }
++
++    // Policy command admission is not an agent acknowledgement.  During cold
++    // multi-hop onboarding an agent may have published its radios while its
++    // policy command path is still converging, and one accepted request can
++    // consequently produce no reporting timer.  Repeat the idempotent
++    // activation after every device has had one complete pass.  This keeps a
++    // single UI/API action reliable without changing the desired policy or
++    // requiring an operator to press the button twice.
++    time.Sleep(5 * time.Second)
++    for i := range configs {
++        policy := &configs[i]
++        if !applyWifiPolicyConfigForDevice(policyTree, policy.ID) {
++            http.Error(w, fmt.Sprintf("Failed to confirm metrics policy for %s", policy.ID), http.StatusInternalServerError)
++            return
++        }
++        if !waitForWifiPolicyConfig(*policy, 8*time.Second) {
++            http.Error(w, fmt.Sprintf("Timed out confirming metrics policy for %s", policy.ID), http.StatusGatewayTimeout)
++            return
++        }
++        time.Sleep(time.Second)
 +    }
 +
 +    w.Header().Set("Content-Type", "application/json")

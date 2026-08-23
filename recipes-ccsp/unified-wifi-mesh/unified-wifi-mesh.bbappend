@@ -88,6 +88,23 @@ EASYMESH_CORE_PATCHES = " \
     file://0084-cli-update-signal-arcs-in-place.patch \
     file://0085-cli-show-exact-backhaul-parent.patch \
     file://0086-cli-stabilize-layout-and-show-client-channel.patch \
+    file://0087-dm-enforce-single-backhaul-sta-bss.patch \
+    file://0088-topology-resolve-parent-from-ap-bss-only.patch \
+    file://0089-cli-show-live-backhaul-signal-and-contain-hover.patch \
+    file://0090-metrics-resolve-sta-across-controller-models.patch \
+    file://0091-topology-decode-live-backhaul-parent.patch \
+    file://0092-metrics-seed-associated-sta-on-first-report.patch \
+    file://0093-topology-resolve-backhaul-sta-without-local-mac.patch \
+    file://0094-topology-serialize-tree-rebuild-and-encode.patch \
+    file://0096-topology-refresh-periodic-response.patch \
+    file://0097-topology-prune-stale-operational-bss.patch \
+    file://0098-agent-accept-mesh-sta-subdoc-name.patch \
+    file://0099-capability-report-actual-backhaul-sta.patch \
+    file://0100-cli-key-backhaul-metrics-by-current-link.patch \
+    file://0101-topology-reconcile-single-live-backhaul-sta.patch \
+    file://0102-agent-resolve-mesh-sta-radio-identity.patch \
+    file://0103-wsc-provision-all-enabled-hauls.patch \
+    file://0104-db-reconcile-device-bss-snapshot.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

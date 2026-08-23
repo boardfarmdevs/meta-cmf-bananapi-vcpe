@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000096 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 03:30:00 -0700
+Subject: [PATCH] topology: refresh model from periodic response
+
+Once an Agent reached topology-synchronized state, the controller processed
+only the client portion of later Topology Responses.  Consequently a warm
+backhaul reparent carried the new upstream BSSID over IEEE 1905 every fifteen
+seconds but never reached the normal Device Information decoder.
+
+Run the normal topology decoder for periodic responses and rebuild the
+controller tree only when the authoritative upstream BSSID decoder reports
+an actual change, before reconciling clients.  Treat positive decoder results
+as successful during initial synchronization and avoid rebuilding and
+serializing the complete network for every unchanged fifteen-second snapshot.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 3333333..5555555 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2598,6 +2598,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                             util::mac_to_string(upstream_bssid).c_str());
+                         memcpy(matched_bsta->bssid.mac, upstream_bssid,
+                             sizeof(mac_address_t));
++                        ret = 1;
+                         dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
+                     }
+                 }
+@@ -6362,7 +6363,7 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+ 
+         case em_msg_type_topo_resp:
+             if ((get_service_type() == em_service_type_ctrl) && (get_state() == em_state_ctrl_topo_sync_pending)){
+-                if (handle_topology_response(data, len) == 0) {
++                if (handle_topology_response(data, len) >= 0) {
+                     set_state(em_state_ctrl_topo_synchronized);
+                     static_cast<em_t*>(this)->set_ssid_mismatch(false);
+                     std::vector<em_t *> em_radios;
+@@ -6386,5 +6387,9 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+                 handle_topology_response_clients(data, len);
+             } else if ((get_service_type() == em_service_type_ctrl) &&
+                        (get_state() >= em_state_ctrl_topo_synchronized)) {
++                int topology_rc = handle_topology_response(data, len);
++                if (topology_rc > 0) {
++                    get_mgr()->update_network_topology();
++                }
+                 // Periodic Topology Responses repair a missed multicast notification.
+                 handle_topology_response_clients(data, len);
+             }
+-- 
+2.43.0

@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000104 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 08:35:00 -0700
+Subject: [PATCH] db: reconcile BSS rows against the device snapshot
+
+BSSList does not persist VapMode.  After controller restart, a stale backhaul
+STA row is consequently loaded with no reliable STA/AP classification and the
+mode-based single-VAP guard cannot remove it.  A BSSID is also part of the row
+key, so mutating an in-memory bSTA before deleting its old key can leave a
+database-only orphan which is no longer present in the global list.  A
+reparented extender can therefore retain both its former and current upstream
+BSSID in MariaDB even though the live topology publishes only the current edge.
+
+The per-device model has already consumed the authoritative Device Information
+and Operational BSS observations before its BSS update bit is processed.
+Reconcile the database keys themselves for every radio represented by that
+model, then write the surviving snapshot.  Radios which have not appeared yet
+are left untouched so incremental onboarding cannot prune an unobserved band.
+
+Upstream-Status: Pending
+---
+ inc/dm_bss_list.h              |  7 +++++
+ src/ctrl/dm_easy_mesh_ctrl.cpp |  6 ++++
+ src/dm/dm_bss_list.cpp         | 81 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 94 insertions(+)
+
+diff --git a/inc/dm_bss_list.h b/inc/dm_bss_list.h
+index 2222222..3333333 100644
+--- a/inc/dm_bss_list.h
++++ b/inc/dm_bss_list.h
+@@ -199,6 +199,13 @@ public:
+ 	 * inserting the replacement record.
+ 	 */
+ 	void enforce_single_vap_bss(db_client_t& db_client, dm_bss_t& bss);
++
++	/**
++	 * Remove persisted/global BSS keys which are absent from an authoritative
++	 * per-device radio model.  BSSList does not persist VapMode, so restart
++	 * recovery cannot safely identify stale bSTA rows by mode alone.
++	 */
++	int reconcile_device_bss(db_client_t& db_client, dm_easy_mesh_t& dm);
+     
+ 	/**!
+ 	 * @brief Retrieves the configuration details from a JSON object.
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 1111111..2222222 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4234,6 +4234,12 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+     } 
+ 
+     if (dm->db_cfg_type_is_set(db_cfg_type_bss_list_update)) {
++        /* The per-device model has already reconciled the authoritative
++         * topology/operational-BSS observations.  Remove obsolete global and
++         * database keys before writing the surviving snapshot. */
++        if (dm_bss_list_t::reconcile_device_bss(m_db_client, *dm) != 0) {
++            at_least_one_failed = true;
++        }
+         for (i = 0; i < dm->get_num_bss(); i++) {
+             bss = dm->get_bss_by_ref(i);
+     		dm_easy_mesh_t::macbytes_to_string(dm->m_device.m_device_info.intf.mac, dev_mac_str);
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index 4444444..5555555 100644
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -35,6 +35,7 @@
+ #include <sys/uio.h>
+ #include <sys/time.h>
+ #include <unistd.h>
++#include <vector>
+ #include "em_cmd.h"
+ #include "dm_bss_list.h"
+ #include "dm_easy_mesh.h"
+@@ -130,6 +131,86 @@ void dm_bss_list_t::enforce_single_vap_bss(db_client_t& db_client,
+     }
+ }
+ 
++int dm_bss_list_t::reconcile_device_bss(db_client_t& db_client,
++    dm_easy_mesh_t& dm)
++{
++    db_query_t query;
++    void *ctx;
++    em_long_string_t key;
++    mac_addr_str_t mac;
++    std::vector<dm_bss_t> stale;
++    em_device_info_t *device = dm.get_device_info();
++
++    if (device == NULL) {
++        return -1;
++    }
++
++    /* Read MariaDB itself rather than only walking the global in-memory list.
++     * A BSSID is part of the row key.  Older code could mutate the in-memory
++     * bSTA to its new upstream BSSID before deleting the former key, leaving a
++     * database-only orphan which no in-memory reconciliation could see. */
++    memset(query, 0, sizeof(query));
++    snprintf(query, sizeof(query), "select ID,BSSID,RUID from BSSList");
++    ctx = db_client.execute(query);
++    if (ctx == NULL) {
++        return -1;
++    }
++
++    while (db_client.next_result(ctx)) {
++        dm_bss_t current;
++        bool radio_present = false;
++        bool exact_present = false;
++
++        current.init();
++        db_client.get_string(ctx, key, 1);
++        parse_bss_id_from_key(key, &current.m_bss_info.id);
++        db_client.get_string(ctx, mac, 2);
++        dm_easy_mesh_t::string_to_macbytes(mac,
++            current.m_bss_info.bssid.mac);
++        db_client.get_string(ctx, mac, 3);
++        dm_easy_mesh_t::string_to_macbytes(mac,
++            current.m_bss_info.ruid.mac);
++
++        if (memcmp(current.m_bss_info.id.dev_mac, device->intf.mac,
++                sizeof(mac_address_t)) != 0) {
++            continue;
++        }
++
++        for (unsigned int i = 0; i < dm.get_num_bss(); i++) {
++            em_bss_info_t *candidate = dm.get_bss_info(i);
++            if (candidate == NULL ||
++                    memcmp(current.m_bss_info.ruid.mac,
++                        candidate->ruid.mac, sizeof(mac_address_t)) != 0) {
++                continue;
++            }
++            radio_present = true;
++            if (memcmp(current.m_bss_info.bssid.mac,
++                    candidate->bssid.mac, sizeof(mac_address_t)) == 0 &&
++                    current.m_bss_info.id.haul_type ==
++                        candidate->id.haul_type) {
++                exact_present = true;
++                break;
++            }
++        }
++
++        /* Do not prune a radio which has not yet appeared during incremental
++         * onboarding.  Once present, its per-device BSS set is authoritative. */
++        if (radio_present && !exact_present) {
++            stale.push_back(current);
++        }
++    }
++
++    for (dm_bss_t& bss : stale) {
++        if (update_db(db_client, dm_orch_type_db_delete,
++                bss.get_bss_info()) != 0) {
++            return -1;
++        }
++        update_list(bss, dm_orch_type_db_delete);
++    }
++
++    return 0;
++}
++
+ int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void *parent_id)
+ {
+     cJSON *obj;
+-- 
+2.43.0

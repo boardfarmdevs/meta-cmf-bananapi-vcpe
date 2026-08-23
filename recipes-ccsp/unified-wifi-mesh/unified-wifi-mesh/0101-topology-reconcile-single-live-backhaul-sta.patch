@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000101 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 12:15:00 -0700
+Subject: [PATCH] topology: reconcile one live backhaul STA per radio
+
+Every IEEE 1905 Device Information TLV is an authoritative observation of a
+local Wi-Fi station interface and its current upstream BSSID.  Parent changes
+previously updated one matching bSTA record but left older station-mode BSS
+records in the per-device data model.  The subsequent database update walked
+all of those records in turn, so single-VAP enforcement could finish with the
+old record and the topology builder could place the extender under its former
+parent.
+
+After matching the reported interface, retain that record and remove every
+other backhaul-STA record for the same radio from the per-device model.  Mark
+the BSS list dirty even when the BSSID itself did not change.  The normal BSS
+commit then receives one authoritative record and removes the stale global and
+database rows, so controller restart cannot resurrect an old parent.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 39 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 2222222..5555555 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2581,6 +2581,8 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                     memcpy(upstream_bssid, media, sizeof(upstream_bssid));
+                     em_bss_info_t *matched_bsta = NULL;
+                     em_bss_info_t *band_bsta = NULL;
++                    unsigned int matched_bsta_index = dm->get_num_bss();
++                    unsigned int band_bsta_index = dm->get_num_bss();
+                     unsigned int band_matches = 0;
+                     unsigned char reported_band = media[sizeof(mac_address_t) + 1];
+                     for (unsigned int bss_idx = 0;
+@@ -2593,6 +2596,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                         if (memcmp(bsta->sta_mac, local_mac,
+                                 sizeof(mac_address_t)) == 0) {
+                             matched_bsta = bsta;
++                            matched_bsta_index = bss_idx;
+                             break;
+                         }
+ 
+@@ -2608,11 +2612,13 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                         }
+                         if (model_band != 0 && model_band == reported_band) {
+                             band_bsta = bsta;
++                            band_bsta_index = bss_idx;
+                             band_matches++;
+                         }
+                     }
+                     if (matched_bsta == NULL && band_matches == 1) {
+                         matched_bsta = band_bsta;
++                        matched_bsta_index = band_bsta_index;
+                         em_printfout(
+                             "Backhaul STA learned by unique band: sta=%s band=%u",
+                             util::mac_to_string(local_mac).c_str(), reported_band);
+@@ -2637,7 +2643,46 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                             sizeof(mac_address_t));
+                         ret = 1;
+                         dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
+                     }
++
++                    if (matched_bsta != NULL) {
++                        mac_address_t live_ruid;
++                        memcpy(live_ruid, matched_bsta->ruid.mac,
++                            sizeof(live_ruid));
++
++                        /* The per-device model feeds the global/database BSS
++                         * update.  Compact it before that walk, otherwise old
++                         * and new bSTA records replace each other in order. */
++                        for (int stale_idx =
++                                static_cast<int>(dm->get_num_bss()) - 1;
++                                stale_idx >= 0; stale_idx--) {
++                            if (static_cast<unsigned int>(stale_idx) ==
++                                    matched_bsta_index) {
++                                continue;
++                            }
++                            em_bss_info_t *candidate =
++                                dm->get_bss_info(static_cast<unsigned int>(stale_idx));
++                            if (candidate == NULL ||
++                                    candidate->vap_mode != em_vap_mode_sta ||
++                                    candidate->id.haul_type != em_haul_type_backhaul ||
++                                    memcmp(candidate->ruid.mac, live_ruid,
++                                        sizeof(live_ruid)) != 0) {
++                                continue;
++                            }
++                            em_printfout(
++                                "Removing stale per-device bSTA: sta=%s bssid=%s",
++                                util::mac_to_string(candidate->sta_mac).c_str(),
++                                util::mac_to_string(candidate->bssid.mac).c_str());
++                            dm->remove_bss_by_index(
++                                static_cast<unsigned int>(stale_idx));
++                            if (static_cast<unsigned int>(stale_idx) <
++                                    matched_bsta_index) {
++                                matched_bsta_index--;
++                            }
++                            ret = 1;
++                            dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++                        }
++                    }
+                 }
+                 interface_cursor += entry_len;
+                 interface_remaining -= entry_len;
+-- 
+2.43.0

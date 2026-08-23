@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000103 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 14:20:00 -0700
+Subject: [PATCH] wsc: provision every enabled haul for the radio band
+
+The Controller capped the number of M2 credential TLVs at the radio's
+current `number_of_bss`.  That field is the observed operational BSS count,
+not a provisioning capacity.  On a fresh tri-band node the 2.4 and 6 GHz
+radios each exposed only two provisional BSS rows, so the enum-ordered loop
+sent fronthaul and backhaul credentials but silently omitted IoT.  The
+resulting configuration could never create the missing target BSS and the
+Controller settled at eight BSS records instead of ten.
+
+Iterate every defined haul type.  create_m2_msg() already rejects entries
+that are disabled, absent from NetworkSSIDList, or inapplicable to the
+current radio band, and the message buffer is sized for em_haul_type_max.
+This makes the configured NetworkSSIDList authoritative and removes the
+circular dependency on pre-configuration operational state.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 14 ++------------
+ 1 file changed, 2 insertions(+), 12 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 1111111..2222222 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -4332,9 +4332,6 @@ int em_configuration_t::create_autoconfig_wsc_m2_msg(unsigned char *buff, unsig
+     unsigned char *tmp = buff;
+     unsigned short sz = 0;
+     unsigned short type = htons(ETH_P_1905);
+-    dm_radio_t *radio;
+-
+-    radio = get_radio_from_dm();
+ 
+     // first compute keys
+     if (compute_keys(get_e_public(), static_cast<short unsigned int> (get_e_public_len()), get_r_private(), static_cast<short unsigned int> (get_r_private_len())) != 1) {
+@@ -4373,15 +4370,8 @@ int em_configuration_t::create_autoconfig_wsc_m2_msg(unsigned char *buff, unsig
+     tmp += (sizeof(em_tlv_t) + sizeof(mac_address_t));
+     len += static_cast<int> (sizeof(em_tlv_t) + sizeof(mac_address_t));
+ 
+-    // Add as many wsc tlv in M2 as number of BSS associated with this radio
+-    if (radio && radio->m_radio_info.number_of_bss < num_hauls) {
+-        num_hauls = radio->m_radio_info.number_of_bss;
+-        em_printfout("Adjusting number of hauls to: %d", num_hauls);
+-    } else if (!radio) {
+-        em_printfout("Radio is NULL for WSC haul type TLV creation");
+-        num_hauls = 0;
+-    }
+-
++    // Add every enabled NetworkSSIDList haul applicable to this radio band.
++    // number_of_bss is observed state and must not limit target provisioning.
+     for (i = 0; i < num_hauls; i++) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_wsc;
+-- 
+2.43.0

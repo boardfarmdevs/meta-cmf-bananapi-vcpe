@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000009 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 13:05:00 -0700
+Subject: [PATCH] webconfig: translate mesh STA documents for EasyMesh
+
+OneWifi publishes live backhaul association changes as the `mesh sta`
+subdocument.  Its decoder populated the internal OneWifi radio and VAP
+structures, but the subdocument translation hooks only invoked the OVSDB
+translator.  EasyMesh therefore received a successful decode with an empty
+external data model and continued advertising the previous backhaul parent.
+
+Honor the EasyMesh translation descriptors in both directions, matching the
+already-correct `mesh backhaul sta` subdocument implementation.  A live
+OneWifi mesh-STA snapshot can then update the agent BSS model and normal
+Topology Response/Notification path without restarting either endpoint.
+
+This is a generic WebConfig protocol-selection defect and is independent of
+hwsim, containers and the selected backhaul topology.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_webconfig_mesh_sta.c | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/source/webconfig/wifi_webconfig_mesh_sta.c b/source/webconfig/wifi_webconfig_mesh_sta.c
+index 1111111..2222222 100644
+--- a/source/webconfig/wifi_webconfig_mesh_sta.c
++++ b/source/webconfig/wifi_webconfig_mesh_sta.c
+@@ -49,9 +49,13 @@ webconfig_error_t access_check_mesh_sta_subdoc(webconfig_t *config, webconfig_s
+ 
+ webconfig_error_t translate_from_mesh_sta_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data)
+ {
+-    if ((data->descriptor & webconfig_data_descriptor_translate_to_ovsdb) == webconfig_data_descriptor_translate_to_ovsdb) {
++    if (((data->descriptor & webconfig_data_descriptor_translate_to_ovsdb) ==
++            webconfig_data_descriptor_translate_to_ovsdb) ||
++        ((data->descriptor & webconfig_data_descriptor_translate_to_easymesh) ==
++            webconfig_data_descriptor_translate_to_easymesh)) {
+         if (config->proto_desc.translate_to(webconfig_subdoc_type_mesh_sta, data) != webconfig_error_none) {
+-            return webconfig_error_translate_to_ovsdb;
++            return ((data->descriptor & webconfig_data_descriptor_translate_to_ovsdb) != 0) ?
++                webconfig_error_translate_to_ovsdb : webconfig_error_translate_to_easymesh;
+         }
+     } else if ((data->descriptor & webconfig_data_descriptor_translate_to_tr181) == webconfig_data_descriptor_translate_to_tr181) {
+ 
+@@ -64,9 +68,13 @@ webconfig_error_t translate_from_mesh_sta_subdoc(webconfig_t *config, webconfig
+ 
+ webconfig_error_t translate_to_mesh_sta_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data)
+ {
+-    if ((data->descriptor & webconfig_data_descriptor_translate_from_ovsdb) == webconfig_data_descriptor_translate_from_ovsdb) {
++    if (((data->descriptor & webconfig_data_descriptor_translate_from_ovsdb) ==
++            webconfig_data_descriptor_translate_from_ovsdb) ||
++        ((data->descriptor & webconfig_data_descriptor_translate_from_easymesh) ==
++            webconfig_data_descriptor_translate_from_easymesh)) {
+         if (config->proto_desc.translate_from(webconfig_subdoc_type_mesh_sta, data) != webconfig_error_none) {
+-            return webconfig_error_translate_from_ovsdb;
++            return ((data->descriptor & webconfig_data_descriptor_translate_from_ovsdb) != 0) ?
++                webconfig_error_translate_from_ovsdb : webconfig_error_translate_from_easymesh;
+         }
+     } else if ((data->descriptor & webconfig_data_descriptor_translate_from_tr181) == webconfig_data_descriptor_translate_from_tr181) {
+ 
+-- 
+2.43.0

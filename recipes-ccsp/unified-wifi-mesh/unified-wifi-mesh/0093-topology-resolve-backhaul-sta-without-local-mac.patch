@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000093 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 02:00:00 -0700
+Subject: [PATCH] topology: resolve backhaul STA without local MAC
+
+The controller's BSS model loaded during onboarding can contain the upstream
+BSSID and radio but no local bSTA MAC.  The live-parent decoder therefore
+discarded a valid IEEE 1905 Device Information observation whenever its exact
+local-interface-MAC lookup failed.  A warm extender reparent was physically
+complete but remained on its former parent in the controller topology.
+
+Prefer the exact local bSTA MAC as before.  If it is absent, resolve the unique
+backhaul station on the radio band carried by the same media-specific record.
+The current data model permits one backhaul STA VAP per radio, so an ambiguous
+same-band result is deliberately rejected.  Cache the observed local MAC once
+resolved so subsequent responses use the exact path.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 65 ++++++++++++++++++++++++++++--------
+ 1 file changed, 51 insertions(+), 14 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 2222222..3333333 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2544,26 +2544,63 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                         memcmp(media, ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) {
+                     mac_address_t upstream_bssid;
+                     memcpy(upstream_bssid, media, sizeof(upstream_bssid));
++                    em_bss_info_t *matched_bsta = NULL;
++                    em_bss_info_t *band_bsta = NULL;
++                    unsigned int band_matches = 0;
++                    unsigned char reported_band = media[sizeof(mac_address_t) + 1];
+                     for (unsigned int bss_idx = 0;
+                             bss_idx < dm->get_num_bss(); bss_idx++) {
+                         em_bss_info_t *bsta = dm->get_bss_info(bss_idx);
+-                        if (bsta == NULL || bsta->vap_mode != em_vap_mode_sta ||
+-                                memcmp(bsta->sta_mac, local_mac,
+-                                    sizeof(mac_address_t)) != 0) {
++                        if (bsta == NULL || bsta->vap_mode != em_vap_mode_sta ||
++                                bsta->id.haul_type != em_haul_type_backhaul) {
+                             continue;
+                         }
+-                        if (memcmp(bsta->bssid.mac, upstream_bssid,
+-                                sizeof(mac_address_t)) != 0) {
+-                            em_printfout(
+-                                "Backhaul parent update: sta=%s old_bssid=%s new_bssid=%s",
+-                                util::mac_to_string(local_mac).c_str(),
+-                                util::mac_to_string(bsta->bssid.mac).c_str(),
+-                                util::mac_to_string(upstream_bssid).c_str());
+-                            memcpy(bsta->bssid.mac, upstream_bssid,
+-                                sizeof(mac_address_t));
+-                            dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++                        if (memcmp(bsta->sta_mac, local_mac,
++                                sizeof(mac_address_t)) == 0) {
++                            matched_bsta = bsta;
++                            break;
+                         }
+-                        break;
++
++                        dm_radio_t *radio = dm->get_radio(bsta->ruid.mac);
++                        unsigned char model_band = 0;
++                        if (radio != NULL) {
++                            switch (radio->m_radio_info.band) {
++                                case em_freq_band_24: model_band = 0x01; break;
++                                case em_freq_band_5:  model_band = 0x03; break;
++                                case em_freq_band_6:  model_band = 0x04; break;
++                                default: break;
++                            }
++                        }
++                        if (model_band != 0 && model_band == reported_band) {
++                            band_bsta = bsta;
++                            band_matches++;
++                        }
++                    }
++                    if (matched_bsta == NULL && band_matches == 1) {
++                        matched_bsta = band_bsta;
++                        em_printfout(
++                            "Backhaul STA learned by unique band: sta=%s band=%u",
++                            util::mac_to_string(local_mac).c_str(), reported_band);
++                        memcpy(matched_bsta->sta_mac, local_mac,
++                            sizeof(mac_address_t));
++                    } else if (matched_bsta == NULL && band_matches > 1) {
++                        em_printfout(
++                            "Ambiguous backhaul STA for sta=%s band=%u candidates=%u",
++                            util::mac_to_string(local_mac).c_str(), reported_band,
++                            band_matches);
++                    }
++
++                    if (matched_bsta != NULL &&
++                            memcmp(matched_bsta->bssid.mac, upstream_bssid,
++                                sizeof(mac_address_t)) != 0) {
++                        em_printfout(
++                            "Backhaul parent update: sta=%s old_bssid=%s new_bssid=%s",
++                            util::mac_to_string(local_mac).c_str(),
++                            util::mac_to_string(matched_bsta->bssid.mac).c_str(),
++                            util::mac_to_string(upstream_bssid).c_str());
++                        memcpy(matched_bsta->bssid.mac, upstream_bssid,
++                            sizeof(mac_address_t));
++                        dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
+                     }
+                 }
+                 interface_cursor += entry_len;
+-- 
+2.43.0
