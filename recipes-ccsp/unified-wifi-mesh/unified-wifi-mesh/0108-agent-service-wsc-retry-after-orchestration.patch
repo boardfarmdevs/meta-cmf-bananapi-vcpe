@@ -15,14 +15,20 @@ state remains the ownership boundary, so reception of M2 changes state and
 stops retries immediately. All other Agent states keep the existing
 orchestration-command guard.
 
+The M1 encoder also used the active command to obtain the local AL MAC. Use the
+radio's persistent data-model accessor instead, since a recovery transaction
+intentionally outlives that command. The value is identical during ordinary
+onboarding and remains valid afterward.
+
 This recovered a reproducible tri-band extender that otherwise remained at
 three radios, nine BSS records and only two operational fronthaul BSSs after
 one of its three initial M2 frames was lost.
 
 Upstream-Status: Inappropriate [hwsim lab protocol recovery]
 ---
- src/em/em.cpp | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ src/em/config/em_configuration.cpp |  2 +-
+ src/em/em.cpp                       | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
 
 diff --git a/src/em/em.cpp b/src/em/em.cpp
 index 52e6d7a..64130ad 100644
@@ -45,5 +51,12 @@ index 52e6d7a..64130ad 100644
      } else if (m_service_type == em_service_type_ctrl) {
          handle_ctrl_state();
      }
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 42d97f4..99af3fd 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -4431 +4431 @@ int em_configuration_t::create_autoconfig_wsc_m1_msg(unsigned char *buff, unsign
+-    memcpy(tmp, get_current_cmd()->get_al_interface_mac(), sizeof(mac_address_t));
++    memcpy(tmp, get_al_interface_mac(), sizeof(mac_address_t));
 -- 
 2.43.0
