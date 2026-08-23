@@ -45,9 +45,12 @@ assert.deepEqual(topology, original, 'formatting changed the topology API model'
 assert.equal(controller.topologySignature(topology), before);
 
 const cohortStations = [
-  { staMAC: '02:00:00:00:09:00', ssid: 'private_ssid' },
-  { staMAC: '02:00:00:00:0a:00', ssid: 'private_ssid' },
-  { staMAC: '02:00:00:00:13:00', ssid: 'iot_ssid' }
+  { staMAC: '02:00:00:00:09:00', ssid: 'private_ssid', band: 1, channel: 36,
+    bssid: '02:00:00:00:01:01' },
+  { staMAC: '02:00:00:00:0a:00', ssid: 'private_ssid', band: 3, channel: 1,
+    bssid: '02:00:00:00:01:02' },
+  { staMAC: '02:00:00:00:13:00', ssid: 'iot_ssid', band: 0, channel: 6,
+    bssid: '02:00:00:00:01:03' }
 ];
 const cohortHauls = [
   { name: 'Fronthaul', ssid: 'private_ssid' },
@@ -196,6 +199,12 @@ assert.match(visualizationSource, /Upstream BSSID:.*upstreamBSSID/,
   'backhaul hover details do not identify the exact parent BSSID');
 assert.match(visualizationSource, /uplink &rarr;/,
   'backhaul hover details do not name child-to-parent direction');
+assert.match(visualizationSource, /sta-channel-label/,
+  'topology clients do not show their current band and channel');
+assert.match(visualizationSource, /Channel:.*channelInfo/,
+  'client hover details do not show the current channel');
+assert.match(visualizationSource, /BSSID:.*sta\.bssid/,
+  'client hover details do not show the serving BSSID');
 assert.match(controller.refreshTopologyData.toString(), /apiCall\('\/clients'\)/,
   'topology refresh does not acquire the live client metrics snapshot');
 assert.match(controller.refreshTopologyData.toString(), /refreshTopologySignalVisuals\(\)/,
@@ -239,29 +248,30 @@ assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNo
   'Optimize Layout does not operate on the D3 render-node set');
 assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
 
-let layoutEnd;
 let fitted = false;
 const layoutEvents = [];
+let tickCount = 0;
 const layoutNodes = structuredClone(renderTopology.nodes);
 layoutNodes.forEach(node => { node.fx = node.x ?? 0; node.fy = node.y ?? 0; });
 const fakeSimulation = {
   nodes: () => layoutNodes,
-  on(name, handler) {
-    assert.equal(name, 'end.autoLayout');
-    layoutEnd = handler;
+  on(name) {
+    assert.equal(name, 'tick');
+    return () => layoutEvents.push('paint');
+  },
+  stop() {
+    assert.ok(layoutNodes.every(node => node.fx === null && node.fy === null),
+      'Optimize Layout did not release every rendered node');
     return this;
   },
   alpha(value) { assert.equal(value, 1); return this; },
   alphaTarget(value) { assert.equal(value, 0); return this; },
-  restart() {
-    assert.ok(layoutNodes.every(node => node.fx === null && node.fy === null),
-      'Optimize Layout did not release every rendered node');
+  tick() {
+    tickCount += 1;
     layoutNodes.forEach((node, index) => {
       node.x = 300 + index * 400;
       node.y = 200 + index * 250;
     });
-    controller.topologyRenderPending = true;
-    layoutEnd();
     return this;
   }
 };
@@ -281,9 +291,10 @@ assert.equal(controller.staPositionCache.size, 0,
   'Optimize Layout did not reset manual client positions');
 assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
   'optimized render positions were not fixed and cached');
+assert.equal(tickCount, 180, 'Optimize Layout did not settle for a bounded tick count');
 assert.equal(fitted, true, 'optimized graph was not fitted to the viewport');
-assert.deepEqual(layoutEvents, ['fit', 'redraw'],
-  'a deferred two-second redraw ran before the completed layout was fitted');
+assert.deepEqual(layoutEvents, ['paint', 'fit'],
+  'Optimize Layout did not paint and fit its final state exactly once');
 assert.deepEqual(topology, original, 'Optimize Layout changed the API model');
 
 let redraws = 0;

@@ -87,6 +87,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0083-cli-show-authoritative-backhaul-channel.patch \
     file://0084-cli-update-signal-arcs-in-place.patch \
     file://0085-cli-show-exact-backhaul-parent.patch \
+    file://0086-cli-stabilize-layout-and-show-client-channel.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
