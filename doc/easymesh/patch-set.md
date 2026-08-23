@@ -32,8 +32,8 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0104`, IEEE1905
-patches through `0006`, libwebconfig patches through `0010`, OneWifi patches
+The current source series contains EasyMesh patches through `0106`, IEEE1905
+patches through `0006`, libwebconfig patches through `0011`, OneWifi patches
 through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
 category-factory serialization fix. The
 Dropbox-packaged 0818 appliance remains an
@@ -514,6 +514,7 @@ presentation boundaries:
 | `0103` | provision every enabled haul on a radio band so cold onboarding produces the complete ten-BSS device model |
 | `0104` | reconcile MariaDB BSS keys directly against the authoritative per-device snapshot, removing a former-upstream BSSID that no longer exists in memory |
 | `0105` | serialize concurrent per-radio WSC M2 parsing and re-arm bounded WSC recovery when a OneWifi subdoc is not confirmed |
+| `0106` | initialize and validate the one-octet Profile TLV and serialize concurrent controller Autoconfiguration Search/WSC model selection |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -531,6 +532,17 @@ bounded SET fails, it returns that exact radio from `owconfig_pending` to
 `wsc_m2_pending`, where the existing fresh-crypto, bounded M1 retry replays the
 idempotent subdoc. This closes both observed stalls without restarting a
 container or declaring configuration complete before OneWifi confirms it.
+
+A subsequent fresh rev120 reconstruction exposed the matching controller-side
+race. Two band-specific Autoconfiguration Searches for one extender arrived
+eight milliseconds apart. Both entered shared data-model creation, the first
+decoded a one-octet Profile TLV into an otherwise uninitialized integer enum,
+and the second terminated `onewifi_em_ctrl` with a glibc heap-corruption
+assertion. After systemd restarted the controller, only a discovery placeholder
+remained for that extender. Unified-mesh `0106` initializes and bounds-checks
+both Profile readers and serializes only the controller's shared
+Autoconfiguration Search/WSC selection and node-creation boundary. Per-radio
+protocol processing outside that short critical section remains concurrent.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
