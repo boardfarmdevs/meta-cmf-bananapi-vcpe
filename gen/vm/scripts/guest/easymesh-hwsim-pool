@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = 24
-test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = 3
-test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
+configured_parameter() {
+    local key=$1 fallback=$2 value
+    value=$(awk -v key="$key" '
+        $1 == "options" && $2 == "mac80211_hwsim" {
+            for (field = 3; field <= NF; field++) {
+                if ($field ~ ("^" key "=")) {
+                    sub(/^[^=]*=/, "", $field)
+                    value = $field
+                }
+            }
+        }
+        END { print value }
+    ' /etc/modprobe.d/easymesh-hwsim.conf 2>/dev/null || true)
+    printf '%s\n' "${value:-$fallback}"
+}
 
-# A reboot recreates the pool as wlan0..wlan23. LXD profiles refer to stable
-# virt-wlanN parents, so establish those names before LXD starts instances.
+# Validate the pool against the persistent module configuration rather than a
+# historical profile size.  Small currently uses 32 radios; larger accepted
+# profiles can change the same modprobe file without replacing this helper.
+expected_radios=$(configured_parameter radios 32)
+expected_channels=$(configured_parameter channels 3)
+expected_regtest=$(configured_parameter regtest 5)
+
+test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$expected_radios"
+test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = "$expected_channels"
+test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest"
+
+# A reboot recreates the configured pool as wlan0..wlanN. LXD profiles refer
+# to stable virt-wlanN parents, so establish those names before LXD starts
+# instances.
 #
 # During first installation the lab is already running and LXD has moved some
 # PHYs into container network namespaces. Only the interfaces still present in

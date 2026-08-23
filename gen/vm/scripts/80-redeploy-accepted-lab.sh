@@ -12,8 +12,17 @@ controller_sha256=${CONTROLLER_SHA256:?set CONTROLLER_SHA256}
 extender_sha256=${EXTENDER_SHA256:?set EXTENDER_SHA256}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:?set EXPECTED_WMEDIUMD_SHA256}
 evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/vagrant/easymesh-evidence}
+hwsim_radios=${HWSIM_RADIOS:-32}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 evidence="$evidence_root/$run_id"
+
+case "$hwsim_radios" in
+    ''|*[!0-9]*) echo 'HWSIM_RADIOS must be an integer' >&2; exit 2 ;;
+esac
+if [ "$hwsim_radios" -lt 25 ]; then
+    echo 'the accepted five-node/20-client profile requires at least 25 hwsim radios' >&2
+    exit 2
+fi
 
 mkdir -p "$evidence"
 exec > >(tee "$evidence/deploy.log") 2>&1
@@ -53,6 +62,27 @@ while read -r container; do
 done < <(lxc list -c n --format csv \
     | grep -E '^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$' \
     | sort -Vr)
+
+# Pool size is immutable while mac80211_hwsim is loaded.  The managed service
+# and every hwsim container are stopped above, making this the one safe point
+# to upgrade an older thin VM from its historical 24-radio pool.  Persist the
+# requested size and install the current naming helper before the reload so a
+# later VM reboot reconstructs the same pool.
+printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_radios" \
+    | sudo tee /etc/modprobe.d/easymesh-hwsim.conf >/dev/null
+sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool" \
+    /usr/local/sbin/easymesh-hwsim-pool
+sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool.service" \
+    /etc/systemd/system/easymesh-hwsim-pool.service
+if [ "$(cat /sys/module/mac80211_hwsim/parameters/radios)" != "$hwsim_radios" ] \
+    || [ "$(cat /sys/module/mac80211_hwsim/parameters/channels)" != 3 ] \
+    || [ "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" != 5 ]; then
+    sudo modprobe -r mac80211_hwsim
+    sudo modprobe mac80211_hwsim radios="$hwsim_radios" channels=3 regtest=5
+fi
+sudo systemctl daemon-reload
+sudo systemctl enable easymesh-hwsim-pool.service
+sudo systemctl restart easymesh-hwsim-pool.service
 
 for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     if old_nvram=$(lxc profile device get "$profile" nvram source 2>/dev/null); then
