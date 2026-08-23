@@ -30,7 +30,10 @@ const topology = {
     id: 'agent-2',
     haulTypes: []
   }],
-  edges: [{ from: 'agent-1', to: 'agent-2', band: -1 }]
+  edges: [{
+    from: 'agent-1', to: 'agent-2', band: 1, channel: 36,
+    upstreamBSSID: '02:00:00:00:00:11', mediaType: 'Wireless LAN'
+  }]
 };
 const original = structuredClone(topology);
 const before = controller.topologySignature(topology);
@@ -75,7 +78,7 @@ for (const station of cohortStations) {
   assert.ok(Math.abs(distance - placement.edgeRadius) < 0.001,
     `${station.staMAC} was not placed on the ${station.ssid} perimeter`);
   assert.ok(distance + placement.iconSize / 2 + 4 <= bubble.radius + 0.001,
-    `${station.staMAC} signal ring extends outside ${station.ssid}`);
+    `${station.staMAC} icon extends outside ${station.ssid}`);
 }
 
 controller.staPositionCache.set('02:00:00:00:09:00', {
@@ -124,6 +127,16 @@ assert.equal(liveSignal.rssi, -41);
 assert.equal(liveSignal.rcpi, 138);
 assert.equal(liveSignal.quality, 'strong');
 assert.equal(liveSignal.band, '5G');
+assert.equal(controller.topologySignalLevel(liveSignal), 5);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -56 }), 4);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -63 }), 3);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -72 }), 2);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -82 }), 1);
+assert.equal(controller.topologySignalLevel({ available: false, rssi: null }), 0);
+assert.match(controller.topologySignalArcPath({
+  to: { x: 10, y: 20 }, iconSize: 30
+}, 4), /^M.*A.*0 0 1/,
+  'signal glyph is not a semicircular SVG arc');
 
 const uptimeOnlyChange = structuredClone(controller.clients);
 uptimeOnlyChange[0].client_metrics.association_uptime_seconds = 12;
@@ -165,16 +178,30 @@ assert.equal(staleSignal.available, false);
 assert.equal(staleSignal.stale, true);
 assert.equal(staleSignal.label, 'stale');
 const visualizationSource = controller.updateTopologyVisualization.toString();
-assert.match(visualizationSource, /sta-signal-ring/,
-  'topology does not render the signal-quality ring');
+assert.match(visualizationSource, /sta-signal-bars/,
+  'topology does not render the signal-strength glyph');
+assert.match(visualizationSource, /sta-signal-arc/,
+  'topology does not render the five signal semicircles');
+assert.doesNotMatch(visualizationSource, /sta-signal-ring/,
+  'topology still draws a bubble around client devices');
 assert.doesNotMatch(visualizationSource, /sta-signal-label/,
   'topology still renders signal text outside the client hover details');
 assert.match(visualizationSource, /Signal:.*signalInfo/,
   'client hover details do not contain the signal strength');
 assert.match(visualizationSource, /topologyBandLabel\(d\.band\).*ch/,
   'backhaul labels do not show both band and channel');
+assert.match(visualizationSource, /backhaul-uplink-arrowhead/,
+  'wireless backhaul links do not show uplink direction');
+assert.match(visualizationSource, /Upstream BSSID:.*upstreamBSSID/,
+  'backhaul hover details do not identify the exact parent BSSID');
+assert.match(visualizationSource, /uplink &rarr;/,
+  'backhaul hover details do not name child-to-parent direction');
 assert.match(controller.refreshTopologyData.toString(), /apiCall\('\/clients'\)/,
   'topology refresh does not acquire the live client metrics snapshot');
+assert.match(controller.refreshTopologyData.toString(), /refreshTopologySignalVisuals\(\)/,
+  'metric polling does not update signal arcs in place');
+assert.doesNotMatch(controller.refreshTopologyData.toString(), /updateTopologyVisualization\(\)/,
+  'two-second metric polling still rebuilds the entire topology SVG');
 assert.match(visualizationSource, /staDragStarted/,
   'topology clients do not install a D3 drag interaction');
 assert.match(visualizationSource, /sta-steer-pulse/,
@@ -265,4 +292,28 @@ controller.updateTopologyVisualization = () => { redraws += 1; };
 assert.equal(controller.applyTopologyRefresh(structuredClone(topology)), false);
 assert.equal(redraws, 0, 'an unchanged two-second refresh redrew the graph');
 
-console.log('PASS: topology layout, live signal, STA dragging and steering cues preserve the API model');
+let signalVisualRefreshes = 0;
+controller.clients = [{
+  mac: '02:00:00:00:09:00',
+  client_metrics: { rssi_dbm: -41, last_updated: metricsUpdated }
+}];
+controller.apiCall = async endpoint => endpoint === '/topology'
+  ? structuredClone(topology)
+  : { clients: [{
+    mac: '02:00:00:00:09:00',
+    client_metrics: { rssi_dbm: -72, last_updated: metricsUpdated }
+  }] };
+controller.refreshTopologySignalVisuals = () => {
+  signalVisualRefreshes += 1;
+  return true;
+};
+controller.refreshTopologyData().then(() => {
+  assert.equal(signalVisualRefreshes, 1,
+    'changed signal metrics were not applied to the existing SVG');
+  assert.equal(redraws, 0,
+    'the two-second client-metrics poll rebuilt the topology SVG');
+  console.log('PASS: topology layout, exact backhaul parent, live signal, STA dragging and steering cues preserve the API model');
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

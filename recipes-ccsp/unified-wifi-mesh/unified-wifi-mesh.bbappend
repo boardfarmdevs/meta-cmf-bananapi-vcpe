@@ -85,6 +85,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0081-cli-show-live-client-signal-in-topology.patch \
     file://0082-cli-drag-clients-and-highlight-steering.patch \
     file://0083-cli-show-authoritative-backhaul-channel.patch \
+    file://0084-cli-update-signal-arcs-in-place.patch \
+    file://0085-cli-show-exact-backhaul-parent.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
