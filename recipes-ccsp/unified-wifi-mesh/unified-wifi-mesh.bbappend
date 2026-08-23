@@ -105,6 +105,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0102-agent-resolve-mesh-sta-radio-identity.patch \
     file://0103-wsc-provision-all-enabled-hauls.patch \
     file://0104-db-reconcile-device-bss-snapshot.patch \
+    file://0105-agent-serialize-and-retry-wsc-subdocs.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

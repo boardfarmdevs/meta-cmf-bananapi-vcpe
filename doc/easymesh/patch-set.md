@@ -513,11 +513,24 @@ presentation boundaries:
 | `0096`-`0102` | refresh and prune operational topology, accept the emitted mesh-STA form, report/correlate the actual backhaul STA, and retain one current backhaul record per radio |
 | `0103` | provision every enabled haul on a radio band so cold onboarding produces the complete ten-BSS device model |
 | `0104` | reconcile MariaDB BSS keys directly against the authoritative per-device snapshot, removing a former-upstream BSSID that no longer exists in memory |
+| `0105` | serialize concurrent per-radio WSC M2 parsing and re-arm bounded WSC recovery when a OneWifi subdoc is not confirmed |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
 made a correct new image continue serving the previous image's JavaScript after
 an identity-preserving redeploy.
+
+Libwebconfig `0011` bounds every synchronous RBUS SET provider exchange at five
+seconds. An artifact-only rev120 reconstruction proved the need: OneWifi
+applied `Vap_2.4G`, but its SET response never returned, leaving
+`onewifi_em_agent` blocked for more than seven minutes. At the same instant the
+2.4 and 6 GHz radio service threads entered the stateful M2 parser together;
+ten credential TLVs authenticated but only one invocation reached encrypted
+settings. Unified-mesh `0105` serializes that non-reentrant path. If the
+bounded SET fails, it returns that exact radio from `owconfig_pending` to
+`wsc_m2_pending`, where the existing fresh-crypto, bounded M1 retry replays the
+idempotent subdoc. This closes both observed stalls without restarting a
+container or declaring configuration complete before OneWifi confirms it.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
