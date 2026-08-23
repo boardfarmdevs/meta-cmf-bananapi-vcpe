@@ -8,7 +8,8 @@ Network Topology page remains open. Each move contains a real disconnect
 interval followed by deterministic RF placement at the next AP.
 
 This is the easiest scenario to correlate by eye because the test prints the
-same stable labels that the WebUI displays: `STA-03`, `STA-04`, and so on.
+same stable labels that the WebUI displays: `STA-03` for private clients and
+`IOT-03` for IoT clients.
 
 It is not an optimizer or steering-policy test. The script never calls
 `steer.sh`. It uses atomic wmediumd SNR generations to make one destination the
@@ -19,8 +20,8 @@ reassociation, agent notifications and controller topology updates are real.
 
 ## Scenario
 
-On the accepted five-AP/ten-client lab, the script creates five groups of two
-clients and forms this visible ring:
+For either ten-client cohort in the accepted five-AP/20-client lab, the script
+creates five groups of two clients and forms this visible ring:
 
 ```text
  [Agent-1] -> [Extender-1] -> [Extender-2] -> [Extender-3] -> [Extender-4]
@@ -65,21 +66,21 @@ Layout** once. Then run on the lab host/VM:
 
 ```sh
 cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex
-sudo gen/tests/wmediumd-client-carousel.py --rounds 2
+gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
 ```
 
 Inside a distributable VM the repository is normally under `/home/vagrant`:
 
 ```sh
 cd /home/vagrant/git/meta-cmf-bananapi-vcpe
-sudo gen/tests/wmediumd-client-carousel.py --rounds 2
+gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
 ```
 
 Two rounds move every client twice and then return all clients to their
 preflight APs. For a continuous demonstration, use:
 
 ```sh
-sudo gen/tests/wmediumd-client-carousel.py --rounds 0
+gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 0
 ```
 
 Press `Ctrl-C` once to stop. The signal is handled at a phase boundary, the
@@ -90,6 +91,7 @@ Useful controls:
 
 ```text
 --rounds 2                 full rotations; 0 means run until Ctrl-C
+--ssid private_ssid        select private clients (use iot_ssid for IoT)
 --blackout-hold 4          seconds to leave clients visibly absent
 --arrival-hold 4           seconds to leave clients visibly at the new AP
 --disconnect-timeout 30    deadline for real and controller disassociation

@@ -183,9 +183,10 @@ python3 -m wmdcfg.cli status
 ```
 
 At the accepted small profile the full controller model is five Agents,
-fifteen radios, fifty BSS records, and ten clients. `/api/v1/bsses` exposes the
+fifteen radios, fifty BSS records, and twenty clients: ten on `private_ssid`
+and ten on `iot_ssid`. `/api/v1/bsses` exposes the
 thirty fronthaul identities used as client targets. `PolicyConfig` currently
-gates actions on five non-controller mesh-device records and ten clients.
+gates actions on five non-controller mesh-device records and twenty clients.
 
 Every active client must have a nonzero RCPI and a real metric receipt time.
 Inventory-only candidates are allowed in a snapshot but have `rcpi: null` and
@@ -222,11 +223,13 @@ em-optimizer recommend \
 
 The provider groups clients per Agent radio, splits each group into transactions
 of at most eight STAs (the controller data-model limit), and queries those
-transactions sequentially. The accepted five-Agent/ten-client profile uses
-seven transactions and returns 40 same-band candidate links per complete
-cycle. `--interval` is the delay after a completed cycle, not a fixed wall-clock
-sampling period. Inspect printed decisions and the journal. A healthy but
-ineligible cycle is a successful no-action result with an explicit reason.
+transactions sequentially. The last fully measured provider-cycle acceptance
+used ten clients, seven transactions, and 40 same-band candidate links per
+complete cycle. The current small runtime has 20 clients, so collect and retain
+a new complete-cycle result before permitting all-client actions. `--interval`
+is the delay after a completed cycle, not a fixed wall-clock sampling period.
+Inspect printed decisions and the journal. A healthy but ineligible cycle is a
+successful no-action result with an explicit reason.
 
 The default observation error policy stops at the first candidate-collection
 failure. For a non-acting soak, this option records a failed cycle and
@@ -615,7 +618,8 @@ A change is ready for team use only when all applicable gates pass:
 4. Isolated crossover gives one explained recommendation and no extra action.
 5. Border hover does not ping-pong; fast transit does not trigger a late roam.
 6. Reject/ignore/timeout enters bounded backoff.
-7. Five-Agent/ten-client live model stays complete with no service restart.
+7. Five-Agent/20-client live model stays complete with ten private and ten IoT
+   clients and no service restart.
 8. Candidate collection completes for every queried Agent without partial use.
 9. One explicit act converges in client link, controller API, and traffic.
 10. Cooldown prevents immediate reversal.

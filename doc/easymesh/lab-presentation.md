@@ -41,7 +41,7 @@ Ubuntu host
     `-- em_cli WebUI/API :8888
 ```
 
-Current accepted model: **5 agents · 15 radios · 50 BSSs · 10 clients**
+Current accepted model: **5 agents · 15 radios · 50 BSSs · 20 clients**
 
 ---
 
@@ -289,7 +289,7 @@ extender liveness/return. Highest-priority open items are:
 
 1. the historical raw-frame provider delivery miss, retained as a journal
    trigger after 143 clean post-fix steers;
-2. the in-progress three-target 12-hour memory/churn envelope;
+2. the deliberately deferred three-target 12-hour memory/churn envelope;
 3. cross-band candidate-link measurement and client-capability exposure; and
 4. reproducible scale limits for the VM profiles.
 

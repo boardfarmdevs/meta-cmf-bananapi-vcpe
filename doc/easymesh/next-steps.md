@@ -52,28 +52,25 @@ be used to claim policy quality until the preceding acceptance gates pass.
    - **Three-run reconstruction gate closed on 2026-08-19:** consecutive runs
      passed in 805, 800 and 802 seconds with `5/15/50/14`, 10/10 live clients,
      a 120-second stable window, zero monitored restarts and 10/10 traffic.
-   - The first 12-hour attempt exposed soak-harness boundary defects rather
-     than a valid acceptance result. After focused three-target regression, a
-     byte-identical final alternating carousel/outage rerun started from zero
-     at commit `2a15c95` as `easymesh-soak-0822-final2.service` on rev130 and
-     both 0821 VMs. It remains in progress; do not treat a running unit or the
-     three cold runs as a completed acceptance result. See
-     [soak-acceptance.md](soak-acceptance.md).
+   - The attempted three-target duration runs exposed soak-harness boundaries
+     and were stopped. They are not acceptance results. The corrected 12-hour
+     definition remains deliberately deferred; do not infer a duration result
+     from the three cold runs. See [soak-acceptance.md](soak-acceptance.md).
 5. **Closed:** sequence-correlated tracing identified command-2 `EINVAL` as
    unsupported startup clones and valid cloned frames rejected during normal
    scan/channel receive-state gaps. wmediumd now requires current frequency
    evidence and downgrades only its own tracked transient clone rejection.
    A two-round paired carousel converged and restored with zero command-2
    diagnostics while an unrelated command-3 error remained visible.
-6. **Cold-reconstruction footprint closed; long-growth gate in progress:** the
+6. **Cold-reconstruction footprint closed; long-growth gate deferred:** the
    15-minute whole-container profile sampled one complete cold reconstruction.
    The 1 GiB `bpibroadband` cgroup peaked at 311.57 MiB and converged at
    266.10 MiB with no swap, pressure, limit or OOM events. Converged aggregate
    process PSS was 281.95 MiB; `em_ctrl`/`em_cli` were 22.92/81.03 MiB PSS.
    Bring-up allocator pulses were released. See
    [memory-footprint.md](memory-footprint.md). PSS growth from hour 1 to hour 12
-   is now being measured by the three-target 0822 soak and has no result until
-   each final summary is written.
+   has not been accepted and will have no result until a future authorized run
+   writes passing final summaries.
 
 Exit gate status: **P0 functional acceptance is closed.** In addition to the
 earlier three-run gate, the final metrics/uptime image passed a fresh rev130
@@ -81,9 +78,11 @@ cold reconstruction on 2026-08-20 in 866 seconds with `5/15/50/14`, 10/10
 live clients, 10/10 non-zero RCPI and association uptime, a 120-second stable
 window, zero monitored restarts and 10/10 traffic. All five BPI containers had
 exactly one `snmp_subagent`, and the controller logged zero AP Metrics Response
-validation failures. The 12-hour churn test is now an active long-duration
-characterization task; it was not a blocker for starting P1 and must not be
-claimed as completed until all three final summaries pass.
+validation failures. On 2026-08-23 the expanded rev130 profile additionally
+passed a fresh `5/15/50/24` deployment, cold chain, cold branch and
+controller-only restart with 20/20 clients. The 12-hour churn test remains a
+deferred characterization task; it was not a blocker for starting P1 and must
+not be claimed as completed until future final summaries pass.
 
 ### P1 — Freeze the optimizer integration contract
 
@@ -176,12 +175,14 @@ no-steering control on predefined metrics.
 
 ### P4 — Scale the infrastructure cheaply and predictably
 
-**Preparation started 2026-08-20:** the scenario layer now has a five-Agent/
-ten-static-client home, ten additional mobile-client roles, a second Agent
-placement and deterministic golden RF timelines. `scale-profiles.json` marks
-small as accepted, home20 as generated-not-accepted, and medium/stress as
-planned. This does not replace the topology manifest or its runtime resource
-envelope.
+**20-client implementation reached immediate acceptance on rev130
+2026-08-23:** the count-driven pool now provisions ten private and ten IoT
+clients, resumes healthy partial cohorts, registers wmediumd once and exposes
+cohort identity to inventory, optimizer tests and the WebUI. All 20 clients
+passed association, controller export and zero-loss traffic. RF-churn/duration
+acceptance is still required before P4 small is fully closed. The next profile
+is 50 clients on a 64-radio pool; 100 clients needs a validated 105-radio hwsim
+path. See [client-scale.md](client-scale.md).
 
 Replace fixed container lists with a topology manifest:
 
@@ -220,10 +221,12 @@ have explicit resource and stability envelopes.
 **Scenario sources and capability-gated matrix started 2026-08-20:** ten
 golden RF worlds cover stationary, slow walk, AP placement, border hover,
 flash crowd, disappearance, fast transit, asymmetric links and extender loss.
-The tenth moves the accepted ten-client profile for band experiments. Five
+The tenth moves the original ten-client profile for band experiments. Five
 independent traffic profiles and two policy baselines produce a 148-case
-initial matrix. Fourteen small/ping-or-idle cases are runnable today; all
-others record the missing
+initial matrix. With the five-Agent/20-client mixed cohort accepted, 56 cases
+are capability-runnable and 92 remain blocked. The runnable label means that
+all declared mechanisms exist; it is not a claim that every combination has
+completed live acceptance. Blocked cases record the missing
 measurement, RF, traffic, response-control or scale capability. See
 [optimizer-scenarios.md](optimizer-scenarios.md). Scoring and live execution
 remain open. A deterministic offline closed-loop runner now converts verified

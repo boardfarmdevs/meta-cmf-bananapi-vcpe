@@ -552,5 +552,7 @@ the same log, confirming that error reporting was not globally suppressed.
   and recovery without stopping a container.
 - [wmediumd-client-carousel.md](wmediumd-client-carousel.md) exercises repeated
   client movement visible in the live topology.
+- [client-scale.md](client-scale.md) defines the 20/50/100-client profiles,
+  pair-state growth, measured wmediumd cost and overload gates.
 - [patch-set.md](patch-set.md) places the wmediumd and kernel patches in the
   complete 0815 patch rationale.

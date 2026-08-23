@@ -7,7 +7,7 @@ short demonstrations that are visible in both a terminal and the WebUI:
 
 1. a named, manually commanded EasyMesh steer;
 2. live RCPI changes driven by a reversible wmediumd scenario;
-3. ten clients rotating around all five APs; and
+3. either ten-client cohort rotating around all five APs; and
 4. complete RF loss and recovery of one extender.
 
 A final procedure brings the entire Wi-Fi lab down and reconstructs it without
@@ -53,11 +53,11 @@ The required starting state is:
 
 ```text
 controller model       5 devices / 15 radios / 50 BSSs
-associated STA rows    14 (10 clients + 4 wireless backhauls)
-WebUI/API clients      10 unique STA MACs
+associated STA rows    24 (20 clients + 4 wireless backhauls)
+WebUI/API clients      20 unique STA MACs (10 private + 10 IoT)
 WebUI mesh nodes       6 (Controller, Agent-1, Extender-1..4)
 service restarts       zero for every monitored service
-traffic                all ten clients reach 10.0.0.1
+traffic                all 20 clients reach 10.0.0.1
 ```
 
 The RCPI demonstration has one additional policy gate. Confirm that the chosen
@@ -169,18 +169,20 @@ every control-socket update and restores the exact captured link value.
 
 ### Story
 
-Five pairs of clients move around `Agent-1` and the four extenders. Every move
-has a visible blackout followed by deterministic arrival at the next AP. This
-is the clearest visual demonstration of live association notifications and
-controller/WebUI convergence at scale.
+Five pairs from one SSID cohort move around `Agent-1` and the four extenders.
+Every move has a visible blackout followed by deterministic arrival at the
+next AP. This is the clearest visual demonstration of live association
+notifications and controller/WebUI convergence at scale.
 
 ### Operator actions
 
 Return to **Network Topology** and run one complete rotation:
 
 ```sh
-gen/tests/wmediumd-client-carousel.py --rounds 1
+gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 1
 ```
+
+Repeat with `--ssid iot_ssid` to move the ten IoT-icon clients independently.
 
 The terminal announces each group with the same labels shown in the WebUI:
 
@@ -246,7 +248,7 @@ PASS artifacts=/tmp/wmediumd-extender-outage/TIMESTAMP-bpiap-003
 The test never stops `bpiap-003`; loss is entirely through wmediumd's live
 control socket. The API node count falls from six to five and returns to six,
 while client traffic continues through other APs. A pass also requires exact
-medium readback/restoration, stable controller PIDs and restart counts, 10/10
+medium readback/restoration, stable controller PIDs and restart counts, 20/20
 traffic, and 75 seconds of physical/API placement agreement after recovery.
 
 ## Bring the complete rev130 Wi-Fi lab down and back up
@@ -254,7 +256,7 @@ traffic, and 75 seconds of physical/API placement agreement after recovery.
 ### Scope and safety
 
 This is an identity-preserving reconstruction, not a fresh deployment. It
-stops wmediumd, all ten clients, all four extenders and `bpibroadband`; the
+stops wmediumd, all 20 clients, all four extenders and `bpibroadband`; the
 optional command also stops the two Boardfarm WAN/DHCP provider containers.
 It does not delete LXD instances, profiles, `/nvram`, databases, Docker
 networks or images. Do not use `bpi.sh -F` for this demonstration because `-F`
@@ -307,12 +309,12 @@ sudo env \
 ```
 
 This is intentionally not a fast parallel start. It waits for the WAN provider,
-controller tri-band state, each extender's complete onboarding, all ten clients,
-the `5/15/50/14` model, a two-minute stability window, zero service restarts and
-10/10 traffic. On success it prints:
+controller tri-band state, each extender's complete onboarding, all 20 clients,
+the `5/15/50/24` model, a two-minute stability window, zero service restarts and
+20/20 traffic. On success it prints:
 
 ```text
-EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=10/10 associated=14 restarts=0
+EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=20/20 metrics=20/20 associated=24 restarts=0
 ```
 
 Run the independent audit and reopen the WebUI:

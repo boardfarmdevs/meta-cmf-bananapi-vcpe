@@ -7,8 +7,10 @@ controller image while a complete virtual lab is reconstructed. It measures the
 whole `bpibroadband` container and attributes the userspace footprint to the
 EasyMesh, Wi-Fi and supporting RDK-B processes.
 
-The current five-agent, ten-client lab is comfortably bounded by its 1 GiB LXD
-limit:
+The measured five-agent, ten-client lab was comfortably bounded by its 1 GiB
+LXD limit. The routine small profile has since grown to 20 clients, so the
+numbers below remain the accepted cold-bring-up baseline rather than a
+20-client capacity measurement:
 
 | Measurement | Result |
 | --- | ---: |
@@ -26,8 +28,8 @@ proposals is a projection rather than a measured result.
 
 Cold bring-up creates a temporary controller allocation pulse while agent,
 radio and BSS records are configured. The pulse is released after convergence.
-This run found no retained bring-up growth. It is not, however, a substitute for
-the 12-hour stability run now active on the three 0822 targets.
+This run found no retained bring-up growth. It is not, however, a substitute
+for the deliberately deferred 12-hour stability acceptance.
 
 A later multi-day observation found an independent 15-minute SNMP self-heal
 process-multiplication defect. The bounded profile below ended with one
@@ -346,8 +348,8 @@ Banana Pi production-memory specification:
   libraries, allocator behavior and reserved memory;
 - the virtual WebUI is colocated with the controller and is the largest steady
   userspace process;
-- the ten-client/four-extender topology is larger than many gateway deployments
-  but smaller than the intended scale envelope;
+- the measured ten-client/four-extender topology is smaller than the current
+  20-client routine profile and the intended 50/100-client scale envelope;
 - 15 minutes covers cold reconstruction and convergence, not long-term leak
   behavior.
 
@@ -377,9 +379,10 @@ retention and failure recovery active.
    layout.
 8. Extend the accepted two-interval SNMP check with an explicit forced recovery
    and verify that it still leaves exactly one daemon and no wrapper.
-9. Complete the active 0822 12-hour churn/steady-state test and compare start,
-   post-churn and final PSS by service; do not report a growth result before
-   the final summaries are written.
+9. When the duration run is authorized, complete the defined 12-hour
+   churn/steady-state test and compare start, post-churn and final PSS by
+   service; do not report a growth result before the final summaries are
+   written.
 
 ## Reproducing the profile
 

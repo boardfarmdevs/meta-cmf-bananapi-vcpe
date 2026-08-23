@@ -117,14 +117,16 @@ jq -r '.cases[] | select(.status == "blocked") |
   scenarios/generated/home-suite.matrix.json
 ```
 
-The current matrix contains 148 cases: 16 runnable and 132 blocked. It applies
+The current matrix contains 148 cases: 56 capability-runnable and 92 blocked.
+It applies
 both the ordinary weak-link threshold baseline and the opt-in band-upgrade
 baseline to the same RF/traffic cases. The count is not a quality score. It
 shows that the Cartesian core and specialized scenario
-families exist while preserving the present lab boundary. The two additional
-runnable cases are small-profile same-band slow-walk cases promoted by the
-accepted candidate-link and receipt-time path; band-steering cases remain
-blocked on the distinct cross-band capability.
+families exist while preserving the present lab boundary. Accepting the
+five-Agent/20-client mixed profile promotes cases whose other declared
+requirements are already available. It does not mean that all 56 combinations
+have run live. Band-steering cases remain blocked on the distinct cross-band
+capability.
 
 Create the runnable stationary latency plan for rev130:
 
@@ -139,9 +141,10 @@ jq '{status, duration_ms, events: (.events | length), plan_sha256}' \
   /tmp/stationary-latency.traffic.json
 ```
 
-The role binding is explicit: gateway, four extenders and ten fixed clients map
-to the current rev130 container names. A larger world fails plan compilation
-until its additional roles have real containers and a profile is accepted.
+The role binding is explicit: gateway, four extenders, ten fixed private
+clients and ten mobile IoT clients map to the current rev130 container names.
+A larger world fails plan compilation until its additional roles have real
+containers and a profile is accepted.
 
 ## Capability boundaries by scenario family
 
@@ -256,7 +259,7 @@ throughput claim until representative widths, traffic and a verifier exist.
 
 ## Acceptance progression
 
-1. Keep the current 5-Agent/10-client small profile green.
+1. Keep the current 5-Agent/20-client small profile green.
 2. Add a traffic executor and accept latency, constant-load and burst evidence.
 3. **Complete for same-band:** retain real receipt time and exact target-BSSID
    candidate measurements; add a separate cross-band provider.
@@ -264,7 +267,8 @@ throughput claim until representative widths, traffic and a verifier exist.
    stationary, border and fast-transit cases.
 5. **One bounded action complete:** repeat it under cooldown, rejection and
    longer-soak conditions before increasing `--max-actions`.
-6. Generate and accept the 5/20 profile, then medium and stress manifests.
+6. Complete 5/20 churn acceptance, then accept the 50-client medium profile and
+   implement the 105-radio prerequisite for the 100-client stress profile.
 7. **Frequency-qualified RF complete:** keep its apply/readback/restore
    regression mandatory; cross-band measurements still gate a band-steering
    policy claim.

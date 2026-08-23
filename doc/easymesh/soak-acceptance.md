@@ -1,11 +1,13 @@
-# Long-duration acceptance
+# Duration-bound churn acceptance
 
 ## Purpose
 
-The long soak is a 12-hour, requirements-driven characterization of the same
-small lab on rev130, the rev120 VM and the rev150 VM. It is not a passive
-uptime check. Each run alternates controlled RF churn with complete health,
-traffic, state-restoration and memory gates.
+The long soak is a requirements-driven characterization of the same small lab
+on rev130, the rev120 VM and the rev150 VM. It is not a passive uptime check.
+Each run alternates controlled RF churn with complete health, traffic,
+state-restoration and memory gates. A 12-hour memory-growth acceptance remains
+defined below but is deliberately deferred; shorter shakedowns are not labeled
+as long-duration acceptance.
 
 The executable definition is `gen/tests/p0-churn-soak.py`. Every sample and
 workload writes machine-readable evidence under `/var/tmp/easymesh-soak` on
@@ -17,10 +19,11 @@ Every preflight, post-workload and final gate must satisfy all of these:
 
 | Area | Requirement |
 | --- | --- |
-| topology API | 6 rendered nodes, 5 edges and 10 unique WLAN clients |
-| controller model | 5 devices, 15 radios, 50 BSS records and 14 associated records |
-| association truth | all 10 physical client links agree with controller/API ownership |
-| traffic | all 10 clients complete three pings to `10.0.0.1` with zero loss |
+| topology API | 6 rendered nodes, 5 edges and the profile's exact unique WLAN-client count; current small is 20 |
+| SSID cohorts | topology counts exactly match provisioned metadata; current small is 10 `private_ssid` plus 10 `iot_ssid` |
+| controller model | 5 devices, 15 radios, 50 BSS records and `clients + 4` associated records; current small is 24 |
+| association truth | every physical client link agrees with controller/API ownership |
+| traffic | every client completes three pings to `10.0.0.1` with zero loss |
 | processes | every monitored unit remains active with the same main PID and zero additional restarts; transient child commands in the unit cgroup are recorded but are not daemon restarts |
 | medium | same wmediumd instance; pair matrix and sparse frequency overrides restore byte-equivalently |
 | candidate RCPI | a standard query at controlled 25 dB SNR returns RCPI 88 through the read-only hwsim provider, then restores the exact override state |
@@ -29,23 +32,24 @@ Every preflight, post-workload and final gate must satisfy all of these:
 | growth | hour-1 to hour-12 PSS growth <= 64 MiB for each of `em_ctrl` and `em_cli` |
 | failures | no new OOM record or coredump in any BPI container |
 
-The model count of 14 is intentional: ten fronthaul WLAN clients plus four
-extender backhaul stations. The rendered node count of six includes the
-network root plus the five EasyMesh devices.
+The additional four associated rows are the extender backhaul stations. The
+rendered node count of six includes the network root plus the five EasyMesh
+devices.
 
 ## Workload
 
-One carousel moves all ten WLAN clients through changing RF preferences. Every
-third workload is a full RF isolation/recovery of an extender. Each scenario
-must restore its medium in a `finally` path before the next health gate. The
+Carousel workloads alternate between the complete private and IoT cohorts,
+moving ten clients at a time through changing RF preferences. Every third
+workload is a full RF isolation/recovery of an extender. Each scenario must
+restore its medium in a `finally` path before the next health gate. The
 candidate-RCPI check also uses a temporary frequency-qualified override and
 proves that the sparse override set is identical before and after the query.
 
 Extender recovery has two separate bounds: clients and controller ownership
 must regain agreement within 120 seconds, and that agreement must then remain
 continuous for 75 seconds. The stability interval is not subtracted from the
-recovery allowance. Traffic probes are deliberately sequential. Running ten
-simultaneous `lxc exec` scopes can cause LXD to terminate the transports before
+recovery allowance. Traffic probes use a bounded fan-out of four. Larger
+simultaneous `lxc exec` bursts can cause LXD to terminate the transports before
 their pings execute, which is not WLAN packet loss. Read-only probes retry only
 signal-derived transport statuses (negative signal status or `128 + signal`);
 ordinary command and ping failures retain their original status and fail the
@@ -127,19 +131,35 @@ The link-state restore now retries only signal-derived LXD transport loss; a
 real link command failure remains a hard failure. A focused rev120 carousel
 then passed with both `placement_restored: true` and `medium_restored: true`.
 
-The authoritative byte-identical rerun started from zero on 2026-08-22 at
-commit `2a15c95` under `easymesh-soak-0822-final2.service`. Its evidence roots
-are:
+The byte-identical three-target rerun started from zero on 2026-08-22 at commit
+`2a15c95` under `easymesh-soak-0822-final2.service`. It was later superseded by
+the mixed-cohort scale work; none of these interrupted roots is an acceptance
+result:
 
 - rev130: `/var/tmp/easymesh-soak/0822-final2/20260822T163423Z-p0-churn-soak`;
 - rev120 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`;
 - rev150 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`.
 
-All three passed preflight with the complete `5/15/50/14` model, ten clients,
-10/10 physical/API ownership agreement, 10/10 traffic, a successful candidate
-RCPI transaction, exact starting-medium fingerprints and no service errors.
-They are running, not passed, until each final summary closes every acceptance
-gate.
+All three had passed preflight with the complete `5/15/50/14` model, ten
+clients, 10/10 physical/API ownership agreement, 10/10 traffic, a successful
+candidate RCPI transaction, exact starting-medium fingerprints and no service
+errors before interruption.
+
+### 20-client rev130 shakedown
+
+The 2026-08-23 mixed-cohort preflight was accepted as a bounded functional
+gate, not as the deferred 12-hour growth acceptance. A fully fresh rev130 lab
+reached `5/15/50/24`, ten private and ten IoT clients, explicit 2.4/5/6 GHz
+associations, 20/20 forwarding and zero automatic service restarts. Cold chain
+and branch profiles passed exact physical/API parent, signal, forwarding and
+database checks, and a controller-only restart reconstructed the branch at the
+same invariant. The default health load produced 0% loss on every client.
+
+An explicit load characterization at 40 probes per client with a 50 ms
+interval offered 400 echo requests per second and produced 30-87% loss. At the
+normal one-second interval all twenty clients produced 0% loss. Therefore the
+high-rate result records the present wmediumd/data-path saturation envelope; it
+is not evidence of broken normal forwarding and is not used as a health PASS.
 
 ## Candidate measurement boundary
 

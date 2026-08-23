@@ -14,6 +14,7 @@ gradients that are independent from the steering decision being evaluated.
 | [architecture.md](architecture.md) | What runs where, how the control and data planes work, and how nodes onboard |
 | [patch-set.md](patch-set.md) | Which 0815 patches are retained, why they exist, and what was removed from 0814 |
 | [lab-setup.md](lab-setup.md) | How to build, deploy, scale, access and validate the direct and Vagrant-VM labs |
+| [client-scale.md](client-scale.md) | How private/IoT cohorts grow from the accepted 20-client profile toward 50 and 100 clients |
 | [demo-scenarios.md](demo-scenarios.md) | Operator-led rev130 demonstrations: manual steer, live RCPI, client carousel, extender outage and full reconstruction |
 | [packet-capture.md](packet-capture.md) | How to capture plaintext EasyMesh, agent/client traffic and safely handle the raw 802.11 boundary |
 | [wmediumd.md](wmediumd.md) | What the medium can simulate, how radios and frames are resolved, and which static and live controls remain |
@@ -38,40 +39,44 @@ than beside current operating instructions.
 
 ```text
 source             codex/0815-clean
-patch series       EasyMesh through 0059, IEEE1905 through 0005
+patch series       EasyMesh through 0104, IEEE1905 through 0006
 image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
 model              5 agents / 15 radios / 50 BSSs
-clients            10 active WLAN clients
+clients            20 active WLAN clients (10 private + 10 IoT) on rev130
 medium             patched multichannel wmediumd
 ```
 
 The current deployment deliberately records each role independently. The
-controller contains EasyMesh through `0059`, IEEE1905 through `0005`, the
+controller contains EasyMesh through `0104`, IEEE1905 through `0006`, OneWifi
+through `0018`, libwebconfig through `0010`, Wi-Fi HAL through `0026`, the
 serialized log4c category-factory fix, and the cross-user SNMP self-heal fix.
-The extenders add OneWifi `0012`, which resolves an extender AL MAC shared by
-its bridge and backhaul STA without delaying DML and backhaul publication.
+The extender artifact contains every AP-side change needed by the same lab;
+the final controller-only metrics confirmation and database reconciliation do
+not require a second AP rebuild.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2` | `da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2` | `5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2` | `c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2` | `0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8` |
 
-The controller was built at `3c8a41f1fc868cd3ec823ea722430b152e20e4e7`;
-the extender was built at `a50a008152c7c3860af73b58af4bb8b944c777e7`.
-The different revisions are intentional because `0012` changes only the
-extender's OneWifi discovery path. The controller also refreshes packaged
+The accepted platform source is recorded by commit `d353c65`; the matching
+host-side scale and acceptance tooling is commit `5280bb4`. The controller
+also refreshes packaged
 WebUI assets into persistent `/nvram/static` on every service start, so a
 same-identity upgrade cannot continue serving an older UI. Never infer image
 contents from a newer host checkout.
 
-A fresh 2026-08-20 deployment of this exact pair on rev130 passed
-`5/15/50/14`, ten-client topology and traffic, a 120-second stable window, and
-zero monitored service restarts. Three two-second topology polls were
-byte-identical after convergence. The controller served
-`topology-layout-optimized-1`, and the live JavaScript regression verified
-that optimization changes D3's render nodes without mutating the API model.
+A fresh 2026-08-23 deployment of this exact pair on rev130 passed the immediate
+20-client gate at `5/15/50/24`: 10 private clients, 10 IoT clients, deliberate
+2.4/5/6 GHz client associations, four wireless backhauls, 20/20 zero-loss
+health traffic and zero automatic service restarts. Cold chain and branch
+multi-hop trees both passed exact physical-link, forwarding, API-edge,
+RSSI/RCPI and database checks. A controller-only restart then reconstructed
+the branch at the same `5/15/50/24` invariant. The 20-client duration/RF-churn
+gate remains distinct from this immediate result; see
+[client-scale.md](client-scale.md) and [soak-acceptance.md](soak-acceptance.md).
 
 ## Runtime access
 

@@ -452,11 +452,11 @@ optimizer retry workaround.
 Scenario preparation is also implemented. Two 2D Agent layouts, ten mobility/
 presence worlds and five separate traffic profiles expand into a deterministic
 148-case matrix across two policy baselines. The current capability file marks
-16 cases runnable and 132 blocked with exact missing mechanisms.
+56 cases capability-runnable and 92 blocked with exact missing mechanisms.
 Frequency-qualified RF, metric receipt time and same-band candidate collection
-are accepted; cross-band evidence, load traffic, controlled BTM response,
-backhaul actions,
-channel width and 20-client scale must not be inferred from configuration
+are accepted, as is the five-Agent/20-client mixed profile. Cross-band
+evidence, load traffic, controlled BTM response, backhaul actions, channel
+width and the 50/100-client profiles must not be inferred from configuration
 alone. See [optimizer-scenarios.md](optimizer-scenarios.md).
 
 ### Test ladder

@@ -32,9 +32,10 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0068`, IEEE1905
-patches through `0005`, libwebconfig patches through `0005`, and OneWifi
-patches through `0014`, plus the log4c category-factory serialization fix. The
+The current source series contains EasyMesh patches through `0104`, IEEE1905
+patches through `0006`, libwebconfig patches through `0010`, OneWifi patches
+through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
+category-factory serialization fix. The
 Dropbox-packaged 0818 appliance remains an
 older, separately accepted distribution until its binary artifacts are
 deliberately rolled forward. Never infer image content from the host checkout;
@@ -199,7 +200,7 @@ authority. Its dependency order is:
 
 The ordered series is replayed against pristine pinned source before each Yocto
 component or image build. The current images contain the complete ordered
-series through `0067`.
+series through `0104`.
 
 ## IEEE 1905 ordering
 
@@ -299,28 +300,28 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 ## Build and acceptance
 
-The current deployment is a clean role-specific roll-up through EasyMesh
-`0059`, IEEE1905 `0005`, the generic log4c category-factory serialization fix,
-and the SNMP self-heal process fix. The extender additionally contains OneWifi
-`0012`. Each role retains its own source revision and artifact hash:
+The current rev130 deployment is a clean role-specific roll-up. The controller
+contains EasyMesh through `0104`, IEEE1905 through `0006`, OneWifi through
+`0018`, libwebconfig through `0010`, Wi-Fi HAL through `0026`, and the
+applicable log4c and SNMP fixes. The accepted platform source is commit
+`d353c65`; host-side scale and acceptance tooling is `5280bb4`. Each deployed
+role retains its exact artifact hash:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller (`3c8a41f1fc868cd3ec823ea722430b152e20e4e7`) | `X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2` | `da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e` |
-| extender (`a50a008152c7c3860af73b58af4bb8b944c777e7`) | `X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2` | `5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2` | `c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2` | `0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8` |
 
-All five deployed device images contain the same `onewifi_em_agent` binary
-(`ad859de12e6b667c7d7698e53b30658316a7db99c612f322bafe1894534679bb`).
-The earlier deterministic fourth-extender/four-associated-STA stack-protector
-failure remained absent through clean deployment and cold-boot reconstruction.
-
-Fresh deployment of the exact pair on rev130 reached `5/15/50/14`, exposed ten
-live clients, passed 10/10 traffic, held a 120-second stability window, and
-recorded zero monitored service restarts. Three live topology responses across
-two refresh intervals had the same SHA-256. The rendered model is
+Fresh deployment of the exact pair on rev130 reached `5/15/50/24`, exposed ten
+private and ten IoT clients, passed 20/20 zero-loss health traffic, and
+recorded zero automatic service restarts. Cold chain and branch profiles both
+passed physical link, parent station, forwarding, API edge, RSSI/RCPI and exact
+database checks. A controller-only restart reconstructed the live branch at
+`5/15/50/24`; the former database-only upstream BSS did not return. The
+rendered model is
 `Controller`, colocated `Agent-1`, and `Extender-1` through `Extender-4`.
-The deployed asset is `topology-layout-optimized-1`; its live source passed
-the layout-model isolation and optimization regression.
+The deployed WebUI asset passed the layout-model isolation, exact-parent,
+signal, drag/steering-cue and one-action metrics regressions.
 
 ### SNMP self-heal correction
 
@@ -471,7 +472,8 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
-Patches `0047` through `0059` close the follow-on P0 state, service, and
+Patches `0047` through `0104` close the follow-on P0 state, service,
+multi-hop, metrics, and
 presentation boundaries:
 
 | Patch | Root-cause boundary |
@@ -506,6 +508,11 @@ presentation boundaries:
 | `0075` | resolve topology radio lists by key rather than child position |
 | `0076` | retire a candidate command when its correlated response is retained, admitting the next serialized query |
 | `0077` | join topology nodes to the authoritative flat Agent/radio/BSS inventory by exact AL MAC |
+| `0078`-`0086` | resolve duplicate STA ownership by association age and make IoT/client placement, live signal, steering cues, exact band/channel/parent and layout stability observable without mutating the API model |
+| `0087`-`0094` | replace stale logical bSTA keys, derive parents only from AP BSSs, carry live backhaul signal, reconcile first metrics reports and serialize topology rebuild/encoding |
+| `0096`-`0102` | refresh and prune operational topology, accept the emitted mesh-STA form, report/correlate the actual backhaul STA, and retain one current backhaul record per radio |
+| `0103` | provision every enabled haul on a radio band so cold onboarding produces the complete ten-BSS device model |
+| `0104` | reconcile MariaDB BSS keys directly against the authoritative per-device snapshot, removing a former-upstream BSSID that no longer exists in memory |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -594,9 +601,9 @@ Three consecutive cold reconstructions passed in 805, 800 and 802 seconds with
 restarts and 10/10 traffic. A separate instrumented reconstruction established
 a 311.57 MiB cgroup peak and 266.10 MiB converged footprint under the 1 GiB
 controller limit, with no swap or memory-pressure/OOM event. See
-[memory-footprint.md](memory-footprint.md). These bounded results did not imply
-a long-duration pass; the separate 12-hour run began on all three targets on
-2026-08-22 and remains in progress.
+[memory-footprint.md](memory-footprint.md). These bounded results do not imply
+a long-duration pass. The attempted three-target run was stopped and the
+defined 12-hour acceptance remains deliberately deferred.
 
 The final metrics/uptime image (`20260821015142`) was then installed on rev130.
 Its controller artifact SHA-256 is
@@ -639,11 +646,10 @@ controller desired state or ACK bookkeeping alone.
 
 A bounded rev130 churn shakedown completed two carousel workloads in 510.795
 seconds with candidate RCPI 88 at the controlled 25 dB point, exact medium
-restore, complete topology/model/traffic and zero restarts. The full 12-hour
-alternating carousel/outage campaign was then started as
-`easymesh-soak-0822.service` on rev130 and both VMs. This is in-progress
-evidence, not an acceptance result; only each final `summary.json` can close
-the long-growth gate.
+restore, complete topology/model/traffic and zero restarts. The attempted
+three-target campaign was deliberately stopped and is not an acceptance
+result. No 12-hour soak claim is made; a future duration run closes the
+long-growth gate only when its final `summary.json` passes.
 
 ## Remaining engineering debt
 
@@ -657,7 +663,7 @@ the long-growth gate.
 - Generalize the current 15-second Associated Clients reconciliation cadence
   and capacity policy for larger topologies; it is now active defense in depth,
   not missing functionality.
-- Make a controller-service-only restart re-query every already-running agent.
-  A diagnostic controller restart temporarily reconstructed only `5/15/36`;
-  re-onboarding the absent agent restored the required `5/15/50`. Full VM boot
-  reconstruction remains a separate, previously accepted path.
+- Generalize exact BSS-key reconciliation beyond the current authoritative
+  per-device update boundary if future partial-radio protocol inputs require a
+  different FULL/DELTA contract. The current controller-only restart and cold
+  chain/branch tests pass `5/15/50/24` exactly.

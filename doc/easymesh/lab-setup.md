@@ -25,13 +25,12 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-controller source         3c8a41f1fc868cd3ec823ea722430b152e20e4e7
-extender source           a50a008152c7c3860af73b58af4bb8b944c777e7
-image EasyMesh content    through EasyMesh 0059 and IEEE1905 0005
-host tooling              codex/0815-clean at 3c8a41f or later
+platform source           d353c65 (accepted pre-commit build worktree)
+image EasyMesh content    controller through EasyMesh 0104; IEEE1905 0006
+host tooling              codex/0815-clean at 5280bb4 or later
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260820210038.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260820202147.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -41,8 +40,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-da74e07dfece8653bc76d9c821324b75cc72e783d85e681f7524554cc671dc6e  controller
-5468a70d0c5345866d2592062575bf8b197466f1970ca25837b9909a40d8ac29  extender
+c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825  controller
+0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -59,7 +58,8 @@ Artifacts are built on rev140 under
 
 - Linux 7.0.0-28 with the patched hwsim module;
 - LXD 6.7 or 6.9 with a storage pool and management bridge;
-- a 24-radio hwsim pool loaded with `channels=3 regtest=5`;
+- a 32-radio hwsim pool loaded with `channels=3 regtest=5` for the current
+  20-client profile;
 - patched `wmediumd.patched` from this repository;
 - the prebuilt WNM-capable WLAN-client image; and
 - Boardfarm `br-wan105` with DHCP/Internet for controller `erouter0`.
@@ -88,7 +88,8 @@ points are:
 
 ```text
 gen/bpi.sh                         deploy controller/extender containers
-gen/wlan-client.sh                 deploy WNM client stations
+gen/wlan-client.sh                 deploy one WNM client station
+gen/wlan-client-pool.sh            plan/provision private and IoT client cohorts
 gen/hwsim/                         build/load patched hwsim
 gen/wmediumd/wmediumd-up.sh        generate/start/stop the medium
 gen/wmediumd/configurator/         compile and run RF scenarios
@@ -120,7 +121,7 @@ second extender         3 / 9 / 30
 five clients            API active=5 total=5
 third extender          4 / 12 / 40
 fourth extender         5 / 15 / 50
-ten clients             API active=10 total=10
+twenty clients          API private=10 IoT=10 total=20
 ```
 
 The controller topology additionally displays a controller model node, so five
@@ -143,16 +144,17 @@ From `gen/` on a prepared runtime:
 # start the medium after mesh radios exist
 SNR=40 ./wmediumd/wmediumd-up.sh up
 
-# ten clients; create sequentially so every client export gate completes
-./wlan-client.sh up private_ssid test-fronthaul
-for i in 1 2 3 4 5 6 7 8 9; do
-  ./wlan-client.sh -i "$i" up private_ssid test-fronthaul
-done
+# resumable 10-private + 10-IoT client profile
+./wlan-client-pool.sh plan --profile small
+./wlan-client-pool.sh up --profile small
 ```
 
 Adding an extender or client changes wmediumd's fixed radio registration
-matrix. The deployment helpers refresh the daemon as required; client creation
-then waits for association, DHCP and controller model export before returning.
+matrix. The single-client helper refreshes the daemon as required. The pool
+helper instead creates and verifies the cohort over hwsim's built-in medium,
+then registers the completed active-radio set once. Each new client still waits
+for association, DHCP and controller model export before returning. See
+[client-scale.md](client-scale.md).
 
 `-F` destroys the named node's old `/nvram` identity and is correct for a clean
 baseline. Omit it only when restarting the same logical device with its complete
@@ -169,14 +171,14 @@ vagrant up
 vagrant status
 ```
 
-The provisioned appliance declares the full four-extender/ten-client scale step
+The provisioned appliance declares the full four-extender/20-client scale step
 and installs an enabled `easymesh-lab.service`. On every boot that service stops
 any LXD-restored instances, removes stale OneWifi VAPs from the hwsim wiphys
 returned to the host, then starts controller, extenders and clients in gated
 order before rebuilding wmediumd. The VAP cleanup is required for in-place
 service restarts; without it nl80211 reaches its interface-combination limit and
-reports `ENFILE`. A PASS requires `5/15/50/14`, API
-`10/10`, zero OneWifi/EasyMesh restarts, ten-client gateway traffic and a
+reports `ENFILE`. A PASS requires `5/15/50/24`, API cohorts `10/10`, zero
+OneWifi/EasyMesh restarts, 20-client gateway traffic and a
 120-second stable hold. Evidence is stored by boot ID under
 `~/.local/state/easymesh-vagrant/reboot-acceptance/`.
 
@@ -213,7 +215,7 @@ docker start wan-cpe5 dhcp-cpe5
 
 # Load the already-installed patched module. Kernel headers are needed to build
 # it, not to recover with the installed updates/mac80211_hwsim.ko.
-sudo modprobe mac80211_hwsim radios=24 channels=3 regtest=5
+sudo modprobe mac80211_hwsim radios=32 channels=3 regtest=5
 
 # Recreate host bridges and rename wlanN pool devices to stable virt-wlanN.
 bash -c 'source ./gen-util.sh'
@@ -251,15 +253,12 @@ bash -c 'source ./gen-util.sh; hwsim_reclaim_dirty_phys'
 SNR=40 ./wmediumd/wmediumd-up.sh up
 ```
 
-After all extenders reach `5/15/50`, recreate clients sequentially. The helper
-refreshes wmediumd before starting each supplicant, then gates association,
-DHCP and controller export:
+After all extenders reach `5/15/50`, resume the accepted mixed client profile.
+The pool helper retains any healthy client, repairs only missing/inconsistent
+members, then registers the full active-radio set with wmediumd once:
 
 ```sh
-./wlan-client.sh up private_ssid test-fronthaul
-for i in 1 2 3 4 5 6 7 8 9; do
-    ./wlan-client.sh -i "$i" up private_ssid test-fronthaul
-done
+./wlan-client-pool.sh up --profile small
 ```
 
 Finish with the normal acceptance gate:
@@ -268,8 +267,8 @@ Finish with the normal acceptance gate:
 ./tests/health-audit.sh
 ```
 
-The expected operational result remains `5/15/50/14`, API `10/10`, ten working
-WLAN data paths and a running wmediumd. Nonzero restart counters mean the
+The expected operational result is `5/15/50/24`, API cohorts `10/10`, 20
+working WLAN data paths and a running wmediumd. Nonzero restart counters mean the
 recovery is usable but is not a clean onboarding acceptance result; inspect the
 corresponding boot journal rather than clearing the counters.
 
@@ -309,7 +308,7 @@ lxc exec wlan-client -- ip -4 -o addr show wlan0
 lxc exec wlan-client -- ping -I wlan0 -c 3 10.0.0.1
 ```
 
-Expected live topology result is ten. `/api/v1/devices` and
+Expected small-profile live topology result is 20. `/api/v1/devices` and
 `/api/v1/clients` are also derived from the current controller tree: the device
 list contains the controller, colocated agent and four extenders, while each
 client record contains its observed STA MAC, parent agent and BSSID. The client
@@ -393,11 +392,13 @@ container/service state, backhaul link and traffic alongside the API because
 hwsim may retain station link state until a real link-loss event is delivered.
 
 A controller-process restart is intentionally not used as an AP recovery
-action. In one diagnostic restart, four already-running agents were restored
-but one agent's BSS inventory was absent (`5/15/36`) until that AP re-onboarded,
-after which the model returned to `5/15/50`. Always run the model gate after a
-controller-only restart; process liveness and ten working client links alone do
-not prove the controller has all steering targets.
+action, but it is now an accepted persistence test. The 2026-08-23 rev130 run
+restarted only `em_ctrl` while the branch tree and all clients stayed live.
+The controller returned in four seconds, the single metrics action restored
+all four link measurements, and full verification passed at `5/15/50/24` with
+20/20 client forwarding. Always retain that exact model gate: process liveness
+and working client links alone do not prove the controller has every steering
+target or that stale BSS keys were removed.
 
 ## WebUI access
 
@@ -508,6 +509,38 @@ rev130 only. It passed a complete identity-preserving reconstruction,
 zero monitored restarts. Three topology responses spanning two refresh
 intervals had the same SHA-256, and the live
 `topology-layout-optimized-1` asset passed its JavaScript regression.
+
+### Current rev130 acceptance
+
+The 2026-08-23 artifacts listed under **Image provenance** supersede those
+historical samples. A fully destructive role/container redeploy, followed by
+fresh creation of the small client profile, passed:
+
+- `5/15/50/24` exactly: five devices, fifteen radios, fifty BSS rows, twenty
+  fronthaul clients and four extender backhaul STAs;
+- ten `private_ssid` and ten `iot_ssid` clients, all associated, addressed and
+  forwarding, including explicit 2.4, 5 and 6 GHz client cases;
+- one metrics API/UI action populating all four direct-backhaul RSSI/RCPI
+  values in 10.8 seconds;
+- cold chain and cold branch multi-hop onboarding, including exact parent
+  BSSID, parent-side station, traffic, controller edge and signal checks;
+- controller-only restart reconstruction of the live branch at the same exact
+  database invariant; and
+- one `snmp_subagent`, no retained launcher, no automatic service restart and
+  0% loss for the default 20-client health probe.
+
+`health-audit.sh` defaults to ten one-second probes per client and fails if any
+packet is lost. Higher offered loads are explicit experiments, for example:
+
+```sh
+HEALTH_PING_COUNT=40 \
+HEALTH_PING_INTERVAL=0.05 \
+HEALTH_PING_MAX_LOSS=100 \
+  gen/tests/health-audit.sh
+```
+
+That example offers 400 echo requests per second across twenty clients and is
+a wmediumd/data-path load characterization, not the normal health gate.
 
 ## Troubleshooting order
 
