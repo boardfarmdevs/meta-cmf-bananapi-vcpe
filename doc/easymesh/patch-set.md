@@ -557,6 +557,8 @@ radio identities, and releases one radio into `wsc_m2_pending` for each apply
 callback. A 30-second callback watchdog covers a lost completion. The existing
 bounded retry obtains a fresh M2 for the released radio; the patch neither
 parallelizes OneWifi writes nor declares configuration before confirmation.
+The analyzer's zero return means that the asynchronous SET was accepted; only
+a negative result releases the slot as a synchronous failure.
 
 A full fresh rev120 acceptance run then reproduced loss of two initial M2
 deliveries. The affected radio objects remained in `wsc_m2_pending`, but the

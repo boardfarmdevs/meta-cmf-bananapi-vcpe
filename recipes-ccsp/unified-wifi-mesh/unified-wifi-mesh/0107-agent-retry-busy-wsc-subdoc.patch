@@ -15,7 +15,8 @@ actual asynchronous OneWifi boundary instead: admit one subdoc, defer the
 other radio identities, and release one deferred radio into the existing
 fresh-M1 retry path for each OneWifi apply callback. A 30-second completion
 watchdog also re-arms the active radio if its callback is lost. Failed SET or
-encode operations release the slot immediately.
+encode operations release the slot immediately. Preserve the analyzer's
+existing contract in which zero means that the asynchronous SET was accepted.
 
 This preserves OneWifi's single-writer behavior, applies each band only after
 the previous apply completes, and retains the existing bounded WSC retry
@@ -102,7 +103,7 @@ index 68ebf99..58de17e 100644
 -            em->set_state(em_state_agent_wsc_m2_pending);
 -            em_printfout("OneWifi subdoc delivery failed for radio %s; re-arming WSC M2 recovery",
 -                ruid.c_str());
-+    if (result <= 0) {
++    if (result < 0) {
 +        m_onewifi_wsc_subdoc_active = false;
 +        m_onewifi_wsc_ruid.clear();
 +        m_onewifi_wsc_wait_ticks = 0;
