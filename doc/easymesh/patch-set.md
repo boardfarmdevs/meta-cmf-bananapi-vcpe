@@ -32,7 +32,7 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0106`, IEEE1905
+The current source series contains EasyMesh patches through `0107`, IEEE1905
 patches through `0006`, libwebconfig patches through `0011`, OneWifi patches
 through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
 category-factory serialization fix. The
@@ -515,6 +515,7 @@ presentation boundaries:
 | `0104` | reconcile MariaDB BSS keys directly against the authoritative per-device snapshot, removing a former-upstream BSSID that no longer exists in memory |
 | `0105` | serialize concurrent per-radio WSC M2 parsing and re-arm bounded WSC recovery when a OneWifi subdoc is not confirmed |
 | `0106` | initialize and validate the one-octet Profile TLV and serialize concurrent controller Autoconfiguration Search/WSC model selection |
+| `0107` | serialize per-radio WSC subdocs through OneWifi apply callbacks and release deferred radios through bounded fresh-M1 recovery |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -543,6 +544,18 @@ remained for that extender. Unified-mesh `0106` initializes and bounds-checks
 both Profile readers and serializes only the controller's shared
 Autoconfiguration Search/WSC selection and node-creation boundary. Per-radio
 protocol processing outside that short critical section remains concurrent.
+
+Persistent cold reconstruction then exposed a second agent-side boundary that
+does not occur reliably during an ordinary fresh deployment. All three M2
+frames were parsed successfully, but RBUS SET acceptance preceded asynchronous
+OneWifi apply completion. Immediate submissions left only the first VAP subdoc
+applied and the other radios in `owconfig_pending`. The M2 subdoc event maps to
+no orchestration command, so the generic previous-command test cannot serialize
+this path. Unified-mesh `0107` admits one OneWifi write, queues only the other
+radio identities, and releases one radio into `wsc_m2_pending` for each apply
+callback. A 30-second callback watchdog covers a lost completion. The existing
+bounded retry obtains a fresh M2 for the released radio; the patch neither
+parallelizes OneWifi writes nor declares configuration before confirmation.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering
