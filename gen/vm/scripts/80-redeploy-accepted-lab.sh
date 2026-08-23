@@ -42,13 +42,7 @@ test "$(sha256sum "$repo/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
 
 sudo systemctl stop easymesh-lab.service 2>/dev/null || true
 sudo systemctl reset-failed easymesh-lab.service 2>/dev/null || true
-sudo systemctl start docker.service snap.lxd.daemon.service \
-    boardfarm-lab.service easymesh-lxd-docker-forward.service
-for attempt in $(seq 1 60); do
-    ip link show br-wan105 >/dev/null 2>&1 && break
-    sleep 2
-done
-ip link show br-wan105 >/dev/null
+sudo systemctl start docker.service snap.lxd.daemon.service
 
 cd "$repo/gen"
 ./wmediumd/wmediumd-up.sh down >/dev/null 2>&1 || true
@@ -86,7 +80,23 @@ if [ "$(cat /sys/module/mac80211_hwsim/parameters/radios)" != "$hwsim_pool_radio
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-hwsim-pool.service
-sudo systemctl restart easymesh-hwsim-pool.service
+# The pool unit orders before and is required by LXD. Restarting an already
+# active oneshot propagates a stop through LXD and Boardfarm even though the
+# module was safely updated in place above. Run the idempotent helper directly,
+# then use start only to establish a previously inactive/failed unit state.
+sudo /usr/local/sbin/easymesh-hwsim-pool
+sudo systemctl reset-failed easymesh-hwsim-pool.service 2>/dev/null || true
+sudo systemctl start easymesh-hwsim-pool.service
+
+# Boardfarm and the LXD/Docker bridge helper depend on the accepted hwsim/LXD
+# state. Start them only after pool recovery so a stale failed pool unit cannot
+# force an unnecessary or doomed WAN-lab reconstruction.
+sudo systemctl start boardfarm-lab.service easymesh-lxd-docker-forward.service
+for attempt in $(seq 1 60); do
+    ip link show br-wan105 >/dev/null 2>&1 && break
+    sleep 2
+done
+ip link show br-wan105 >/dev/null
 
 for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     if old_nvram=$(lxc profile device get "$profile" nvram source 2>/dev/null); then
