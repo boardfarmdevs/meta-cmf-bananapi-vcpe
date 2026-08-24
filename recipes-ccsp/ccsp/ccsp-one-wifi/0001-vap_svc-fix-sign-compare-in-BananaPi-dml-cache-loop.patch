@@ -1,0 +1,23 @@
+Fix build: -Werror=sign-compare treats the loop counter's signedness
+mismatch against tgt_vap_map->num_vaps (unsigned int) as an error.
+This BananaPi-only block (_PLATFORM_BANANAPI_R4_) was added in
+e28776520 ("2026-07-14") and is the only place in this loop nest that
+uses a signed counter - the equivalent `j` loops elsewhere in the same
+function already use an unsigned counter. Match that convention.
+
+---
+ source/core/services/vap_svc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source/core/services/vap_svc.c b/source/core/services/vap_svc.c
+--- a/source/core/services/vap_svc.c
++++ b/source/core/services/vap_svc.c
+@@ -282,7 +282,7 @@
+             __func__, __LINE__, i);
+ #if defined(_PLATFORM_BANANAPI_R4_)
+         uint8_t vap_index = 0;
+-        for (int idx = 0; idx < tgt_vap_map->num_vaps; idx++) {
++        for (unsigned int idx = 0; idx < tgt_vap_map->num_vaps; idx++) {
+             vap_index = tgt_vap_map->vap_array[idx].vap_index;
+             for (j = 0; j < vap_map->num_vaps; j++) {
+                 if (dml_cache_update_needed == true) {
