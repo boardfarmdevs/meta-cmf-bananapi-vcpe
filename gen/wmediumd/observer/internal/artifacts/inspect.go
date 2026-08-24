@@ -16,8 +16,9 @@ import (
 // Inspector caches hashes by path and file identity. Artifact failures enrich
 // a snapshot but never make live readback unavailable.
 type Inspector struct {
-	ConfigPath string
-	PIDFile    string
+	ConfigPath     string
+	PIDFile        string
+	DaemonManifest string
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -64,6 +65,13 @@ func (i *Inspector) inspectDaemon() model.Artifact {
 		return result
 	}
 	if err != nil {
+		// A hardened non-root service cannot dereference /proc/PID/exe for the
+		// root-owned daemon without CAP_SYS_PTRACE. The launcher therefore
+		// publishes a bounded, PID-qualified hash manifest in /run. Prefer that
+		// explicit handoff to weakening ProtectHome or granting ptrace.
+		if manifest := i.inspectManifest(pid, procExecutable); manifest.Available {
+			return manifest
+		}
 		// Ubuntu may deny /proc/PID/exe for a root-owned process while leaving
 		// its non-sensitive cmdline readable. The first argument is the exact
 		// executable path used by the accepted launcher.
@@ -80,6 +88,44 @@ func (i *Inspector) inspectDaemon() model.Artifact {
 		}
 	}
 	return i.inspectFile(strings.TrimSuffix(executable, " (deleted)"))
+}
+
+func (i *Inspector) inspectManifest(pid int, procExecutable string) model.Artifact {
+	if i.DaemonManifest == "" {
+		return model.Artifact{Path: procExecutable, Error: "daemon hash manifest is not configured"}
+	}
+	file, err := os.Open(i.DaemonManifest)
+	if err != nil {
+		return model.Artifact{Path: procExecutable, Error: err.Error()}
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil {
+		return model.Artifact{Path: procExecutable, Error: err.Error()}
+	}
+	if len(content) > 4096 {
+		return model.Artifact{Path: procExecutable, Error: "daemon hash manifest exceeds 4096 bytes"}
+	}
+	fields := strings.Split(strings.TrimSpace(string(content)), "\t")
+	if len(fields) != 3 {
+		return model.Artifact{Path: procExecutable, Error: "invalid daemon hash manifest"}
+	}
+	manifestPID, err := strconv.Atoi(fields[0])
+	if err != nil || manifestPID != pid {
+		return model.Artifact{Path: procExecutable, Error: "daemon hash manifest PID does not match the active daemon"}
+	}
+	hash := strings.ToLower(fields[1])
+	if len(hash) != sha256.Size*2 || strings.Trim(hash, "0123456789abcdef") != "" {
+		return model.Artifact{Path: procExecutable, Error: "invalid daemon SHA-256 in manifest"}
+	}
+	executable := filepath.Clean(fields[2])
+	if !filepath.IsAbs(executable) {
+		return model.Artifact{Path: procExecutable, Error: "daemon manifest executable is not an absolute path"}
+	}
+	return model.Artifact{
+		Path: procExecutable, ResolvedPath: executable,
+		SHA256: hash, Available: true,
+	}
 }
 
 func (i *Inspector) inspectFile(path string) model.Artifact {

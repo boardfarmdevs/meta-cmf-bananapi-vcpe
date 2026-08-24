@@ -19,7 +19,10 @@ The Console shows:
   counters;
 - a bounded event timeline and explicit event-ring gap indication;
 - queue depth/delay and factual health warnings; and
-- startup-config and running-binary SHA-256 identities.
+- startup-config and running-binary SHA-256 identities. The root launcher
+  publishes a PID-qualified hash manifest in `/run`; this keeps the hardened
+  non-root service from needing `CAP_SYS_PTRACE` merely to dereference the
+  daemon's `/proc/PID/exe` entry.
 
 No packet payload is copied, stored or exposed. If the Console is pointed at an
 older `-R` read-only endpoint, configured state remains visible and packet

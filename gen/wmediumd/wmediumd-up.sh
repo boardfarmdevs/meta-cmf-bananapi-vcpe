@@ -22,6 +22,7 @@ METRICS=${WMEDIUMD_METRICS_SOCKET:-$METRICS_DIR/control.sock}
 OBSERVER_DIR=${WMEDIUMD_OBSERVER_DIR:-$RUNTIME/observer}
 OBSERVER=${WMEDIUMD_OBSERVER_SOCKET:-$OBSERVER_DIR/telemetry.sock}
 IDENTITY=${WMEDIUMD_IDENTITY_INVENTORY:-$RUNTIME/identity-inventory.json}
+DAEMON_MANIFEST=${WMEDIUMD_DAEMON_MANIFEST:-$RUNTIME/wmediumd-binary.sha256}
 IDENTITY_GENERATOR=${WMEDIUMD_IDENTITY_GENERATOR:-$HERE/observer/generate-identity-inventory.sh}
 CFG=${CFG:-$RUNTIME/wmediumd.cfg}
 PIDF=${WMEDIUMD_PIDFILE:-$RUNTIME/wmediumd.pid}
@@ -72,7 +73,7 @@ stop_running_wmediumd() {
     local pattern pids n
     pattern="^${WMD//./\\.}([[:space:]]|$)"
     pids=$(find_running_wmediumd "$pattern")
-    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"; return; }
+    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY" "$DAEMON_MANIFEST"; return; }
     sudo kill $pids 2>/dev/null || true
     for n in $(seq 1 20); do
         pids=$(find_running_wmediumd "$pattern")
@@ -82,7 +83,7 @@ stop_running_wmediumd() {
     if [ -n "$pids" ]; then
         sudo kill -KILL $pids 2>/dev/null || true
     fi
-    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY" "$DAEMON_MANIFEST"
 }
 
 case "${1:-up}" in
@@ -104,7 +105,7 @@ case "${1:-up}" in
         exit 1
     }
     echo ">> starting wmediumd"
-    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$LOG" "$IDENTITY"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$LOG" "$IDENTITY" "$DAEMON_MANIFEST"
     echo ">> generating Console radio identities -> $IDENTITY"
     if ! "$IDENTITY_GENERATOR" --output "$IDENTITY"; then
         echo "WARN: Console identity inventory unavailable; telemetry will use radio MAC labels" >&2
@@ -148,7 +149,12 @@ case "${1:-up}" in
     sudo chmod 0666 "$METRICS"
     sudo chgrp "$CONTROL_GROUP" "$OBSERVER"
     sudo chmod 0660 "$OBSERVER"
-    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS; telemetry $OBSERVER; identities $IDENTITY"
+    binary_sha256=$(sha256sum "$WMD" | awk '{print $1}')
+    printf '%s\t%s\t%s\n' "$pid" "$binary_sha256" "$WMD" \
+        | sudo tee "$DAEMON_MANIFEST" >/dev/null
+    sudo chown root:root "$DAEMON_MANIFEST"
+    sudo chmod 0644 "$DAEMON_MANIFEST"
+    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS; telemetry $OBSERVER; identities $IDENTITY; binary manifest $DAEMON_MANIFEST"
     ;;
   down)
     stop_running_wmediumd

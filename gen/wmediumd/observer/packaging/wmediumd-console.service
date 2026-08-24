@@ -10,7 +10,7 @@ User=wmediumd-console
 Group=wmediumd-console
 SupplementaryGroups=lxd
 EnvironmentFile=-/etc/default/wmediumd-console
-ExecStart=/usr/local/bin/wmediumd-console --listen=${WMEDIUMD_CONSOLE_LISTEN} --socket=${WMEDIUMD_CONSOLE_SOCKET} --identity-inventory=${WMEDIUMD_CONSOLE_IDENTITY_INVENTORY} --config=${WMEDIUMD_CONSOLE_CONFIG} --pid-file=${WMEDIUMD_CONSOLE_PID_FILE} $WMEDIUMD_CONSOLE_EXTRA_ARGS
+ExecStart=/usr/local/bin/wmediumd-console --listen=${WMEDIUMD_CONSOLE_LISTEN} --socket=${WMEDIUMD_CONSOLE_SOCKET} --identity-inventory=${WMEDIUMD_CONSOLE_IDENTITY_INVENTORY} --config=${WMEDIUMD_CONSOLE_CONFIG} --pid-file=${WMEDIUMD_CONSOLE_PID_FILE} --daemon-manifest=${WMEDIUMD_CONSOLE_DAEMON_MANIFEST} $WMEDIUMD_CONSOLE_EXTRA_ARGS
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=10s

@@ -37,3 +37,23 @@ func TestInspectConfigAndCurrentProcess(t *testing.T) {
 		t.Fatalf("binary was not hashed through procfs: %+v", artifacts.DaemonBinary)
 	}
 }
+
+func TestInspectPIDQualifiedDaemonManifest(t *testing.T) {
+	directory := t.TempDir()
+	manifest := filepath.Join(directory, "wmediumd-binary.sha256")
+	hash := strings.Repeat("a", sha256.Size*2)
+	if err := os.WriteFile(manifest,
+		[]byte(fmt.Sprintf("%d\t%s\t/usr/local/bin/wmediumd\n", os.Getpid(), hash)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inspector := &Inspector{DaemonManifest: manifest}
+	artifact := inspector.inspectManifest(os.Getpid(), fmt.Sprintf("/proc/%d/exe", os.Getpid()))
+	if !artifact.Available || artifact.SHA256 != hash || artifact.ResolvedPath != "/usr/local/bin/wmediumd" {
+		t.Fatalf("unexpected manifest artifact: %+v", artifact)
+	}
+
+	artifact = inspector.inspectManifest(os.Getpid()+1, fmt.Sprintf("/proc/%d/exe", os.Getpid()+1))
+	if artifact.Available || !strings.Contains(artifact.Error, "PID does not match") {
+		t.Fatalf("stale manifest was accepted: %+v", artifact)
+	}
+}
