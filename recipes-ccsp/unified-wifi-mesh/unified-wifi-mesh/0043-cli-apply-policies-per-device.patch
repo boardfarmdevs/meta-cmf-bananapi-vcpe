@@ -1,0 +1,176 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] cli: apply wireless policies one device at a time
+
+The native set_policy command accepts one EasyMesh device per request.  The
+WebUI passed the complete network DeviceList, which returned a false success
+without changing policy (and could crash older command drivers).
+
+Clone and prune the edited tree for each device, serialize those requests,
+verify the desired controller state, and allow its asynchronous 1905
+transaction to retire before sending the next command.  This also propagates
+rejected commands and commit timeouts as HTTP errors.
+
+---
+ src/rdkb-cli/main.go | 133 ++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 122 insertions(+), 11 deletions(-)
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -41,6 +41,7 @@
+ 	"net/http"
+ 	"os"
+ 	"regexp"
++	"reflect"
+ 	"sort"
+ 	"strconv"
+ 	"strings"
+@@ -2280,10 +2281,26 @@
+                     http.Error(w, "Policy update failed", http.StatusInternalServerError)
+                     return
+                 }
+-            }
+ 
+-            if applyWifiPolicyConfig(policyTree) != true {
+-                http.Error(w, fmt.Sprintf("Failed to update wifi policy"), http.StatusInternalServerError)
++                // The native set_policy command handles one EasyMesh device per
++                // command.  Sending the complete DeviceList makes the request a
++                // silent no-op (and older builds could crash), so serialize one
++                // pruned policy tree per device.
++                if wifiPolicyConfigIsCurrent(policy) {
++                    continue
++                }
++                if !applyWifiPolicyConfigForDevice(policyTree, policy.ID) {
++                    http.Error(w, fmt.Sprintf("Failed to update wifi policy for %s", policy.ID), http.StatusInternalServerError)
++                    return
++                }
++                if !waitForWifiPolicyConfig(policy, 8*time.Second) {
++                    http.Error(w, fmt.Sprintf("Timed out applying wifi policy for %s", policy.ID), http.StatusGatewayTimeout)
++                    return
++                }
++                // The controller commits desired policy before its asynchronous
++                // state machine sends the request and consumes the 1905 ACK.
++                // Allow that transaction to retire before the next device.
++                time.Sleep(2 * time.Second)
+             }
+ 
+             // Return success response
+@@ -5183,12 +5200,117 @@
+ 
+     //Execute the set_policy command with updated policies
+     result := execEMCommand(cmd, set_policy_node)
+-    if result != nil {
+-        C.free_network_tree(result)
++    if result == nil {
++        return false
+     }
++    C.free_network_tree(result)
+     return true
+ }
+ 
++// applyWifiPolicyConfigForDevice clones the edited policy tree and retains only
++// the requested device.  The controller's set_policy command accepts a single
++// device, while the WebUI edits and displays a network-wide DeviceList.
++func applyWifiPolicyConfigForDevice(policyTree *C.em_network_node_t, deviceID string) bool {
++    singleTree := C.clone_network_tree(policyTree)
++    if singleTree == nil {
++        log.Printf("failed to clone policy tree for device %s", deviceID)
++        return false
++    }
++    defer C.free_network_tree(singleTree)
++
++    deviceList := getNetworkTreeByKey(singleTree, "DeviceList")
++    if deviceList == nil {
++        log.Printf("DeviceList not found for device %s", deviceID)
++        return false
++    }
++
++    target := -1
++    for i := 0; i < int(deviceList.num_children); i++ {
++        if deviceList.child[i] != nil && getTreeValue(deviceList.child[i], "ID") == deviceID {
++            target = i
++            break
++        }
++    }
++    if target < 0 {
++        log.Printf("policy device %s not found", deviceID)
++        return false
++    }
++
++    targetNode := deviceList.child[target]
++    for i := 0; i < int(deviceList.num_children); i++ {
++        if i == target || deviceList.child[i] == nil {
++            continue
++        }
++        C.free_network_tree(deviceList.child[i])
++        deviceList.child[i] = nil
++    }
++    deviceList.child[0] = targetNode
++    if target != 0 {
++        deviceList.child[target] = nil
++    }
++    deviceList.num_children = 1
++
++    return applyWifiPolicyConfig(singleTree)
++}
++
++// wifiPolicyConfigIsCurrent avoids starting a controller transaction for an
++// unchanged device.  Otherwise the database already matches before the new
++// transaction has completed and the following device can race it.
++func wifiPolicyConfigIsCurrent(want wifiPolicyConfig) bool {
++    policyCmd := C.CString("get_policy OneWifiMesh")
++    deviceListKey := C.CString("DeviceList")
++    defer C.free(unsafe.Pointer(policyCmd))
++    defer C.free(unsafe.Pointer(deviceListKey))
++
++    tree := execEMCommand(policyCmd, nil)
++    if tree == nil {
++        return false
++    }
++    defer C.free_network_tree(tree)
++
++    deviceList := C.get_network_tree_by_key(tree, deviceListKey)
++    if deviceList == nil {
++        return false
++    }
++    for _, got := range getPolicyConfiguration(deviceList) {
++        if got.ID == want.ID {
++            return reflect.DeepEqual(got, want)
++        }
++    }
++    return false
++}
++
++// waitForWifiPolicyConfig prevents a following set_policy request from racing
++// the controller's still-running policy state machine.  The native command
++// response confirms admission, not successful application by the agent.
++func waitForWifiPolicyConfig(want wifiPolicyConfig, timeout time.Duration) bool {
++    policyCmd := C.CString("get_policy OneWifiMesh")
++    deviceListKey := C.CString("DeviceList")
++    defer C.free(unsafe.Pointer(policyCmd))
++    defer C.free(unsafe.Pointer(deviceListKey))
++
++    deadline := time.Now().Add(timeout)
++    for time.Now().Before(deadline) {
++        tree := execEMCommand(policyCmd, nil)
++        if tree != nil {
++            deviceList := C.get_network_tree_by_key(tree, deviceListKey)
++            if deviceList != nil {
++                for _, got := range getPolicyConfiguration(deviceList) {
++                    if got.ID == want.ID && reflect.DeepEqual(got, want) {
++                        C.free_network_tree(tree)
++                        return true
++                    }
++                }
++            }
++            C.free_network_tree(tree)
++        }
++        time.Sleep(200 * time.Millisecond)
++    }
++
++    log.Printf("timed out waiting for policy commit for device %s", want.ID)
++    return false
++}
++
+ func getControllerRemoteIP() (string, int, error) {
+     var remoteIPcfg RemoteIPConfig
+     data, err := os.ReadFile(remoteCtrl_Addr_path)

@@ -1,0 +1,105 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] al-sap: preserve stream message boundaries
+
+AL-SAP frames each SDU with a four-byte length prefix, then transports the
+frames over a Unix SOCK_STREAM.  serviceAccessPointDataIndication() instead
+issued one 64 KiB recv() and treated all returned bytes as one SDU.  When two
+frames arrived together, deserialize() consumed the first frame's header and
+treated the remainder -- including the next length prefix and SDU -- as part
+of its payload.  The first CMDU was processed and every coalesced CMDU was
+silently lost.
+
+This was reproduced with two client associations 88 microseconds apart.  Both
+Topology Notification CMDUs, with distinct message IDs, were visible on the
+controller's brlan0, while em_ctrl received only the first and retained the
+second client's old parent.
+
+Read exactly the length prefix and the declared body for each SDU.  The loop
+also handles short stream reads and EINTR, validates the declared size before
+allocation, and leaves any following frame queued for the next indication.
+
+---
+ src/al-sap/al_service_access_point.cpp | 48 +++++++++++++++++++++++++---------
+ 1 file changed, 36 insertions(+), 12 deletions(-)
+
+diff --git a/src/al-sap/al_service_access_point.cpp b/src/al-sap/al_service_access_point.cpp
+index 095ef51..4574926 100644
+--- a/src/al-sap/al_service_access_point.cpp
++++ b/src/al-sap/al_service_access_point.cpp
+@@ -206,17 +206,42 @@ AlServiceDataUnit AlServiceAccessPoint::serviceAccessPointDataIndication() {
+     AlServiceDataUnit message;
+ 
+     while (receivingFragments) {
+-        std::vector<unsigned char> buffer(SOCKET_MTU, 0x00);
+-
+-        // Receive data from the socket
+-        ssize_t bytesRead = recv(alDataSocketDescriptor, buffer.data(), buffer.size(), 0);
+-        if (bytesRead <= 0) {
+-            if (errno == EBADF || errno == ECONNRESET) {
+-                throw AlServiceException("Socket closed or connection reset", PrimitiveError::SocketClosed);
++        auto receive_exact = [this](unsigned char *data, size_t length) {
++            size_t received = 0;
++            while (received < length) {
++                ssize_t bytes_read = recv(alDataSocketDescriptor, data + received,
++                                          length - received, 0);
++                if (bytes_read == 0) {
++                    throw AlServiceException("Socket closed", PrimitiveError::SocketClosed);
++                }
++                if (bytes_read < 0) {
++                    if (errno == EINTR) {
++                        continue;
++                    }
++                    if (errno == EBADF || errno == ECONNRESET) {
++                        throw AlServiceException("Socket closed or connection reset",
++                                                 PrimitiveError::SocketClosed);
++                    }
++                    throw AlServiceException("Failed to receive message through Unix socket",
++                                             PrimitiveError::IndicationFailed);
++                }
++                received += static_cast<size_t>(bytes_read);
+             }
+-            throw AlServiceException("Failed to receive message through Unix socket", PrimitiveError::IndicationFailed);
++        };
++
++        std::vector<unsigned char> length_prefix(sizeof(uint32_t));
++        receive_exact(length_prefix.data(), length_prefix.size());
++        uint32_t body_size = convert_bytes_into_u32(length_prefix);
++        constexpr size_t sdu_header_size = PACKET_HEADER_SIZE - sizeof(uint32_t);
++        if (body_size < sdu_header_size ||
++                body_size > SOCKET_MTU - sizeof(uint32_t)) {
++            throw AlServiceException("Invalid AL-SAP frame length",
++                                     PrimitiveError::InvalidMessage);
+         }
+-        buffer.resize(bytesRead);
++
++        std::vector<unsigned char> buffer(sizeof(uint32_t) + body_size);
++        std::copy(length_prefix.begin(), length_prefix.end(), buffer.begin());
++        receive_exact(buffer.data() + sizeof(uint32_t), body_size);
+ 
+         // Deserialize the received fragment
+         AlServiceDataUnit fragment;
+@@ -227,7 +252,7 @@ AlServiceDataUnit AlServiceAccessPoint::serviceAccessPointDataIndication() {
+         }
+         #ifdef DEBUG_MODE
+         std::cout << "Received fragment " << static_cast<int>(fragment.getFragmentId())
+-                  << " - Size: " << bytesRead << " bytes, "
++                  << " - Size: " << buffer.size() << " bytes, "
+                   << "isFragment: " << static_cast<int>(fragment.getIsFragment()) << ", "
+                   << "FragmentId: " << static_cast<int>(fragment.getFragmentId()) << ", "
+                   << "isLastFragment: " << static_cast<int>(fragment.getIsLastFragment()) << std::endl;
+@@ -235,7 +260,7 @@ AlServiceDataUnit AlServiceAccessPoint::serviceAccessPointDataIndication() {
+         // Check if this is a single message (non-fragmented)
+         if (fragment.getIsFragment() == 0 && fragment.getIsLastFragment() == 1) {
+             #ifdef DEBUG_MODE
+-            std::cout << "Received a non-fragmented message of size: " << bytesRead << " bytes." << std::endl;
++            std::cout << "Received a non-fragmented message of size: " << buffer.size() << " bytes." << std::endl;
+             #endif
+             return fragment; // Return immediately, as no reassembly is needed
+         }
+@@ -270,4 +295,3 @@ AlServiceDataUnit AlServiceAccessPoint::serviceAccessPointDataIndication() {
+     return message;
+ }
+ 
+-
+-- 
+2.43.0
