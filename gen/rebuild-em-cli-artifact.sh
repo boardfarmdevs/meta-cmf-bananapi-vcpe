@@ -26,7 +26,8 @@ libemcli="$work/build/src/rdkb-cli/.libs/libemcli.so"
 artifact="$repo/recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh/em-cli.tar.gz"
 go_bin=${GO_BIN:-$(command -v go || true)}
 
-for required in "$source_dir/main.go" "$sysroot/usr/include/ccsp/wifi_webconfig.h" \
+for required in "$source_dir/main.go" "$source_dir/backhaul_signal.go" \
+    "$sysroot/usr/include/ccsp/wifi_webconfig.h" \
     "$native/usr/bin/i686-rdk-linux/i686-rdk-linux-gcc" "$libemcli" "$artifact"; do
     if [ ! -e "$required" ]; then
         echo "missing required build input: $required" >&2
@@ -49,7 +50,8 @@ binary="$work/onewifi_em_cli.rebuilt"
     CC="i686-rdk-linux-gcc --sysroot=$sysroot -m32 -march=core2 -mtune=core2 -msse3 -mfpmath=sse" \
     CGO_CFLAGS="--sysroot=$sysroot -m32 -I$sysroot/usr/include -I$sysroot/usr/include/ccsp -I$sysroot/usr/include/rbus" \
     CGO_LDFLAGS="--sysroot=$sysroot -m32 -L$(dirname "$libemcli") -L$sysroot/usr/lib" \
-    "$go_bin" build -trimpath -ldflags='-s -w' -o "$binary" main.go
+    "$go_bin" build -trimpath -ldflags='-s -w' -o "$binary" \
+        main.go backhaul_signal.go
 )
 
 if ! file "$binary" | grep -q 'ELF 32-bit.*Intel 80386'; then
