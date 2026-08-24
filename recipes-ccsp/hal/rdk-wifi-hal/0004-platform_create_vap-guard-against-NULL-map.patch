@@ -1,0 +1,33 @@
+Fix crash: platform_create_vap() (BananaPi platform.c) dereferences
+its `map` parameter (map->num_vaps, then &map->vap_array[i]) with no
+NULL check. Confirmed via a core dump: segfault (read fault, error 4)
+at a small offset consistent with dereferencing a NULL `map` at the
+vap_array field's struct offset.
+
+This code path is gated behind HOSTAPD_VERSION >= 211 and, inside the
+loop, wifi_hal_is_mld_enabled(interface) -- MLD/802.11be multi-link
+support, which mac80211_hwsim doesn't implement, so this branch was
+presumably never exercised with a real (non-NULL, fully-formed) map
+before hitting it via this container's EasyMesh controller role. Every
+other call site into this function chain (get_platform_create_vap_fn()
+callers in wifi_hal.c) already null-checks the *function pointer*
+before calling; this is the missing null-check on the *argument*.
+
+---
+ platform/banana-pi/platform.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -135,6 +135,10 @@ int platform_create_vap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
+     wifi_interface_info_t *interface;
+     struct hostapd_data *hapd, *link_bss;
+
++    if (map == NULL) {
++        return 0;
++    }
++
+     for (unsigned int i = 0; i < map->num_vaps; i++) {
+         vap = &map->vap_array[i];
+         if (vap->vap_mode != wifi_vap_mode_ap) {

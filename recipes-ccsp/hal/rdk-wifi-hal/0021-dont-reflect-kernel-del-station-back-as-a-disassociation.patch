@@ -1,0 +1,78 @@
+From: Rene Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] events: don't reflect a kernel DEL_STATION back as a disassociation
+
+nl80211_del_station_event() turned every kernel DEL_STATION notification
+into EVENT_DISASSOC toward hostapd -- including deletions hostapd itself
+had just ordered.  hostapd's handle_auth() removes a stale kernel station
+("start over") when a client authenticates while an old entry exists, so
+the following sequence fired on every steer-back inside the
+stale-association window left by a silent BTM roam-away:
+
+    .281715  AUTH received from the returning client
+    .281867  hostapd removes the STALE kernel entry     (handle_auth)
+    .291536  NEW_STATION: fresh entry, added_unassoc
+    .291849  auth reply, status 0 -- session has WLAN_STA_AUTH
+    .292055  DEL_STATION notify of .281867 arrives  -> EVENT_DISASSOC
+    .296515  hostapd_notif_disassoc -> hostapd_remove_sta:
+             strips WLAN_STA_AUTH|ASSOC, sends disassoc sc:8,
+             ap_free_sta() deletes the NEW kernel entry too
+    .309352  client's REASSOC arrives
+    .309392  rejected: deauth sc:6, class-2 from non-authenticated STA
+
+The client then blacklists the AP and falls back, so steering a client
+back to a previous AP failed on the first attempt every time (the failure
+itself purges the stale entry, so a retry succeeds -- which is what made
+this look intermittent).
+
+Fresh clients never hit it: with no stale kernel entry the removal
+returns -ENOENT and no notification is generated.
+
+Upstream driver_nl80211_event.c gates this exact synthesis on
+drv->device_ap_sme -- full-MAC devices whose firmware disassociates
+stations autonomously -- and otherwise deliberately ignores DEL_STATION
+in AP mode as the completion of hostapd's own request.  This HAL is
+always userspace-SME, so drop the AP-mode synthesis entirely.  The
+bridge-fdb and 4addr cleanup stay; genuine client-initiated
+disassoc/deauth still arrive as management frames through
+process_frame_mgmt().
+
+Upstream-Status: Pending
+---
+diff --git a/wifi_hal_nl80211_events.c b/wifi_hal_nl80211_events.c
+--- a/wifi_hal_nl80211_events.c
++++ b/wifi_hal_nl80211_events.c
+@@ -179,7 +179,7 @@
+         return;
+     }
+     memcpy(mac, nla_data(attr), sizeof(mac_address_t));
+-    wifi_hal_error_print("%s:%d: DEL station:%s, sending event: EVENT_DISASSOC\n", __func__, __LINE__,
++    wifi_hal_dbg_print("%s:%d: DEL station:%s\n", __func__, __LINE__,
+         to_mac_str(mac, mac_str));
+ 
+     snprintf(br_buff,sizeof(br_buff),"bridge fdb del %s dev %s master",to_mac_str(mac, mac_str),interface->name); //deleting fdb entries in bridge
+@@ -190,9 +190,23 @@
+ #if defined(BANANA_PI_PORT) && (HOSTAPD_VERSION >= 211)
+         supplicant_event(&interface->wpa_s, EVENT_DISASSOC, &event);
+ #endif
+-    } else {
+-        wpa_supplicant_event(&interface->u.ap.hapd, EVENT_DISASSOC, &event);
+     }
++    /* For an AP interface whose SME runs in userspace, a kernel DEL_STATION
++     * notification is only the completion of a removal hostapd itself
++     * requested -- reflecting it back as EVENT_DISASSOC makes hostapd tear
++     * down a session it did not lose.  handle_auth()'s clean-slate removal of
++     * a stale kernel entry then echoes back ~10 ms later and destroys the
++     * just-authenticated session, so the client's reassociation is rejected
++     * with reason 6 (class-2 frame from non-authenticated STA).  Seen every
++     * time a client is steered back to an AP inside the stale-association
++     * window after a silent BTM roam-away.
++     *
++     * Upstream driver_nl80211_event.c gates this exact synthesis on
++     * drv->device_ap_sme (full-MAC devices whose firmware disassociates
++     * stations autonomously) and otherwise ignores DEL_STATION in AP mode.
++     * This HAL is always userspace-SME, so do not synthesize the event at
++     * all.  Genuine client-initiated disassoc/deauth still arrive as
++     * management frames through process_frame_mgmt(). */
+     //Remove the station from the bridge, if present
+     wifi_hal_configure_sta_4addr_to_bridge(interface, 0);
+ #endif

@@ -1,0 +1,52 @@
+Fix crash: platform_create_vap() (BananaPi platform.c) calls
+for_each_mld_link(link_bss, hapd) unconditionally once
+wifi_hal_is_mld_enabled(interface) is true. That macro expands (see
+rdk-wifi-libhostap's src/ap/hostapd.h, CONFIG_IEEE80211BE branch) to:
+
+    dl_list_for_each(partner, &self->mld->links, struct hostapd_data, link)
+
+i.e. it dereferences hapd->mld with no NULL check inside the macro
+itself. Under mac80211_hwsim no real MLO/802.11be link negotiation
+ever runs, so hapd->mld is never allocated even though
+wifi_hal_is_mld_enabled() can still return true purely from static
+config (vap_info.u.bss_info.mld_info.common_info.mld_enable) -- so
+this hits a NULL->mld dereference.
+
+Confirmed via a second core dump (after the earlier 0004 map-NULL fix
+resolved the first crash): SIGSEGV back in platform_create_vap, exact
+line for_each_mld_link(link_bss, hapd) at platform.c:169.
+
+Every other call site of for_each_mld_link in this codebase already
+guards it with "hapd->mld != NULL" first -- see
+set_mld_shared_resources()/clear_mld_shared_resources() in
+src/wifi_hal_hostapd.c. This patch applies the same, already-established
+guard here.
+
+---
+ platform/banana-pi/platform.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -166,12 +166,14 @@
+
+         /* beacon has to be set twice to make it broadcast */
+         hapd = &interface->u.ap.hapd;
+-        for_each_mld_link(link_bss, hapd) {
+-            if (ieee802_11_set_beacon(link_bss) != 0) {
+-                wifi_hal_error_print("%s:%d: Failed to set beacon for interface: %s link id: %d\n",
+-                    __func__, __LINE__, wifi_hal_get_interface_name(interface),
+-                    link_bss->mld_link_id);
+-                return -1;
++        if (hapd->mld != NULL) {
++            for_each_mld_link(link_bss, hapd) {
++                if (ieee802_11_set_beacon(link_bss) != 0) {
++                    wifi_hal_error_print("%s:%d: Failed to set beacon for interface: %s link id: %d\n",
++                        __func__, __LINE__, wifi_hal_get_interface_name(interface),
++                        link_bss->mld_link_id);
++                    return -1;
++                }
+             }
+         }
+     }

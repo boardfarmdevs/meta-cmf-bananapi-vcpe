@@ -1,0 +1,61 @@
+From: Rob Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] ap: defer WDS-STA (4-address) setup until the station is authorized
+
+On mac80211_hwsim, creating the 4-address WDS STA netdev at (re)association -- before
+the 4-way handshake -- makes the kernel route the station's pre-authorization EAPOL
+(notably M4) to the WDS netdev instead of the AP's authenticator, so the 4-way times
+out with reason 15. Gate the WDS-STA setup in handle_assoc_cb() on WLAN_STA_AUTHORIZED
+and re-issue it from ap_sta_set_authorized() once the station authorizes, so the 4-way
+completes first and the bridged 4-address path is established afterwards.
+---
+--- a/source/hostap-2.11/src/ap/ieee802_11.c
++++ b/source/hostap-2.11/src/ap/ieee802_11.c
+@@ -6950,12 +6950,18 @@
+ 		sta->flags |= WLAN_STA_WDS;
+ 	}
+ 
+-	/* WPS not supported on backhaul BSS. Disable 4addr mode on fronthaul */
+-	if ((sta->flags & WLAN_STA_WDS) ||
++	/* WPS not supported on backhaul BSS. Disable 4addr mode on fronthaul.
++	 * meta-cmf-bananapi-vcpe: defer WDS-STA (4-address) netdev setup until the station is
++	 * AUTHORIZED (4-way complete). Creating it here at (re)association -- before the 4-way --
++	 * makes mac80211_hwsim route the STA's pre-auth EAPOL (notably M4) to the WDS netdev before
++	 * the authenticator receives it, so the 4-way times out (reason 15). ap_sta_set_authorized()
++	 * re-issues this setup once the station authorizes. */
++	if ((sta->flags & WLAN_STA_AUTHORIZED) &&
++	    ((sta->flags & WLAN_STA_WDS) ||
+ 	    (sta->flags & WLAN_STA_MULTI_AP &&
+ 	     (hapd->conf->multi_ap & BACKHAUL_BSS) &&
+ 	     hapd->conf->wds_sta &&
+-	     !(sta->flags & WLAN_STA_WPS))) {
++	     !(sta->flags & WLAN_STA_WPS)))) {
+ 		int ret;
+ 		char ifname_wds[IFNAMSIZ + 1];
+ 
+--- a/source/hostap-2.11/src/ap/sta_info.c
++++ b/source/hostap-2.11/src/ap/sta_info.c
+@@ -1707,6 +1707,24 @@
+ 	if (!ap_sta_set_authorized_flag(hapd, sta, authorized))
+ 		return;
+ 	ap_sta_set_authorized_event(hapd, sta, authorized);
++
++	/* meta-cmf-bananapi-vcpe: create the 4-address WDS STA netdev only once the station is
++	 * AUTHORIZED (4-way complete) -- handle_assoc_cb() defers it to here so the STA's pre-auth
++	 * EAPOL (M4) is not diverted to the WDS netdev before the authenticator gets it (reason 15
++	 * on mac80211_hwsim). No-op for non-WDS / non-backhaul stations. */
++	if (authorized &&
++	    ((sta->flags & WLAN_STA_WDS) ||
++	     (sta->flags & WLAN_STA_MULTI_AP &&
++	      (hapd->conf->multi_ap & BACKHAUL_BSS) &&
++	      hapd->conf->wds_sta &&
++	      !(sta->flags & WLAN_STA_WPS)))) {
++		char ifname_wds[IFNAMSIZ + 1];
++
++		wpa_printf(MSG_DEBUG, "Enable 4-address WDS mode for authorized STA "
++			   MACSTR " (aid %u)", MAC2STR(sta->addr), sta->aid);
++		if (hostapd_set_wds_sta(hapd, ifname_wds, sta->addr, sta->aid, 1) == 0)
++			hostapd_set_wds_encryption(hapd, sta, ifname_wds);
++	}
+ }
+ 
+ 

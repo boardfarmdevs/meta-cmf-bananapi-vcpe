@@ -1,0 +1,43 @@
+Fix EasyMesh/hwsim container boot: get_rdk_radio_indices() only returns
+entries from l_radio_interface_map (built from InterfaceMap.json) whose
+configured phy_index matches the *runtime-detected* phy index
+(g_wifi_hal.radio_info[0].index, read from the real NL80211_ATTR_WIPHY
+via netlink). On real BananaPi R4 hardware that's always phy index 0,
+matching InterfaceMap.json's hardcoded "phy_index": 0 for every radio
+entry, so the comparison always trivially passes there.
+
+Inside an LXD container using mac80211_hwsim (moved in via a `physical`
+nic device), the phy keeps its host-side hwsim allocation index (e.g.
+40) instead of being renumbered to 0 -- confirmed the kernel refuses to
+even *rename* a wiphy to "phy0" while the host's real WiFi hardware
+already holds that name (EINVAL, wiphy names are unique kernel-wide,
+not per network-namespace). So the comparison never matches and
+map_rdk_radios_and_indexes() fails with "Failure to fetch radio map for
+the phy!", and wifi_hal_init aborts before onewifi ever comes up.
+
+FEATURE_SINGLE_PHY mode (this is the BananaPi/single-phy comment right
+above this function) means there is, by construction, only ever one
+phy in play -- the phy_index parameter is redundant under this mode,
+since every radio entry in the config belongs to that one phy whatever
+its real kernel-assigned index happens to be. Drop the comparison
+instead of trying to match it.
+
+---
+ wifi_hal_nl80211_utils.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/wifi_hal_nl80211_utils.c b/wifi_hal_nl80211_utils.c
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -1921,7 +1921,10 @@ int get_rdk_radio_indices(unsigned int phy_index, int *rdk_radio_indices, int
+     max_radios = *num_radios_mapped;
+
+     for (i = 0; i < get_sizeof_radio_interfaces_map(); i++) {
+-        if (l_radio_interface_map[i].phy_index == phy_index) {
++        // FEATURE_SINGLE_PHY: there is only ever one phy, so every configured
++        // radio entry belongs to it regardless of its real kernel-assigned
++        // index (may not be 0, e.g. under mac80211_hwsim in a container).
++        if (1) {
+             if (num_radios < max_radios) {
+                 rdk_radio_indices[num_radios] = l_radio_interface_map[i].radio_index;
+                 num_radios++;

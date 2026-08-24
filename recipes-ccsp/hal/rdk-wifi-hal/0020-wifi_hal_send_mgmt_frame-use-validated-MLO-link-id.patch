@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RDK-BPI EasyMesh Investigation <noreply@example.com>
+Date: Sun, 9 Aug 2026 22:38:00 +0000
+Subject: [PATCH] wifi_hal_send_mgmt_frame: use the validated MLO link id
+
+The management-frame transmit path initializes link_id to zero and changes it
+to not-applicable only when wifi_hal_is_mld_enabled() is false.  A VAP whose
+data model enables MLO but which has no established MLO link therefore emits
+NL80211_ATTR_MLO_LINK_ID=0.  The kernel rejects the frame with -EINVAL.
+
+Use wifi_hal_get_mld_link_id(), like the other management-frame paths.  The
+accessor returns the established link id and, with the existing layer fix,
+maps the data model's unset value to NL80211_DRV_LINK_ID_NA.
+
+Upstream-Status: Pending
+---
+ wifi_hal.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/wifi_hal.c b/wifi_hal.c
+index 1b68868..c812f1e 100644
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -4710,8 +4710,5 @@ int wifi_hal_send_mgmt_frame(int apIndex,mac_address_t sta, const unsigned char
+ #ifdef HOSTAPD_2_11 // 2.11
+-    // Action frames will get rejected by kernel if we pass a valid link_id for non-MLO case.
+-    if(!wifi_hal_is_mld_enabled(interface)) {
+-        link_id = -1;
+-    }
++    link_id = wifi_hal_get_mld_link_id(interface);
+     res = wifi_drv_send_mlme(interface, buf, 24 + data_len, 1, freq, NULL, 0, 0, wait, link_id);
+ #elif HOSTAPD_2_10 // 2.10
+     res = wifi_drv_send_mlme(interface, buf, 24 + data_len, 1, freq, NULL, 0, 0, wait);
+-- 
+2.43.0
