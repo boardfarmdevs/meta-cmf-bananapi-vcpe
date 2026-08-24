@@ -58,6 +58,44 @@ done
 CT="wlan-client${INST:+-$INST}"
 PROFILE="$CT"
 
+# Resolve a band request against the channels which the live mesh is actually
+# advertising.  A band preference is not a channel preference: pinning 6 GHz
+# to one historical frequency (6135 MHz) made a valid 5955 MHz lab impossible
+# to join.  Keep every observed frequency in the selected band so a client can
+# still roam between APs if their same-band channels later differ.
+active_band_frequencies() {
+    local band=$1 container frequencies
+    for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+        lxc info "$container" >/dev/null 2>&1 || continue
+        lxc exec "$container" -- iw dev 2>/dev/null || true
+    done | awk -v band="$band" '
+        $1 == "channel" {
+            frequency=$3
+            gsub(/[^0-9]/, "", frequency)
+            if ((band == "2.4" && frequency >= 2400 && frequency < 2500) ||
+                (band == "5"   && frequency >= 5000 && frequency < 5955) ||
+                (band == "6"   && frequency >= 5955 && frequency <= 7115))
+                seen[frequency]=1
+        }
+        END {
+            separator=""
+            for (frequency in seen) {
+                values[++count]=frequency + 0
+            }
+            for (i=1; i<=count; i++)
+                for (j=i+1; j<=count; j++)
+                    if (values[j] < values[i]) {
+                        value=values[i]; values[i]=values[j]; values[j]=value
+                    }
+            for (i=1; i<=count; i++) {
+                printf "%s%d", separator, values[i]
+                separator=" "
+            }
+            if (count)
+                printf "\n"
+        }'
+}
+
 # Initialize a container without physical hwsim devices in its profile, attach
 # the requested radios to the stopped instance, and only then start it. LXD 6.7
 # on rev130 can wedge image materialization if a physical hwsim NIC is already
@@ -146,11 +184,17 @@ build-image)
     ;;
 up)
     SSID="${2:-PlumeSim}"; PSK="$3"
+    EXPECTED_FREQS=
     case "$BAND" in
-        auto) FREQ_DIRECTED=; EXPECTED_FREQ= ;;
-        2.4)  EXPECTED_FREQ=2437; FREQ_DIRECTED='\n scan_freq=2437\n freq_list=2437' ;;
-        5)    EXPECTED_FREQ=5180; FREQ_DIRECTED='\n scan_freq=5180\n freq_list=5180' ;;
-        6)    EXPECTED_FREQ=6135; FREQ_DIRECTED='\n scan_freq=6135\n freq_list=6135' ;;
+        auto) FREQ_DIRECTED= ;;
+        2.4|5|6)
+            EXPECTED_FREQS=$(active_band_frequencies "$BAND")
+            if [ -z "$EXPECTED_FREQS" ]; then
+                echo "$CT: no active $BAND GHz AP frequency was found" >&2
+                exit 1
+            fi
+            FREQ_DIRECTED="\n scan_freq=$EXPECTED_FREQS\n freq_list=$EXPECTED_FREQS"
+            ;;
         *) echo "$CT: unsupported band '$BAND' (use auto, 2.4, 5 or 6)" >&2; exit 2 ;;
     esac
     if [ "$SECURITY" = auto ]; then
@@ -283,13 +327,16 @@ up)
         echo "$CT: failed to associate with $SSID" >&2
         exit 1
     }
-    if [ -n "$EXPECTED_FREQ" ]; then
+    if [ -n "$EXPECTED_FREQS" ]; then
         actual_freq=$(lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null \
             | awk '/freq:/ {print $2; exit}')
-        [ "$actual_freq" = "$EXPECTED_FREQ" ] || {
-            echo "$CT: expected band $BAND ($EXPECTED_FREQ MHz), associated at ${actual_freq:-unknown}" >&2
-            exit 1
-        }
+        case " $EXPECTED_FREQS " in
+            *" $actual_freq "*) ;;
+            *)
+                echo "$CT: expected band $BAND (${EXPECTED_FREQS// /,} MHz), associated at ${actual_freq:-unknown}" >&2
+                exit 1
+                ;;
+        esac
     fi
     if ! lxc exec "$CT" -- ip -4 -o addr show wlan0 2>/dev/null | grep -q 'inet '; then
         lxc exec "$CT" -- udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true
