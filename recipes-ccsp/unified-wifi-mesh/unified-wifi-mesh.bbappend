@@ -1,42 +1,66 @@
 FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
 
+# Keep source patches in dependency order in one place. Comments below retain
+# the evidence for each patch without silently changing application order.
+EASYMESH_CORE_PATCHES = " \
+    file://0001-ec_pa_configurator-fix-std-min-type-mismatch-on-32bit.patch \
+    file://0002-securityTypeMap-WPA2-Personal-is-WPA2PSK-not-WPA2.patch \
+    file://0003-topo-query-do-not-wait-for-disabled-radios.patch \
+    file://0004-crypto-decrypt-final-block-into-the-callers-buffer.patch \
+    file://0005-fix-heap-overflow-building-the-btm-request-action-frame.patch \
+    file://0006-tests-honor-caller-supplied-googletest-filter.patch \
+    file://0007-steering-serialize-request-entirely-from-command-params.patch \
+    file://0008-tests-add-steering-request-serializer-regression-tests.patch \
+    file://0009-steering-restore-state-after-client-steering.patch \
+    file://0010-agent-send-BTM-request-on-the-source-VAP.patch \
+    file://0011-em_configuration-6ghz-upgrade-guard-match-wpa2psk.patch \
+    file://0011-steering-route-1905-ACK-to-the-requesting-radio.patch \
+    file://0012-agent-subscribe-all-AP-action-frame-Rx.patch \
+    file://0013-steering-acknowledge-and-complete-BTM-report.patch \
+    file://0015-cli-steer-sta-send-the-callers-request.patch \
+    file://0016-net-node-size-tree-string-buffer.patch \
+    file://0017-dm-enforce-single-association-invariant.patch \
+    file://0018-al-sap-retry-registration-during-1905-startup.patch \
+    file://0019-agent-exclude-disabled-radio-from-onboarding.patch \
+    file://0021-agent-resend-m1-on-lost-m2.patch \
+    file://0022-ctrl-elect-active-topology-query-radio.patch \
+    file://0023-wsc-refresh-registrar-key-per-m1.patch \
+    file://0024-agent-send-sta-topology-notify-synchronously.patch \
+    file://0025-controller-size-sta-frame-body-hex-buffer.patch \
+    file://0026-orch-complete-cancelled-commands-independently.patch \
+    file://0027-metrics-size-ap-response-for-model.patch \
+"
+SRC_URI += "${EASYMESH_CORE_PATCHES}"
+
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t
 # (unsigned int) and WIFI_MTU_SIZE's unsigned long are distinct types - see patch
 # header. This project's usual targets (64-bit/arm64) don't hit it since size_t is
 # unsigned long there too.
-SRC_URI += "file://0001-ec_pa_configurator-fix-std-min-type-mismatch-on-32bit.patch"
 
 # 6 GHz WSC-M2 auth-upgrade guard also matches EM_AUTH_WPA2PSK (see patch header):
 # NetworkSSIDList "WPA2 Personal" -> 0x20 (not 0x10) via 0002-securityTypeMap, so the 6 GHz
 # M2 wrongly carried WPA2-PSK; the leaf's encode_security_object() then rejects it. Lets a
 # WPA2 backhaul coexist with a WPA3/SAE 6 GHz fronthaul (guard upgrades 6 GHz only).
-SRC_URI += "file://0011-em_configuration-6ghz-upgrade-guard-match-wpa2psk.patch"
-SRC_URI += "file://0020-ctrl-recover-wsc_m2_sent-radio-in-topo-sync.patch"
 # A multi-radio extender runs WSC for all radios at once; the controller sends each M2
 # only once and never retransmits, so a single lost/mistimed M2 strands one radio in
 # wsc_m2_pending -- its VAP subdoc is never pushed, wifi_hal_createVAP is never called,
 # and that fronthaul radio never beacons (random "straggler" on fresh onboarding). The
 # agent now re-sends M1 (bounded) while waiting, and the controller re-issues M2.
-SRC_URI += "file://0021-agent-resend-m1-on-lost-m2.patch"
 # When several radios reach topo_sync_pending together, the vector-front radio may
 # already have left the active em_config candidate set. Elect an active candidate
 # to send the Topology Query so the device's BSSList cannot remain unpopulated.
-SRC_URI += "file://0022-ctrl-elect-active-topology-query-radio.patch"
 # A WSC M1 retransmission must create a new registrar transaction.  Reusing a
 # registrar DH key that OpenSSL has rejected makes every bounded M1 retry fail
 # identically and leaves that radio permanently unconfigured.
-SRC_URI += "file://0023-wsc-refresh-registrar-key-per-m1.patch"
 
 # A live association can arrive while an extender radio is still finishing AP
 # capability/topology synchronization.  Permit this fire-and-forget STA-list
 # command during onboarding, send it synchronously, and restore the prior radio
 # state so the event cannot expire or disrupt the onboarding exchange.
-SRC_URI += "file://0024-agent-send-sta-topology-notify-synchronously.patch"
 
 # A 512-byte association frame needs 1025 bytes when stored as hexadecimal plus
 # NUL.  The old 1024-byte scratch buffer made hex() reject the maximum-sized
 # frame and fed uninitialized data to SQL, dropping that client from STAList.
-SRC_URI += "file://0025-controller-size-sta-frame-body-hex-buffer.patch"
 
 # The account/database creation in setup_mysql_db_pre.sh (run from em_ctrl.service's
 # ExecStartPre) is guarded by /nvram/mysql_db_account_exists, but the MariaDB datadir lives
@@ -319,7 +343,6 @@ do_install_append() {
 # sent, the AP sees only probe requests, and the STA retries forever. Only reachable
 # because this build forces WPA2 for mac80211_hwsim; upstream's WPA3 Personal default maps
 # correctly. See patch header.
-SRC_URI += "file://0002-securityTypeMap-WPA2-Personal-is-WPA2PSK-not-WPA2.patch"
 
 # The agent refuses to answer a Topology Query until every one of its radios has
 # reached bssconfig_ind. The 6GHz radio is disabled here (ccsp-one-wifi patch 0006,
@@ -329,7 +352,6 @@ SRC_URI += "file://0002-securityTypeMap-WPA2-Personal-is-WPA2PSK-not-WPA2.patch"
 # rides in that response, the controller's BSSList stays empty for every radio,
 # no station is ever attributed to a BSS, and steer_sta cannot work. Skip disabled
 # radios rather than blocking on them. See patch header.
-SRC_URI += "file://0003-topo-query-do-not-wait-for-disabled-radios.patch"
 
 # platform_cipher_decrypt() discards the last block of every decryption and still
 # counts it as valid plaintext. With padding enabled (which AES-128-CBC callers
@@ -341,7 +363,6 @@ SRC_URI += "file://0003-topo-query-do-not-wait-for-disabled-radios.patch"
 # were correct and last three were ciphertext -- matching no interface, yet
 # always starting 02:00:00, which is what made them look like plausible MACs.
 # Generic crypto defect, all platforms, every caller. See patch header.
-SRC_URI += "file://0004-crypto-decrypt-final-block-into-the-callers-buffer.patch"
 
 # THE reason EasyMesh client steering never worked: the agent ABORTS on every
 # steer. analyze_btm_request_action_frame() sizes its buffer for the action
@@ -353,7 +374,6 @@ SRC_URI += "file://0004-crypto-decrypt-final-block-into-the-callers-buffer.patch
 # written at offset 68, OVERFLOW=24. Size the allocation for the overlay; 'len',
 # frame_len and the memcpy are correct as they stand and are left alone.
 # Platform-independent -- nothing here is hwsim- or container-specific.
-SRC_URI += "file://0005-fix-heap-overflow-building-the-btm-request-action-frame.patch"
 
 
 # The controller rewrote the source BSSID of every Steering Request. The TLV
@@ -366,7 +386,6 @@ SRC_URI += "file://0005-fix-heap-overflow-building-the-btm-request-action-frame.
 # zeroes the reserved nibble (previously whatever the caller's buffer held) and
 # byte-swaps the steering opportunity window, which was the only two-octet field
 # in the TLV not being htons()'d. Platform-independent.
-SRC_URI += "file://0007-steering-serialize-request-entirely-from-command-params.patch"
 
 # Regression tests for the serializer above, and the test-runner fix needed to
 # actually run them: tests/main.cpp installed its built-in negative filter after
@@ -374,28 +393,21 @@ SRC_URI += "file://0007-steering-serialize-request-entirely-from-command-params.
 # selected and every run executed all ~2900 tests -- aborting inside unrelated
 # pre-existing failures long before reaching these seven. Both are test-only;
 # the test target stays behind EM_UNITTEST, which is false for shipped images.
-SRC_URI += "file://0006-tests-honor-caller-supplied-googletest-filter.patch"
-SRC_URI += "file://0008-tests-add-steering-request-serializer-regression-tests.patch"
 
 # Client steering must remain eligible after the controller reaches topology
 # synchronized, and completion or cancellation must restore the displaced
 # stable state instead of leaving the radio pending or forcing configured.
-SRC_URI += "file://0009-steering-restore-state-after-client-steering.patch"
 
 # Build and transmit a valid BTM Request from the request's actual source VAP.
-SRC_URI += "file://0010-agent-send-BTM-request-on-the-source-VAP.patch"
 
 # Generic 1905 ACKs do not identify a radio. Correlate the steering request MID
 # across the source agent's radios so the ACK reaches the radio which sent it.
-SRC_URI += "file://0011-steering-route-1905-ACK-to-the-requesting-radio.patch"
 
 # BTM responses arrive on the source fronthaul VAP. Subscribe to action-frame
 # receive events on every AP-mode BSS instead of only the first backhaul AP.
-SRC_URI += "file://0012-agent-subscribe-all-AP-action-frame-Rx.patch"
 
 # Complete BTM-report orchestration with the protocol-required 1905 ACK and
 # route that ACK by MID to the radio which has the report pending.
-SRC_URI += "file://0013-steering-acknowledge-and-complete-BTM-report.patch"
 
 # A commanded (scripted/UI) client steer could not be triggered from the CLI at
 # all on this build -- two libemcli bugs, plus a heap overflow that aborted it:
@@ -410,8 +422,6 @@ SRC_URI += "file://0013-steering-acknowledge-and-complete-BTM-report.patch"
 #        sent. Size the buffer to the subdoc buffer it is copied into.
 # With both, a ClientSteer JSON drives a full BTM steer end to end -- verified:
 # the client roams controller<->extender, both directions, repeatably.
-SRC_URI += "file://0015-cli-steer-sta-send-the-callers-request.patch"
-SRC_URI += "file://0016-net-node-size-tree-string-buffer.patch"
 
 # OneWifi reports client associations as per-event deltas and EasyMesh never
 # reconciles, so a missed disassociation delta leaves a stale Associated=1 row
@@ -419,13 +429,11 @@ SRC_URI += "file://0016-net-node-size-tree-string-buffer.patch"
 # the controller reject steers whose source no longer matches the stale row.
 # Enforce the single-association invariant at store time: a fresh Associated=1
 # record for a STA deletes every other attribution of that STA (map + DB).
-SRC_URI += "file://0017-dm-enforce-single-association-invariant.patch"
 
 # The ieee1905 forking units can report started while their Unix socket paths are stale
 # or not yet accepting. Both EasyMesh binaries let the resulting AlServiceException
 # escape from startup, producing SIGABRT/core dumps. Retry the existing registration
 # transaction for a bounded interval and fail startup normally if it never succeeds.
-SRC_URI += "file://0018-al-sap-retry-registration-during-1905-startup.patch"
 
 # Gate B (review P1/P2 #4): patch 0003 stops the controller's Topology-Query
 # handler blocking on a disabled radio, but the agent still created a full
@@ -434,7 +442,6 @@ SRC_URI += "file://0018-al-sap-retry-registration-during-1905-startup.patch"
 # a disabled radio at the source (em_orch_agent radio-insert loop skips create_node
 # when radio_info.enabled is false); the radio stays represented in the data model
 # but gets no state machine, so no M1 is generated. Generalises beyond 6 GHz.
-SRC_URI += "file://0019-agent-exclude-disabled-radio-from-onboarding.patch"
 
 # ---------------------------------------------------------------------------
 # EasyMesh web UI (onewifi_em_cli, port 8888).
