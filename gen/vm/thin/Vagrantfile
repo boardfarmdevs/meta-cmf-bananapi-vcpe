@@ -1,0 +1,30 @@
+# frozen_string_literal: true
+
+VM_NAME = ENV.fetch("EASYMESH_THIN_VM_NAME", "easymesh-thin")
+KERNEL_ARCHIVE = File.expand_path(".cache/linux-7.0.0-28-hwsim.tar.zst", __dir__)
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_version = "202510.26.0"
+  config.vm.hostname = VM_NAME
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.ssh.forward_agent = true
+  config.ssh.keep_alive = true
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = VM_NAME
+    vb.gui = false
+    vb.memory = ENV.fetch("EASYMESH_VM_MEMORY", "8192").to_i
+    vb.cpus = ENV.fetch("EASYMESH_VM_CPUS", "6").to_i
+    vb.customize ["modifyvm", :id, "--audio-enabled", "off"]
+  end
+
+  config.vm.provision "kernel-archive",
+                      type: "file",
+                      source: KERNEL_ARCHIVE,
+                      destination: "/tmp/linux-7.0.0-28-hwsim.tar.zst"
+  config.vm.provision "thin-base",
+                      type: "shell",
+                      path: "scripts/prepare-thin.sh",
+                      reboot: true
+end

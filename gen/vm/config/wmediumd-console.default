@@ -1,0 +1,9 @@
+# VM profile: VirtualBox exposes guest port 8890 only through its explicitly
+# configured host forwarding rule. Keep typed controls disabled.
+WMEDIUMD_CONSOLE_LISTEN=0.0.0.0:8890
+WMEDIUMD_CONSOLE_SOCKET=/run/meta-cmf-wmediumd/observer/telemetry.sock
+WMEDIUMD_CONSOLE_IDENTITY_INVENTORY=/run/meta-cmf-wmediumd/identity-inventory.json
+WMEDIUMD_CONSOLE_CONFIG=/run/meta-cmf-wmediumd/wmediumd.cfg
+WMEDIUMD_CONSOLE_PID_FILE=/run/meta-cmf-wmediumd/wmediumd.pid
+WMEDIUMD_CONSOLE_DAEMON_MANIFEST=/run/meta-cmf-wmediumd/wmediumd-binary.sha256
+WMEDIUMD_CONSOLE_EXTRA_ARGS=

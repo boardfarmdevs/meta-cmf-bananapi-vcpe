@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "run with sudo: sudo easymesh-labctl ${1:-status}" >&2
+    exit 1
+fi
+
+runtime=/usr/local/sbin/easymesh-lab-runtime
+audit=/usr/local/sbin/easymesh-health-audit
+
+wait_for_start() {
+    systemctl start boardfarm-lab.service
+    systemctl start easymesh-lxd-docker-forward.service
+    systemctl start easymesh-lab.service
+}
+
+case "${1:-status}" in
+warm-start|start)
+    # On a normal VM reboot systemd already starts this chain. This command is
+    # safe to run afterward and blocks until any in-progress start completes.
+    wait_for_start
+    "$runtime" status
+    ;;
+status)
+    systemctl --no-pager --full status \
+        boardfarm-lab.service \
+        easymesh-lxd-docker-forward.service \
+        easymesh-lab.service || true
+    "$runtime" status
+    ;;
+check)
+    "$audit"
+    ;;
+steer-return)
+    sudo -H -u vagrant bash /home/vagrant/return-steering-test.sh
+    ;;
+steer-scale)
+    iterations=${2:-3}
+    [[ "$iterations" =~ ^[1-9][0-9]*$ ]]
+    sudo -H -u vagrant bash /home/vagrant/scale-steering-test.sh "$iterations"
+    ;;
+*)
+    echo 'usage: easymesh-labctl {warm-start|start|status|check|steer-return|steer-scale [iterations]}' >&2
+    exit 2
+    ;;
+esac

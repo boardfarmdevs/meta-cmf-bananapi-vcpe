@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+configured_parameter() {
+    local key=$1 fallback=$2 value
+    value=$(awk -v key="$key" '
+        $1 == "options" && $2 == "mac80211_hwsim" {
+            for (field = 3; field <= NF; field++) {
+                if ($field ~ ("^" key "=")) {
+                    sub(/^[^=]*=/, "", $field)
+                    value = $field
+                }
+            }
+        }
+        END { print value }
+    ' /etc/modprobe.d/easymesh-hwsim.conf 2>/dev/null || true)
+    printf '%s\n' "${value:-$fallback}"
+}
+
+# Validate the pool against the persistent module configuration rather than a
+# historical profile size.  Small currently uses 32 radios; larger accepted
+# profiles can change the same modprobe file without replacing this helper.
+expected_radios=$(configured_parameter radios 32)
+expected_channels=$(configured_parameter channels 3)
+expected_regtest=$(configured_parameter regtest 5)
+
+test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$expected_radios"
+test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = "$expected_channels"
+test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest"
+
+# A reboot recreates the configured pool as wlan0..wlanN. LXD profiles refer
+# to stable virt-wlanN parents, so establish those names before LXD starts
+# instances.
+#
+# During first installation the lab is already running and LXD has moved some
+# PHYs into container network namespaces. Only the interfaces still present in
+# the host namespace are visible below. Rename and validate that subset; the
+# module parameters above validate the size of the complete persistent pool.
+for phy in /sys/class/ieee80211/phy*; do
+    netdevs=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+    netdev=$(printf '%s\n' "$netdevs" | grep -m1 '^virt-wlan[0-9]\+$' || true)
+    if [ -z "$netdev" ]; then
+        netdev=$(printf '%s\n' "$netdevs" | grep -m1 '^wlan[0-9]\+$' || true)
+        if [ -n "$netdev" ]; then
+            ip link set "$netdev" down
+            ip link set "$netdev" name "virt-$netdev"
+            netdev="virt-$netdev"
+        fi
+    fi
+    if [ -z "$netdev" ]; then
+        echo "no stable hwsim pool interface on ${phy##*/}: $netdevs" >&2
+        exit 1
+    fi
+    netdevs=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+
+    # A stopped or interrupted container returns its complete wiphy, including
+    # OneWifi-created VAPs.  This helper only runs before normal LXD startup or
+    # at the explicit idle point in the fresh redeployer, so those extra VAPs
+    # cannot belong to a live node and must not poison the reusable pool.
+    while read -r stale; do
+        [ -n "$stale" ] || continue
+        [ "$stale" = "$netdev" ] && continue
+        iw dev "$stale" del
+    done <<< "$netdevs"
+    ip link set "$netdev" up
+done
+
+host_phys=$(find /sys/class/ieee80211 -mindepth 1 -maxdepth 1 -name 'phy*' | wc -l)
+host_radios=$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)
+test "$host_radios" -eq "$host_phys"

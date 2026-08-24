@@ -1,0 +1,46 @@
+# frozen_string_literal: true
+
+VM_NAME = ENV.fetch("EASYMESH_VM_NAME", "easymesh-lab")
+WEBUI_HOST_PORT = ENV.fetch("EASYMESH_WEBUI_PORT", "18888").to_i
+WEBUI_HOST_IP = ENV.fetch("EASYMESH_WEBUI_HOST_IP", "127.0.0.1")
+CONSOLE_HOST_PORT = ENV.fetch("WMEDIUMD_CONSOLE_PORT", "18890").to_i
+CONSOLE_HOST_IP = ENV.fetch("WMEDIUMD_CONSOLE_HOST_IP", WEBUI_HOST_IP)
+ARTIFACTS_DIR = File.expand_path(ENV.fetch("EASYMESH_ARTIFACTS_DIR", "artifacts"), __dir__)
+DEFAULT_BOX_NAME = Dir.glob(File.join(ARTIFACTS_DIR, "easymesh-thin-*.box")).empty? ?
+                   "cmf/easymesh-lab" : "cmf/easymesh-thin"
+BOX_NAME = ENV.fetch("EASYMESH_BOX_NAME", DEFAULT_BOX_NAME)
+
+Vagrant.configure("2") do |config|
+  config.vm.box = BOX_NAME
+  config.vm.hostname = VM_NAME
+  config.ssh.forward_agent = true
+  if Dir.exist?(ARTIFACTS_DIR)
+    config.vm.synced_folder ARTIFACTS_DIR,
+                            "/vagrant-artifacts",
+                            type: "virtualbox",
+                            mount_options: ["ro"]
+  end
+  config.vm.network "forwarded_port",
+                    guest: 8888,
+                    host: WEBUI_HOST_PORT,
+                    host_ip: WEBUI_HOST_IP,
+                    id: "easymesh-webui",
+                    auto_correct: false
+  config.vm.network "forwarded_port",
+                    guest: 8890,
+                    host: CONSOLE_HOST_PORT,
+                    host_ip: CONSOLE_HOST_IP,
+                    id: "wmediumd-console",
+                    auto_correct: false
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = VM_NAME
+    vb.gui = false
+    vb.memory = ENV.fetch("EASYMESH_VM_MEMORY", "6144").to_i
+    vb.cpus = ENV.fetch("EASYMESH_VM_CPUS", "6").to_i
+    vb.customize ["modifyvm", :id, "--audio-enabled", "off"]
+  end
+
+  config.ssh.keep_alive = true
+  config.vm.graceful_halt_timeout = 240
+end
