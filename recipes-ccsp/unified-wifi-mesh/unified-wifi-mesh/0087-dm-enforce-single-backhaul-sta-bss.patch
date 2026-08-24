@@ -1,0 +1,165 @@
+From 0000000000000000000000000000000000000087 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 23:15:00 -0700
+Subject: [PATCH] dm: replace stale BSSID for one logical VAP
+
+When an extender moves its mesh STA to a different upstream BSSID, the BSS
+commit path keys the record by that upstream BSSID and appends a second
+station-mode BSS.  The old gateway-facing record remains enabled and
+get_bsta_bss_info() returns whichever record happens to be first.  The
+controller can consequently rebuild an extender below Agent-1 even while the
+live link and the newly reported BSS both point at another extender.
+
+A radio has one backhaul STA VAP, and an AP VAP is identified by its stable
+radio, mode and SSID even if hwsim assigns a new BSSID after recreation.
+Before committing a newly reported BSS, remove a different BSSID for that
+logical VAP.  Apply the same invariant to the global BSS list so stale rows
+are deleted from BSSList rather than returning after a controller restart.
+
+Station comparison includes device, RUID, backhaul haul type and STA mode.
+AP comparison includes device, RUID, AP mode and SSID, so distinct SSIDs and
+links on other radios are unaffected.
+
+Upstream-Status: Pending
+---
+ inc/dm_bss_list.h        |  7 +++++++
+ src/dm/dm_bss_list.cpp  | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/dm/dm_easy_mesh.cpp | 33 +++++++++++++++++++++++++++++++++
+ 3 files changed, 86 insertions(+)
+
+diff --git a/inc/dm_bss_list.h b/inc/dm_bss_list.h
+index 1111111..2222222 100644
+--- a/inc/dm_bss_list.h
++++ b/inc/dm_bss_list.h
+@@ -192,5 +192,12 @@ public:
+ 	 */
+ 	int set_config(db_client_t& db_client, dm_bss_t& bss, void *parent_id);
++
++	/**
++	 * Delete an older BSSID for the same logical STA or AP VAP.
++	 * The BSS key contains the upstream BSSID, so this must run before
++	 * inserting the replacement record.
++	 */
++	void enforce_single_vap_bss(db_client_t& db_client, dm_bss_t& bss);
+     
+ 	/**!
+ 	 * @brief Retrieves the configuration details from a JSON object.
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index 3333333..4444444 100644
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -77,14 +77,59 @@ int dm_bss_list_t::set_config(db_client_t& db_client, dm_bss_t& bss, void *paren
+     dm_orch_type_t op;  
+ 
+     //printf("%s:%d: Parent: %s \n", __func__, __LINE__, (char *)parent_id);
+	parse_bss_id_from_key(static_cast<char *> (parent_id), &bss.m_bss_info.id);
+ 
++    enforce_single_vap_bss(db_client, bss);
+     update_db(db_client, (op = get_dm_orch_type(db_client, bss)), bss.get_bss_info());
+     update_list(bss, op);
+                         
+     return 0;
+ }
+ 
++void dm_bss_list_t::enforce_single_vap_bss(db_client_t& db_client,
++    dm_bss_t& bss)
++{
++    dm_bss_t *current;
++    dm_bss_t stale[16];
++    unsigned int num_stale = 0;
++    const bool incoming_sta = bss.m_bss_info.vap_mode == em_vap_mode_sta &&
++        bss.m_bss_info.id.haul_type == em_haul_type_backhaul;
++    const bool incoming_ap = bss.m_bss_info.vap_mode == em_vap_mode_ap &&
++        bss.m_bss_info.ssid[0] != '\0';
++
++    if (!incoming_sta && !incoming_ap) {
++        return;
++    }
++
++    current = get_first_bss();
++    while (current != NULL) {
++        const bool same_kind = current->m_bss_info.vap_mode ==
++                bss.m_bss_info.vap_mode &&
++            ((incoming_sta && current->m_bss_info.id.haul_type ==
++                em_haul_type_backhaul) ||
++             (incoming_ap && strncmp(current->m_bss_info.ssid,
++                bss.m_bss_info.ssid,
++                sizeof(bss.m_bss_info.ssid)) == 0));
++        if (same_kind &&
++                memcmp(current->m_bss_info.id.dev_mac,
++                    bss.m_bss_info.id.dev_mac, sizeof(mac_address_t)) == 0 &&
++                memcmp(current->m_bss_info.ruid.mac,
++                    bss.m_bss_info.ruid.mac, sizeof(mac_address_t)) == 0 &&
++                memcmp(current->m_bss_info.bssid.mac,
++                    bss.m_bss_info.bssid.mac, sizeof(mac_address_t)) != 0 &&
++                num_stale < (sizeof(stale) / sizeof(stale[0]))) {
++            stale[num_stale++] = *current;
++        }
++        current = get_next_bss(current);
++    }
++
++    for (unsigned int i = 0; i < num_stale; i++) {
++        em_printfout("Removing stale BSSID for logical VAP before replacement");
++        update_db(db_client, dm_orch_type_db_delete, stale[i].get_bss_info());
++        update_list(stale[i], dm_orch_type_db_delete);
++    }
++}
++
+ int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void *parent_id)
+ {
+     cJSON *obj;
+@@ -97,6 +135,7 @@ int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void
+     for (i = 0; i < size; i++) {
+         obj = cJSON_GetArrayItem(obj_arr, i);
+		bss.decode(obj, parent_id);
++        enforce_single_vap_bss(db_client, bss);
+		update_db(db_client, (op = get_dm_orch_type(db_client, bss)), bss.get_bss_info());
+		update_list(bss, op);
+     }
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index 5555555..6666666 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -203,7 +203,40 @@ bool dm_easy_mesh_t::commit_config(dm_easy_mesh_t& dm, em_commit_target_t target
+         printf("%s:%d Commit radio=%s\n", __func__, __LINE__,target.params);
+         string_to_macbytes(reinterpret_cast<char *> (target.params),mac);
+ 		for (i = 0; i < dm.m_num_bss; i++) {
+ 			if (memcmp(mac, dm.get_bss(i)->get_bss_info()->ruid.mac, sizeof(mac_address_t)) == 0) {
++                em_bss_info_t *incoming = dm.get_bss(i)->get_bss_info();
++
++                /* A changed BSSID identifies the same logical VAP when the
++                 * radio/mode and STA haul type or AP SSID are unchanged. */
++                const bool incoming_sta =
++                    incoming->vap_mode == em_vap_mode_sta &&
++                    incoming->id.haul_type == em_haul_type_backhaul;
++                const bool incoming_ap =
++                    incoming->vap_mode == em_vap_mode_ap &&
++                    incoming->ssid[0] != '\0';
++                if (incoming_sta || incoming_ap) {
++                    for (j = 0; j < m_num_bss;) {
++                        em_bss_info_t *current = get_bss(j)->get_bss_info();
++                        const bool same_kind = current->vap_mode ==
++                                incoming->vap_mode &&
++                            ((incoming_sta && current->id.haul_type ==
++                                em_haul_type_backhaul) ||
++                             (incoming_ap && strncmp(current->ssid,
++                                incoming->ssid,
++                                sizeof(incoming->ssid)) == 0));
++                        if (same_kind &&
++                                memcmp(current->ruid.mac, incoming->ruid.mac,
++                                    sizeof(mac_address_t)) == 0 &&
++                                memcmp(current->bssid.mac, incoming->bssid.mac,
++                                    sizeof(mac_address_t)) != 0) {
++                            memmove(&m_bss[j], &m_bss[j + 1],
++                                (m_num_bss - j - 1) * sizeof(m_bss[0]));
++                            m_num_bss--;
++                            continue;
++                        }
++                        j++;
++                    }
++                }
+ 				for (j = 0; j < m_num_bss; j++) {
+ 					if ((memcmp(get_bss(j)->get_bss_info()->bssid.mac, dm.get_bss(i)->get_bss_info()->bssid.mac, sizeof(mac_address_t)) == 0)){
+ 						m_bss[j] = dm.m_bss[i];
+-- 
+2.43.0

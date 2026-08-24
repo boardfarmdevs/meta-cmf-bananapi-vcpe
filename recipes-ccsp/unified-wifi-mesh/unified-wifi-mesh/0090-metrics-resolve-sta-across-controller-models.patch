@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000090 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 00:23:00 -0700
+Subject: [PATCH] metrics: resolve STA across controller device models
+
+An AP Metrics Response is handled by the radio state machine that received
+the CMDU, but the associated STA can live in another device data model.  The
+exact lookup therefore silently drops valid link metrics even though the
+agent supplied a valid STA address, BSSID and RCPI.
+
+Search all controller device models for the exact STA/BSSID pair.  Because
+topology and metrics are independent CMDUs, also fall back to the unique STA
+address while an association or backhaul-parent change is converging.  The
+controller already enforces one active association for a STA, so this cannot
+select a second live owner.  Mark the model that actually owns the record for
+database persistence and log genuinely unknown reports.
+
+This makes ordinary client metrics robust to model placement and allows
+backhaul STA RCPI to survive the same controller path as fronthaul metrics.
+
+Upstream-Status: Pending
+---
+ src/em/metrics/em_metrics.cpp | 51 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 49 insertions(+), 2 deletions(-)
+
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 1111111..2222222 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -51,12 +51,57 @@
+ 
+ static     const unsigned char em_vendor_oui[EM_VENDOR_OUI_SIZE] = {0xd8, 0x9c, 0x8e};
+ 
++static dm_sta_t *find_metrics_sta(em_mgr_t *mgr, dm_easy_mesh_t *preferred,
++                                  mac_address_t sta_mac, bssid_t bssid,
++                                  dm_easy_mesh_t **owner)
++{
++    dm_easy_mesh_t *candidate;
++    dm_sta_t *sta;
++
++    *owner = preferred;
++    sta = preferred->find_sta(sta_mac, bssid);
++    if (sta != NULL) {
++        return sta;
++    }
++
++    /* A metrics response is handled by the radio state machine that received
++     * it, while the controller keeps the associated STA in the owning
++     * device's data model.  Search all device models before treating a valid
++     * report as unknown. */
++    candidate = mgr->get_first_dm();
++    while (candidate != NULL) {
++        sta = candidate->find_sta(sta_mac, bssid);
++        if (sta != NULL) {
++            *owner = candidate;
++            return sta;
++        }
++        candidate = mgr->get_next_dm(candidate);
++    }
++
++    /* Topology and AP metrics are independent CMDUs.  During a roam or
++     * backhaul reparent, the STA can still be keyed by its previous BSSID.
++     * The controller enforces one active association per STA, so its unique
++     * address remains an authoritative fallback until topology catches up. */
++    candidate = mgr->get_first_dm();
++    while (candidate != NULL) {
++        sta = candidate->find_sta(sta_mac);
++        if (sta != NULL) {
++            *owner = candidate;
++            return sta;
++        }
++        candidate = mgr->get_next_dm(candidate);
++    }
++
++    return NULL;
++}
++
+ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+                                                     unsigned int tlv_len)
+ {
+     em_assoc_sta_link_metrics_t *sta_metrics;
+     em_assoc_link_metrics_t *metrics;
+     dm_sta_t *sta;
++    dm_easy_mesh_t *sta_dm;
+     unsigned int i;
+     dm_easy_mesh_t *dm;
+ 
+@@ -87,8 +132,12 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+ 
+     for (i = 0; i < sta_metrics->num_bssids; i++) {
+         metrics = &sta_metrics->assoc_link_metrics[i];
+-        sta = dm->find_sta(sta_metrics->sta_mac, metrics->bssid);
++        sta = find_metrics_sta(get_mgr(), dm, sta_metrics->sta_mac,
++                               metrics->bssid, &sta_dm);
+         if (sta == NULL) {
++            em_printfout("Associated STA metrics target not found: sta=%s bssid=%s",
++                util::mac_to_string(sta_metrics->sta_mac).c_str(),
++                util::mac_to_string(metrics->bssid).c_str());
+             continue;
+         }
+ 
+@@ -99,6 +148,7 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+             snprintf(sta->m_sta_info.timestamp, sizeof(sta->m_sta_info.timestamp),
+                      "%s", received_at);
+         }
++        sta_dm->set_db_cfg_param(db_cfg_type_sta_metrics_update, "");
+     }
+ 
+     return 0;
+-- 
+2.43.0

@@ -79,7 +79,33 @@ EASYMESH_CORE_PATCHES = " \
     file://0075-cli-key-topology-radio-tree-by-name.patch \
     file://0076-controller-complete-candidate-command-on-response.patch \
     file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
-    "
+    file://0078-topology-response-resolve-owner-by-association-age.patch \
+    file://0079-cli-distinguish-iot-clients.patch \
+    file://0080-cli-place-clients-inside-ssid-bubbles.patch \
+    file://0081-cli-show-live-client-signal-in-topology.patch \
+    file://0082-cli-drag-clients-and-highlight-steering.patch \
+    file://0083-cli-show-authoritative-backhaul-channel.patch \
+    file://0084-cli-update-signal-arcs-in-place.patch \
+    file://0085-cli-show-exact-backhaul-parent.patch \
+    file://0086-cli-stabilize-layout-and-show-client-channel.patch \
+    file://0087-dm-enforce-single-backhaul-sta-bss.patch \
+    file://0088-topology-resolve-parent-from-ap-bss-only.patch \
+    file://0089-cli-show-live-backhaul-signal-and-contain-hover.patch \
+    file://0090-metrics-resolve-sta-across-controller-models.patch \
+    file://0091-topology-decode-live-backhaul-parent.patch \
+    file://0092-metrics-seed-associated-sta-on-first-report.patch \
+    file://0093-topology-resolve-backhaul-sta-without-local-mac.patch \
+    file://0094-topology-serialize-tree-rebuild-and-encode.patch \
+    file://0096-topology-refresh-periodic-response.patch \
+    file://0097-topology-prune-stale-operational-bss.patch \
+    file://0098-agent-accept-mesh-sta-subdoc-name.patch \
+    file://0099-capability-report-actual-backhaul-sta.patch \
+    file://0100-cli-key-backhaul-metrics-by-current-link.patch \
+    file://0101-topology-reconcile-single-live-backhaul-sta.patch \
+    file://0102-agent-resolve-mesh-sta-radio-identity.patch \
+    file://0103-wsc-provision-all-enabled-hauls.patch \
+    file://0104-db-reconcile-device-bss-snapshot.patch \
+"
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t
@@ -592,7 +618,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -614,6 +640,8 @@ do_install_append_qemux86bpibroadband() {
         ${S}/src/rdkb-cli/static/script.js \
         ${S}/src/rdkb-cli/static/style.css \
         ${D}/usr/ccsp/EasyMesh/static/
+    install -m 0644 ${WORKDIR}/iot-device.svg \
+        ${D}/usr/ccsp/EasyMesh/static/icons/iot-device.svg
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
 

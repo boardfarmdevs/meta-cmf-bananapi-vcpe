@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000100 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 02:40:00 -0700
+Subject: [PATCH] cli: key backhaul metrics by the current link
+
+Reparenting convergence can temporarily leave associated-STA records for a
+backhaul STA under both its former and current parent AP.  Indexing metrics by
+STA address alone therefore made the topology signal depend on map iteration
+order and could display the former link's RSSI on the new topology edge.
+
+Key the dashboard metric by both endpoints: the child's backhaul STA and the
+upstream AP BSSID already selected for the topology edge.  This preserves the
+normal asynchronous convergence while guaranteeing that a presented signal
+belongs to the link being drawn.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/main.go | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 86cb2897..737305aa 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3285,7 +3285,8 @@ func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]Backha
+ 					} else {
+ 						continue
+ 					}
+-					metrics[strings.ToLower(sta.MACAddress)] = BackhaulLinkMetric{
++					key := strings.ToLower(sta.MACAddress) + "@" + strings.ToLower(bss.BSSID)
++					metrics[key] = BackhaulLinkMetric{
+ 						RCPI: rcpi, RSSI: rssi, ObservedAt: sta.TimeStamp,
+ 					}
+ 				}
+@@ -4973,7 +4974,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+ 				"backhaulSTA":   backhaulSTA,
+                 "mediaType":     mediaType,
+ 			}
+-			if metric, found := backhaulMetrics[backhaulSTA]; found {
++			if metric, found := backhaulMetrics[backhaulSTA+"@"+upstreamBSSID]; found {
+ 				edge["rcpi"] = metric.RCPI
+ 				edge["rssi"] = metric.RSSI
+ 				if metric.ObservedAt != "" {
+-- 
+2.43.0
