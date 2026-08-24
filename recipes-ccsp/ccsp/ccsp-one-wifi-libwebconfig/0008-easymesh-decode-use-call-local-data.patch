@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000008 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 12:25:00 -0700
+Subject: [PATCH] webconfig: serialize the EasyMesh translation cache
+
+The EasyMesh translation wrappers intentionally reuse one decoded OneWifi
+radio/VAP snapshot: subsequent WSC M2 encodes merge controller credentials
+into that snapshot.  The same wrappers are called concurrently for the three
+radio M2 exchanges and RBUS events, however.  A radio could overwrite or free
+another radio's work object or returned encoded buffer, leaving that radio
+unconfigured and the controller with a zero-BSS node.
+
+Serialize access to the shared snapshot.  Copy every encoded result into
+thread-local return storage before releasing the lock, so its documented
+post-call lifetime no longer depends on another thread.  This preserves the
+required OneWifi snapshot while making concurrent decode/encode operations
+deterministic.
+
+This is a generic WebConfig concurrency fix and is not specific to hwsim or
+containers.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_easymesh_translator.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/source/webconfig/wifi_easymesh_translator.c b/source/webconfig/wifi_easymesh_translator.c
+index 1111111..2222222 100644
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -53,6 +53,9 @@
+ static webconfig_subdoc_data_t  webconfig_easymesh_data;
+ /* global pointer to webconfig subdoc encoded data to avoid memory loss when passing data to  */
+ static char *webconfig_easymesh_raw_data_ptr = NULL;
++static pthread_mutex_t webconfig_easymesh_lock = PTHREAD_MUTEX_INITIALIZER;
++/* Returned data remains valid until the same callback thread encodes again. */
++static __thread char *webconfig_easymesh_thread_raw_data_ptr;
+ 
+ static wifi_radio_capabilities_t *
+ get_radio_cap_from_radio_index(wifi_platform_property_t *wifi_prop,
+@@ -118,12 +121,15 @@ webconfig_error_t webconfig_easymesh_decode(webconfig_t *config, const char *str,
+         webconfig_external_easymesh_t *data,
+         webconfig_subdoc_type_t *type)
+ {
++    pthread_mutex_lock(&webconfig_easymesh_lock);
++
+     webconfig_easymesh_data.u.decoded.external_protos = (webconfig_external_easymesh_t *)data;
+     webconfig_easymesh_data.descriptor = webconfig_data_descriptor_translate_to_easymesh;
+ 
+     if (webconfig_decode(config, &webconfig_easymesh_data, str) != webconfig_error_none) {
+         //        *data = NULL;
+         wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: Easymesh decode failed\n", __func__, __LINE__);
++        pthread_mutex_unlock(&webconfig_easymesh_lock);
+         return webconfig_error_decode;
+     }
+ 
+@@ -131,6 +137,7 @@ webconfig_error_t webconfig_easymesh_decode(webconfig_t *config, const char *str,
+     *type = webconfig_easymesh_data.type;
+     //debug_external_protos(&webconfig_easymesh_data, __func__, __LINE__);
+     webconfig_data_free(&webconfig_easymesh_data);
++    pthread_mutex_unlock(&webconfig_easymesh_lock);
+     return webconfig_error_none;
+ }
+ 
+@@ -140,6 +147,8 @@ webconfig_error_t webconfig_easymesh_encode(webconfig_t *config,
+         webconfig_subdoc_type_t type,
+         char **str)
+ {
++    pthread_mutex_lock(&webconfig_easymesh_lock);
++
+     wifi_util_info_print(WIFI_WEBCONFIG,"%s:%d: Easymesh encode subdoc type %d\n", __func__, __LINE__, type);
+ 
+     webconfig_easymesh_data.u.decoded.external_protos = (webconfig_external_easymesh_t *)data;
+@@ -149,6 +158,7 @@ webconfig_error_t webconfig_easymesh_encode(webconfig_t *config,
+     if (webconfig_encode(config, &webconfig_easymesh_data, type) != webconfig_error_none) {
+         *str = NULL;
+         wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: Easymesh encode failed\n", __func__, __LINE__);
++        pthread_mutex_unlock(&webconfig_easymesh_lock);
+         return webconfig_error_encode;
+     }
+ 
+@@ -158,7 +168,15 @@ webconfig_error_t webconfig_easymesh_encode(webconfig_t *config,
+     }
+     webconfig_easymesh_raw_data_ptr = webconfig_easymesh_data.u.encoded.raw;
+ 
+-    *str = webconfig_easymesh_raw_data_ptr;
++    free(webconfig_easymesh_thread_raw_data_ptr);
++    webconfig_easymesh_thread_raw_data_ptr = strdup(webconfig_easymesh_raw_data_ptr);
++    if (webconfig_easymesh_thread_raw_data_ptr == NULL) {
++        *str = NULL;
++        pthread_mutex_unlock(&webconfig_easymesh_lock);
++        return webconfig_error_encode;
++    }
++    *str = webconfig_easymesh_thread_raw_data_ptr;
++    pthread_mutex_unlock(&webconfig_easymesh_lock);
+     return webconfig_error_none;
+ }
+ // sets the default values in em_bss_info_t Easymesh structure
+-- 
+2.43.0

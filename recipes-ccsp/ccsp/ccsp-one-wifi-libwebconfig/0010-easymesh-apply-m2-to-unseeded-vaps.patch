@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000010 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 14:21:00 -0700
+Subject: [PATCH] easymesh: apply M2 credentials to unseeded VAPs
+
+The per-radio EasyMesh translator looked up each OneWifi VAP by BSSID in the
+EasyMesh data model and skipped the VAP before applying the Controller's M2
+credential when that row did not exist.  A fresh radio is precisely where a
+target fronthaul BSS may not exist yet.  This circular dependency left the
+2.4 and 6 GHz primary VAPs on their image-default SSID, after which the
+Controller correctly rejected them as SSID mismatches.
+
+Detect a matching M2 haul credential independently of the optional model
+row.  Continue to merge existing EasyMesh BSS state when present, but allow
+the authoritative M2 credential to initialize an otherwise unseeded VAP.
+Unsupported VAPs with neither source are still skipped.  Include the VAP
+name and index in the diagnostic so future mapping failures identify their
+target without exposing credential material.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_easymesh_translator.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/source/webconfig/wifi_easymesh_translator.c b/source/webconfig/wifi_easymesh_translator.c
+index 1111111..2222222 100644
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -2998,6 +2998,7 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_su
+     mac_address_t mac;
+     em_haul_type_t haultype;
+     webconfig_error_t ret = webconfig_error_none;
++    bool has_m2_config;
+ 
+     if (decoded_params == NULL) {
+         wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: decoded_params is NULL\n", __func__, __LINE__);
+@@ -3051,6 +3052,18 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_su
+     for (j = 0; j < radio->vaps.num_vaps; j++) {
+         //Get the corresponding vap
+         vap = &vap_map->vap_array[j];
++        has_m2_config = false;
++        haultype = em_haul_type_max;
++        convert_vap_name_to_hault_type(&haultype, (char *)vap->vap_name);
++        if (radio_config != NULL && haultype != em_haul_type_max) {
++            for (k = 0; k < radio_config->noofbssconfig; k++) {
++                if (radio_config->haultype[k] == haultype) {
++                    has_m2_config = true;
++                    break;
++                }
++            }
++        }
++
+         if (vap->vap_mode == wifi_vap_mode_ap) {
+             vap_info_row = proto->get_bss_info_with_mac(proto->data_model, vap->u.bss_info.bssid);
+         } else if (vap->vap_mode == wifi_vap_mode_sta) {
+@@ -3061,10 +3074,15 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_su
+             vap_info_row = NULL;
+         }
+         if (vap_info_row == NULL) {
+-            wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: em_vap_info is NULL\n", __func__, __LINE__);
+-            continue;
++            wifi_util_error_print(WIFI_WEBCONFIG,
++                "%s:%d: no EasyMesh BSS row for VAP %s (index %u)\n",
++                __func__, __LINE__, vap->vap_name, vap->vap_index);
++            if (has_m2_config == false) {
++                continue;
++            }
+         }
+ 
++        if (vap_info_row != NULL) {
+         if (is_vap_private(wifi_prop, vap->vap_index) == TRUE) {
+             if (translate_em_bss_to_private_vap_info(vap,  vap_info_row) != webconfig_error_none) {
+                 wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: Translation from EM to  private vap failed %d\n", __func__, __LINE__, vap->vap_index);
+@@ -3099,6 +3117,7 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_su
+             wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: Unknown vap type %d\n", __func__, __LINE__, vap->vap_index);
+             return webconfig_error_translate_from_easymesh;
+         }
++        }
+ 
+         if (radio_config != NULL) {
+             for(k = 0; k < radio_config->noofbssconfig; k++) {
+-- 
+2.43.0

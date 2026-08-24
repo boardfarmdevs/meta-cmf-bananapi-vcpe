@@ -19,6 +19,14 @@ WIFI_DB_HWSIM_NO_6GHZ_PATCH := "${THISDIR}/${BPN}/0006-wifi_db-disable-6ghz-only
 WIFI_DB_HWSIM_SAE_STA_PATCH := "${THISDIR}/${BPN}/0007-wifi_db-disable-sae-wpa3-sta-defaults-under-hwsim.patch"
 WIFI_DB_HWSIM_20MHZ_PATCH := "${THISDIR}/${BPN}/0008-wifi_db-clamp-channelwidth-20mhz-under-hwsim.patch"
 WIFI_ASSOC_RETURN_DELTA_PATCH := "${THISDIR}/${BPN}/0010-assoc-publish-returning-client-delta.patch"
+WIFI_ASSOC_LIVE_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0011-assoc-mark-monitor-missing-client-inactive.patch"
+WIFI_EM_DUPLICATE_AL_MAC_PATCH := "${THISDIR}/${BPN}/0012-webconfig-prefer-sta-for-duplicate-al-mac.patch"
+WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH := "${THISDIR}/${BPN}/0013-ap-metrics-index-radio-config-by-radio-index.patch"
+WIFI_EM_CLIENT_UPTIME_PATCH := "${THISDIR}/${BPN}/0014-easymesh-copy-client-association-uptime.patch"
+WIFI_NASTA_RESPONSE_NAME_PATCH := "${THISDIR}/${BPN}/0015-nasta-label-response-subdoc.patch"
+WIFI_STA_BSSID_SET_PATCH := "${THISDIR}/${BPN}/0016-rbus-apply-mesh-sta-bssid.patch"
+WIFI_STA_STATUS_PUBLISH_PATCH := "${THISDIR}/${BPN}/0017-publish-mesh-sta-on-connection-change.patch"
+WIFI_STA_PARENT_CACHE_PATCH := "${THISDIR}/${BPN}/0018-cache-confirmed-mesh-sta-parent.patch"
 python do_patch_append() {
     import subprocess
     s = d.getVar('S')
@@ -94,6 +102,56 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: publishing association delta for returning clients")
     with open(d.getVar('WIFI_ASSOC_RETURN_DELTA_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # The persistent association map can retain a station after a silent roam.
+    # Make the failed live-monitor lookup explicit so full snapshots can exclude
+    # retained history without deleting it.
+    bb.note("meta-cmf-bananapi-vcpe: marking monitor-missing association history inactive")
+    with open(d.getVar('WIFI_ASSOC_LIVE_SNAPSHOT_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # Linux bridges inherit a port MAC, so the extender AL MAC can appear on
+    # both brlan0 and its wireless backhaul STA.  Make the Init_dml readiness
+    # check select the known STA instead of depending on getifaddrs() order.
+    bb.note("meta-cmf-bananapi-vcpe: resolving duplicate EasyMesh AL MAC to the backhaul STA")
+    with open(d.getVar('WIFI_EM_DUPLICATE_AL_MAC_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # AP Metrics requests can enumerate RUIDs in a different order from the
+    # platform radio array.  Keep the decoded radio config indexed by physical
+    # radio_index, as required by the encoder, so per-VAP/per-STA metrics are
+    # not silently omitted.
+    bb.note("meta-cmf-bananapi-vcpe: fixing AP-metrics radio-config indexing")
+    with open(d.getVar('WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # OneWifi already measures time associated; preserve it when translating
+    # the association snapshot into the EasyMesh station data model.
+    bb.note("meta-cmf-bananapi-vcpe: forwarding client association uptime to EasyMesh")
+    with open(d.getVar('WIFI_EM_CLIENT_UPTIME_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # The NaSta encoder publishes a response on Device.WiFi.EM.NaStaResponse,
+    # but labelled the document as the original request.  Consumers must be
+    # able to distinguish the asynchronous result from the method input.
+    bb.note("meta-cmf-bananapi-vcpe: labelling NaSta event payload as a response")
+    with open(d.getVar('WIFI_NASTA_RESPONSE_NAME_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # Device.WiFi.STA.{i}.Bssid was registered writable but its setter ignored
+    # the value.  Deliver validated writes to the existing mesh-extender BSSID
+    # change state machine so a controller can select a wireless backhaul parent.
+    if d.getVar('MACHINE') == 'qemux86bpiap':
+        bb.note("meta-cmf-bananapi-vcpe: applying mesh-STA RBUS BSSID selection")
+        with open(d.getVar('WIFI_STA_BSSID_SET_PATCH'), 'rb') as f:
+            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        # A confirmed mesh-STA connection updates the OneWifi cache.  Publish
+        # that change as mesh_sta (not the generic dml document ignored by the
+        # EasyMesh agent) so runtime reparenting updates the controller model.
+        bb.note("meta-cmf-bananapi-vcpe: publishing mesh-STA connection changes")
+        with open(d.getVar('WIFI_STA_STATUS_PUBLISH_PATCH'), 'rb') as f:
+            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        # The mesh-ext state machine previously refreshed its cached BSSID
+        # only during initial connection establishment.  A live reparent is a
+        # connected-to-connected transition, so cache every confirmed parent
+        # before publishing the mesh_sta document above.
+        bb.note("meta-cmf-bananapi-vcpe: caching confirmed live mesh-STA parents")
+        with open(d.getVar('WIFI_STA_PARENT_CACHE_PATCH'), 'rb') as f:
+            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -107,7 +165,11 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH WIFI_DB_HWSIM_STANDARDS_PATCH \
     WIFI_DB_HWSIM_SAE_PATCH WIFI_DB_HWSIM_NO_6GHZ_PATCH \
     WIFI_DB_HWSIM_SAE_STA_PATCH WIFI_DB_HWSIM_20MHZ_PATCH \
-    WIFI_ASSOC_RETURN_DELTA_PATCH"
+    WIFI_ASSOC_RETURN_DELTA_PATCH WIFI_ASSOC_LIVE_SNAPSHOT_PATCH \
+    WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
+    WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH \
+    WIFI_STA_BSSID_SET_PATCH WIFI_STA_STATUS_PUBLISH_PATCH \
+    WIFI_STA_PARENT_CACHE_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -117,6 +179,14 @@ do_patch[file-checksums] += "${WIFI_DB_HWSIM_NO_6GHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_HWSIM_SAE_STA_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_HWSIM_20MHZ_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_RETURN_DELTA_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_ASSOC_LIVE_SNAPSHOT_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_DUPLICATE_AL_MAC_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_CLIENT_UPTIME_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_NASTA_RESPONSE_NAME_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_STA_BSSID_SET_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_STA_STATUS_PUBLISH_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_STA_PARENT_CACHE_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.
