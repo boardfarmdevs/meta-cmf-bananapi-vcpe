@@ -105,6 +105,14 @@ EASYMESH_CORE_PATCHES = " \
     file://0102-agent-resolve-mesh-sta-radio-identity.patch \
     file://0103-wsc-provision-all-enabled-hauls.patch \
     file://0104-db-reconcile-device-bss-snapshot.patch \
+    file://0105-agent-serialize-and-retry-wsc-subdocs.patch \
+    file://0106-controller-serialize-autoconfig-and-parse-profile.patch \
+    file://0107-agent-retry-busy-wsc-subdoc.patch \
+    file://0108-agent-service-wsc-retry-after-orchestration.patch \
+    file://0109-agent-preserve-wsc-recovery-past-dev-init.patch \
+    file://0110-agent-preserve-wsc-recovery-past-renew.patch \
+    file://0111-agent-recover-orphaned-wsc-subdocs.patch \
+    file://0112-agent-finish-onewifi-callback-at-bss-config.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

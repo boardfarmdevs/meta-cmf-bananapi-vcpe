@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000106 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 15:10:00 -0700
+Subject: [PATCH] controller: serialize autoconfiguration model creation
+
+A fresh four-extender VM reconstruction delivered two band-specific
+Autoconfiguration Search CMDUs for the same new agent eight milliseconds
+apart. Both entered the controller's data-model creation path. The first
+attempt also stored a garbage negative Profile value, and the second search
+ended in a glibc heap-corruption assertion. systemd restarted the controller,
+but the extender was left as a discovery-only DeviceList record and could not
+complete onboarding.
+
+The Profile TLV is one octet while em_profile_type_t is an enum backed by an
+int. get_profile() copied only the TLV byte into an otherwise uninitialized
+enum, leaving its upper bytes undefined. Initialize and bounds-check both
+profile readers and reject malformed TLV lengths.
+
+Also serialize controller selection/model mutation for Autoconfiguration
+Search and WSC messages. Multi-radio agents legitimately issue these messages
+concurrently, while the controller data-model and radio hash maps are shared
+and are not safe for concurrent creation. The lock covers only node selection
+and creation; normal per-radio message processing remains concurrent.
+
+Upstream-Status: Pending
+---
+ inc/em_ctrl.h        |  1 +
+ src/ctrl/em_ctrl.cpp |  8 +++++++-
+ src/em/em_msg.cpp    | 17 +++++++++++++----
+ 3 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index 1111111..2222222 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -51,5 +51,6 @@ class em_ctrl_t : public em_mgr_t {
+     };
+     std::mutex m_liveness_mutex;
++    std::mutex m_autoconfig_mutex;
+     std::map<std::string, agent_liveness_t> m_agent_liveness;
+ 
+ 	/**!
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 3333333..4444444 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -973,5 +973,6 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em
+     em_commit_info_t dm_commit;
+     mac_address_t fallback_ruid = {0};
++    unsigned short msg_type;
+ 
+     assert(len > ((sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))));
+     if (len < ((sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)))) {
+@@ -987,8 +988,14 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em
+     }
+     
+     cmdu = reinterpret_cast<em_cmdu_t *> (data + sizeof(em_raw_hdr_t));
++    msg_type = htons(cmdu->type);
++    std::unique_lock<std::mutex> autoconfig_lock(m_autoconfig_mutex, std::defer_lock);
++    if (msg_type == em_msg_type_autoconf_search ||
++            msg_type == em_msg_type_autoconf_wsc) {
++        autoconfig_lock.lock();
++    }
+ 
+-    switch (htons(cmdu->type)) {
++    switch (msg_type) {
+         case em_msg_type_autoconf_search:
+             if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)), len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_freq_band(&band) == false) {
+                 return NULL;
+diff --git a/src/em/em_msg.cpp b/src/em/em_msg.cpp
+index 5555555..6666666 100644
+--- a/src/em/em_msg.cpp
++++ b/src/em/em_msg.cpp
+@@ -91,11 +91,16 @@ bool em_msg_t::get_profile(em_profile_type_t *profile)
+     em_tlv_t    *tlv;
+     unsigned int len;
+ 
++    *profile = em_profile_type_reserved;
+     tlv = reinterpret_cast<em_tlv_t *> (m_buff); len = m_len;
+     while ((tlv->type != em_tlv_type_eom) && (len > 0)) {
+         if (tlv->type == em_tlv_type_profile) {
+-            memcpy(profile, tlv->value, htons(tlv->len));
+-            return true;
++            if (htons(tlv->len) != sizeof(unsigned char)) {
++                return false;
++            }
++            *profile = static_cast<em_profile_type_t>(tlv->value[0]);
++            return *profile >= em_profile_type_1 &&
++                *profile <= em_profile_type_3;
+         }
+ 
+         len -= static_cast<unsigned int> (sizeof(em_tlv_t) + htons(tlv->len));
+@@ -244,9 +249,13 @@ bool em_msg_t::get_profile_type(em_profile_type_t *profile)
+     *profile = em_profile_type_reserved;
+     tlv = reinterpret_cast<em_tlv_t *> (m_buff); len = m_len;
+     while ((tlv->type != em_tlv_type_eom) && (len > 0)) {
+         if (tlv->type == em_tlv_type_profile) {
+-            memcpy(reinterpret_cast<unsigned char *> (profile), tlv->value, htons(tlv->len));
+-            return true;
++            if (htons(tlv->len) != sizeof(unsigned char)) {
++                return false;
++            }
++            *profile = static_cast<em_profile_type_t>(tlv->value[0]);
++            return *profile >= em_profile_type_1 &&
++                *profile <= em_profile_type_3;
+         }
+         len -= static_cast<unsigned int> (sizeof(em_tlv_t) + htons(tlv->len));
+         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+-- 
+2.43.0
