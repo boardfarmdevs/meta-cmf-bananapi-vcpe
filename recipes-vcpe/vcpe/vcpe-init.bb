@@ -15,6 +15,8 @@ SRC_URI = " \
     file://SaveConfigFile.sh \
     file://GetConfigFile.sh \
     file://rssfree.sh \
+    file://pss.sh \
+    file://memdetail.sh \
 "
 
 inherit systemd
@@ -68,6 +70,8 @@ do_install() {
     install -m 0755 ${WORKDIR}/GetConfigFile.sh ${D}${bindir}/GetConfigFile
 
     install -m 0755 ${WORKDIR}/rssfree.sh ${D}${bindir}/rssfree
+    install -m 0755 ${WORKDIR}/pss.sh ${D}${bindir}/pss.sh
+    install -m 0755 ${WORKDIR}/memdetail.sh ${D}${bindir}/memdetail.sh
 }
 
 FILES:${PN} += " \
@@ -83,4 +87,6 @@ FILES:${PN} += " \
     ${bindir}/SaveConfigFile \
     ${bindir}/GetConfigFile \
     ${bindir}/rssfree \
+    ${bindir}/pss.sh \
+    ${bindir}/memdetail.sh \
 "
