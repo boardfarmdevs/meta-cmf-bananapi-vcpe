@@ -18,6 +18,7 @@ gradients that are independent from the steering decision being evaluated.
 | [demo-scenarios.md](demo-scenarios.md) | Operator-led rev130 demonstrations: manual steer, live RCPI, client carousel, extender outage and full reconstruction |
 | [packet-capture.md](packet-capture.md) | How to capture plaintext EasyMesh, agent/client traffic and safely handle the raw 802.11 boundary |
 | [wmediumd.md](wmediumd.md) | What the medium can simulate, how radios and frames are resolved, and which static and live controls remain |
+| [wmediumd-observability.md](wmediumd-observability.md) | How the Go wmediumd Console exposes live medium paths, rules, packet outcomes and bounded typed controls |
 | [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
 | [metrics-reporting.md](metrics-reporting.md) | Why STA/AP metrics were inactive, how they are configured, and how to verify the live observation path |
 | [memory-footprint.md](memory-footprint.md) | Measured whole-container and per-process memory during cold reconstruction and convergence |
@@ -39,44 +40,58 @@ than beside current operating instructions.
 
 ```text
 source             codex/0815-clean
-patch series       EasyMesh through 0104, IEEE1905 through 0006
+patch series       EasyMesh through 0113, IEEE1905 through 0006
 image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
 model              5 agents / 15 radios / 50 BSSs
-clients            20 active WLAN clients (10 private + 10 IoT) on rev130
+clients            accepted 20-client profile (10 private + 10 IoT)
 medium             patched multichannel wmediumd
 ```
 
 The current deployment deliberately records each role independently. The
-controller contains EasyMesh through `0104`, IEEE1905 through `0006`, OneWifi
-through `0018`, libwebconfig through `0010`, Wi-Fi HAL through `0026`, the
-serialized log4c category-factory fix, and the cross-user SNMP self-heal fix.
-The extender artifact contains every AP-side change needed by the same lab;
-the final controller-only metrics confirmation and database reconciliation do
-not require a second AP rebuild.
+controller artifact contains EasyMesh through `0113`, including end-to-end
+backhaul-signal freshness and the current WebUI/API helper. The extender
+artifact contains the complete Agent recovery series through `0112`.
+IEEE1905 remains at `0006`; the previously accepted OneWifi, libwebconfig,
+Wi-Fi HAL, log4c and SNMP fixes remain in both roles as applicable.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2` | `c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2` | `0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2` | `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
 
-The accepted platform source is recorded by commit `d353c65`; the matching
-host-side scale and acceptance tooling is commit `5280bb4`. The controller
-also refreshes packaged
+The current Phase 1/2 runtime checkout is `8d1c49a`; the controller helper and
+image input are captured by `fb3bf7e`. The controller also refreshes packaged
 WebUI assets into persistent `/nvram/static` on every service start, so a
 same-identity upgrade cannot continue serving an older UI. Never infer image
 contents from a newer host checkout.
 
-A fresh 2026-08-23 deployment of this exact pair on rev130 passed the immediate
-20-client gate at `5/15/50/24`: 10 private clients, 10 IoT clients, deliberate
-2.4/5/6 GHz client associations, four wireless backhauls, 20/20 zero-loss
-health traffic and zero automatic service restarts. Cold chain and branch
-multi-hop trees both passed exact physical-link, forwarding, API-edge,
-RSSI/RCPI and database checks. A controller-only restart then reconstructed
-the branch at the same `5/15/50/24` invariant. The 20-client duration/RF-churn
-gate remains distinct from this immediate result; see
+On 2026-08-23/24 the preceding `a9689eb` package baseline was independently
+recreated from fresh containers in the rev120 and rev150 Vagrant VMs. Both the
+initial deployment and persistent stop/start reconstruction passed
+`5/15/50/24`, 10 private plus 10 IoT clients, all 20 non-zero RCPI reports,
+four live backhaul metric edges, 20/20 zero-loss health traffic and zero
+automatic EasyMesh/OneWifi restarts. Client associations included 2.4, 5 and
+6 GHz. Current Phase 1/2 acceptance adds structured signal-freshness and
+wmediumd Console gates on both rev120 and rev150. Independent destructive fresh
+deployments and managed reconstructions passed at `5/15/50/24`, with four
+`fresh` structured extender signals, 25/25 Console identities, 600 directed
+pairs, packet telemetry, 20/20 traffic and zero monitored restarts. Evidence is
+retained at `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
+`/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150. The 20-client
+duration/RF-churn gate remains
+distinct from these immediate results; see
 [client-scale.md](client-scale.md) and [soak-acceptance.md](soak-acceptance.md).
+
+The previously accepted ready-to-run Vagrant/VirtualBox package is
+`easymesh-lab-0824-a9689eb.box` (`16,560,643,152` bytes), SHA-256
+`7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1`.
+That immutable package is the `a9689eb` baseline and predates the wmediumd
+Console and EasyMesh `0113`; regenerate a box from the current VM before
+claiming those additions in a distributable appliance.
+Use `gen/vm/consumer/Vagrantfile` and the import/start procedure in
+`gen/vm/packaged/README.md`.
 
 ## Runtime access
 
@@ -86,20 +101,22 @@ From the `192.168.2.0/24` lab network:
 http://192.168.2.130:8888    rev130 WebUI
 http://192.168.2.150:18889   rev150 Vagrant-VM WebUI
 http://192.168.2.120:18889   rev120 Vagrant-VM WebUI
+http://192.168.2.150:18890   rev150 Vagrant-VM wmediumd Console
+http://192.168.2.120:18890   rev120 Vagrant-VM wmediumd Console
 ```
 
 SSH into the VM through rev150:
 
 ```sh
 ssh -tt rev@192.168.2.150 \
-  "cd /home/rev/easymesh-vagrant-lab && vagrant ssh"
+  "cd /home/rev/easymesh-lab/0821 && vagrant ssh"
 ```
 
 For the clean-install rev120 VM:
 
 ```sh
 ssh -tt rev@192.168.2.120 \
-  "cd /home/rev/easymesh-lab/0820 && vagrant ssh"
+  "cd /home/rev/easymesh-lab/0821 && vagrant ssh"
 ```
 
 ## Documentation rules

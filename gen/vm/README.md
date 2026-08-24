@@ -8,7 +8,7 @@ recovery use.
 | --- | --- | --- |
 | [`packaged/`](packaged/) | New-user manual for an already-installed, shareable Vagrant box | Import, operate, test, monitor, recover and repackage the complete lab |
 | [`thin/`](thin/) | Ubuntu 24.04, Linux 7.0 and sizing; installs the lab once from GitHub and an artifact server | Normal engineering handoff |
-| [`precooked/`](precooked/) | Complete installed lab and all build assets; currently an 11.1 GB box | Offline demonstration, recovery and appliance-builder acceptance |
+| [`precooked/`](precooked/) | Complete installed lab; see the current exact size and checksum in `packaged/README.md` | Offline demonstration, recovery and appliance-builder acceptance |
 
 Shared Boardfarm configuration and lifecycle scripts live in `config/` and
 `scripts/`. `consumer/Vagrantfile` runs either packaged box.
@@ -27,7 +27,7 @@ Linux workstation
   -> vagrant up; vagrant ssh
   -> clone codex/0815-clean bootstrap repository
   -> one-time install + first cold start (downloads, builds, deploys, verifies)
-  -> check -> WebUI -> steering tests
+  -> check -> WebUI + wmediumd Console -> steering tests
   -> optional VM snapshot
   -> later VM halt/reboot/reload
   -> automatic warm-start from installed/cached state
@@ -77,6 +77,19 @@ vagrant up
 Then use `http://<virtualbox-host-address>:18888/`. Do not expose this port to
 an untrusted network; the lab WebUI is an engineering interface, not a hardened
 Internet service.
+
+## wmediumd Console
+
+Current Phase 1/2 installations also forward the independent medium observer:
+
+```text
+http://127.0.0.1:18890/
+```
+
+Set `WMEDIUMD_CONSOLE_HOST_IP=0.0.0.0` when invoking Vagrant only when the
+Console must be reachable from a trusted lab LAN. Its normal managed service
+is read-only. Typed pair/frequency set, clear and one-step undo controls require
+an explicit in-guest opt-in; see `gen/wmediumd/observer/README.md`.
 
 ## Readiness gate
 

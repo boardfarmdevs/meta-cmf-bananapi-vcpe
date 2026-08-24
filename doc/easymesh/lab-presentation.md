@@ -85,7 +85,7 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 2. Watch all agents, radios, BSSs and clients in the live WebUI.
 3. Inspect associated-client RCPI updating every two seconds.
 4. Command a client steer through the real EasyMesh/BTM path.
-5. Move ten clients visibly around five agents using live wmediumd control.
+5. Move client cohorts visibly around five agents using live wmediumd control.
 6. Isolate an extender over RF; watch clients move, the node age out, and the
    same extender return after restoration.
 7. Stop/restart an AP and verify service, WLAN and controller recovery.
@@ -96,9 +96,10 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 # Current evidence
 
 - Complete cold deployment: Boardfarm **60/60** checks.
-- Topology/API: six rendered nodes and ten unique live clients.
+- Topology/API: six rendered mesh nodes and twenty unique live clients (ten
+  private and ten IoT).
 - Service stability: zero OneWifi, agent, controller or CLI restarts.
-- Traffic baseline: all ten clients reach the WLAN gateway.
+- Traffic baseline: all twenty clients reach the WLAN gateway.
 - Commanded return steering: **4/4** passed.
 - Scaled commanded steering: **100/100** passed across ten clients/five agents;
   a further **10/10** validated transaction-level evidence journaling.
@@ -106,8 +107,9 @@ This keeps WAN infrastructure reproducible without mixing it with policy logic.
 - Extender RF outage: client movement in 5.464 s, node removal in 59.181 s,
   exact 210-link restoration, same-node return in 15.198 s and 75 seconds of
   10/10 association agreement passed.
-- Cold reconstruction: three consecutive `5/15/50/14` runs passed in
-  805, 800 and 802 seconds with zero service restarts.
+- The historical three-run cold-reconstruction campaign passed
+  `5/15/50/14` in 805, 800 and 802 seconds. The current accepted profile is
+  `5/15/50/24` with twenty clients and zero monitored service restarts.
 - Controller-container memory: 311.57 MiB cgroup peak and 266.10 MiB after
   convergence, with no swap or memory-pressure events.
 - IEEE 1905 capture: live decapsulated traffic verified on controller `brlan0`.

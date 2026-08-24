@@ -32,7 +32,7 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0107`, IEEE1905
+The current source series contains EasyMesh patches through `0113`, IEEE1905
 patches through `0006`, libwebconfig patches through `0011`, OneWifi patches
 through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
 category-factory serialization fix. The
@@ -196,11 +196,25 @@ authority. Its dependency order is:
 41. source the WebUI client inventory from the detailed associated-STA model;
 42. synchronize the validated agent profile into every runtime radio object;
     and
-43. make an explicit complete policy submission an idempotent runtime replay.
+43. make an explicit complete policy submission an idempotent runtime replay;
+44. serialize the controller's shared Autoconfiguration Search/WSC model
+    boundary and validate Profile TLVs;
+45. serialize asynchronous per-radio WSC subdoc delivery through OneWifi apply
+    completion and bounded callback recovery;
+46. service lost-M2 recovery from self-clearing radio protocol state after the
+    shared orchestration command has ended;
+47. preserve that per-radio recovery ownership when either device-init or
+    retained-identity configuration-renewal reaches its generic command TTL;
+48. recover a OneWifi subdoc whose orchestration command ended before its
+    callback was delivered;
+49. complete a successful OneWifi callback at its own BSS-configuration
+    terminal state instead of waiting for a later Topology Query; and
+50. preserve IEEE1905 measurement age end to end and publish an explicit
+    fresh/stale/unknown backhaul-signal contract to the WebUI.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current images contain the complete ordered
-series through `0104`.
+component or image build. The current source series ends at `0113`; the
+role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
 
@@ -279,6 +293,8 @@ wmediumd patches, in order:
 | `0010` | require current transmit-learned frequency evidence before cloning to a receiver |
 | `0011` | classify tracked clones rejected during transient receive states without hiding other netlink faults |
 | `0012` | add atomic frequency-qualified SNR overrides with pair fallback and exact clear/readback semantics |
+| `0013` | add the multi-client read-only pair/frequency endpoint used by the hwsim HAL |
+| `0014` | add bounded host-only frame/outcome, active-link, radio/frequency, VIF and event telemetry for the Go Console |
 
 `gen/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
 `wmediumd-up.sh` runs its ten-test internal acceptance suite before launch.
@@ -292,7 +308,7 @@ wmediumd patches, in order:
 | forced controller transition out of `wsc_m2_sent` | removed; it could fire after valid M2 and hid command cancellation deadlock |
 | forced `wsc_m1_pending` recovery | not imported; previous capability is not proof of current configuration |
 | passive returning-client cache update | replaced by refresh, insertion verification and explicit delta publication |
-| one historical wmediumd patch | replaced by the tested twelve-patch multichannel/control protocol series |
+| one historical wmediumd patch | replaced by the tested fourteen-patch multichannel/control/telemetry series |
 
 The replacement for forced WSC state is EasyMesh patch `0026`: cancelled
 commands become terminal, and completion is evaluated per command. Duplicate M1
@@ -300,28 +316,35 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 
 ## Build and acceptance
 
-The current rev130 deployment is a clean role-specific roll-up. The controller
-contains EasyMesh through `0104`, IEEE1905 through `0006`, OneWifi through
-`0018`, libwebconfig through `0010`, Wi-Fi HAL through `0026`, and the
-applicable log4c and SNMP fixes. The accepted platform source is commit
-`d353c65`; host-side scale and acceptance tooling is `5280bb4`. Each deployed
+The current portable-VM deployment is a clean role-specific roll-up. The
+controller contains EasyMesh through `0113`, including the corrected
+cross-built WebUI/API helper; the extender contains the complete Agent recovery
+sequence through `0112`. IEEE1905 remains at `0006`, with the accepted OneWifi,
+libwebconfig, Wi-Fi HAL, log4c and SNMP changes applied by role. Each deployed
 role retains its exact artifact hash:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2` | `c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2` | `0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2` | `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
 
-Fresh deployment of the exact pair on rev130 reached `5/15/50/24`, exposed ten
-private and ten IoT clients, passed 20/20 zero-loss health traffic, and
-recorded zero automatic service restarts. Cold chain and branch profiles both
-passed physical link, parent station, forwarding, API edge, RSSI/RCPI and exact
-database checks. A controller-only restart reconstructed the live branch at
-`5/15/50/24`; the former database-only upstream BSS did not return. The
-rendered model is
-`Controller`, colocated `Agent-1`, and `Extender-1` through `Extender-4`.
-The deployed WebUI asset passed the layout-model isolation, exact-parent,
-signal, drag/steering-cue and one-action metrics regressions.
+The exact current pair passed independent destructive fresh deployments plus
+managed persistent reconstructions on rev120 and rev150 at `5/15/50/24`,
+20/20 traffic and zero monitored restarts. All four wireless extender edges
+carried the new nested `fresh` signal object, and the served WebUI passed the
+signal/layout/metrics regressions. Evidence is
+`/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
+`/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
+
+Independent destructive deployments of the preceding `a9689eb` baseline on
+the rev120 and rev150 VMs each reached `5/15/50/24`, exposed ten private and
+ten IoT clients, passed 20/20 non-zero RCPI and zero-loss health traffic, and
+recorded zero automatic service restarts. Each same run then passed persistent
+controller -> extender -> client reconstruction, four wireless backhaul metric
+edges and a 120-second stable hold. The current `0113` controller artifact adds
+the structured freshness contract and is accepted separately against the same
+model. The rendered model remains `Controller`, colocated `Agent-1`, and
+`Extender-1` through `Extender-4`.
 
 ### SNMP self-heal correction
 
@@ -472,7 +495,7 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
-Patches `0047` through `0104` close the follow-on P0 state, service,
+Patches `0047` through `0113` close the follow-on P0 state, service,
 multi-hop, metrics, and
 presentation boundaries:
 
@@ -517,6 +540,11 @@ presentation boundaries:
 | `0106` | initialize and validate the one-octet Profile TLV and serialize concurrent controller Autoconfiguration Search/WSC model selection |
 | `0107` | serialize per-radio WSC subdocs through OneWifi apply callbacks and release deferred radios through bounded fresh-M1 recovery |
 | `0108` | service a radio's bounded WSC M2-loss recovery from protocol state even after the shared device-init orchestration ends |
+| `0109` | let an incomplete per-radio WSC transaction retain its recovery state after the shared device-init command reaches its generic TTL |
+| `0110` | apply the same state-ownership rule to retained-identity configuration renewal during persistent reconstruction |
+| `0111` | recover serialized WSC subdocs that outlive their initiating orchestration command and otherwise have no callback/retry owner |
+| `0112` | finish `onewifi_cb` at `onewifi_bssconfig_ind`; leave the later topology-synchronized transition to Topology Query processing |
+| `0113` | preserve measurement time from the IEEE1905 wire delta, select the newest exact bSTA/upstream-BSSID sample deterministically, and expose explicit fresh/stale/unknown extender signal in the API and WebUI |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy
@@ -571,6 +599,38 @@ persistent radio data model's local AL MAC and device identity rather than
 dereferencing the ended command. Captured rev120 cores located the former null
 accesses first at the source-address copy and then in the M1 manufacturer
 attribute.
+
+The first strict persistent reconstruction with `0108` then proved that
+protocol-state servicing was necessary but not sufficient. The generic
+device-init command TTL still reset an incomplete radio from
+`wsc_m2_pending`/`owconfig_pending` to `unconfigured`, erasing the ownership
+state that made the bounded timer runnable. Patch `0109` allows the shared
+command to end while the per-radio WSC transaction retains those two recovery
+states; all other state and command timeout behavior is unchanged. A second
+artifact-only reconstruction exposed the retained-identity form of the same
+boundary: it runs under `cfg_renew`, not `dev_init`. Patch `0110` therefore
+applies the identical state-ownership rule to both onboarding commands.
+
+That broader recovery work still left a rarer, later failure. A debugger
+attached during persistent reconstruction caught command type
+`em_cmd_type_onewifi_cb` timing out while its radio was already in
+`em_state_agent_onewifi_bssconfig_ind`. This state means OneWifi successfully
+applied the BSS subdoc. The command completion test incorrectly waited for
+`topo_synchronized`, a transition owned by the subsequent Topology Query.
+Generic timeout handling then reset the valid radio to `unconfigured`.
+Patch `0112` makes BSS indication terminal for the callback command while
+leaving the radio in place for normal Topology Query processing. Its unit
+regression distinguishes the preceding `owconfig_pending` state from the
+successful BSS-indication state. Patch `0111` remains the bounded repair for a
+genuinely missing OneWifi callback; it is not used for a callback that already
+succeeded.
+
+The resulting extender image was verified to contain the callback completion path,
+then used for independent destructive fresh deployments and persistent cold
+reconstructions on the rev120 and rev150 VMs. Both passed `5/15/50/24`, 20/20
+RCPI, four live backhaul metric edges, 20/20 traffic, the 120-second stability
+window and zero monitored restarts. This is direct evidence for the recovery
+boundary; it is not a restart, delay or controller-database workaround.
 
 OneWifi `0012` closes the matching extender convergence defect. The extender
 uses the same AL MAC on its backhaul STA and `brlan0`; `getifaddrs()` ordering

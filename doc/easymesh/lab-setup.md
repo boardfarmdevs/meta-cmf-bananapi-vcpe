@@ -25,12 +25,12 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-platform source           d353c65 (accepted pre-commit build worktree)
-image EasyMesh content    controller through EasyMesh 0104; IEEE1905 0006
-host tooling              codex/0815-clean at 5280bb4 or later
+runtime source            8d1c49a34eef9cec526f5a66d188447622eb0981
+image EasyMesh content    controller through 0113; extender through 0112
+controller image input    fb3bf7e (cross-built em_cli helper included)
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260823165225.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260823141018.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -40,8 +40,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-c4e2965b20ca9c1c5906bb1f31e368370708dbbab08f6e15efd6a10623018825  controller
-0d35c1e6df576b97cb6f8be9e25fec9914fce35b55852ceb19776c300a4b7bb8  extender
+894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d  controller
+676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -163,10 +163,12 @@ silently deleting another checkout's identities.
 
 ### rev150 Vagrant harness
 
-The appliance is managed from `/home/rev/easymesh-vagrant-lab`:
+The current appliance is managed from `/home/rev/easymesh-lab/0821`. Use the
+minimal `gen/vm/consumer/Vagrantfile` with a packaged VM; the precooked build
+harness is only for the one-time provisioning workflow:
 
 ```sh
-cd /home/rev/easymesh-vagrant-lab
+cd /home/rev/easymesh-lab/0821
 vagrant up
 vagrant status
 ```
@@ -408,6 +410,8 @@ From the lab LAN:
 http://192.168.2.130:8888    rev130
 http://192.168.2.150:18889   rev150 VM
 http://192.168.2.120:18889   rev120 VM
+http://192.168.2.150:18890   rev150 VM wmediumd Console
+http://192.168.2.120:18890   rev120 VM wmediumd Console
 ```
 
 rev150 forwards the VM without reloading it:
@@ -425,7 +429,16 @@ The clean-install rev120 VM uses Vagrant's direct host forwarding instead:
 192.168.2.120:18889 -> VM:8888
 ```
 
-Its working directory is `/home/rev/easymesh-lab/0820`; Vagrant selected host
+The Phase 1/2 Vagrant profile separately forwards guest port 8890 to host port
+18890. The Console observes wmediumd; it is not served by `em_cli`. Its managed
+service must report read-only mode during ordinary lab operation:
+
+```sh
+systemctl status wmediumd-console.service
+curl -fsS http://127.0.0.1:8890/api/v1/controls | jq .
+```
+
+Its working directory is `/home/rev/easymesh-lab/0821`; Vagrant selected host
 SSH port `2201`. Use `vagrant ssh` from that directory rather than treating the
 forwarded SSH port as a stable lab interface.
 
@@ -447,6 +460,67 @@ graph untouched. EasyMesh `0059` makes **Optimize Layout** release and settle
 D3's cloned render nodes; operating on the immutable API nodes only changed
 the viewport scale and left the graph itself fixed. The current controller
 serves asset revision `topology-layout-optimized-1`.
+
+## Packaged baseline VM portability acceptance
+
+On 2026-08-23/24 the rev120 and rev150 Vagrant VMs were each destructively
+recreated from the preceding `a9689eb` image pair and clean detached revision
+`a9689ebc`. Each run then stopped every managed node and exercised the
+persistent boot service, rather than accepting only the initial deployment.
+Both independent runs passed:
+
+- `5/15/50/24` exactly;
+- four fully configured tri-band extenders and four live backhaul metric
+  edges;
+- 10 `private_ssid` plus 10 `iot_ssid` clients, including 2.4, 5 and 6 GHz
+  associations;
+- 20/20 non-zero RCPI reports and 20/20 zero-loss health traffic;
+- a 120-second stable hold; and
+- zero OneWifi, Agent, Controller or CLI restarts.
+
+The retained in-guest evidence is:
+
+```text
+rev120  /home/vagrant/easymesh-evidence/a9689eb/20260824T045904Z
+rev150  /home/vagrant/easymesh-evidence/a9689eb/20260824T045904Z
+```
+
+The accepted rev150 guest was shut down cleanly and packaged as one canonical,
+ready-to-run Vagrant/VirtualBox box. The same bytes and adjacent checksum file
+are stored on both VM hosts under `/home/rev/easymesh-lab/0821/artifacts/`:
+
+```text
+easymesh-lab-0824-a9689eb.box
+SHA-256 7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1
+size    16,560,643,152 bytes
+```
+
+Use `gen/vm/consumer/Vagrantfile` with this package. Do not reuse the original
+build-harness Vagrantfile, whose provisioners intentionally refer to the
+one-time input assets. Import and start the copy as described in
+`gen/vm/packaged/README.md`.
+
+### Current Phase 1/2 rev120/rev150 acceptance
+
+On 2026-08-24, rev120 and rev150 were independently and destructively
+redeployed from source `8d1c49a` and the current image pair above. Each
+acceptance invoked the persistent managed reconstruction before recording its
+result. Both passed:
+
+- exact model `5/15/50/24` and 20 live clients;
+- 10 private plus 10 IoT clients with 20/20 zero-loss WLAN traffic;
+- four wireless extender edges whose nested signal state was `fresh`, with
+  numeric RCPI/RSSI, source, observation time and age;
+- zero OneWifi, Agent, Controller and CLI restarts;
+- wmediumd Console ready/read-only with 25 identities, 600 directed pair
+  records and packet telemetry; and
+- Console `NRestarts=0`; rev120 measured 6.7 MiB current/7.9 MiB peak and
+  rev150 measured 7.8 MiB current/8.4 MiB peak.
+
+Evidence is `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
+`/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
+The exact served JavaScript separately passed the signal-freshness,
+topology-layout and one-action metrics regressions.
 
 ## Parity procedure
 

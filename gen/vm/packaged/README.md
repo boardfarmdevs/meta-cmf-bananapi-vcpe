@@ -2,21 +2,30 @@
 
 This guide is for an engineer receiving a complete, already-installed EasyMesh
 Vagrant box. It starts with a new Ubuntu workstation and ends with a usable
-five-AP, ten-client simulated WLAN. It also explains how to inspect the lab,
+five-AP, twenty-client simulated WLAN. It also explains how to inspect the lab,
 use the WebUI and controller interfaces, run steering and RF tests, collect
 evidence, restart the VM and make another packaged copy.
 
 The packaged box is different from the thin installer. Everything inside the
 guest has already been installed and accepted: Ubuntu 24.04, Linux 7.0, the
 patched hwsim module, multichannel wmediumd, LXD, Docker, Boardfarm, the
-controller, four extenders, ten WLAN clients and the test checkout. A new user
+controller, four extenders, twenty WLAN clients and the test checkout. A new user
 imports the box and starts it; they do not run the one-time installer.
 
-Always inspect the box's recorded source revision and image hashes. The dated
-0818 box predates the `0047`-`0055` liveness/association P0 roll-up; the outage
-and strict-carousel behavior described below requires a package rebuilt from
-the current series. Older boxes remain usable for their dated acceptance but
-must not be used to claim the newer results.
+The accepted baseline package is `easymesh-lab-0824-a9689eb.box`, exactly
+`16,560,643,152` bytes, with SHA-256
+`7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1`.
+It was made only after independent fresh and persistent cold-reconstruction
+passes on rev120 and rev150. Always verify the adjacent checksum and inspect
+the box's recorded source revision and image hashes. Older dated boxes remain
+usable for their own acceptance but must not be used to claim the current
+results.
+
+That immutable `a9689eb` package predates the wmediumd Console and EasyMesh
+`0113` extender-signal freshness. The current Vagrantfile already reserves
+host port 18890 for the Console, but it becomes usable only in a package
+regenerated from the Phase 1/2 runtime. Verify the source revision inside a box
+instead of inferring features from its Vagrantfile.
 
 ## 1. Understand the lab
 
@@ -31,10 +40,12 @@ Ubuntu 22.04/24.04 workstation
     |-- LXD
     |   |-- bpibroadband                      EasyMesh controller + agent
     |   |-- bpiap ... bpiap-003               four EasyMesh extenders
-    |   `-- wlan-client ... wlan-client-009   ten simulated stations
+    |   `-- wlan-client ... wlan-client-019   twenty simulated stations
     |-- patched multichannel wmediumd         simulated RF medium
-    `-- WebUI/API on guest port 8888
-             `-- Vagrant forwards it to host port 18888
+    |-- WebUI/API on guest port 8888
+    |        `-- Vagrant forwards it to host port 18888
+    `-- wmediumd Console on guest port 8890 (Phase 1/2 packages)
+             `-- Vagrant forwards it to host port 18890
 ```
 
 Boardfarm has a deliberately narrow infrastructure role in this lab. Its
@@ -52,10 +63,10 @@ The expected EasyMesh topology is:
 - four extender agents;
 - three radios per agent, representing 2.4, 5 and 6 GHz;
 - ten BSSs per agent and 50 BSSs in total; and
-- ten associated WLAN clients.
+- twenty associated WLAN clients: ten private and ten IoT stations.
 
-The controller database shorthand `5/15/50/14` means five EasyMesh devices,
-15 radios, 50 BSSs and 14 associated station rows: ten fronthaul clients plus
+The controller database shorthand `5/15/50/24` means five EasyMesh devices,
+15 radios, 50 BSSs and 24 associated station rows: twenty fronthaul clients plus
 four extender backhaul stations. The WebUI shows six mesh nodes because it
 renders the controller model separately from its colocated agent.
 
@@ -118,10 +129,10 @@ Create one working directory per VM. Copy the dated `.box`, its `.sha256` file
 and the supplied `Vagrantfile` into it:
 
 ```sh
-mkdir -p "$HOME/easymesh-lab/0818"
-cd "$HOME/easymesh-lab/0818"
+mkdir -p "$HOME/easymesh-lab/0824"
+cd "$HOME/easymesh-lab/0824"
 ls -lh
-sha256sum -c easymesh-lab-0818.box.sha256
+sha256sum -c easymesh-lab-0824-a9689eb.box.sha256
 ```
 
 The exact filename and date may differ. A checksum failure means the transfer
@@ -130,15 +141,15 @@ is incomplete or the wrong checksum was supplied; do not import that file.
 Register the verified box once under a clear local name:
 
 ```sh
-vagrant box add --name cmf/easymesh-lab-0818 easymesh-lab-0818.box
-vagrant box list | grep '^cmf/easymesh-lab-0818 '
+vagrant box add --name cmf/easymesh-lab-0824 easymesh-lab-0824-a9689eb.box
+vagrant box list | grep '^cmf/easymesh-lab-0824 '
 ```
 
 Make sure the `Vagrantfile` selects the same name. The supplied consumer file
 can also be selected with an environment variable:
 
 ```sh
-export EASYMESH_BOX_NAME=cmf/easymesh-lab-0818
+export EASYMESH_BOX_NAME=cmf/easymesh-lab-0824
 ```
 
 The import is a one-time operation. Later `vagrant up` commands use the local
@@ -149,8 +160,8 @@ registered box and the VM's own virtual disk.
 From the directory containing the `Vagrantfile`:
 
 ```sh
-cd "$HOME/easymesh-lab/0818"
-export EASYMESH_BOX_NAME=cmf/easymesh-lab-0818
+cd "$HOME/easymesh-lab/0824"
+export EASYMESH_BOX_NAME=cmf/easymesh-lab-0824
 vagrant up
 vagrant status
 vagrant ssh
@@ -194,10 +205,10 @@ sudo easymesh-labctl check
 A fully ready result has all of these properties:
 
 - Boardfarm reports all 60 infrastructure checks passing;
-- controller model is `5/15/50/14`;
-- topology contains the controller, five agents and ten unique clients;
-- `/api/v1/clients` reports ten active clients;
-- all ten clients can ping `10.0.0.1` over WLAN;
+- controller model is `5/15/50/24`;
+- topology contains the controller, five agents and twenty unique clients;
+- `/api/v1/clients` reports twenty active clients;
+- all twenty clients can ping `10.0.0.1` over WLAN;
 - wmediumd and its control socket are active; and
 - OneWifi, agents, controller and CLI have zero unexpected restarts.
 
@@ -257,7 +268,7 @@ To reach it from another trusted machine on the same LAN, bind the forwarded
 port to the workstation's network interfaces when starting the VM:
 
 ```sh
-EASYMESH_BOX_NAME=cmf/easymesh-lab-0818 \
+EASYMESH_BOX_NAME=cmf/easymesh-lab-0824 \
 EASYMESH_WEBUI_HOST_IP=0.0.0.0 \
 EASYMESH_WEBUI_PORT=18888 \
 vagrant up
@@ -276,7 +287,7 @@ The principal pages are:
   optimize Wi-Fi or issue a steer. **Export** saves current topology as JSON,
   SVG or PNG.
 - **Devices** lists current devices derived from the controller model.
-- **Connected Clients** lists the ten live clients. Signal shows dBm and raw
+- **Connected Clients** lists the twenty live clients. Signal shows dBm and raw
   RCPI and refreshes every two seconds.
 - **Policy Settings** reads and writes the controller's EasyMesh reporting and
   steering policy primitives. These values control reporting and permitted
@@ -297,6 +308,21 @@ The topology and client API are good automation interfaces for observing and
 verifying a test. `steer.sh` is the supported command-line adapter for an
 explicit steering action.
 
+For a Phase 1/2 package, open `http://127.0.0.1:18890/` to inspect the medium
+itself: active radio paths, frame/outcome counters, effective SNR, VIF
+ownership, queue/netlink health and the bounded event timeline. Verify it from
+inside the guest with:
+
+```sh
+systemctl status wmediumd-console.service
+curl -fsS http://127.0.0.1:8890/api/v1/status | jq .
+curl -fsS http://127.0.0.1:8890/api/v1/controls | jq .
+```
+
+The last response must say `enabled: false` during normal operation. The
+Console is experiment instrumentation, not an EasyMesh optimizer and not the
+source of controller signal measurements.
+
 ## 7. Run the routine acceptance tests
 
 Run these after every imported-box first boot or VM reboot:
@@ -312,8 +338,8 @@ sudo easymesh-labctl check
 requires command delivery, real client association, controller database and
 WebUI topology to agree for all four moves.
 
-`steer-scale 3` performs 30 commanded steers across all ten clients and five
-agents while traffic runs. It records command status, link convergence,
+`steer-scale 3` performs 30 commanded steers across the ten-client private
+cohort and five agents while traffic runs. It records command status, link convergence,
 database convergence, topology convergence and packet loss. The final `check`
 ensures that the lab remains healthy after the test.
 
@@ -402,7 +428,7 @@ controller-visible client movement, then completely isolates the extender.
 The controller must remove the unreachable node from active topology after the
 IEEE1905 aging/probe interval. The test restores every touched SNR pair,
 requires the same logical extender to return, and holds physical/API placement
-agreement for all ten clients for 75 seconds. Node retention is now a failure;
+agreement for all twenty clients for 75 seconds. Node retention is now a failure;
 `--allow-stale-node` exists only for diagnosis.
 
 For only the client movement portion:
@@ -530,7 +556,7 @@ mkdir -p "$HOME/easymesh-lab/copy-2"
 cd "$HOME/easymesh-lab/copy-2"
 cp /path/to/Vagrantfile .
 
-EASYMESH_BOX_NAME=cmf/easymesh-lab-0818 \
+EASYMESH_BOX_NAME=cmf/easymesh-lab-0824 \
 EASYMESH_VM_NAME=easymesh-lab-copy-2 \
 EASYMESH_WEBUI_PORT=18889 \
 vagrant up
@@ -570,9 +596,9 @@ clean shutdown; it does not contain the workstation's Vagrant registration.
 Destroy only the VM represented by the current working directory:
 
 ```sh
-cd "$HOME/easymesh-lab/0818"
+cd "$HOME/easymesh-lab/0824"
 vagrant destroy
-vagrant box remove cmf/easymesh-lab-0818
+vagrant box remove cmf/easymesh-lab-0824
 ```
 
 `vagrant destroy` permanently deletes that VM and its mutable disk. The

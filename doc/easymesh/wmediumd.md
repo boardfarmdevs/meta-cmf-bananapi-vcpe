@@ -15,6 +15,10 @@ socket for atomic in-memory SNR changes. A startup configuration file is still
 required. The socket replaces per-phase configuration-file rewrites, not the
 initial radio inventory or model selection.
 
+The current daemon also exposes a minimal multi-client `-R` metrics/readback
+socket for the hwsim HAL and a separate host-only `-O` telemetry socket for the
+Go wmediumd Console. Neither observer endpoint changes the medium.
+
 ```text
  EasyMesh and WLAN processes in LXD containers
  hostapd / OneWifi / em_agent / wpa_supplicant / applications
@@ -39,6 +43,10 @@ initial radio inventory or model selection.
  startup plane                         live scenario plane
  /run/.../wmediumd.cfg                 /run/wmediumd-control.sock
  IDs, model, initial matrix            atomic directed SNR generations
+
+ observer plane
+ /run/.../observer/telemetry.sock -> unprivileged Go wmediumd Console
+                                    -> UI/REST/WebSocket/Prometheus
 ```
 
 ## What it can simulate
@@ -335,8 +343,9 @@ and full dump, plus frequency-qualified SNR in patch `0012`. For `N` configured
 stations, the base matrix contains `N x N` cells and its dump returns the
 `N x (N - 1)` non-self directed links. The frequency table is sparse and
 preallocated for up to four contexts per pair within the 64 KiB message limit.
-Only one client can remain connected. The accepted 15-radio topology dumps 210
-base links and reports a maximum frequency generation of 900 entries.
+Only one client can remain connected to the writable `-C` endpoint. The
+accepted 25-radio topology dumps 600 base links and reports a maximum atomic
+update capacity of 2,500 records.
 
 `APPLY` must request exactly `current_generation + 1`. Before changing any
 cell, wmediumd validates the entire packet, known radio identities, number of
@@ -368,6 +377,25 @@ The older upstream `-a` API socket is a frame-relay/control-notification
 interface for additional wmediumd clients. Its `SET_CONTROL` flags request all
 frames or TX-start notifications; it does not edit the SNR matrix. Scenario
 tools must use `-C`, not `-a`.
+
+### Read-only metrics and observer sockets
+
+Patch `0013` adds `-R`, a multi-client read-only form of the versioned control
+protocol. It permits identity/status, pair/frequency readback and bounded dumps
+but rejects both APPLY operations. The BPI hwsim HAL uses this socket for
+candidate-link metric lookup without receiving scenario-write authority.
+
+Patch `0014` adds `-O`, retaining the same immutable readback and adding paged
+bounded daemon, radio/frequency, active-link, VIF-ownership and event-ring
+telemetry. It counts frame classes, modeled attempts/retries, ACK/no-ACK,
+receiver injection, explicit drop reasons, multicast fan-out, queue delay and
+netlink health without copying payloads. A slow or absent reader cannot block
+the single wmediumd frame loop.
+
+The separate Go wmediumd Console consumes `-O`; see
+[wmediumd-observability.md](wmediumd-observability.md). Its managed service is
+read-only. Explicit typed-control mode opens `-C` separately and exposes only
+generation-checked pair/frequency set, clear and one-step undo operations.
 
 ## Operator workflow
 
@@ -435,9 +463,13 @@ tests do. They still use the same generation, readback and restore contract.
 | Path or artifact | Required? | Owner and lifetime |
 | --- | --- | --- |
 | `gen/wmediumd/wmediumd.patched` | Yes, unless rebuilt | Proven patched daemon binary committed with the lab |
-| `gen/wmediumd/patches/*.patch` | Required to rebuild | Twelve-patch delta over pinned upstream |
+| `gen/wmediumd/patches/*.patch` | Required to rebuild | Fourteen-patch delta over pinned upstream |
 | `/run/meta-cmf-wmediumd/wmediumd.cfg` | Yes at every start | Generated static radio inventory and initial model |
 | `/run/wmediumd-control.sock` | Yes for dynamic scenarios | Runtime socket; disappears with daemon |
+| `/run/meta-cmf-wmediumd/metrics/control.sock` | Yes for HAL candidate metrics | Multi-client minimal read-only protocol (`-R`) |
+| `/run/meta-cmf-wmediumd/observer/telemetry.sock` | Yes for the Console | Host-only paged read-only telemetry (`-O`) |
+| `/run/meta-cmf-wmediumd/identity-inventory.json` | Console identity overlay | Atomically generated radio label/owner map |
+| `/run/meta-cmf-wmediumd/wmediumd-binary.sha256` | Console provenance | PID-qualified live-binary hash manifest |
 | `/run/meta-cmf-wmediumd/wmediumd.pid` | Lifecycle state | Launcher-created runtime PID |
 | `/run/meta-cmf-wmediumd/wmediumd.log` | Diagnostic state | Daemon stdout/stderr for current launch |
 | scenario `.wmd` | Only for configurator use | Human-authored scenario source, not a daemon config |
@@ -455,7 +487,7 @@ modify the file.
 
 The lab pins upstream commit
 `717e5d7fcc23eecbc8e32bd897a8fd4b1e3ba640` (the source reports v0.3.1) and
-applies twelve patches in `gen/wmediumd/patches/`:
+applies fourteen patches in `gen/wmediumd/patches/`:
 
 | Patch | Operational effect |
 | --- | --- |
@@ -471,13 +503,19 @@ applies twelve patches in `gen/wmediumd/patches/`:
 | `0010` | Requires transmit-learned receive-frequency evidence and rechecks directed delivery after scan/channel changes |
 | `0011` | Distinguishes a tracked clone rejected during a transient radio receive state from an untracked netlink/protocol error |
 | `0012` | Adds frequency-qualified SNR set/clear, readback, sparse dump and pair fallback |
+| `0013` | Adds the multi-client read-only `-R` pair/frequency metrics endpoint used by the hwsim HAL |
+| `0014` | Adds bounded packet/outcome, radio/frequency, active-link, VIF and event telemetry on host-only `-O` |
 
 The launcher executes `wmediumd.patched -T` before every start. That suite
 checks multichannel interference isolation, frequency override/fallback,
 ownership/filter invariants, frequency-filtered multicast, independent
-scheduling, Linux 7 rate mapping and the related regression cases.
+scheduling, Linux 7 rate mapping, bounded telemetry and the related regression
+cases.
 
-The patch-`0012` prebuilt binary has SHA-256
+The current patch-`0014` prebuilt binary has SHA-256
+`f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f`.
+
+The earlier patch-`0012` prebuilt binary had SHA-256
 `59a98419c1a4f587796fb04d319dfdf993e94eb2e8d7aa341861a55f8129d42e`.
 On rev130, one client/Agent pair simultaneously held 25 dB at 5180 MHz and
 55 dB at 2437 MHz. The active 5180 MHz link changed from -41 to -66 dBm and
