@@ -3,6 +3,8 @@
 VM_NAME = ENV.fetch("EASYMESH_VM_NAME", "easymesh-lab")
 WEBUI_HOST_PORT = ENV.fetch("EASYMESH_WEBUI_PORT", "18888").to_i
 WEBUI_HOST_IP = ENV.fetch("EASYMESH_WEBUI_HOST_IP", "127.0.0.1")
+CONSOLE_HOST_PORT = ENV.fetch("WMEDIUMD_CONSOLE_PORT", "18890").to_i
+CONSOLE_HOST_IP = ENV.fetch("WMEDIUMD_CONSOLE_HOST_IP", WEBUI_HOST_IP)
 ARTIFACTS_DIR = File.expand_path(ENV.fetch("EASYMESH_ARTIFACTS_DIR", "artifacts"), __dir__)
 DEFAULT_BOX_NAME = Dir.glob(File.join(ARTIFACTS_DIR, "easymesh-thin-*.box")).empty? ?
                    "cmf/easymesh-lab" : "cmf/easymesh-thin"
@@ -23,6 +25,12 @@ Vagrant.configure("2") do |config|
                     host: WEBUI_HOST_PORT,
                     host_ip: WEBUI_HOST_IP,
                     id: "easymesh-webui",
+                    auto_correct: false
+  config.vm.network "forwarded_port",
+                    guest: 8890,
+                    host: CONSOLE_HOST_PORT,
+                    host_ip: CONSOLE_HOST_IP,
+                    id: "wmediumd-console",
                     auto_correct: false
 
   config.vm.provider "virtualbox" do |vb|

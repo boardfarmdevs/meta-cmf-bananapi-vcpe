@@ -144,7 +144,15 @@ as_lab_user env \
     EASYMESH_REPO="$runtime_repo" \
     EXTENDER_IMAGE="$assets/$ap" \
     bash "$vm_dir/scripts/55-scale-topology.sh"
+bash "$runtime_repo/gen/wmediumd/observer/install.sh"
+install -m 0644 "$vm_dir/config/wmediumd-console.default" \
+    /etc/default/wmediumd-console
+systemctl enable wmediumd-console.service
 bash "$vm_dir/scripts/50-runtime-service.sh"
 systemctl start easymesh-lab.service
+systemctl start wmediumd-console.service
+curl -fsS http://127.0.0.1:8890/api/v1/status \
+    | jq -e '.packet_metrics.available == true and .identity_inventory.matched > 0' \
+        >/dev/null
 bash "$vm_dir/scripts/70-health-audit.sh"
 echo 'One-time installation and first cold-start PASS. The lab is ready.'

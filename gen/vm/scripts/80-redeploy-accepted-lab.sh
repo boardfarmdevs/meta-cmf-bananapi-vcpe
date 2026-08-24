@@ -41,6 +41,7 @@ test "$(sha256sum "$repo/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 
 sudo systemctl stop easymesh-lab.service 2>/dev/null || true
+sudo systemctl stop wmediumd-console.service 2>/dev/null || true
 sudo systemctl reset-failed easymesh-lab.service 2>/dev/null || true
 sudo systemctl start docker.service snap.lxd.daemon.service
 
@@ -129,6 +130,16 @@ sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-lab.service" \
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-lab.service
 sudo systemctl start easymesh-lab.service
+
+bash "$repo/gen/wmediumd/observer/install.sh"
+sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \
+    /etc/default/wmediumd-console
+sudo systemctl enable --now wmediumd-console.service
+
+console_status=$(curl -fsS http://127.0.0.1:8890/api/v1/status)
+test "$(jq -r '.packet_metrics.available' <<< "$console_status")" = true
+test "$(jq -r '.identity_inventory.entries' <<< "$console_status")" = 25
+test "$(jq -r '.identity_inventory.matched' <<< "$console_status")" = 25
 
 sudo easymesh-labctl check
 
