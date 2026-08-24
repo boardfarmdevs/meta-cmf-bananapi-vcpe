@@ -21,6 +21,8 @@ METRICS_DIR=${WMEDIUMD_METRICS_DIR:-$RUNTIME/metrics}
 METRICS=${WMEDIUMD_METRICS_SOCKET:-$METRICS_DIR/control.sock}
 OBSERVER_DIR=${WMEDIUMD_OBSERVER_DIR:-$RUNTIME/observer}
 OBSERVER=${WMEDIUMD_OBSERVER_SOCKET:-$OBSERVER_DIR/telemetry.sock}
+IDENTITY=${WMEDIUMD_IDENTITY_INVENTORY:-$RUNTIME/identity-inventory.json}
+IDENTITY_GENERATOR=${WMEDIUMD_IDENTITY_GENERATOR:-$HERE/observer/generate-identity-inventory.sh}
 CFG=${CFG:-$RUNTIME/wmediumd.cfg}
 PIDF=${WMEDIUMD_PIDFILE:-$RUNTIME/wmediumd.pid}
 LOG=${WMEDIUMD_LOG:-$RUNTIME/wmediumd.log}
@@ -70,7 +72,7 @@ stop_running_wmediumd() {
     local pattern pids n
     pattern="^${WMD//./\\.}([[:space:]]|$)"
     pids=$(find_running_wmediumd "$pattern")
-    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER"; return; }
+    [ -n "$pids" ] || { sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"; return; }
     sudo kill $pids 2>/dev/null || true
     for n in $(seq 1 20); do
         pids=$(find_running_wmediumd "$pattern")
@@ -80,7 +82,7 @@ stop_running_wmediumd() {
     if [ -n "$pids" ]; then
         sudo kill -KILL $pids 2>/dev/null || true
     fi
-    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"
 }
 
 case "${1:-up}" in
@@ -102,7 +104,12 @@ case "${1:-up}" in
         exit 1
     }
     echo ">> starting wmediumd"
-    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$LOG"
+    sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$LOG" "$IDENTITY"
+    echo ">> generating Console radio identities -> $IDENTITY"
+    if ! "$IDENTITY_GENERATOR" --output "$IDENTITY"; then
+        echo "WARN: Console identity inventory unavailable; telemetry will use radio MAC labels" >&2
+        sudo rm -f "$IDENTITY"
+    fi
     sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' -R '$METRICS' -O '$OBSERVER' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
     sleep 1
     pid=$(cat "$PIDF" 2>/dev/null || true)
@@ -115,25 +122,25 @@ case "${1:-up}" in
         echo "!! wmediumd registered incompletely or rejected a radio" >&2
         tail -20 "$LOG" 2>/dev/null >&2 || true
         sudo kill "$pid" 2>/dev/null || true
-        sudo rm -f "$PIDF"
+        sudo rm -f "$PIDF" "$IDENTITY"
         exit 1
     fi
     if [ ! -S "$CONTROL" ]; then
         echo "!! wmediumd control socket did not appear: $CONTROL" >&2
         sudo kill "$pid" 2>/dev/null || true
-        sudo rm -f "$PIDF" "$CONTROL"
+        sudo rm -f "$PIDF" "$CONTROL" "$IDENTITY"
         exit 1
     fi
     if [ ! -S "$METRICS" ]; then
         echo "!! wmediumd read-only metrics socket did not appear: $METRICS" >&2
         sudo kill "$pid" 2>/dev/null || true
-        sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER"
+        sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"
         exit 1
     fi
     if [ ! -S "$OBSERVER" ]; then
         echo "!! wmediumd observer socket did not appear: $OBSERVER" >&2
         sudo kill "$pid" 2>/dev/null || true
-        sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER"
+        sudo rm -f "$PIDF" "$CONTROL" "$METRICS" "$OBSERVER" "$IDENTITY"
         exit 1
     fi
     sudo chgrp "$CONTROL_GROUP" "$CONTROL"
@@ -141,7 +148,7 @@ case "${1:-up}" in
     sudo chmod 0666 "$METRICS"
     sudo chgrp "$CONTROL_GROUP" "$OBSERVER"
     sudo chmod 0660 "$OBSERVER"
-    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS; telemetry $OBSERVER"
+    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS; telemetry $OBSERVER; identities $IDENTITY"
     ;;
   down)
     stop_running_wmediumd
