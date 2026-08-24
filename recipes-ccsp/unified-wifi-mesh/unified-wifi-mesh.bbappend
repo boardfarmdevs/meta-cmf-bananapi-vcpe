@@ -112,6 +112,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0109-agent-preserve-wsc-recovery-past-dev-init.patch \
     file://0110-agent-preserve-wsc-recovery-past-renew.patch \
     file://0111-agent-recover-orphaned-wsc-subdocs.patch \
+    file://0112-agent-finish-onewifi-callback-at-bss-config.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
