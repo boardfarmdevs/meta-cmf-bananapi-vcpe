@@ -1,0 +1,223 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 15:15:00 -0700
+Subject: [PATCH] cli: enable metrics reporting across the live mesh
+
+Editing metrics one device and radio at a time is unsuitable for a repeatable
+evaluation lab.  It also cannot repair a restarted agent when the controller's
+desired database values are unchanged: the generic policy POST intentionally
+skips equal configurations even though the agent's volatile reporting timer
+may no longer be active.
+
+Add a dedicated idempotent action that reads the live policy inventory,
+requires discovered radio rows for every agent, applies the lab's reporting
+defaults to every radio, and deliberately re-sends one serialized EasyMesh
+Policy Configuration Request per device.  Expose that action as a clear
+Policy Settings button and wait briefly for Connected Clients to acquire RCPI
+so the operator sees an end-to-end result rather than only request admission.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/main.go          | 78 ++++++++++++++++++++++++++++++++++++
+ src/rdkb-cli/static/index.html |  6 ++-
+ src/rdkb-cli/static/script.js | 60 ++++++++++++++++++++++++++++
+ 3 files changed, 143 insertions(+), 1 deletion(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -2226,6 +2226,83 @@ func getWirelessSettingsHandler(w http.ResponseWriter, r *http.Request) {
+ }
+ 
+ // ===== WIRELESS Policy HANDLERS =====
++func enableMetricsReportingHandler(w http.ResponseWriter, r *http.Request) {
++    if r.Method != http.MethodPost {
++        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
++        return
++    }
++
++    policyCmd := C.CString("get_policy OneWifiMesh")
++    defer C.free(unsafe.Pointer(policyCmd))
++
++    policyTree := execEMCommand(policyCmd, nil)
++    if policyTree == nil {
++        http.Error(w, "Controller policy model unavailable", http.StatusServiceUnavailable)
++        return
++    }
++    defer C.free_network_tree(policyTree)
++
++    deviceListNode := getNetworkTreeByKey(policyTree, "DeviceList")
++    if deviceListNode == nil {
++        http.Error(w, "Controller policy device list unavailable", http.StatusServiceUnavailable)
++        return
++    }
++
++    configs := getPolicyConfiguration(deviceListNode)
++    if len(configs) == 0 {
++        http.Error(w, "No EasyMesh agents are available", http.StatusConflict)
++        return
++    }
++
++    radioCount := 0
++    for i := range configs {
++        policy := &configs[i]
++        if len(policy.RadioSpecificMetricsPolicy) == 0 {
++            http.Error(w, fmt.Sprintf("No live radios are available for %s", policy.ID), http.StatusConflict)
++            return
++        }
++
++        policy.APMetricReportingPolicy.Interval = 5
++        for j := range policy.RadioSpecificMetricsPolicy {
++            metrics := &policy.RadioSpecificMetricsPolicy[j]
++            metrics.STARCPIThreshold = 120
++            metrics.STARCPIHysteresis = 5
++            metrics.APUtilizationThreshold = 60
++            metrics.STATrafficStats = 1
++            metrics.STALinkMetrics = 1
++            metrics.STAStatus = 0
++            radioCount++
++        }
++
++        if err := updatePolicySettings(deviceListNode, *policy); err != nil {
++            http.Error(w, fmt.Sprintf("Failed to stage metrics policy for %s", policy.ID), http.StatusInternalServerError)
++            return
++        }
++        // This action deliberately re-sends even an unchanged desired policy:
++        // after a process or container cold start the agent's volatile timer
++        // state may be absent while the controller database still compares
++        // equal to the requested configuration.
++        if !applyWifiPolicyConfigForDevice(policyTree, policy.ID) {
++            http.Error(w, fmt.Sprintf("Failed to apply metrics policy for %s", policy.ID), http.StatusInternalServerError)
++            return
++        }
++        if !waitForWifiPolicyConfig(*policy, 8*time.Second) {
++            http.Error(w, fmt.Sprintf("Timed out applying metrics policy for %s", policy.ID), http.StatusGatewayTimeout)
++            return
++        }
++        time.Sleep(2 * time.Second)
++    }
++
++    w.Header().Set("Content-Type", "application/json")
++    json.NewEncoder(w).Encode(map[string]interface{}{
++        "success": true,
++        "message": "Metrics reporting enabled for all live EasyMesh radios",
++        "devices": len(configs),
++        "radios": radioCount,
++        "interval_seconds": 5,
++    })
++}
++
+ func getWirelessPolicyHandler(w http.ResponseWriter, r *http.Request) {
+ 
+     // formate get policy tree
+@@ -2866,6 +2943,7 @@ func SetupRoutes(api *mux.Router) {
+ 
+ 	// Wireless Policy settings
+ 	api.HandleFunc("/wifipolicy", getWirelessPolicyHandler).Methods("GET", "POST")
++	api.HandleFunc("/metricsreporting/enable", enableMetricsReportingHandler).Methods("POST")
+ 
+         // ===== NEW COVERAGE MAP ROUTES =====
+ 	
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -865,6 +865,10 @@
+                 <select id="device-selector" aria-label="Select device"></select>
+             </div>
+             <div class="actions-group">
++                <button id="enable-all-metrics" class="btn btn-secondary" type="button"
++                        title="Configure and activate periodic metrics on every live EasyMesh radio">
++                    <i class="fas fa-signal"></i> Enable All Metrics
++                </button>
+                 <button id="apply-policy-settings" class="btn btn-primary" type="button">
+                     <i class="fas fa-save"></i> Apply Policy Settings
+                 </button>
+@@ -2032,7 +2036,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-layout-optimized-1"></script>
++    <script src="static/script.js?v=metrics-reporting-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -326,6 +326,9 @@ class EasyMeshController {
+     if (applyPolicyBtn) {
+       applyPolicyBtn.addEventListener('click', () => this.handlePolicySettingApply());
+     }
++    document.getElementById('enable-all-metrics')?.addEventListener('click', () => {
++      this.enableAllMetricsReporting();
++    });
+ 
+     // Local Steering disallowed mac: + / - buttons
+     (() => {
+@@ -849,6 +852,63 @@ savePolicySettings(sectionKey, scope = "selected") {
+ }
+ 
+ 
++async enableAllMetricsReporting() {
++  const button = document.getElementById('enable-all-metrics');
++  if (button?.disabled) return;
++
++  if (button) {
++    button.disabled = true;
++    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enabling Metrics...';
++  }
++  this.showNotification('Applying metrics reporting to every live radio…', 'info');
++
++  try {
++    const response = await fetch('/api/v1/metricsreporting/enable', { method: 'POST' });
++    const text = await response.text();
++    let result = {};
++    try {
++      result = text ? JSON.parse(text) : {};
++    } catch (_) {
++      result = {};
++    }
++    if (!response.ok) {
++      throw new Error(result.message || text || `HTTP ${response.status}`);
++    }
++
++    await this.loadWifiPolicyConfig();
++
++    let reporting = 0;
++    let total = 0;
++    const deadline = Date.now() + 30000;
++    do {
++      const clientsResponse = await fetch('/api/v1/clients');
++      if (clientsResponse.ok) {
++        const clientsResult = await clientsResponse.json();
++        const clients = Array.isArray(clientsResult.clients) ? clientsResult.clients : [];
++        total = clients.length;
++        reporting = clients.filter(client => Number(client.client_metrics?.rcpi) > 0).length;
++        if (total > 0 && reporting === total) break;
++      }
++      await new Promise(resolve => setTimeout(resolve, 2000));
++    } while (Date.now() < deadline);
++
++    const policySummary = `${result.devices || 0} devices / ${result.radios || 0} radios`;
++    if (total > 0 && reporting === total) {
++      this.showNotification(`Metrics enabled: ${policySummary}, ${reporting}/${total} clients reporting signal`, 'success');
++    } else {
++      this.showNotification(`Metrics enabled: ${policySummary}; signal pending for ${total - reporting}/${total} clients`, 'warning');
++    }
++  } catch (error) {
++    console.error('Failed to enable metrics reporting:', error);
++    this.showNotification(`Failed to enable metrics reporting: ${error.message}`, 'error');
++  } finally {
++    if (button) {
++      button.disabled = false;
++      button.innerHTML = '<i class="fas fa-signal"></i> Enable All Metrics';
++    }
++  }
++}
++
+ async handlePolicySettingApply() {
+   const saveBtn = document.getElementById('apply-policy-settings');
+ 
+-- 
+2.43.0

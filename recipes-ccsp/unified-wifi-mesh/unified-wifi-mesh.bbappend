@@ -58,6 +58,18 @@ EASYMESH_CORE_PATCHES = " \
     file://0054-controller-serialize-command-result-sessions.patch \
     file://0055-topology-response-do-not-overwrite-conflicting-owner.patch \
     file://0056-radio-service-protocol-timers-under-frame-load.patch \
+    file://0057-cli-render-topology-without-mutating-model.patch \
+    file://0058-cli-isolate-d3-topology-render-state.patch \
+    file://0059-cli-optimize-rendered-topology-nodes.patch \
+    file://0060-metrics-create-defaults-for-reloaded-radios.patch \
+    file://0061-cli-enable-all-metrics-reporting.patch \
+    file://0062-controller-preserve-profile-through-dm-commit.patch \
+    file://0063-controller-commit-topology-response-profile.patch \
+    file://0064-metrics-report-cpe-and-client-uptime.patch \
+    file://0065-cli-source-client-association-from-sta-model.patch \
+    file://0066-controller-synchronize-runtime-agent-profile.patch \
+    file://0067-controller-replay-explicit-policy.patch \
+    file://0068-cli-expose-live-bss-inventory.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -556,9 +568,10 @@ do_install_append() {
 # target format, and final binary hash are recorded in
 # doc/easymesh/rev130-bringup-summary.md#rebuilding-the-precompiled-webui-helper.
 #
-# The binary reads /nvram/static and /nvram/remoteCtrl.json; /nvram is a ZFS
-# dataset recreated per deploy, so a service drop-in seeds it at start from the
-# persistent copy under /usr/ccsp/EasyMesh/static.
+# The binary reads /nvram/static and /nvram/remoteCtrl.json. A same-node image
+# redeploy deliberately preserves /nvram, so the service drop-in refreshes the
+# packaged assets in /usr/ccsp/EasyMesh/static on every start. Without that
+# overwrite, a controller upgrade keeps serving the previous image's WebUI.
 # em_cli is the controller-side web UI and links libemcli.so, which is only built
 # and packaged in the broadband (controller) configuration of this recipe -- the
 # extender build produces no libemcli, so shipping the prebuilt onewifi_em_cli there

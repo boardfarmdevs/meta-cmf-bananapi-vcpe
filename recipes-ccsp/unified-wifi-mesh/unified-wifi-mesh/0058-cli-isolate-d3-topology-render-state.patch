@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 12:30:00 -0700
+Subject: [PATCH] cli: isolate D3 topology render state
+
+D3 forceSimulation and forceLink add layout coordinates, indices and resolved
+source/target objects to the node and edge objects supplied by the caller.  The
+topology view supplied the live API snapshot itself, so the first render still
+changed that snapshot after the pure BSS-label fix.  At the next two-second
+poll the stable controller response compared different and rebuilt the graph,
+undoing Optimize Layout once.
+
+Clone the JSON snapshot before normalization and D3 rendering.  Keep links
+behind device nodes and make agent identity labels large and outlined so the
+numeric suffix remains visible over links and haul circles.  Bump the asset
+revision to prevent browsers retaining the prior renderer.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 39 +++++++++++++++++++++++------------
+ 2 files changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 9207c14..49258a2 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2032,7 +2032,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-layout-stable-1"></script>
++    <script src="static/script.js?v=topology-layout-isolated-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index c173d43..b5e6f36 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2603,6 +2603,12 @@ class EasyMeshController {
+       : '802.11be';
+   }
+ 
++  topologyRenderSnapshot(value) {
++    // The topology API is a JSON model.  D3 owns and mutates this disposable
++    // copy; polling continues to compare the untouched controller snapshot.
++    return JSON.parse(JSON.stringify(value || { nodes: [], edges: [] }));
++  }
++
+   topologySignature(value) {
+     return JSON.stringify(value || {}, (key, item) =>
+       ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
+@@ -2699,7 +2705,8 @@ class EasyMeshController {
+     // Return if container is empty
+     if (!this.topology?.nodes?.length) return;
+ 
+-    const currentNodeIds = new Set(this.topology.nodes.map(n => String(n.id)));
++    const renderTopology = this.topologyRenderSnapshot(this.topology);
++    const currentNodeIds = new Set(renderTopology.nodes.map(n => String(n.id)));
+     for (const key of this.nodePositionCache.keys()) {
+       if (!currentNodeIds.has(key)) {
+         this.nodePositionCache.delete(key);
+@@ -2736,15 +2743,15 @@ class EasyMeshController {
+     this.topologyView = { svg, group: svgGroup, zoom, width, height };
+ 
+     // Normalize node and edge IDs to strings
+-    this.topology.nodes.forEach(n => n.id = String(n.id));
+-    this.topology.edges.forEach(e => {
++    renderTopology.nodes.forEach(n => n.id = String(n.id));
++    renderTopology.edges.forEach(e => {
+       e.from = String(e.from);
+       e.to = String(e.to);
+     });
+ 
+     // Validate edges
+-    const nodeIds = new Set(this.topology.nodes.map(n => n.id));
+-    const invalidEdges = this.topology.edges.filter(e => !nodeIds.has(e.from) || !nodeIds.has(e.to));
++    const nodeIds = new Set(renderTopology.nodes.map(n => n.id));
++    const invalidEdges = renderTopology.edges.filter(e => !nodeIds.has(e.from) || !nodeIds.has(e.to));
+ 
+     if (invalidEdges.length > 0) {
+       console.error('Invalid edges found:', invalidEdges);
+@@ -2757,7 +2764,7 @@ class EasyMeshController {
+     }
+ 
+     // Transform edges to use source/target for D3
+-    const edges = this.topology.edges.map(e => ({
++    const edges = renderTopology.edges.map(e => ({
+       ...e,
+       source: e.from,
+       target: e.to
+@@ -2786,16 +2793,16 @@ class EasyMeshController {
+       'default': 20
+     };
+ 
+-    const minX = d3.min(this.topology.nodes, d => d.x);
+-    const maxX = d3.max(this.topology.nodes, d => d.x);
+-    const minY = d3.min(this.topology.nodes, d => d.y);
+-    const maxY = d3.max(this.topology.nodes, d => d.y);
++    const minX = d3.min(renderTopology.nodes, d => d.x);
++    const maxX = d3.max(renderTopology.nodes, d => d.x);
++    const minY = d3.min(renderTopology.nodes, d => d.y);
++    const maxY = d3.max(renderTopology.nodes, d => d.y);
+     const graphWidth = maxX - minX;
+     const graphHeight = maxY - minY;
+     const offsetX = (width - graphWidth) / 2 - minX -250;
+     const offsetY = (height - graphHeight) / 2 - minY;
+ 
+-    this.topology.nodes.forEach(node => {
++    renderTopology.nodes.forEach(node => {
+       const saved = this.nodePositionCache.get(node.id);
+       if (saved) {
+         node.x = saved.x;
+@@ -2812,7 +2819,7 @@ class EasyMeshController {
+     });
+ 
+     // Create simulation
+-    const simulation = d3.forceSimulation(this.topology.nodes)
++    const simulation = d3.forceSimulation(renderTopology.nodes)
+     .force('link', d3.forceLink(edges).id(d => d.id).distance(390).strength(0.12))
+     .force('charge', d3.forceManyBody().strength(-1600))
+     .force('collision', d3.forceCollide().radius(175).strength(1).iterations(2))
+@@ -2820,12 +2827,12 @@ class EasyMeshController {
+     .alphaDecay(0.08);
+     this.topologySimulation = simulation;
+ 
+-    const nodeGroup = svgGroup.append('g').attr('class', 'nodes');
+     const edgeGroup = svgGroup.append('g').attr('class', 'edges');
++    const nodeGroup = svgGroup.append('g').attr('class', 'nodes');
+     const staGroup  = svgGroup.append('g').attr('class', 'sta-nodes');
+ 
+     const node = nodeGroup.selectAll('g')
+-    .data(this.topology.nodes)
++    .data(renderTopology.nodes)
+     .enter()
+     .append('g')
+     .attr('class', 'node')
+@@ -3038,11 +3045,15 @@ class EasyMeshController {
+ 
+       g.append('text')
+         .attr('x', 0)
+-        .attr('y', isController ? 30: 25)
++        .attr('y', isController ? 36 : 32)
+         .attr('text-anchor', 'middle')
+-        .attr('font-size', '9px')
++        .attr('font-size', '13px')
+         .attr('fill', '#333')
+         .attr('font-weight', 'bold')
++        .attr('stroke', '#fff')
++        .attr('stroke-width', 3)
++        .attr('paint-order', 'stroke')
++        .style('pointer-events', 'none')
+         .text(d.name);
+     });
+ 
+-- 
+2.43.0
