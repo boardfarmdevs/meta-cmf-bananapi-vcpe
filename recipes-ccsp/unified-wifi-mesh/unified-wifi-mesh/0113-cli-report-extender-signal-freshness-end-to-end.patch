@@ -1,0 +1,683 @@
+From 086ee2977bed6f6924e9161495b8b53b54ac3b14 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 23:20:08 -0700
+Subject: [PATCH] cli: report extender signal freshness end to end
+
+Associated STA Link Metrics already carry the bSTA RCPI and measurement age, but the controller stored report receipt time. Repeated responses could therefore make an old cached observation look current. Reconstruct the observation timestamp from the standard time-delta field and exercise its rounding behavior.
+
+Expose an explicit fresh, stale, or unknown signal object for each wireless extender edge. Accept timestamped standards RCPI only, including the valid RCPI-zero boundary; do not promote association-time SignalStrength into live telemetry. Keep fresh legacy fields for older API consumers.
+
+Show the state on every wireless backhaul label and hover, refresh telemetry without rebuilding the D3 layout, and preserve compatibility with the existing flat API while its prebuilt helper is refreshed.
+
+Upstream-Status: Pending
+---
+ inc/em_metrics_time.h                |  48 +++++++++
+ src/em/metrics/em_metrics.cpp        |  16 ++-
+ src/rdkb-cli/backhaul_signal.go      |  96 +++++++++++++++++
+ src/rdkb-cli/backhaul_signal_test.go |  90 ++++++++++++++++
+ src/rdkb-cli/main.go                 |  50 ++++-----
+ src/rdkb-cli/static/index.html       |   2 +-
+ src/rdkb-cli/static/script.js        | 150 ++++++++++++++++++++++++---
+ tests/test_l1_em_metrics.cpp         |  20 ++++
+ 8 files changed, 421 insertions(+), 51 deletions(-)
+ create mode 100644 inc/em_metrics_time.h
+ create mode 100644 src/rdkb-cli/backhaul_signal.go
+ create mode 100644 src/rdkb-cli/backhaul_signal_test.go
+
+diff --git a/inc/em_metrics_time.h b/inc/em_metrics_time.h
+new file mode 100644
+index 0000000..0244a61
+--- /dev/null
++++ b/inc/em_metrics_time.h
+@@ -0,0 +1,48 @@
++/*
++ * Copyright 2026 RDK Management
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ * http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef EM_METRICS_TIME_H
++#define EM_METRICS_TIME_H
++
++#include <stddef.h>
++#include <time.h>
++
++/** Format an Associated STA Link Metrics measurement time as RFC3339 UTC. */
++static inline bool em_format_link_metric_observed_at(char *out, size_t out_len,
++                                                      time_t received_at,
++                                                      unsigned int delta_ms)
++{
++    if (out == NULL || out_len == 0 || received_at == (time_t)-1) {
++        return false;
++    }
++    out[0] = '\0';
++
++    /* The model stores second-resolution RFC3339. Round the wire age upward,
++     * never downward, so freshness consumers cannot see a younger sample. */
++    time_t delta_seconds = static_cast<time_t>(
++        (static_cast<unsigned long long>(delta_ms) + 999ULL) / 1000ULL);
++    if (received_at < 0 || delta_seconds > received_at) {
++        return false;
++    }
++    time_t observed_at = received_at - delta_seconds;
++    struct tm utc;
++    if (gmtime_r(&observed_at, &utc) == NULL) {
++        return false;
++    }
++    return strftime(out, out_len, "%Y-%m-%dT%H:%M:%SZ", &utc) != 0;
++}
++
++#endif
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 0d1042c..e8e507f 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -48,6 +48,7 @@
+ #include "em_cmd_exec.h"
+ #include "dm_easy_mesh_agent.h"
+ #include "em_cmd_unassoc_sta_query.h"
++#include "em_metrics_time.h"
+ 
+ static     const unsigned char em_vendor_oui[EM_VENDOR_OUI_SIZE] = {0xd8, 0x9c, 0x8e};
+ 
+@@ -120,15 +121,7 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         return -1;
+     }
+ 
+-    char received_at[64] = {0};
+     time_t now = time(NULL);
+-    struct tm utc;
+-    if (now != (time_t)-1 && gmtime_r(&now, &utc) != NULL) {
+-        if (strftime(received_at, sizeof(received_at),
+-                     "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
+-            received_at[0] = '\0';
+-        }
+-    }
+ 
+     for (i = 0; i < sta_metrics->num_bssids; i++) {
+         metrics = &sta_metrics->assoc_link_metrics[i];
+@@ -144,9 +137,12 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
+         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+         sta->m_sta_info.rcpi = metrics->rcpi;
+-        if (received_at[0] != '\0') {
++        char observed_at[64] = {0};
++        sta->m_sta_info.timestamp[0] = '\0';
++        if (em_format_link_metric_observed_at(observed_at, sizeof(observed_at),
++                now, ntohl(metrics->time_delta_ms))) {
+             snprintf(sta->m_sta_info.timestamp, sizeof(sta->m_sta_info.timestamp),
+-                     "%s", received_at);
++                     "%s", observed_at);
+         }
+         sta_dm->set_db_cfg_param(db_cfg_type_sta_metrics_update, "");
+     }
+diff --git a/src/rdkb-cli/backhaul_signal.go b/src/rdkb-cli/backhaul_signal.go
+new file mode 100644
+index 0000000..a0700c3
+--- /dev/null
++++ b/src/rdkb-cli/backhaul_signal.go
+@@ -0,0 +1,96 @@
++/*
++  Copyright 2026 RDK Management
++
++  Licensed under the Apache License, Version 2.0 (the "License");
++  you may not use this file except in compliance with the License.
++  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License.
++*/
++
++package main
++
++import "time"
++
++const (
++	backhaulSignalFresh           = "fresh"
++	backhaulSignalStale           = "stale"
++	backhaulSignalUnknown         = "unknown"
++	backhaulSignalMaxAge          = 20 * time.Second
++	backhaulSignalFutureTolerance = 5 * time.Second
++	backhaulSignalSource          = "ieee1905-associated-sta-link-metrics"
++)
++
++// BackhaulLinkMetric is a validated Associated STA Link Metrics observation.
++// ObservedAt is the measurement time reconstructed by the Controller from the
++// report receipt time and the standard time-delta field.
++type BackhaulLinkMetric struct {
++	RCPI       int
++	ObservedAt time.Time
++}
++
++// BackhaulSignal is emitted for every wireless extender edge. Unknown has no
++// numeric fields; stale retains the last measurement while clearly marking it
++// as unsuitable for a current-link decision.
++type BackhaulSignal struct {
++	Status     string `json:"status"`
++	Source     string `json:"source,omitempty"`
++	RCPI       *int   `json:"rcpi,omitempty"`
++	RSSI       *int   `json:"rssi_dbm,omitempty"`
++	ObservedAt string `json:"observed_at,omitempty"`
++	AgeSeconds *int64 `json:"age_seconds,omitempty"`
++}
++
++func parseBackhaulLinkMetric(rcpi int, timestamp string) (BackhaulLinkMetric, bool) {
++	// RCPI 0 is a real standards value (at or below -110 dBm). It is only
++	// distinguishable from an uninitialized model row when a metric timestamp
++	// was recorded, so both fields are required.
++	if rcpi < 0 || rcpi > 220 || timestamp == "" {
++		return BackhaulLinkMetric{}, false
++	}
++	observedAt, err := time.Parse(time.RFC3339Nano, timestamp)
++	if err != nil || observedAt.IsZero() {
++		return BackhaulLinkMetric{}, false
++	}
++	return BackhaulLinkMetric{RCPI: rcpi, ObservedAt: observedAt.UTC()}, true
++}
++
++func retainNewerBackhaulLinkMetric(metrics map[string]BackhaulLinkMetric,
++	key string, candidate BackhaulLinkMetric) {
++	previous, found := metrics[key]
++	if !found || candidate.ObservedAt.After(previous.ObservedAt) ||
++		(candidate.ObservedAt.Equal(previous.ObservedAt) && candidate.RCPI > previous.RCPI) {
++		metrics[key] = candidate
++	}
++}
++
++func classifyBackhaulSignal(metric *BackhaulLinkMetric, now time.Time) BackhaulSignal {
++	if metric == nil || metric.ObservedAt.IsZero() ||
++		metric.ObservedAt.After(now.Add(backhaulSignalFutureTolerance)) {
++		return BackhaulSignal{Status: backhaulSignalUnknown}
++	}
++
++	age := now.Sub(metric.ObservedAt)
++	if age < 0 {
++		age = 0
++	}
++	ageSeconds := int64(age / time.Second)
++	rcpi := metric.RCPI
++	rssi := rcpi/2 - 110
++	status := backhaulSignalFresh
++	if age > backhaulSignalMaxAge {
++		status = backhaulSignalStale
++	}
++	return BackhaulSignal{
++		Status: status, Source: backhaulSignalSource,
++		RCPI: &rcpi, RSSI: &rssi,
++		ObservedAt: metric.ObservedAt.Format(time.RFC3339Nano),
++		AgeSeconds: &ageSeconds,
++	}
++}
+diff --git a/src/rdkb-cli/backhaul_signal_test.go b/src/rdkb-cli/backhaul_signal_test.go
+new file mode 100644
+index 0000000..2d595bb
+--- /dev/null
++++ b/src/rdkb-cli/backhaul_signal_test.go
+@@ -0,0 +1,90 @@
++/*
++  Copyright 2026 RDK Management
++
++  Licensed under the Apache License, Version 2.0 (the "License");
++  you may not use this file except in compliance with the License.
++  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License.
++*/
++
++package main
++
++import (
++	"testing"
++	"time"
++)
++
++func TestBackhaulSignalFreshStaleAndUnknown(t *testing.T) {
++	now := time.Date(2026, 8, 23, 12, 0, 20, 0, time.UTC)
++
++	freshMetric, ok := parseBackhaulLinkMetric(138, "2026-08-23T12:00:15Z")
++	if !ok {
++		t.Fatal("valid fresh RCPI was rejected")
++	}
++	fresh := classifyBackhaulSignal(&freshMetric, now)
++	if fresh.Status != backhaulSignalFresh || fresh.RCPI == nil || *fresh.RCPI != 138 ||
++		fresh.RSSI == nil || *fresh.RSSI != -41 || fresh.AgeSeconds == nil || *fresh.AgeSeconds != 5 {
++		t.Fatalf("unexpected fresh signal: %+v", fresh)
++	}
++
++	weakestMetric, ok := parseBackhaulLinkMetric(0, "2026-08-23T12:00:15Z")
++	if !ok {
++		t.Fatal("timestamped RCPI 0 must remain a real observation")
++	}
++	weakest := classifyBackhaulSignal(&weakestMetric, now)
++	if weakest.Status != backhaulSignalFresh || weakest.RSSI == nil || *weakest.RSSI != -110 {
++		t.Fatalf("unexpected RCPI-0 signal: %+v", weakest)
++	}
++
++	staleMetric, ok := parseBackhaulLinkMetric(100, "2026-08-23T11:59:50Z")
++	if !ok {
++		t.Fatal("valid stale measurement was rejected")
++	}
++	stale := classifyBackhaulSignal(&staleMetric, now)
++	if stale.Status != backhaulSignalStale || stale.RSSI == nil || *stale.RSSI != -60 ||
++		stale.AgeSeconds == nil || *stale.AgeSeconds != 30 {
++		t.Fatalf("unexpected stale signal: %+v", stale)
++	}
++
++	for _, invalid := range []struct {
++		rcpi      int
++		timestamp string
++	}{{221, "2026-08-23T12:00:15Z"}, {255, "2026-08-23T12:00:15Z"},
++		{138, ""}, {138, "not-a-time"}} {
++		if _, ok := parseBackhaulLinkMetric(invalid.rcpi, invalid.timestamp); ok {
++			t.Fatalf("accepted invalid metric: %+v", invalid)
++		}
++	}
++	unknown := classifyBackhaulSignal(nil, now)
++	if unknown.Status != backhaulSignalUnknown || unknown.RCPI != nil || unknown.RSSI != nil {
++		t.Fatalf("absence became a numeric signal: %+v", unknown)
++	}
++
++	future := BackhaulLinkMetric{RCPI: 138, ObservedAt: now.Add(6 * time.Second)}
++	if signal := classifyBackhaulSignal(&future, now); signal.Status != backhaulSignalUnknown {
++		t.Fatalf("future timestamp was treated as current: %+v", signal)
++	}
++
++	selected := make(map[string]BackhaulLinkMetric)
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", staleMetric)
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", freshMetric)
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", staleMetric)
++	if selected["sta@bssid"].ObservedAt != freshMetric.ObservedAt {
++		t.Fatalf("duplicate link rows did not select the newest observation: %+v", selected)
++	}
++	equalTimeWeak := BackhaulLinkMetric{RCPI: 120, ObservedAt: freshMetric.ObservedAt}
++	equalTimeStrong := BackhaulLinkMetric{RCPI: 140, ObservedAt: freshMetric.ObservedAt}
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", equalTimeWeak)
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", equalTimeStrong)
++	retainNewerBackhaulLinkMetric(selected, "sta@bssid", equalTimeWeak)
++	if selected["sta@bssid"].RCPI != 140 {
++		t.Fatalf("equal-time duplicate selection depended on traversal order: %+v", selected)
++	}
++}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index acc8035..e1f3ed5 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -217,12 +217,6 @@ type STA struct {
+     TimeStamp   string `json:"-"`
+ }
+ 
+-type BackhaulLinkMetric struct {
+-	RCPI       int
+-	RSSI       int
+-	ObservedAt string
+-}
+-
+ type Device struct {
+ 	MAC             string         `json:"mac"`
+ 	Role            string         `json:"role"`
+@@ -3285,8 +3279,10 @@ func loadLiveRadioInventory() (map[string][]Radio, error) {
+ }
+ 
+ // collectBackhaulLinkMetrics joins the parent AP's associated-STA metrics to
+-// the child device's Backhaul.STAAddress. Invalid RCPI 255 is deliberately
+-// excluded; the topology must never turn absence into a made-up signal.
++// the child device's Backhaul.STAAddress. Only timestamped standard RCPI is an
++// observation: SignalStrength can be association-time data and must not be
++// promoted into periodic link telemetry. When duplicate rows converge, retain
++// the newest observation deterministically.
+ func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]BackhaulLinkMetric {
+ 	metrics := make(map[string]BackhaulLinkMetric)
+ 	for _, radios := range inventory {
+@@ -3299,19 +3295,12 @@ func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]Backhau
+ 					if !sta.Associated || sta.MACAddress == "" {
+ 						continue
+ 					}
+-					rcpi := sta.RCPI
+-					rssi := sta.SignalStrength
+-					if rcpi > 0 && rcpi <= 220 {
+-						rssi = rcpi/2 - 110
+-					} else if rssi >= -110 && rssi < 0 {
+-						rcpi = (rssi + 110) * 2
+-					} else {
++					metric, valid := parseBackhaulLinkMetric(sta.RCPI, sta.TimeStamp)
++					if !valid {
+ 						continue
+ 					}
+ 					key := strings.ToLower(sta.MACAddress) + "@" + strings.ToLower(bss.BSSID)
+-					metrics[key] = BackhaulLinkMetric{
+-						RCPI: rcpi, RSSI: rssi, ObservedAt: sta.TimeStamp,
+-					}
++					retainNewerBackhaulLinkMetric(metrics, key, metric)
+ 				}
+ 			}
+ 		}
+@@ -4847,6 +4836,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+     }
+     localRadioChannels := loadLocalRadioChannels()
+     backhaulMetrics := collectBackhaulLinkMetrics(radioInventory)
++	topologyObservedAt := time.Now().UTC()
+ 
+     // Helper to create STA list with circular layout
+     createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
+@@ -4990,13 +4980,25 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+                 "channel":       channel,
+                 "upstreamBSSID": upstreamBSSID,
+ 				"backhaulSTA":   backhaulSTA,
+-                "mediaType":     mediaType,
++				"mediaType":     mediaType,
+ 			}
+-			if metric, found := backhaulMetrics[backhaulSTA+"@"+upstreamBSSID]; found {
+-				edge["rcpi"] = metric.RCPI
+-				edge["rssi"] = metric.RSSI
+-				if metric.ObservedAt != "" {
+-					edge["signalObservedAt"] = metric.ObservedAt
++			wireless := !strings.EqualFold(mediaType, "Ethernet") &&
++				upstreamBSSID != "" && upstreamBSSID != "00:00:00:00:00:00"
++			if wireless {
++				key := backhaulSTA + "@" + upstreamBSSID
++				metric, found := backhaulMetrics[key]
++				var metricPtr *BackhaulLinkMetric
++				if found {
++					metricPtr = &metric
++				}
++				signal := classifyBackhaulSignal(metricPtr, topologyObservedAt)
++				edge["signal"] = signal
++				// Retain the original flat fields for consumers which predate the
++				// explicit signal object, but never expose stale data as current.
++				if signal.Status == backhaulSignalFresh {
++					edge["rcpi"] = *signal.RCPI
++					edge["rssi"] = *signal.RSSI
++					edge["signalObservedAt"] = signal.ObservedAt
+ 				}
+ 			}
+ 			edges = append(edges, edge)
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index b07d197..05230d6 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2038,7 +2038,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=backhaul-signal-hover-1"></script>
++    <script src="static/script.js?v=backhaul-signal-freshness-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 2e20f96..d4dce8b 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2696,11 +2696,117 @@ async handleWebSocketMessage(data) {
+ 
+   topologySignature(value) {
+     return JSON.stringify(value || {}, (key, item) =>
+-      ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
++      ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed',
++        'signal', 'rcpi', 'rssi', 'signalObservedAt'].includes(key)
+         ? undefined : item
+     );
+   }
+ 
++  topologyBackhaulEdgeKey(edge) {
++    return [edge?.from, edge?.to, this.normalizeMac(edge?.upstreamBSSID)]
++      .map(value => String(value || '')).join('@');
++  }
++
++  topologyIsWirelessBackhaul(edge) {
++    const bssid = this.normalizeMac(edge?.upstreamBSSID);
++    return Boolean(bssid) && bssid !== '00:00:00:00:00:00' &&
++      String(edge?.mediaType || '').toLowerCase() !== 'ethernet';
++  }
++
++  topologyBackhaulSignal(edge) {
++    const metric = edge?.signal || {};
++    let status = String(metric.status || '').toLowerCase();
++    const rawRCPI = metric.rcpi ?? edge?.rcpi;
++    const rawRSSI = metric.rssi_dbm ?? edge?.rssi;
++    const rcpi = Number(rawRCPI);
++    const rssi = Number(rawRSSI);
++    const hasRCPI = rawRCPI !== null && rawRCPI !== undefined &&
++      Number.isInteger(rcpi) && rcpi >= 0 && rcpi <= 220;
++    const hasRSSI = rawRSSI !== null && rawRSSI !== undefined &&
++      Number.isInteger(rssi) && rssi >= -110 && rssi <= 0;
++    const observedAt = metric.observed_at || edge?.signalObservedAt || '';
++    const observedMillis = Date.parse(observedAt);
++    const future = Number.isFinite(observedMillis) && observedMillis - Date.now() > 5000;
++    const ageSeconds = Number.isFinite(observedMillis)
++      ? Math.max(0, Math.floor((Date.now() - observedMillis) / 1000))
++      : null;
++
++    if (!['fresh', 'stale', 'unknown'].includes(status)) {
++      status = hasRCPI && hasRSSI && ageSeconds !== null
++        ? (ageSeconds > 20 ? 'stale' : 'fresh') : 'unknown';
++    } else if (status === 'fresh' && ageSeconds !== null && ageSeconds > 20) {
++      status = 'stale';
++    }
++    if (!hasRCPI || !hasRSSI || ageSeconds === null || future) status = 'unknown';
++
++    return {
++      status,
++      available: status === 'fresh',
++      stale: status === 'stale',
++      rcpi: status === 'unknown' ? null : rcpi,
++      rssi: status === 'unknown' ? null : rssi,
++      observedAt: status === 'unknown' ? null : observedAt,
++      ageSeconds: status === 'unknown' ? null : ageSeconds
++    };
++  }
++
++  topologyBackhaulSignalSignature(topology = this.topology) {
++    return JSON.stringify((topology?.edges || []).map(edge => {
++      const signal = this.topologyBackhaulSignal(edge);
++      return [this.topologyBackhaulEdgeKey(edge), signal.status,
++        signal.rcpi, signal.rssi, signal.observedAt];
++    }).sort((left, right) => left[0].localeCompare(right[0])));
++  }
++
++  topologyBackhaulSignalHTML(edge) {
++    const signal = this.topologyBackhaulSignal(edge);
++    if (signal.available) {
++      return `<br>Signal: ${signal.rssi} dBm (RCPI ${signal.rcpi}, ${signal.ageSeconds}s old)`;
++    }
++    if (signal.stale) {
++      return `<br>Signal: stale — last ${signal.rssi} dBm (RCPI ${signal.rcpi}, ${signal.ageSeconds}s old)`;
++    }
++    return '<br>Signal: unknown — no fresh link metric';
++  }
++
++  topologyBackhaulLinkLabel(edge) {
++    const channel = Number(edge?.channel) > 0 ? edge.channel : '?';
++    const signal = this.topologyBackhaulSignal(edge);
++    const signalLabel = signal.available ? `${signal.rssi} dBm` :
++      (signal.stale ? 'stale' : 'signal ?');
++    return `${this.topologyBandLabel(edge?.band)} · ch ${channel} · ${signalLabel}`;
++  }
++
++  refreshTopologyBackhaulSignalVisuals() {
++    const group = this.topologyView?.group;
++    if (!group?.selectAll) return false;
++    const liveEdges = new Map((this.topology?.edges || []).map(edge =>
++      [this.topologyBackhaulEdgeKey(edge), edge]));
++    const self = this;
++    const updateDatum = datum => {
++      const live = liveEdges.get(self.topologyBackhaulEdgeKey(datum));
++      if (!live) return;
++      for (const key of ['signal', 'rcpi', 'rssi', 'signalObservedAt']) {
++        if (Object.prototype.hasOwnProperty.call(live, key)) datum[key] = live[key];
++        else delete datum[key];
++      }
++    };
++    group.selectAll('path.backhaul-link').each(function(edge) {
++      updateDatum(edge);
++      const signal = self.topologyBackhaulSignal(edge);
++      d3.select(this)
++        .attr('stroke-dasharray', !self.topologyIsWirelessBackhaul(edge) ||
++          signal.available ? null : '5 4')
++        .attr('opacity', !self.topologyIsWirelessBackhaul(edge) ? 1 :
++          (signal.stale ? 0.7 : (signal.available ? 1 : 0.5)));
++    });
++    group.selectAll('g.channel-label').each(function(edge) {
++      updateDatum(edge);
++      d3.select(this).select('text').text(self.topologyBackhaulLinkLabel(edge));
++    });
++    return true;
++  }
++
+   topologyClientMetricsSignature(clients = this.clients) {
+     return JSON.stringify((Array.isArray(clients) ? clients : []).map(client => {
+       const metrics = client?.client_metrics || {};
+@@ -2895,13 +3001,19 @@ async handleWebSocketMessage(data) {
+       return false;
+     }
+ 
+-    this.recordTopologyAssociationChanges(this.topology, response);
+-
+-    if (this.topologySignature(response) === this.topologySignature(this.topology)) {
++    const topologyUnchanged = this.topologySignature(response) ===
++      this.topologySignature(this.topology);
++    if (topologyUnchanged) {
++      this.topology = response;
+       this.topologyRefreshPending = null;
++      // Refresh even when the wire values are identical: local age advances
++      // between polls and can move a rendered link from fresh to stale.
++      this.refreshTopologyBackhaulSignalVisuals();
+       return false;
+     }
+ 
++    this.recordTopologyAssociationChanges(this.topology, response);
++
+     if ((this.topologyInteractionDepth || 0) > 0) {
+       this.topologyRefreshPending = response;
+       return false;
+@@ -3391,10 +3503,9 @@ async handleWebSocketMessage(data) {
+           const incoming = edges.find(item => String(item.to) === String(d.id));
+           const parent = incoming?.source?.name || incoming?.source?.id || '';
+           const upstreamBSSID = d.upstreamBSSID || incoming?.upstreamBSSID || '';
+-          const wireless = upstreamBSSID && upstreamBSSID !== '00:00:00:00:00:00';
+-          const signal = incoming && Number.isFinite(Number(incoming.rssi))
+-            ? `<br>Signal: ${Number(incoming.rssi)} dBm (RCPI ${Number(incoming.rcpi)})`
+-            : (wireless ? '<br>Signal: N/A' : '');
++          const wireless = incoming && self.topologyIsWirelessBackhaul(incoming);
++          const signal = incoming && wireless
++            ? self.topologyBackhaulSignalHTML(incoming) : '';
+           const backhaul = incoming
+             ? `<br><b>Backhaul parent:</b> ${parent}` +
+               `<br>Media: ${d.backhaulMedia || incoming.mediaType || 'Unknown'}` +
+@@ -3436,9 +3547,17 @@ async handleWebSocketMessage(data) {
+     .attr('fill', 'none')
+     .attr('stroke-width', 2)
+     .attr('stroke', d => bandColors[d.band] || '#000')
++    .attr('stroke-dasharray', d => !self.topologyIsWirelessBackhaul(d) ||
++      self.topologyBackhaulSignal(d).available ? null : '5 4')
++    .attr('opacity', d => {
++      if (!self.topologyIsWirelessBackhaul(d)) return 1;
++      const signal = self.topologyBackhaulSignal(d);
++      return signal.stale ? 0.7 : (signal.available ? 1 : 0.5);
++    })
+     // Paths are encoded parent -> child; marker-start with auto-start-reverse
+     // points from the child back toward its actual upstream parent.
+-    .attr('marker-start', d => String(d.band) === '-1' ? null : 'url(#backhaul-uplink-arrowhead)')
++    .attr('marker-start', d => self.topologyIsWirelessBackhaul(d)
++      ? 'url(#backhaul-uplink-arrowhead)' : null)
+     .style('pointer-events', 'stroke')
+     .style('cursor', 'help')
+     .on('mouseover', function(event, d) {
+@@ -3446,9 +3565,8 @@ async handleWebSocketMessage(data) {
+       const child = d.target?.name || d.target?.id || d.to;
+       const bssid = d.upstreamBSSID && d.upstreamBSSID !== '00:00:00:00:00:00'
+         ? `<br>Upstream BSSID: ${d.upstreamBSSID}` : '';
+-      const signal = Number.isFinite(Number(d.rssi))
+-        ? `<br>Signal: ${Number(d.rssi)} dBm (RCPI ${Number(d.rcpi)})`
+-        : (String(d.band) !== '-1' ? '<br>Signal: N/A' : '');
++      const signal = self.topologyIsWirelessBackhaul(d)
++        ? self.topologyBackhaulSignalHTML(d) : '';
+       tooltip.style('display', 'block')
+         .html(`<b>${child} uplink &rarr; ${parent}</b><br>${self.topologyBandLabel(d.band)} · ch ${Number(d.channel) > 0 ? d.channel : '?'}${bssid}${signal}`);
+       self.positionTooltip(event, tooltip);
+@@ -3457,15 +3575,15 @@ async handleWebSocketMessage(data) {
+     .on('mouseout', () => tooltip.style('display', 'none'));
+ 
+     const channelLabels = edgeGroup.selectAll('g.channel-label')
+-    .data(edges.filter(d => String(d.band) !== '-1')) // Only for non -1 bands
++    .data(edges.filter(d => self.topologyIsWirelessBackhaul(d)))
+     .enter()
+     .append('g')
+     .attr('class', 'channel-label');
+ 
+     channelLabels.append('rect')
+-    .attr('x', -35)
++    .attr('x', -72)
+     .attr('y', -12)
+-    .attr('width', 70)
++    .attr('width', 144)
+     .attr('height', 24)
+     .attr('rx', 12)
+     .attr('fill', '#fff')
+@@ -3477,7 +3595,7 @@ async handleWebSocketMessage(data) {
+     .attr('dominant-baseline', 'middle')
+     .attr('font-size', '10px')
+     .attr('font-weight', 'bold')
+-    .text(d => `${self.topologyBandLabel(d.band)} · ch ${Number(d.channel) > 0 ? d.channel : '?'}`);
++    .text(d => self.topologyBackhaulLinkLabel(d));
+ 
+     simulation.on('tick', () => {
+       node.attr('transform', d => `translate(${d.x},${d.y})`);
+diff --git a/tests/test_l1_em_metrics.cpp b/tests/test_l1_em_metrics.cpp
+index 5346212..f84401d 100644
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -20,6 +20,7 @@
+ #include <gmock/gmock.h>
+ #include <stdio.h>
+ #include "em_metrics.h"
++#include "em_metrics_time.h"
+ #include "em_mgr.h"
+ #include "em_cmd.h"
+ #include "dm_easy_mesh.h"
+@@ -267,3 +268,22 @@ TEST_F(EmMetricsTest, destroy_stack_allocated_em_metrics_t) {
+     }
+     std::cout << "Exiting destroy_stack_allocated_em_metrics_t test" << std::endl;
+ }
++
++TEST_F(EmMetricsTest, AssociatedLinkMetricObservedAtHonorsWireDelta) {
++    char observed_at[64] = {0};
++    const time_t received_at = static_cast<time_t>(1700000000);
++
++    ASSERT_TRUE(em_format_link_metric_observed_at(
++        observed_at, sizeof(observed_at), received_at, 0));
++    EXPECT_STREQ(observed_at, "2023-11-14T22:13:20Z");
++
++    /* A 5.5-second delta rounds upward: never make a sample look younger. */
++    ASSERT_TRUE(em_format_link_metric_observed_at(
++        observed_at, sizeof(observed_at), received_at, 5500));
++    EXPECT_STREQ(observed_at, "2023-11-14T22:13:14Z");
++
++    EXPECT_FALSE(em_format_link_metric_observed_at(
++        nullptr, sizeof(observed_at), received_at, 1000));
++    EXPECT_FALSE(em_format_link_metric_observed_at(
++        observed_at, 0, received_at, 1000));
++}
+-- 
+2.53.0
