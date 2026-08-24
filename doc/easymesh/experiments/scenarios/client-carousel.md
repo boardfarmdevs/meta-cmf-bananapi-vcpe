@@ -145,13 +145,5 @@ converge in the topology. It also requires verified medium restoration and
 preflight client placement restoration. Backhaul pairs are never touched,
 wmediumd is never restarted, and cleanup leaves every client interface up.
 
-The former paired-arrival disagreement is fixed. Its root cause was the AL-SAP
-stream receiver discarding a second length-delimited notification when two
-SDUs arrived in one `recv()`. Follow-on fixes commit association ownership
-before the optional capability query, poll the standard Associated Clients TLV
-as a bounded repair path, and prevent an ambiguous old-AP snapshot from
-overwriting a newer association event. Three strict post-fix carousel runs
-completed 80 individual arrivals with physical link, controller and API
-agreement, followed by a full extender-outage/recovery run that held 10/10
-agreement for 75 seconds. Any recurrence remains a hard test failure and must
-be preserved for diagnosis; it is no longer an accepted residual.
+Any disagreement between the physical association, controller model and API is
+a hard failure. Preserve the complete run directory for diagnosis.

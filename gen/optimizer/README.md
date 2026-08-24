@@ -1,7 +1,7 @@
 # EasyMesh external optimizer
 
 This package is the first P1 implementation of the architecture in
-[`doc/easymesh/optimizer.md`](../../doc/easymesh/optimizer.md). It runs on the
+[the optimizer architecture](../../doc/easymesh/reference/optimizer-architecture.md). It runs on the
 lab host, not in a BPI image.
 
 Implemented now:
@@ -41,7 +41,7 @@ is never treated as link quality. wmediumd SNR is never accepted as an
 optimizer observation.
 
 The complete operator and extension contract is in
-[`optimizer-manual.md`](../../doc/easymesh/optimizer-manual.md). It documents
+[the optimizer development manual](../../doc/easymesh/experiments/optimizer-development.md). It documents
 plain snapshot input, replay sequences, live adapters, new typed metrics, new
 algorithms, scenario authoring and acceptance.
 
@@ -169,5 +169,5 @@ python3 -m optimizer.cli matrix \
 jq '.summary' scenarios/generated/home-suite.matrix.json
 ```
 
-See [`optimizer-scenarios.md`](../../doc/easymesh/optimizer-scenarios.md) for
+See [optimizer scenarios](../../doc/easymesh/experiments/optimizer-scenarios.md) for
 the pseudo-home, traffic plan, band-steering and backhaul boundaries.

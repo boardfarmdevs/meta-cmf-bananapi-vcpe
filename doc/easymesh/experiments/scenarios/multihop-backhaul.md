@@ -195,28 +195,3 @@ A profile passes only when:
 
 Timestamped command logs are written below
 `tmp/test-results/multihop/` by default.
-
-## Accepted rev130 result
-
-On 2026-08-23 a fresh four-extender/twenty-client deployment passed both cold
-profiles with the current controller and extender artifacts. The chain was:
-
-```text
-Agent-1 -> bpiap-003 -> bpiap-002 -> bpiap-001 -> bpiap
-```
-
-The branch was:
-
-```text
-Agent-1 -> bpiap-003 -> {bpiap-002, bpiap-001}
-                         bpiap-002 -> bpiap
-```
-
-Every extender link matched the requested physical BSSID and the topology API.
-The gateway-to-anchor link reported `-41 dBm`/RCPI `138`; each extender hop
-reported `-46 dBm`/RCPI `128`, matching the parent-side `iw` observation.
-Both profiles retained 20/20 client associations and gateway reachability and
-finished at `5/15/50/24` exactly. Restarting only `em_ctrl` while the branch
-remained live reconstructed six topology nodes in four seconds; a single
-metrics activation and `verify branch` then passed the same link, signal,
-client and database gates.

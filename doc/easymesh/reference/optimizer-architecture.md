@@ -8,7 +8,7 @@ OneWifi, WebUI and wmediumd processes.
 
 For installation, operating commands, input schemas, adapter examples and
 policy extension, use the companion [optimizer user and extension
-manual](optimizer-manual.md).
+manual](../experiments/optimizer-development.md).
 
 The optimizer owns all optimization behavior:
 
@@ -357,8 +357,8 @@ steer should have worked.
 
 The optimizer code inhibits an action unless all of these are true:
 
-- expected five non-controller mesh-device records and 10/10 active clients
-  are present;
+- expected five non-controller mesh-device records and 20/20 active clients
+  (ten private and ten IoT) are present;
 - the STA has one current association and a fresh current-link measurement;
 - the target BSSID exists, is not the source and is eligible for the STA;
 - candidate measurements are fresh and exceed the configured margin;
@@ -387,7 +387,7 @@ value or optimistic steer.
    unique target.
 4. **Act mode — implemented and explicitly gated.** The proven `steer.sh`
    adapter, bounded verifier, cooldown and failure backoff are in place.
-5. **Scale and fault tests.** Ten clients, four extenders, stale metrics,
+5. **Scale and fault tests.** Twenty clients, four extenders, stale metrics,
    rejected BTM, missing target, delayed model convergence and process loss.
 6. **Optional API hardening.** Replace `lxc exec` with authenticated observation
    and steering endpoints without moving optimization logic into the BPI image.
@@ -424,9 +424,9 @@ The next measurement slice is cross-band evidence and client capability, not a
 shortcut through scenario truth. Beacon/probe observations must name exact
 BSSID/band, source and receipt time before live band-upgrade action is enabled.
 
-### Unassociated-metrics boundary resolution (2026-08-21)
+### Unassociated-metrics boundary
 
-The earlier source audit separated radio selection/state, RBus method/event,
+The implementation separates radio selection/state, RBus method/event,
 payload-shape, hwsim-provider, result-correlation and HTTP semantic defects.
 The layer repairs each boundary without moving policy into the BPI:
 
@@ -457,7 +457,7 @@ Frequency-qualified RF, metric receipt time and same-band candidate collection
 are accepted, as is the five-Agent/20-client mixed profile. Cross-band
 evidence, load traffic, controlled BTM response, backhaul actions, channel
 width and the 50/100-client profiles must not be inferred from configuration
-alone. See [optimizer-scenarios.md](optimizer-scenarios.md).
+alone. See [optimizer scenarios](../experiments/optimizer-scenarios.md).
 
 ### Test ladder
 

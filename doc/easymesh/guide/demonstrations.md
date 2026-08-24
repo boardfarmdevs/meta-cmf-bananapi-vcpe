@@ -327,7 +327,7 @@ gen/tests/health-audit.sh | tee tmp/test-results/demo/post-reconstruction.txt
 The reconstructed graph must contain the same six mesh nodes and ten named
 clients. The AP BSSIDs and device identities are preserved because this is a
 warm reconstruction of existing containers. Use the fresh-build/deployment
-procedure in [lab-setup.md](lab-setup.md) only when new images or new logical
+procedure in [operations](operations.md) only when new images or new logical
 identities are required.
 
 ## Recovery if a demo is interrupted incorrectly

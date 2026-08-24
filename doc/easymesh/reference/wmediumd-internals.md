@@ -9,7 +9,7 @@ transmission from the kernel, decides when and whether each receiver gets it,
 injects successful frames back into hwsim, and reports transmit status to the
 sender.
 
-The accepted 0815 lab uses one patched wmediumd process for all active radios,
+The current lab uses one patched wmediumd process for all active radios,
 an SNR model loaded from a generated startup file, and a dedicated control
 socket for atomic in-memory SNR changes. A startup configuration file is still
 required. The socket replaces per-phase configuration-file rewrites, not the
@@ -52,10 +52,10 @@ Go wmediumd Console. Neither observer endpoint changes the medium.
 ## What it can simulate
 
 The pinned engine has more features than the supported lab path. The status in
-this table prevents an upstream capability from being mistaken for a validated
-0815 feature.
+this table prevents an upstream capability from being mistaken for a supported
+lab feature.
 
-| Capability | How it works | 0815 status |
+| Capability | How it works | Lab status |
 | --- | --- | --- |
 | Perfect medium | Delivers between configured radios without an explicit loss model | Upstream available; not used |
 | Fixed link loss | `prob` model assigns a frame-error probability per directed radio pair | Upstream available; not lab-validated |
@@ -64,7 +64,7 @@ this table prevents an upstream capability from being mistaken for a validated
 | Asymmetric links | Both directions can have different matrix values | Supported by file and socket |
 | Rate fallback and retries | Uses the hwsim multi-rate retry series, modeled loss and ACK result | Supported, with rate-model limits below |
 | Airtime and contention delay | Models PHY airtime, DIFS/SIFS, ACK time, retry backoff and four 802.11 access categories | Supported |
-| Independent channels | Schedules different center frequencies independently and suppresses off-channel ACK/delivery | Added and used by 0815 patches |
+| Independent channels | Schedules different center frequencies independently and suppresses off-channel ACK/delivery | Patched, supported, and used |
 | Same-frequency interference | Optional collision/interference accounting from concurrent airtime | Patched for per-frequency buckets; disabled in generated baseline |
 | Random fading | Adds pseudo-normal variation scaled by `fading_coefficient` | Upstream available; not used |
 | Geometry/path loss | Derives SNR from coordinates, transmit power and a free-space, log-distance or ITU model | Upstream available; not used by the configurator |
@@ -144,7 +144,7 @@ without the `0x40` bit.
 Only active container radios are included. Free pool radios remain in the host
 namespace, are omitted from the matrix and have their `virt-wlan*` interface
 set down. Including unused, channel-less pool radios causes unnecessary
-multicast clones and previously starved useful delivery.
+multicast clones and can starve useful delivery.
 
 wmediumd itself does **not** query LXD, sysfs or `iw`. It only loads the ordered
 ID list produced by the generator. Matrix link indices refer to this exact
@@ -204,7 +204,7 @@ The normal netlink path is:
 
 The scheduler has per-radio queues for background, best effort, video and
 voice traffic. Management traffic uses voice priority; non-QoS data uses best
-effort; QoS data maps from its 802.11 priority. The 0815 patch finds queue tails
+effort; QoS data maps from its 802.11 priority. The current patch finds queue tails
 only at the same center frequency, so beacons on 2.4 or 6 GHz cannot serialize
 5 GHz traffic.
 
@@ -322,7 +322,7 @@ accepted launcher does not pass `-x`.
 
 ## Dynamic control socket
 
-The 0815 patch adds `-C /run/wmediumd-control.sock`. This is a Unix
+The current patch adds `-C /run/wmediumd-control.sock`. This is a Unix
 `SOCK_SEQPACKET` endpoint, owned `root:lxd` and mode `0660`. It uses protocol
 version 1, magic `WMDC`, network-byte-order fixed-width records and a 64 KiB
 maximum message.
@@ -393,7 +393,7 @@ netlink health without copying payloads. A slow or absent reader cannot block
 the single wmediumd frame loop.
 
 The separate Go wmediumd Console consumes `-O`; see
-[wmediumd-observability.md](wmediumd-observability.md). Its managed service is
+[wmediumd Console](wmediumd-console.md). Its managed service is
 read-only. Explicit typed-control mode opens `-C` separately and exposes only
 generation-checked pair/frequency set, clear and one-step undo operations.
 
@@ -515,14 +515,6 @@ cases.
 The current patch-`0014` prebuilt binary has SHA-256
 `f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f`.
 
-The earlier patch-`0012` prebuilt binary had SHA-256
-`59a98419c1a4f587796fb04d319dfdf993e94eb2e8d7aa341861a55f8129d42e`.
-On rev130, one client/Agent pair simultaneously held 25 dB at 5180 MHz and
-55 dB at 2437 MHz. The active 5180 MHz link changed from -41 to -66 dBm and
-controller RCPI from 138 to 88 with 40/40 probes. Clearing the sparse entries
-restored the exact absent-override state, 50 dB pair fallback, -41 dBm/RCPI 138
-and 20/20 probes. The daemon PID and client association remained stable.
-
 Interference accounting is not enabled by the current generated config. If it
 is enabled manually, the patch keeps exact-frequency buckets and writes bounded
 development diagnostics to `/tmp/mc_intf.log`; VIF ownership changes can appear
@@ -562,21 +554,11 @@ sudo gen/wmediumd/wmediumd.patched -T
 | WLAN works after `down` | Expected hwsim fallback; the experiment is no longer using modeled RF |
 | Topology does not remove an RF-isolated extender within the accepted bound | liveness publication/probe regression; preserve the outage artifact and IEEE1905/controller logs |
 
-The former repeated `nl: cmd 2 ... Invalid argument` output was decoded with
-outbound-netlink sequence correlation. The startup class was multicast beacon
-delivery to radios whose frequency had not yet been learned. The transition
-class was primarily beacons, plus a few probe responses and multicast data
-frames, submitted while a client was between scan/channel receive states.
-`mac80211_hwsim` returns the same `EINVAL` for those normal receive drops that
-it uses for malformed command-2 input.
-
-Patch `0010` prevents clones when current receive-frequency evidence is absent
-or stale. Patch `0011` records the sequence of each clone constructed by this
-process and downgrades only a matching command-2 `EINVAL` to debug-level RF
-loss. Untracked command-2 errors and every other command/error remain visible.
-A two-round, ten-client paired blackout/arrival carousel converged and restored
-with zero command-2 diagnostics; an unrelated command-3 failure remained in
-the same log, confirming that error reporting was not globally suppressed.
+Command-2 `EINVAL` for a clone tracked through outbound-netlink sequence
+correlation is classified as RF loss during a transient receive state. Clones
+are not created when current receive-frequency evidence is absent or stale.
+Untracked command-2 errors and every other command/error remain visible; an
+increase in those diagnostics is a regression.
 
 ## Source and design references
 
@@ -584,13 +566,13 @@ the same log, confirming that error reporting was not globally suppressed.
 - `gen/wmediumd/gen-config.sh` defines active-radio discovery and the baseline.
 - `gen/wmediumd/wmediumd-up.sh` owns the daemon lifecycle and runtime paths.
 - `gen/wmediumd/configurator/wmdcfg/actuator.py` implements the socket client.
-- [configurator.md](configurator.md) defines the supported scenario language
+- [wmediumd configurator](wmediumd-configurator.md) defines the supported scenario language
   and restoration contract.
-- [wmediumd-extender-outage.md](wmediumd-extender-outage.md) tests RF isolation
+- [extender outage](../experiments/scenarios/extender-outage.md) tests RF isolation
   and recovery without stopping a container.
-- [wmediumd-client-carousel.md](wmediumd-client-carousel.md) exercises repeated
+- [client carousel](../experiments/scenarios/client-carousel.md) exercises repeated
   client movement visible in the live topology.
-- [client-scale.md](client-scale.md) defines the 20/50/100-client profiles,
+- [client scale](../experiments/scenarios/client-scale.md) defines the 20/50/100-client profiles,
   pair-state growth, measured wmediumd cost and overload gates.
-- [patch-set.md](patch-set.md) places the wmediumd and kernel patches in the
-  complete 0815 patch rationale.
+- [patch set](patch-set.md) places the wmediumd and kernel patches in the
+  complete component ownership model.

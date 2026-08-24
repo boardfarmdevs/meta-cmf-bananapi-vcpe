@@ -121,40 +121,14 @@ the RF candidates. Give `recovery_ap` a clear advantage and verify the observed
 BSSID. Configurator language v1 deliberately cannot isolate mesh backhaul, so
 the dedicated acceptance test uses `ControlClient` directly for that phase.
 
-## Verified behavior
+## Required behavior
 
-Live rev120 VM runs on 2026-08-17 produced:
-
-| Run | Result |
-| --- | --- |
-| `bpiap-003`, client-only | 2/2 clients moved; actual and API parents agreed in 6.6 s |
-| `bpiap-001`, complete | 2/2 clients moved in 6.7 s; node retained for 90 s; restored backhaul in 16.2 s |
-| `bpiap-002`, complete | 2/2 clients moved in 10.7 s; backhaul lost in 1.4 s; node retained for 60 s; restored in 17.5 s |
-| `bpiap-003`, browser observed | 3/3 clients moved in 11.0 s; 15 polls saw 3 topology states without reload |
-
-The client-side experiment works as intended: dropped beacons cause natural
-link loss, clients reassociate, and the controller publishes the new parent.
-No `ip link` toggle is necessary.
-
-Those runs established the original controller limitation; they are retained
-as boundary evidence rather than the current result. The end-to-end liveness
-path was completed and tested on rev130 on 2026-08-19. A full `bpiap-003` RF
-outage produced:
-
-| Observation | Result |
-| --- | --- |
-| affected client selected another AP | 5.464 s; physical and API parents agreed |
-| extender wireless backhaul loss | 2.011 s |
-| extender removed from active API/WebUI topology | 59.181 s after full isolation |
-| exact 210-link medium restoration | verified through control-socket readback |
-| same extender returned to active topology | 15.198 s after restoration |
-| all ten physical/API client parents | agreed continuously for 75 s |
-| client traffic and controller processes | 10/10 pass; same PIDs and zero restarts |
-
-The device identity and database records remain persistent while the node is
-unreachable. Only its active topology publication is suppressed. A returning
-AL-MAC is therefore the same logical extender rather than a newly provisioned
-device.
+Dropped beacons must cause natural client link loss and reassociation without
+an `ip link` toggle. The physical station link and controller parent must agree.
+After complete isolation, the extender must lose backhaul and age out of active
+topology while its persistent identity remains intact. Exact matrix restoration
+must return the same logical extender, restore client traffic, and leave
+controller services at the original PID and restart count.
 
 ## Root localization in the current stack
 
@@ -196,30 +170,9 @@ The completed chain is:
 A WebUI-only filter or direct call to `RemoveDevice` would bypass this
 controller contract and is intentionally not used.
 
-### IEEE 1905 publication acceptance
-
-A targeted rev130 run on 2026-08-19 isolated every directed wmediumd pair for
-`bpiap-003` while capturing inside the controller network namespace. The exact
-baseline matrix was restored and verified through the control socket. The
-relevant sequence was:
-
-```text
-14:54:49.667  remove expired neighbor 02:00:00:00:04:20 (61.9 s)
-14:54:49.668  publish NeighborExpired and invoke normal notification worker
-14:54:49.670  Topology Notification sent on eth0_virt_peer, message ID 132
-```
-
-The packet capture independently decoded frame 92 as message type `0x0001`,
-source `00:60:2f:da:68:d4`, destination `01:80:c2:00:00:13`, message ID
-`0x0084`. That capture proved the IEEE 1905 publication boundary. The later
-full-path run above separately proved controller suppression and restoration:
-the node count changed from six to five after 59.181 seconds and returned to
-six 15.198 seconds after exact RF restoration.
-
 ## Automatic WebUI refresh
 
-Patch `0038-cli-refresh-topology-on-live-change.patch` changes the visible
-topology tab from a 60-second refresh to a two-second poll. It:
+The visible topology tab polls every two seconds. It:
 
 - permits only one request at a time;
 - compares network data while ignoring D3 presentation coordinates;

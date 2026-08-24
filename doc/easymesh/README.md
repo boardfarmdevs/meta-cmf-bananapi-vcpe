@@ -1,149 +1,100 @@
 # EasyMesh evaluation lab
 
-This directory is the authoritative documentation for the consolidated
-`codex/0824-clean` EasyMesh lab. The lab runs the Banana Pi RDK-B EasyMesh
-userspace in LXD containers with
-Linux 7.0 `mac80211_hwsim` radios and a patched multichannel wmediumd.
+Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
+engineers.
 
-The purpose is repeatable onboarding and steering experimentation, including RF
-gradients that are independent from the steering decision being evaluated.
+Status: current documentation for `codex/0824-clean`.
 
-## Read in this order
+This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
+node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel
+wmediumd as the controlled RF medium. Its purpose is repeatable onboarding,
+telemetry, steering, topology, and optimizer experimentation without requiring
+a large physical Wi-Fi installation.
 
-| Document | Question it answers |
+## Choose a path
+
+| I want to... | Start here |
 | --- | --- |
-| [architecture.md](architecture.md) | What runs where, how the control and data planes work, and how nodes onboard |
-| [patch-set.md](patch-set.md) | Which 0815 patches are retained, why they exist, and what was removed from 0814 |
-| [lab-setup.md](lab-setup.md) | How to build, deploy, scale, access and validate the direct and Vagrant-VM labs |
-| [client-scale.md](client-scale.md) | How private/IoT cohorts grow from the accepted 20-client profile toward 50 and 100 clients |
-| [demo-scenarios.md](demo-scenarios.md) | Operator-led rev130 demonstrations: manual steer, live RCPI, client carousel, extender outage and full reconstruction |
-| [packet-capture.md](packet-capture.md) | How to capture plaintext EasyMesh, agent/client traffic and safely handle the raw 802.11 boundary |
-| [wmediumd.md](wmediumd.md) | What the medium can simulate, how radios and frames are resolved, and which static and live controls remain |
-| [wmediumd-observability.md](wmediumd-observability.md) | How the Go wmediumd Console exposes live medium paths, rules, packet outcomes and bounded typed controls |
-| [configurator.md](configurator.md) | How RF scenarios are described and applied dynamically through wmediumd |
-| [metrics-reporting.md](metrics-reporting.md) | Why STA/AP metrics were inactive, how they are configured, and how to verify the live observation path |
-| [memory-footprint.md](memory-footprint.md) | Measured whole-container and per-process memory during cold reconstruction and convergence |
-| [wmediumd-extender-outage.md](wmediumd-extender-outage.md) | Repeatable RF-loss, client recovery, extender isolation and live-WebUI acceptance |
-| [wmediumd-client-carousel.md](wmediumd-client-carousel.md) | Visual client disconnect/reconnect rotation across every AP |
-| [steering.md](steering.md) | What steering works today, the EasyMesh policy boundary, and how policy experiments should run |
-| [optimizer.md](optimizer.md) | How the completely external optimizer observes, decides, acts and verifies without BPI optimizer logic |
-| [optimizer-manual.md](optimizer-manual.md) | How operators run the optimizer and how researchers add snapshots, live adapters, metrics, policies and scenarios |
-| [optimizer-scenarios.md](optimizer-scenarios.md) | How deterministic homes, mobility, walls, RF goldens and traffic profiles form the optimizer test matrix |
-| [next-steps.md](next-steps.md) | Prioritized stability, integration, scale and novel-policy research plan |
-| [soak-acceptance.md](soak-acceptance.md) | Exact 12-hour topology, traffic, candidate-RCPI, restoration and memory gates |
-| [lab-presentation.md](lab-presentation.md) | Presentation-ready lab introduction, current demos and policy roadmap |
+| Understand what the lab is | [Architecture](concepts/architecture.md) |
+| See exactly what works now | [Current state](current-state.md) |
+| Use an already installed lab | [Quickstart](guide/quickstart.md) |
+| Start, stop, recover, or redeploy it | [Operations](guide/operations.md) |
+| Give a live demonstration | [Demonstrations](guide/demonstrations.md) |
+| Understand RF simulation | [RF simulation](concepts/rf-simulation.md) |
+| Understand steering and policy boundaries | [Steering policy](concepts/steering-policy.md) |
+| Develop an optimizer | [Optimizer](concepts/optimizer.md) |
+| Select and run an experiment | [Experiment catalog](experiments/README.md) |
+| Investigate implementation details | [Technical reference](#technical-reference) |
 
-These documents are the complete current documentation set. Historical
-bring-up notes and superseded 6.8-era decisions remain in Git history rather
-than beside current operating instructions.
-
-## Current source and accepted scale
+A newcomer should not read every document. The shortest useful path is:
 
 ```text
-source             codex/0824-clean
-patch series       EasyMesh through 0114, IEEE1905 through 0006
-image provenance   record filename, SHA-256 and source revision per deployment
-kernel             Linux 7.0.0-28
-topology           controller + colocated agent + four extenders
-model              5 agents / 15 radios / 50 BSSs
-clients            accepted 20-client profile (10 private + 10 IoT)
-medium             patched multichannel wmediumd
+current state -> architecture -> quickstart -> demonstrations
 ```
 
-The current deployment deliberately records each role independently. The
-controller artifact contains EasyMesh through `0114`, including end-to-end
-backhaul-signal freshness in both Network Topology and Mesh Devices. The extender
-artifact contains the complete Agent recovery series through `0112`.
-IEEE1905 remains at `0006`; the previously accepted OneWifi, libwebconfig,
-Wi-Fi HAL, log4c and SNMP fixes remain in both roles as applicable.
-
-| Role | Artifact | SHA-256 |
-| --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2` | `27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2` | `5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54` |
-
-The validated image source checkpoint is `dee4dd4` on `codex/0824-clean`.
-The controller also refreshes packaged
-WebUI assets into persistent `/nvram/static` on every service start, so a
-same-identity upgrade cannot continue serving an older UI. Never infer image
-contents from a newer host checkout.
-
-On 2026-08-23/24 the preceding `a9689eb` package baseline was independently
-recreated from fresh containers in the rev120 and rev150 Vagrant VMs. Both the
-initial deployment and persistent stop/start reconstruction passed
-`5/15/50/24`, 10 private plus 10 IoT clients, all 20 non-zero RCPI reports,
-four live backhaul metric edges, 20/20 zero-loss health traffic and zero
-automatic EasyMesh/OneWifi restarts. Client associations included 2.4, 5 and
-6 GHz. The subsequent EasyMesh `0113` Phase 1/2 acceptance added structured
-signal-freshness and wmediumd Console gates on both rev120 and rev150. Independent destructive fresh
-deployments and managed reconstructions passed at `5/15/50/24`, with four
-`fresh` structured extender signals, 25/25 Console identities, 600 directed
-pairs, packet telemetry, 20/20 traffic and zero monitored restarts. Evidence is
-retained at `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
-`/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150. The 20-client
-duration/RF-churn gate remains
-distinct from these immediate results; see
-[client-scale.md](client-scale.md) and [soak-acceptance.md](soak-acceptance.md).
-
-On 2026-08-24 rev130 was recreated again from the reconstructed
-`codex/0824-clean` history and the artifact pair above. It reached
-`5/15/50/24`, 10 private plus 10 IoT clients, 20/20 current client RCPI,
-four fresh backhaul-signal records and zero monitored restarts. All 20 clients
-passed the ten-packet gateway gate at 0% loss. A named 2.4 GHz steer of
-`sta-11` to `Extender-2` converged in the client link, controller database and
-WebUI topology in 1.379 seconds with 0% loss. The read-only wmediumd Console
-passed 25/25 identities, 600 directed pairs, all REST resources, Prometheus
-export, live packet telemetry and write rejection. Exactly one controller
-`snmp_subagent` remained systemd-owned with zero restarts and no launcher
-wrappers. Evidence is under
-`/home/rev/easymesh-evidence/history-reconstruction-20260824-after` on rev130.
-
-The previously accepted ready-to-run Vagrant/VirtualBox package is
-`easymesh-lab-0824-a9689eb.box` (`16,560,643,152` bytes), SHA-256
-`7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1`.
-That immutable package is the `a9689eb` baseline and predates the wmediumd
-Console and EasyMesh `0113`/`0114`; regenerate a box from the current VM before
-claiming those additions in a distributable appliance.
-Use `gen/vm/consumer/Vagrantfile` and the import/start procedure in
-`gen/vm/packaged/README.md`.
-
-## Runtime access
-
-From the `192.168.2.0/24` lab network:
+An optimizer researcher should then continue with:
 
 ```text
-http://192.168.2.130:8888    rev130 WebUI
-http://192.168.2.130:8890    rev130 wmediumd Console
-http://192.168.2.150:18889   rev150 Vagrant-VM WebUI
-http://192.168.2.120:18889   rev120 Vagrant-VM WebUI
-http://192.168.2.150:18890   rev150 Vagrant-VM wmediumd Console
-http://192.168.2.120:18890   rev120 Vagrant-VM wmediumd Console
+RF simulation -> steering policy -> optimizer -> experiment catalog
 ```
 
-SSH into the VM through rev150:
+## Documentation sections
 
-```sh
-ssh -tt rev@192.168.2.150 \
-  "cd /home/rev/easymesh-lab/0821 && vagrant ssh"
-```
+### Guides
 
-For the clean-install rev120 VM:
+Guides contain procedures an operator follows:
 
-```sh
-ssh -tt rev@192.168.2.120 \
-  "cd /home/rev/easymesh-lab/0821 && vagrant ssh"
-```
+- [Quickstart](guide/quickstart.md) validates a running lab and performs the
+  first steer and RF experiment.
+- [Operations](guide/operations.md) covers deployment, cold and warm starts,
+  health gates, VM parity, recovery, access, and troubleshooting.
+- [Demonstrations](guide/demonstrations.md) is the audience-facing runbook.
+
+### Concepts
+
+Concept documents explain the system without requiring implementation detail:
+
+- [Architecture](concepts/architecture.md) identifies the processes, radios,
+  control plane, data plane, and onboarding sequence.
+- [RF simulation](concepts/rf-simulation.md) shows how wmediumd, the
+  configurator, the Console, EasyMesh, and the optimizer form a closed loop.
+- [Steering policy](concepts/steering-policy.md) separates standardized
+  EasyMesh primitives from controller policy decisions.
+- [Optimizer](concepts/optimizer.md) defines the external optimizer boundary
+  and safe research progression.
+
+### Experiments
+
+The [experiment catalog](experiments/README.md) routes users to the appropriate
+mobility, outage, multihop, scale, soak, or optimizer scenario. Detailed
+optimizer extension instructions are in
+[optimizer development](experiments/optimizer-development.md).
+
+### Technical reference
+
+Reference documents are consulted when implementing or diagnosing a specific
+boundary:
+
+- [Consolidated patch set](reference/patch-set.md)
+- [Metrics reporting and APIs](reference/metrics.md)
+- [Optimizer architecture and contracts](reference/optimizer-architecture.md)
+- [wmediumd internals](reference/wmediumd-internals.md)
+- [wmediumd configurator](reference/wmediumd-configurator.md)
+- [wmediumd Console and telemetry protocol](reference/wmediumd-console.md)
+- [Packet capture](reference/packet-capture.md)
+- [Memory footprint](reference/memory-footprint.md)
 
 ## Documentation rules
 
-- `codex/0824-clean` is the authoritative, consolidated history.
-  `codex/0815-clean` remains an immutable backup/reference; 0814 is represented
-  as intrinsic earlier work in that retained history rather than as a separate
-  implementation line.
-- Record source revision, image hashes and live container provenance for every
-  result.
-- Do not describe commanded steering as an autonomous steering policy.
-- Do not add host-specific diaries here. Convert a finding into architecture,
-  setup, patch rationale, configurator semantics or steering behavior.
-- A successful API response, 1905 ACK or association alone is not an end-to-end
-  pass; use the gates in [lab-setup.md](lab-setup.md).
+- Put the accepted revision, topology, artifacts, and known limitations only in
+  [current-state.md](current-state.md). Other documents link to it.
+- Put commands in guides or experiment procedures, not in concept documents.
+- Put wire formats, APIs, patch ordering, and implementation detail in
+  `reference/`.
+- Keep raw measurements and completed campaign results with external evidence,
+  not in the active user documentation.
+- Do not describe a commanded steer as an autonomous policy decision.
+- A successful API response, 1905 ACK, or association alone is not an
+  end-to-end pass; use the health and acceptance gates.
+- Preserve source revision, image hashes, scenario inputs, and result artifacts
+  for every claimed experiment.

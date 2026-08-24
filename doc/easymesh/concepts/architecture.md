@@ -175,8 +175,8 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
 
 ## Current boundaries
 
-- Clean deployment, commanded steering and unattended VM cold-boot
-  reconstruction are validated at four extenders and ten WLAN clients.
+- Clean deployment, commanded steering and unattended cold-boot reconstruction
+  are validated at four extenders and twenty WLAN clients.
 - Complete RF isolation now ages a remote IEEE1905 neighbor, probes it through
   a bounded standard Topology Query, removes only its active publication and
   restores the same identity when valid traffic returns.
@@ -184,10 +184,6 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
   frequency-qualified SNR overrides on a shared hwsim radio. This supplies
   band-specific RF stimulus; autonomous band steering still requires fresh
   candidate-BSSID measurements and a policy decision.
-- One historical RBUS raw-frame provider delivery miss succeeded on immediate
-  retry. It has not recurred across 143 post-AL-SAP-fix commanded steers and is
-  now covered by transaction-level command/completion journals; no duplicate
-  BTM workaround is present.
 - No autonomous steering evaluator is currently proven. The planned decision
   engine is completely external to the BPI containers; see
-  [optimizer.md](optimizer.md) and [steering.md](steering.md).
+  [optimizer](optimizer.md) and [steering policy](steering-policy.md).

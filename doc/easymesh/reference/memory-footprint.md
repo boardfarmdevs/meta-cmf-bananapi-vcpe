@@ -22,27 +22,86 @@ numbers below remain the accepted cold-bring-up baseline rather than a
 | swap used | 0 |
 | cgroup pressure, limit or OOM events | 0 |
 
-The reduction ideas later in this report are design proposals only. No
-memory-reduction patch has been applied, and every saving attributed to those
-proposals is a projection rather than a measured result.
+The structural footprint reductions proposed below remain design proposals;
+their savings are projections rather than measured results. Correctness fixes
+for retained periodic telemetry state are now implemented separately. They
+remove unbounded growth without changing the intended steady-state model.
 
 Cold bring-up creates a temporary controller allocation pulse while agent,
 radio and BSS records are configured. The pulse is released after convergence.
 This run found no retained bring-up growth. It is not, however, a substitute
 for the deliberately deferred 12-hour stability acceptance.
 
-A later multi-day observation found an independent 15-minute SNMP self-heal
-process-multiplication defect. The bounded profile below ended with one
-`snmp_subagent` after reconstructing the container and therefore remains a
-valid short-run EasyMesh measurement, but it did not exercise the failure for
-multiple health intervals. The defect, its measured cost and the bounded
-rev130 runtime acceptance of its fix are recorded below.
+The current image includes the SNMP self-heal process-detection fix and must
+retain exactly one `snmp_subagent` during memory testing. It also includes the
+four ownership fixes described under [retained-growth diagnosis](#retained-growth-diagnosis-and-fix).
+
+## Retained-growth diagnosis and fix
+
+A later five-agent, 20-client run exposed genuine growth that the original
+15-minute cold profile was too short to reveal. After several days,
+`OneWifi` reached approximately 403 MiB PSS and an extender `em_agent` reached
+approximately 293 MiB PSS. Log files, the bounded journal, persistent maps,
+command queues, topology cardinality and `/nvram` growth were ruled out.
+
+Allocator inspection established that the agent was retaining about 434 KiB
+of live allocations in 53 seconds during periodic AP-metrics processing. The
+growth was in the main malloc arena, while its persistent station, scan,
+command and executor maps remained bounded. Source and ownership tracing then
+identified four independent leaks:
+
+| Component | Retained object | Fix |
+| --- | --- | --- |
+| OneWifi EasyMesh publishers | the separately allocated `webconfig_encode()` result, plus removed client-stat entries | release encoded data through `webconfig_data_free()` on success and error paths and free removed entries |
+| EasyMesh agent | decoded station/scan objects and temporary command data models | give `dm_easy_mesh_t::deinit()` complete ownership cleanup, deep-copy cloned station objects and release temporary decoder models |
+| libwebconfig AP-metrics decoder | the parsed cJSON tree on every successful periodic report | transfer the tree to a local owner and call `cJSON_Delete()` on every exit path |
+| libwebconfig AP-metrics decoder | temporary per-BSS station-traffic and station-link arrays left after translation | release all decoded report arrays at the translation ownership boundary and on partial-decode failure |
+
+The corrected controller and extender images were rebuilt together and
+deployed fresh on rev130 with four extenders and the routine 10-private plus
+10-IoT client profile. Mesh onboarding converged without service restarts. An
+external 25-minute diagnostic wrapper interrupted the resumable scale helper
+while it was creating client 20; running the same helper without that wrapper
+completed immediately to `5/15/50/24`. All service restart counters remained
+zero, all 20 WLAN data paths passed, and the wmediumd Console reported healthy
+bounded telemetry with all 25 radios identified.
+
+The post-fix samples below begin after full client convergence. `em_agent`
+PSS is shown in KiB. Before the final decoder-array fix, a residual slope of
+about 1.4 MiB/hour remained after the much larger command-model leak was
+removed. The final acceptance window crosses repeated AP-metrics reports and
+is compared with both diagnosed slopes.
+
+| Node | Start | 14m38s | Change |
+| --- | ---: | ---: | ---: |
+| colocated agent | 29,541 | 29,540 | -1 |
+| extender 1 | 30,209 | 30,203 | -6 |
+| extender 2 | 30,318 | 30,318 | 0 |
+| extender 3 | 30,184 | 30,164 | -20 |
+| extender 4 | 30,127 | 30,131 | +4 |
+
+Controller `OneWifi` PSS increased from 22,816 to 24,938 KiB during this
+fresh-image window, but detailed mapping evidence distinguishes that from the
+fixed heap leak. Its `[heap]` mapping remained 924 KiB; VM size, data size,
+thread count and file-descriptor count remained bounded. The newly resident
+pages were in an existing 24,948 KiB anonymous executable/BSS mapping. The
+largest symbol in that mapping is the fixed `client_assoc_stats` array at
+about 13.6 MiB, followed by fixed Wi-Fi manager, webconfig, VAP and
+interworking state. Periodic client processing first-touches these reserved
+pages. This is bounded footprint/high-water behavior and remains a candidate
+for structural footprint reduction, not an unbounded ownership leak.
+
+This result demonstrates removal of the previously measured linear agent leak
+over a bounded post-convergence interval: the largest absolute endpoint change
+was 20 KiB. It also separates fixed `OneWifi` first-touch behavior from heap
+growth. It is not a replacement for the deferred long-duration acceptance run.
+Acceptance is based on loss of the sustained station-count-proportional heap
+slope, not on demanding byte-for-byte PSS constancy.
 
 ## Measured configuration
 
-The measurement was made on rev130 on 2026-08-19/20 UTC using the 0815-codex
-lab. The test started with a complete lab, performed one controlled cold
-reconstruction, and sampled through final convergence.
+The available baseline was measured on rev130 during one controlled cold
+reconstruction and sampled through final convergence.
 
 ```text
 container             bpibroadband
@@ -61,19 +120,17 @@ The 14 associated STA model records comprise ten WLAN clients plus four
 wireless-backhaul STA interfaces. They do not mean that 14 client containers
 were running.
 
-The instrumented cold reconstruction completed in 823 seconds. Three earlier
-uninstrumented P0 cold reconstructions completed in 805, 800 and 802 seconds.
-The profiler's repeated `/proc/*/smaps_rollup`, model and storage probes account
-for most of this difference.
+The instrumented cold reconstruction completed in 823 seconds. The profiler's
+repeated `/proc/*/smaps_rollup`, model, and storage probes add measurement cost.
 
 Evidence is retained on rev130 at:
 
 ```text
-/home/rev/git/meta-cmf-bananapi-vcpe-0815-codex/tmp/test-results/
-  bpibroadband-memory/20260820T002605Z-bpibroadband-memory/
+/home/rev/easymesh-lab/0824-clean/evidence/memory-footprint/
+/home/rev/easymesh-lab/0824-clean/evidence/memory-footprint/20260825-postfix/
 ```
 
-The profiler is [bpibroadband-memory-profile.py](../../gen/tests/bpibroadband-memory-profile.py).
+The profiler is [bpibroadband-memory-profile.py](../../../gen/tests/bpibroadband-memory-profile.py).
 It is read-only and runs on the LXD host.
 
 ## Whole-container behavior
@@ -137,64 +194,6 @@ The directly involved Wi-Fi/EasyMesh processes are OneWifi, `em_ctrl`,
 The direct Wi-Fi/EasyMesh processes plus their MariaDB model therefore account
 for 198.10 MiB, or 70.3% of converged process PSS.
 
-## Long-running SNMP self-heal defect
-
-On 2026-08-20 the continuously running rev130 controller contained 53
-`snmp_subagent` processes and 52 retained `run_subagent.sh` wrappers. New pairs
-had appeared approximately every 15 minutes. The same multiplication was
-observed independently on the rev120 and rev150 VM labs.
-
-The launch path is:
-
-```text
-CcspTandDSsp.service
-  -> resource_monitor.sh             15-minute interval
-  -> task_health_monitor.sh
-  -> corrective_action.sh resetNeeded
-  -> run_subagent.sh
-  -> snmp_subagent                   changes from root to non-root
-```
-
-Both process tests were scoped incorrectly:
-
-- `task_health_monitor.sh` used `ps ww`, which selected root processes with a
-  controlling terminal and could not see the non-root daemon;
-- `run_subagent.sh` used `ps -ww`, whose default effective-UID selection also
-  excluded the non-root daemon.
-
-Both exact deployed predicates returned zero PIDs, while `pidof snmp_subagent`
-returned all 53 live processes. The monitor therefore requested a recovery
-every interval, and the launcher failed to replace any prior copy. The
-accumulated wrappers were adopted into `CcspTandDSsp.service` when their callers
-exited.
-
-| Live rev130 measurement | Result |
-| --- | ---: |
-| `snmp_subagent` count | 53 |
-| `snmp_subagent` aggregate RSS / PSS / private | 573.4 / 94.7 / 87.4 MiB |
-| retained wrapper count | 52 |
-| wrapper aggregate RSS / PSS / private | 127.0 / 10.2 / 9.2 MiB |
-| `CcspTandDSsp.service` memory charge | 116.9 MiB |
-| whole-container current / peak memory | 442.5 / 506.4 MiB |
-
-The approximately 700 MiB summed RSS for the two process groups is not their
-physical-memory cost because it counts their common executable and library
-pages once per process. Aggregate PSS and cgroup memory expose the real cost.
-
-Commit `798ad21` changes both owners to `pidof snmp_subagent`. The launcher
-also guards an empty result before `kill`, preserving a normal first start.
-Both recipes and a complete controller image compiled successfully on rev140;
-the generated rootfs passed shell syntax and content checks. The original
-`20260820171311` staged image is superseded by the current controller artifact
-recorded in [lab-setup.md](lab-setup.md).
-
-Runtime acceptance on rev130 held one `snmp_subagent` PID and no retained
-wrapper for 31 minutes, spanning two natural 15-minute health-monitor
-intervals. A subsequent fresh reconstruction with controller
-`20260820210038` again started with one daemon and no wrapper. This bounded
-acceptance demonstrates that the periodic multiplication is fixed; it is not
-a long-duration leak or explicit forced-recovery test.
-
 ## Bring-up allocation behavior
 
 The largest bring-up change was in `em_ctrl`:
@@ -209,7 +208,7 @@ agent and BSS configuration and returns to the original range. Client
 onboarding is a much smaller contributor than extender/radio/BSS creation.
 
 `em_cli` is the largest steady process. Its PSS ranged from approximately 74.9
-to 81.0 MiB in the accepted profile and later instant snapshots. A later
+to 81.0 MiB in the accepted profile and instant snapshots. A detailed
 `memdetail.sh` snapshot attributed 68.5 MiB of its 74.9 MiB PSS to anonymous
 memory and 6.4 MiB to file-backed mappings.
 
@@ -243,13 +242,13 @@ additional application-owned command table. BSS and virtual-size figures must
 not be reported as physical savings; the projected PSS reduction below is
 bounded using the pages observed resident in the running process.
 
-The table remained bounded in the earlier 3,000/6,000-request leak tests
+The table remained bounded in the 3,000/6,000-request stress tests
 documented in [patch-set.md](patch-set.md). It is a large fixed baseline rather
 than evidence of continuing request-by-request growth.
 
 ## Projected memory-reduction patches
 
-The following patches are candidates for later implementation and individual
+The following patches are candidates for future implementation and individual
 measurement. None is present in the current images. Ranges account for
 allocator behavior, shared pages and pages reserved virtually but not resident.
 

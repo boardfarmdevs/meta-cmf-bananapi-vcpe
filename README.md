@@ -26,12 +26,11 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 | | |
 |---|---|
 | [doc/easymesh](doc/easymesh) | the EasyMesh lab — start here |
-| [doc/easymesh/architecture.md](doc/easymesh/architecture.md) | how EasyMesh, the containers, hwsim and the client fit together |
-| [doc/easymesh/patch-set.md](doc/easymesh/patch-set.md) | clean 0815 patch boundaries, retained fixes and removals |
-| [doc/easymesh/lab-setup.md](doc/easymesh/lab-setup.md) | deploy, scale, access and validate both runtime labs |
-| [doc/easymesh/configurator.md](doc/easymesh/configurator.md) | deterministic RF scenarios and dynamic wmediumd control |
-| [doc/easymesh/steering.md](doc/easymesh/steering.md) | commanded steering, policy boundaries and optimizer experiments |
-| [doc/easymesh/optimizer.md](doc/easymesh/optimizer.md) | completely external optimizer architecture and interfaces |
+| [current state](doc/easymesh/current-state.md) | supported topology, capabilities and limitations |
+| [quick start](doc/easymesh/guide/quickstart.md) | validate and use an installed lab |
+| [architecture](doc/easymesh/concepts/architecture.md) | EasyMesh, containers, hwsim and clients |
+| [operations](doc/easymesh/guide/operations.md) | deploy, start, stop, recover and validate |
+| [experiments](doc/easymesh/experiments/README.md) | steering, RF scenarios and optimizer evaluation |
 | [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
 
 ## layout
@@ -49,5 +48,5 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 
 Every patch header carries the trace it was root-caused from — minidump stacks,
 netlink captures, or log excerpts — so start there rather than from the diff. See
-[doc/easymesh/patch-set.md](doc/easymesh/patch-set.md) for the retention and
+[the patch-set reference](doc/easymesh/reference/patch-set.md) for the retention and
 ownership rationale; the bbappends remain the executable patch inventory.

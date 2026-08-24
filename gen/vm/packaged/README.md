@@ -609,10 +609,9 @@ data, use the procedure in [`../thin/README.md`](../thin/README.md#uninstall-fro
 
 ## 16. Where to read more
 
-- [`../../../doc/easymesh/architecture.md`](../../../doc/easymesh/architecture.md): processes, APIs and data flow
-- [`../../../doc/easymesh/lab-setup.md`](../../../doc/easymesh/lab-setup.md): direct-host deployment and detailed gates
-- [`../../../doc/easymesh/steering.md`](../../../doc/easymesh/steering.md): steering and policy boundaries
-- [`../../../doc/easymesh/wmediumd.md`](../../../doc/easymesh/wmediumd.md): medium internals and control interface
-- [`../../../doc/easymesh/configurator.md`](../../../doc/easymesh/configurator.md): scenario language and implementation
-- [`../../../doc/easymesh/metrics-reporting.md`](../../../doc/easymesh/metrics-reporting.md): policies and live RCPI
-- [`../../../doc/easymesh/packet-capture.md`](../../../doc/easymesh/packet-capture.md): complete capture recipes
+- [EasyMesh documentation](../../../doc/easymesh/README.md): reader paths and topic index
+- [current state](../../../doc/easymesh/current-state.md): supported topology and limitations
+- [operations](../../../doc/easymesh/guide/operations.md): direct-host deployment and acceptance gates
+- [steering policy](../../../doc/easymesh/concepts/steering-policy.md): steering mechanisms and policy boundaries
+- [wmediumd internals](../../../doc/easymesh/reference/wmediumd-internals.md): medium behavior and control interface
+- [experiments](../../../doc/easymesh/experiments/README.md): scenario and optimizer workflows

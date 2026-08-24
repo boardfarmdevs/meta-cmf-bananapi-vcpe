@@ -159,17 +159,16 @@ EAPOL, data, retries and traffic on every simulated channel. Backhaul data can
 still be encrypted, whereas the `brlan0` capture shows its decapsulated
 EasyMesh payload.
 
-Do **not** run this on the active 0815 lab:
+Do **not** run this on an active lab:
 
 ```sh
 sudo ip link set hwsim0 up
 ```
 
-Changing `hwsim0` from down to up while the patched wmediumd owned the hwsim
-netlink transport caused wmediumd to exit and left subsequent `iw` operations
-blocked in the kernel during the 2026-08-18 capture evaluation. A host reboot
-was required. Raw capture must therefore be established as part of a future
-tested wmediumd startup sequence, not added dynamically to a running lab.
+Changing `hwsim0` while patched wmediumd owns the hwsim netlink transport can
+terminate wmediumd and block subsequent `iw` operations in the kernel. Raw
+capture must therefore be established as part of a tested cold-start sequence,
+not added dynamically to a running lab.
 
 wmediumd itself supports `-p FILE` and writes scheduled medium traffic as
 pcapng, including modeled ACKs. The current `wmediumd-up.sh` deliberately does

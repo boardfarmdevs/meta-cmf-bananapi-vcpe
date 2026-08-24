@@ -154,13 +154,9 @@ A profile passes only when all of the following agree:
 8. the duration-bound churn soak passes without topology drift, stale client
    ownership, coredumps, OOM events or restoration failure.
 
-On 2026-08-23 rev130 passed the immediate small-profile gates at
-`5 devices / 15 radios / 50 BSS / 24 associated records`. The WebUI API exposed
-10 `private_ssid` and 10 `iot_ssid` clients, and all 20 clients completed the
-gateway traffic audit with zero packet loss and zero monitored service
-restarts. Cold chain, cold branch and controller-only restart verification
-retained the same exact model. Duration and RF-churn evidence is recorded separately in
-[soak-acceptance.md](soak-acceptance.md).
+The accepted small-profile result is defined in
+[current state](../../current-state.md). Duration and RF-churn acceptance is a
+separate gate in [soak acceptance](soak-acceptance.md).
 
 ## wmediumd capacity and overload
 
@@ -172,12 +168,10 @@ pair table for every movement, but frame delivery still has to consider the
 eligible simulated receivers. Client count and offered WLAN traffic therefore
 both matter.
 
-During the 20-client IoT carousel on rev130, wmediumd reported 25 stations and
-600 directed links while using approximately 3 MiB RSS and 24-25% of one host
-CPU. This is healthy, but it is not evidence for 50 or 100 clients. The soak
-sampler records peak RSS, lifetime CPU, thread count and the matching netlink
-socket drop counter so overload becomes a test failure instead of a visual
-impression.
+The accepted 20-client profile produces 25 station identities and 600 directed
+links. This does not establish capacity for 50 or 100 clients. The soak sampler
+records peak RSS, lifetime CPU, thread count and the matching netlink socket
+drop counter so overload becomes a test failure instead of a visual impression.
 
 If a larger profile approaches one full CPU, accumulates netlink drops or
 misses scenario deadlines, apply remedies in this order:

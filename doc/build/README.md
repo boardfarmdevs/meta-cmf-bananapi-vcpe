@@ -43,7 +43,8 @@ bitbake rdk-generic-broadband-image
 ```
 
 Review and commit both the source patch and `em-cli.tar.gz`. Verify the helper
-hash recorded in `doc/easymesh/patch-set.md`; a successful image build alone
+hash recorded in the [patch-set reference](../easymesh/reference/patch-set.md);
+a successful image build alone
 does not prove that a changed Go handler was included.
 
 Optional: a local [repo mirror](../repo-mirror) makes creating and re-syncing

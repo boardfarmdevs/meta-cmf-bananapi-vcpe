@@ -67,7 +67,7 @@ systemd unit per target. Run it as the lab account so LXD and the wmediumd
 control socket use the same permissions as normal scenarios:
 
 ```sh
-SOAK_ID=0822
+SOAK_ID=current
 SOAK_OUTPUT=/var/tmp/easymesh-soak/$SOAK_ID
 SOAK_REPO=/path/to/meta-cmf-bananapi-vcpe
 
@@ -105,61 +105,6 @@ sudo /usr/bin/python3 <repo>/gen/tests/p0-churn-soak.py \
 Do not claim acceptance from a running unit. A run passes only when its final
 `summary.json` says `outcome: passed` and `growth.acceptance_eligible: true`.
 An interrupted run remains useful diagnostic evidence but is not acceptance.
-
-## 0822 campaign status
-
-The first three-target attempt was diagnostically useful but is not an
-acceptance result. It exposed three harness-boundary defects: exact cgroup PID
-membership rejected legitimate OneWifi helper children, recovery and the
-75-second stability window shared one undersized timeout, and VM LXD transport
-terminations were sometimes reported as status 143 and misclassified as WLAN
-traffic failure. Focused reruns proved exact medium restore, continuous client
-ownership, 10/10 traffic and unchanged controller services after correcting
-those boundaries.
-
-The first corrected rerun under `easymesh-soak-0822-final.service` was stopped
-deliberately after rev120 exposed one remaining VM transport boundary while
-restoring an idempotent client link-up. Rev130 and rev150 were interrupted only
-after their active workloads restored the medium. Those evidence roots remain
-diagnostic records and are not acceptance results:
-
-- rev130: `/var/tmp/easymesh-soak/0822-final/20260822T162313Z-p0-churn-soak`;
-- rev150 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162314Z-p0-churn-soak`;
-- rev120 VM: `/var/tmp/easymesh-soak/0822-final/20260822T162315Z-p0-churn-soak`.
-
-The link-state restore now retries only signal-derived LXD transport loss; a
-real link command failure remains a hard failure. A focused rev120 carousel
-then passed with both `placement_restored: true` and `medium_restored: true`.
-
-The byte-identical three-target rerun started from zero on 2026-08-22 at commit
-`2a15c95` under `easymesh-soak-0822-final2.service`. It was later superseded by
-the mixed-cohort scale work; none of these interrupted roots is an acceptance
-result:
-
-- rev130: `/var/tmp/easymesh-soak/0822-final2/20260822T163423Z-p0-churn-soak`;
-- rev120 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`;
-- rev150 VM: `/var/tmp/easymesh-soak/0822-final2/20260822T163425Z-p0-churn-soak`.
-
-All three had passed preflight with the complete `5/15/50/14` model, ten
-clients, 10/10 physical/API ownership agreement, 10/10 traffic, a successful
-candidate RCPI transaction, exact starting-medium fingerprints and no service
-errors before interruption.
-
-### 20-client rev130 shakedown
-
-The 2026-08-23 mixed-cohort preflight was accepted as a bounded functional
-gate, not as the deferred 12-hour growth acceptance. A fully fresh rev130 lab
-reached `5/15/50/24`, ten private and ten IoT clients, explicit 2.4/5/6 GHz
-associations, 20/20 forwarding and zero automatic service restarts. Cold chain
-and branch profiles passed exact physical/API parent, signal, forwarding and
-database checks, and a controller-only restart reconstructed the branch at the
-same invariant. The default health load produced 0% loss on every client.
-
-An explicit load characterization at 40 probes per client with a 50 ms
-interval offered 400 echo requests per second and produced 30-87% loss. At the
-normal one-second interval all twenty clients produced 0% loss. Therefore the
-high-rate result records the present wmediumd/data-path saturation envelope; it
-is not evidence of broken normal forwarding and is not used as a health PASS.
 
 ## Candidate measurement boundary
 

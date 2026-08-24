@@ -5,19 +5,18 @@
 Commanded EasyMesh steering works. An autonomous steering policy is not yet
 proven.
 
-The planned optimizer is a completely external host-side component. No BPI
+The optimizer is a completely external host-side component. No BPI
 EasyMesh, agent, OneWifi or WebUI process performs candidate selection or makes
-the steering decision. See [optimizer.md](optimizer.md).
+the steering decision. See [optimizer](optimizer.md).
 
-The accepted crossover test used an independent RF gradient and an explicit
-`steer.sh` call at 42 seconds. The passive run with the same gradient did not
-roam. Therefore the result proves commanded steering under RF stimulus, not an
-optimizer detecting the crossover.
+The commanded crossover baseline uses an independent RF gradient and an
+explicit `steer.sh` call. A passive run with the same gradient is the control.
+Only a decision produced from observed metrics can be attributed to an
+optimizer.
 
-Metrics policy activation is now complete. Live controller inspection shows 70
-persisted policy rows, five per-device AP reporting policies, and metrics and
-steering entries for all 15 radios. All ten fronthaul clients have live RCPI
-and traffic counters. See [metrics-reporting.md](metrics-reporting.md).
+Metrics policy activation covers all five mesh devices and 15 radios. The
+accepted profile requires live RCPI for all 20 fronthaul clients and fresh
+signal for all four extender backhauls. See [metrics](../reference/metrics.md).
 
 This does not change the optimizer boundary: no verified OneWifi evaluator
 consumes those thresholds and selects a target, and the passive crossover still
@@ -84,18 +83,9 @@ A steer passes only when all planes agree:
 6. WebUI/API placement changes to the same agent; and
 7. traffic continues and service restart counters remain unchanged.
 
-The final scaled sample passed 10/10 operations. An earlier three-round matrix
-passed 30/30. Link convergence averaged about 1.1 seconds in the final sample;
-DB/API convergence averaged about 2.5 seconds.
-
-One historical immediate-return request exposed a rare residual: the
-controller request and 1905 ACK succeeded and the raw-frame setter returned
-success, but the OneWifi provider callback did not occur, so no BTM was
-transmitted. After the AL-SAP framing fix, 143 commanded steers completed
-without recurrence. That supports but does not retrospectively prove a shared
-cause. The portable and packaged matrix runners now persist unique transaction
-IDs, command output and observed link/database/API completion. Any recurrence
-must be diagnosed from that journal; blind duplicate BTM retries remain wrong.
+The matrix runner persists unique transaction IDs, command output, and observed
+link/database/API completion. Diagnose a failed transaction from that journal;
+blind duplicate BTM retries are not permitted.
 
 ## What EasyMesh standardizes
 
@@ -223,9 +213,8 @@ active policy run
   verify BTM, association, DB/API convergence and cooldown
 ```
 
-The earlier commanded test invoked `steer.sh` at 42 seconds during the hold. It
-is a transport/action baseline against which the real optimizer should be
-compared.
+The explicit steer is the transport/action baseline against which optimizer
+decisions are compared.
 
 ## Required run record
 

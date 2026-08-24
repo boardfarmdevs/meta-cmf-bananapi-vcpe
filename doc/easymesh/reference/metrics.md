@@ -328,8 +328,9 @@ client traffic after restoring the link because hwsim supplies a fresh signal
 value when a frame traverses it. The runner captures and restores every
 touched link; confirm its final result before accepting the test.
 
-See [configurator.md](configurator.md) for role binding and scenario authoring,
-and [wmediumd.md](wmediumd.md) for the control-socket and RF-model details.
+See [the configurator](wmediumd-configurator.md) for role binding and scenario
+authoring, and [wmediumd internals](wmediumd-internals.md) for the control socket
+and RF model.
 
 ### Live WebUI RCPI monitor
 
@@ -360,59 +361,23 @@ Traffic is required because hwsim attaches the current simulated signal to
 frames. Without frames, a new wmediumd SNR can be applied correctly while the
 last controller RCPI remains unchanged.
 
-The final P0 cold reconstruction on 2026-08-20 passed without a service nudge:
-
-```text
-elapsed                866 seconds
-controller model       5 devices / 15 radios / 50 BSS / 14 associated STAs
-WebUI/API clients      10/10
-non-zero RCPI          10/10
-association uptime     10/10
-stability hold         120 seconds
-service restarts       0
-client gateway traffic 10/10
-```
-
 Cold start applies the complete metrics policy after mesh convergence and
 replays it once after the live client model converges. The second application
 is required because agent policy timers are volatile and an agent can finish
 an operational transition after the first deployment. Both calls are normal,
-idempotent policy deployments. During acceptance, omitting the second call
-reproduced an 8/10 RCPI result; replaying it restored 10/10 without restarting
-an agent or client. The accepted controller logged zero AP Metrics Response
-validation failures, and every BPI container retained exactly one
-`snmp_subagent`.
-
-The earlier 2026-08-18 acceptance result was:
-
-```text
-devices/profile       5 devices, all Profile 3
-radios                 15
-policy rows            70
-STA rows               14 (10 fronthaul clients and 4 backhaul STAs)
-fronthaul STA metrics  10/10 with non-zero RCPI, rates and traffic counters
-agent cadence          5/5 agents reporting 10 BSSs and 3 radios
-```
-
-An end-to-end medium test changed both directions between
-`wlan-client` and its serving AP from 50 dB to 25 dB. The controller RCPI moved
-from 138 to 88. After restoring 50 dB and generating traffic, it returned to
-138. This verifies that the value comes through the simulated radio path.
-
-The dedicated RCPI monitor also passed on 2026-08-18 in 130.8 seconds with a
-verified restore. Its two-second API samples repeatedly moved through RCPI
-138, 128, 120, 116, 100 and 96 while the client remained associated to the
-same BSSID, then returned to 138 after restore. All ten associated clients had
-non-zero RCPI and all three EasyMesh services retained their PIDs with zero
-restarts.
+idempotent policy deployments. The health gate requires current metrics for all
+20 fronthaul clients and fresh signal records for all four extender backhauls.
+The RCPI monitor verifies that changing a wmediumd pair changes the controller
+observation and that traffic after restoration refreshes the original value.
 
 ## Current limitations
 
 - Radio noise and utilization remain zero because the current hwsim OneWifi
   HAL returns zero survey/channel values. The corresponding TLVs are sent,
   accepted and persisted; useful survey synthesis is separate work.
-- The four backhaul STA rows do not yet receive the periodic client metric
-  fields. The ten fronthaul WLAN clients do.
+- Backhaul edges use the dedicated structured signal/freshness path; they do
+  not expose the complete periodic fronthaul client metric set. All twenty
+  fronthaul clients do.
 - Some hwsim-reported downlink rates exceed signed SQL `INT` range and appear
   negative in `STAList`. RCPI, association and traffic counters are unaffected,
   but rate storage needs a wider database/API path before an optimizer uses it.

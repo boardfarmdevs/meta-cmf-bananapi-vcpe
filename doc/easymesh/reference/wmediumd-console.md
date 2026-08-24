@@ -167,38 +167,15 @@ Pair/frequency batches are atomic. Undo restores the exact captured prior value
 or prior override absence, and is invalid after another generation or daemon
 restart.
 
-The accepted static Console binary is SHA-256
-`67eec3f5a48efe6b87b82dc2f22648bffa382a3344d477fcfd1ac75a1061ce39`;
-the corresponding patched wmediumd is
-`f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f`.
 The launcher publishes a PID-qualified binary-hash manifest under `/run`, so
 the hardened non-root service can verify the root-owned live executable
 without `CAP_SYS_PTRACE`.
 
-Live Phase 1/2 acceptance on both rev120 and rev150 exercised 25 radios, 600
-directed pair records and 20 active clients, with the managed Console in
-read-only mode and zero restarts. A rev150 traffic burst produced 2,962 frames
-and 596,691 bytes of counter delta with no client ping loss. Stopping the Console
-left the wmediumd PID/instance and all client traffic intact. Typed-control
-acceptance changed and restored a pair, set/cleared/restored an exact-frequency
-override, rejected stale generation and repeated undo with HTTP 409, rejected
-the generic mutation route with HTTP 405, and ended with zero overrides and
-20/20 client connectivity. Across the control and final fresh-deployment runs,
-the Console used roughly 6-8 MiB. The final managed cgroup measured 6.7 MiB
-current/7.9 MiB peak on rev120 and 7.8 MiB current/8.4 MiB peak on rev150.
-Fresh-deployment evidence is retained under
-`/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
-`/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
-
-An earlier primary rev130 acceptance was recreated from source `3895d1f` on the
-same date. The final history-reconstruction acceptance then recreated rev130
-from `dee4dd4` on `codex/0824-clean`. Its read-only Console is directly
-available at `http://192.168.2.130:8890/` and passed 25 matched identities,
-600 directed pairs, every REST resource, Prometheus export, exact daemon/config
-hashes, live packet telemetry, `health: ok`, and HTTP 405 rejection of a write
-attempt. The documented 20-client traffic gate passed at 0% loss. Current
-evidence is under
-`/home/rev/easymesh-evidence/history-reconstruction-20260824-after`.
+The accepted profile requires 25 resolved identities, 600 directed pairs,
+healthy packet telemetry, immutable read-only HTTP behavior, and no change to
+wmediumd state when the Console starts, stops, or fails. Exact binary hashes
+belong in the deployment evidence described by
+[current state](../current-state.md).
 
 ## Target closed-loop correlation architecture
 

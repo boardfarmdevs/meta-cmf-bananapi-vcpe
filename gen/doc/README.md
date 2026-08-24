@@ -3,10 +3,10 @@
 `gen/` deploys and operates the LXD/hwsim lab built by this layer. Current
 architecture and operating instructions live in:
 
-- [architecture.md](../../doc/easymesh/architecture.md)
-- [lab-setup.md](../../doc/easymesh/lab-setup.md)
-- [configurator.md](../../doc/easymesh/configurator.md)
-- [steering.md](../../doc/easymesh/steering.md)
+- [architecture](../../doc/easymesh/concepts/architecture.md)
+- [operations](../../doc/easymesh/guide/operations.md)
+- [wmediumd configurator](../../doc/easymesh/reference/wmediumd-configurator.md)
+- [steering policy](../../doc/easymesh/concepts/steering-policy.md)
 
 Do not duplicate host setup or acceptance procedures here.
 
@@ -56,7 +56,7 @@ SNR=40 ./wmediumd/wmediumd-up.sh up
 ```
 
 This is not a complete acceptance sequence. Follow the per-node model gates and
-parity procedure in [lab-setup.md](../../doc/easymesh/lab-setup.md).
+acceptance procedure in [operations](../../doc/easymesh/guide/operations.md).
 
 ## Shared wmediumd state
 

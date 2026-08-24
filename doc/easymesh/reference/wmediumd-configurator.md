@@ -284,28 +284,21 @@ summary.json           outcome, timing, error and restoration result
 An experiment is not complete unless `summary.json` reports `passed` and
 `restored: true`.
 
-## Validated behavior
+## Acceptance
 
-- The supported Python suite passes 23 parser/compiler/world/observer/runner
-  tests, including real-daemon pair/frequency apply, reject, readback, clear
-  and restore.
-- The internal wmediumd multichannel/Linux-7 suite passed 10/10.
-- A passive two-AP crossover applied 32 generations in 60 seconds, kept the
-  same daemon PID, delivered 1,400/1,400 probes and restored every link.
-- The passive client did not roam, proving RF alone is not an autonomous
-  policy.
-- Replaying the gradient with an explicit `steer.sh` action moved the client
-  and converged the controller model while the medium still restored cleanly.
-- Rev130 applied simultaneous 5180 and 2437 MHz overrides to one client/Agent
-  pair. The associated 5180 MHz link moved from -41 to -66 dBm and controller
-  RCPI from 138 to 88 with 40/40 probes. Clearing all overrides restored the
-  pair fallback, -41 dBm/RCPI 138 and 20/20 probes.
-- The complete ten-client `small band walk` applied 30 scheduled all-band
-  generations over 60 seconds. It changed 4,374 directed values, completed in
-  60.8 seconds, had 32.9 ms mean and 65.3 ms maximum deadline lateness, restored
-  all 300 touched frequency keys, and left zero explicit overrides. Both
-  preflight and postflight held 6 WebUI nodes, 10 WLAN clients and the
-  authoritative 5-device/15-radio/50-BSS/14-association controller model.
+Before using a configurator build, require all of the following:
+
+- the Python parser, compiler, world, observer and runner suites pass;
+- the wmediumd multichannel/Linux-7 internal suite passes;
+- pair and frequency updates reject stale generations and read back exactly;
+- a passive crossover changes RF without causing an autonomous roam;
+- an explicit steering action converges in the physical link, controller model
+  and WebUI; and
+- every run restores all touched values, leaves no unexpected override and
+  preserves the complete current topology.
+
+The runnable scenarios under [experiments](../experiments/README.md) produce
+the evidence needed to evaluate these gates.
 
 ## Limits
 

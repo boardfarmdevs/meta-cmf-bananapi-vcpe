@@ -149,12 +149,8 @@ The optimizer tests are deterministic and require no live lab. Configurator
 tests include one skipped live test unless a compatible wmediumd control socket
 is available.
 
-At revision `6336f3d`, the optimizer suite passes all 64 tests. The
-configurator suite passes 24 tests with its one control-socket environment test
-skipped outside a live medium. The freshly deployed rev120 and rev150 0821 VMs
-each passed three live smoke cycles with five devices, ten clients, seven
-candidate transactions, all 40 expected same-band candidates and no action at
-the healthy baseline.
+All optimizer tests must pass. The configurator's live control-socket test is
+skipped only when no compatible wmediumd socket is available.
 
 After a live lab reaches the accepted small profile, run the read-only
 multi-Agent gate. It requires complete same-band measurements for every client
@@ -223,13 +219,13 @@ em-optimizer recommend \
 
 The provider groups clients per Agent radio, splits each group into transactions
 of at most eight STAs (the controller data-model limit), and queries those
-transactions sequentially. The last fully measured provider-cycle acceptance
-used ten clients, seven transactions, and 40 same-band candidate links per
-complete cycle. The current small runtime has 20 clients, so collect and retain
-a new complete-cycle result before permitting all-client actions. `--interval`
-is the delay after a completed cycle, not a fixed wall-clock sampling period.
-Inspect printed decisions and the journal. A healthy but ineligible cycle is a
-successful no-action result with an explicit reason.
+transactions sequentially. An all-client cycle is complete only when every
+eligible client in the current 20-client topology has a fresh associated-link
+sample and every required candidate transaction succeeds. Incomplete cycles
+must not produce actions. `--interval` is the delay after a completed cycle,
+not a fixed wall-clock sampling period. Inspect printed decisions and the
+journal. A healthy but ineligible cycle is a successful no-action result with
+an explicit reason.
 
 The default observation error policy stops at the first candidate-collection
 failure. For a non-acting soak, this option records a failed cycle and
@@ -626,13 +622,6 @@ A change is ready for team use only when all applicable gates pass:
 11. wmediumd restores every touched key.
 12. Journal contains source revision, policy hash, input provenance, decisions,
     action, verification, and failure evidence.
-
-The 2026-08-21 rev130 vertical slice passed gates 1-4 and 7-9 for its isolated
-crossover: three complete recommendation cycles stayed below 15 seconds metric
-age; the scenario produced one exact-BSSID recommendation; and one bounded act
-converged to `02:00:00:37:93:f7` in three verification polls (3.04 seconds).
-Cooldown, border/fast-transit and longer scale cases remain separate scenario
-acceptance work rather than assumptions from this proof.
 
 ## Troubleshooting
 
