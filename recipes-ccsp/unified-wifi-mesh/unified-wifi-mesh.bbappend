@@ -109,6 +109,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0106-controller-serialize-autoconfig-and-parse-profile.patch \
     file://0107-agent-retry-busy-wsc-subdoc.patch \
     file://0108-agent-service-wsc-retry-after-orchestration.patch \
+    file://0109-agent-preserve-wsc-recovery-past-dev-init.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
