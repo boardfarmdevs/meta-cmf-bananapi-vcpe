@@ -151,8 +151,17 @@ systemctl enable wmediumd-console.service
 bash "$vm_dir/scripts/50-runtime-service.sh"
 systemctl start easymesh-lab.service
 systemctl start wmediumd-console.service
-curl -fsS http://127.0.0.1:8890/api/v1/status \
-    | jq -e '.packet_metrics.available == true and .identity_inventory.matched > 0' \
-        >/dev/null
+console_status=
+for attempt in $(seq 1 30); do
+    console_status=$(curl -fsS http://127.0.0.1:8890/api/v1/status 2>/dev/null || true)
+    [ -n "$console_status" ] && break
+    sleep 1
+done
+[ -n "$console_status" ] || {
+    echo 'wmediumd Console did not become ready within 30 seconds' >&2
+    exit 1
+}
+jq -e '.packet_metrics.available == true and .identity_inventory.matched > 0' \
+    <<< "$console_status" >/dev/null
 bash "$vm_dir/scripts/70-health-audit.sh"
 echo 'One-time installation and first cold-start PASS. The lab is ready.'

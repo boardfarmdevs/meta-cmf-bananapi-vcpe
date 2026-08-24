@@ -136,7 +136,16 @@ sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \
     /etc/default/wmediumd-console
 sudo systemctl enable --now wmediumd-console.service
 
-console_status=$(curl -fsS http://127.0.0.1:8890/api/v1/status)
+console_status=
+for attempt in $(seq 1 30); do
+    console_status=$(curl -fsS http://127.0.0.1:8890/api/v1/status 2>/dev/null || true)
+    [ -n "$console_status" ] && break
+    sleep 1
+done
+[ -n "$console_status" ] || {
+    echo 'wmediumd Console did not become ready within 30 seconds' >&2
+    exit 1
+}
 test "$(jq -r '.packet_metrics.available' <<< "$console_status")" = true
 test "$(jq -r '.identity_inventory.entries' <<< "$console_status")" = 25
 test "$(jq -r '.identity_inventory.matched' <<< "$console_status")" = 25
