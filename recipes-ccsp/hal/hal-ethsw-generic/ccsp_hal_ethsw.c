@@ -113,6 +113,21 @@ CcspHalEthSwInit
         return RETURN_OK;
     }
 
+    /* vCPE container LAN bring-up.
+     * On real bpir4 hardware the mediatek ethsw HAL creates the LAN bridge and
+     * programs the switch. The qemu/container build masks that HAL (see
+     * qemux86bpibroadband.conf BBMASK) and falls back to this generic HAL, so
+     * brlan0 (PSM dmsb.l2net.1, member eth1) is never created and neither the
+     * L2 bridge nor its L3 address ever come up -- the LAN is dead. Build it
+     * here with plain Linux, faithful to the PSM config, so brlan0 exists
+     * before EthAgent / service_ipv4 provision the LAN. */
+    if (system("ip link show brlan0 >/dev/null 2>&1") != 0)
+        system("ip link add name brlan0 type bridge");
+    system("ip link set eth1 master brlan0 2>/dev/null");
+    system("ip link set eth1 up");
+    system("ip link set brlan0 up");
+    system("ip -4 addr show dev brlan0 | grep -q 'inet ' || ip addr add 10.0.0.1/24 dev brlan0");
+
     // Create thread to handle async events and callbacks.
     rc = pthread_create(&ethsw_tid, NULL, ethsw_thread_main, NULL);
     if (rc != 0) {

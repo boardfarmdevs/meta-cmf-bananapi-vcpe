@@ -1,1 +1,7 @@
 examples/*/out/
+
+# gen/ (mv.sh) stages downloaded/decrypted images here (M_ROOT/tmp)
+/tmp/
+
+# build-wmediumd.sh clones its pinned upstream source here.
+/gen/wmediumd/src/
