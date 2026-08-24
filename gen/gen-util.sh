@@ -563,7 +563,17 @@ check_and_create_virt_wlan() {
     # destroyed every running container's Wi-Fi. mv.sh's hwsim_attach_radios
     # hands free pool radios to containers as LXD physical NICs; they return to
     # the pool automatically on container delete.)
-    local size="${HWSIM_POOL_SIZE:-24}"
+    local size
+    if [ -n "${HWSIM_POOL_SIZE:-}" ]; then
+        size="$HWSIM_POOL_SIZE"
+    elif [ -r /sys/module/mac80211_hwsim/parameters/radios ]; then
+        # An already-running medium or large profile is authoritative. Reusing
+        # the live size keeps one-client operations from rejecting a valid
+        # 64-radio pool merely because the fresh-install default is 32.
+        size=$(cat /sys/module/mac80211_hwsim/parameters/radios)
+    else
+        size=32
+    fi
     # Freeze the supported runtime defaults by kernel generation. Linux 7.0 is
     # the tri-band platform: it needs three concurrent channel contexts plus
     # custom_03 (regtest=5) so 6 GHz is IR-capable. Linux 6.8 remains the
@@ -695,7 +705,7 @@ main
 # Pre-sized pool: load the module once; radios cycle host<->container via LXD
 # physical NICs and return to the host automatically on container delete. A
 # radio is "free" iff its virt-wlan* netdev is present in the HOST netns.
-HWSIM_POOL_SIZE="${HWSIM_POOL_SIZE:-24}"
+HWSIM_POOL_SIZE="${HWSIM_POOL_SIZE:-$(cat /sys/module/mac80211_hwsim/parameters/radios 2>/dev/null || echo 32)}"
 # The pool is ensured by check_and_create_virt_wlan (idempotent, defined above,
 # called from main). The helpers below are the per-container allocator for mv.sh.
 
@@ -727,6 +737,26 @@ hwsim_free_radios() {
     done | sort -V
 }
 
+# A host-resident radio is not necessarily available for a new profile. When
+# every lab container is stopped, every phy returns to the host namespace, but
+# existing LXD profiles still reserve their parent=virt-wlanN assignment for
+# the next start. Treat those profile references as allocations too; otherwise
+# an image redeploy can give a stopped controller's radio to an extender and
+# both instances then fail to coexist.
+hwsim_reserved_radios() {
+    local profile device parent
+    while read -r profile; do
+        [ -n "$profile" ] || continue
+        while read -r device; do
+            [ -n "$device" ] || continue
+            parent=$(lxc profile device get "$profile" "$device" parent 2>/dev/null || true)
+            case "$parent" in
+                virt-wlan[0-9]*) echo "$parent" ;;
+            esac
+        done < <(lxc profile device list "$profile" 2>/dev/null)
+    done < <(lxc profile list --format csv -c n 2>/dev/null)
+}
+
 # Reclaim "dirty" pool phys: when a container is deleted, its wiphy returns to the
 # host with the VAPs it created (wifi0, wifi0.1, ... wifi1.3) still attached, so
 # hwsim_free_radios skips it and the radio drains from the pool. Those leftover
@@ -748,13 +778,20 @@ hwsim_reclaim_dirty_phys() {
 
 # attach N free hwsim radios to a profile as physical NICs (named wlan0..N-1).
 hwsim_attach_radios() {
-    local profile="$1" count="${2:-3}"
+    local profile="$1" count="${2:-3}" candidate reserved_radio
     [ "$count" -gt 0 ] || return 0
     check_and_create_virt_wlan
     hwsim_reclaim_dirty_phys           # return stale-VAP radios to the pool first
-    local free=($(hwsim_free_radios)) i=0
+    local reserved=($(hwsim_reserved_radios)) free=() i=0
+    while read -r candidate; do
+        [ -n "$candidate" ] || continue
+        for reserved_radio in "${reserved[@]}"; do
+            [ "$candidate" != "$reserved_radio" ] || continue 2
+        done
+        free+=("$candidate")
+    done < <(hwsim_free_radios)
     if [ "${#free[@]}" -lt "$count" ]; then
-        echo "WARN hwsim: only ${#free[@]} free radios, need $count (raise HWSIM_POOL_SIZE, reload at idle)"
+        echo "WARN hwsim: only ${#free[@]} unreserved free radios, need $count (raise HWSIM_POOL_SIZE, reload at idle)"
     fi
     while [ "$i" -lt "$count" ] && [ "$i" -lt "${#free[@]}" ]; do
         lxc profile device add "$profile" "wlan${i}" nic \

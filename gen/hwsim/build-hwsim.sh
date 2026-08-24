@@ -6,7 +6,7 @@
 #   ./build-hwsim.sh --6ghz     # also enable 6 GHz (kernel-generation dependent)
 #   ./build-hwsim.sh --install  # build, then install to updates/ and depmod
 #   ./build-hwsim.sh --load     # build+install, then reload the pool patched
-#                               #   (HWSIM_RADIOS / HWSIM_CHANNELS env, default 24/2)
+#                               #   (HWSIM_RADIOS / HWSIM_CHANNELS env, default 32/2)
 #
 # Kernel-generation aware: 6.8 and 7.0 are both proven and build without FORCE.
 # The 6 GHz story differs by generation (see review TODO #5):
@@ -104,7 +104,12 @@ if [ "$DO_INSTALL" = 1 ]; then
 fi
 
 if [ "$DO_LOAD" = 1 ]; then
-    R=${HWSIM_RADIOS:-24}
+    # 32 covers the target small profile: five mesh radios, twenty client
+    # radios and spare capacity for controlled replacement/tests. Medium uses
+    # 64. A 100-client stress profile needs 105 radios and therefore cannot use
+    # the stock module's static radios= limit; keep it gated until a dynamic or
+    # patched allocation path has its own acceptance evidence.
+    R=${HWSIM_RADIOS:-32}
     # 6 GHz tri-band wants a third channel context; default channels=3 with --6ghz.
     if [ -n "${HWSIM_CHANNELS:-}" ]; then C=$HWSIM_CHANNELS
     elif [ "$WITH_6GHZ" = 1 ]; then C=3

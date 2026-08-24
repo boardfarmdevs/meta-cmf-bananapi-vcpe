@@ -4,7 +4,9 @@
 # one radio from the hwsim pool (returns to the pool on delete).
 #
 #   wlan-client.sh build-image                       # build the self-contained wlan-client-base image
-#   wlan-client.sh [-i NNN] [--build-image] up [ssid] [psk]  # create client, connect to ssid (open if no psk)
+#   wlan-client.sh [-i NNN] [--cohort NAME] [--security MODE] [--band BAND]
+#                  [--build-image]
+#                  up [ssid] [psk]  # create client and connect
 #   wlan-client.sh [-i NNN] status                   # print association state
 #   wlan-client.sh [-i NNN] down                     # tear down (radio returns to the pool)
 #
@@ -28,11 +30,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE_IMG="${WLAN_CLIENT_IMAGE:-wlan-client-base}"   # the self-contained client image
 SRC_IMG="${WLAN_CLIENT_SRC_IMAGE:-alpine}"          # minimal base to build it from
 WNMBIN="$HERE/wpa_supplicant/wpa_supplicant-wnm"    # committed CONFIG_WNM supplicant
+WMD_PIDF=${WMEDIUMD_PIDFILE:-/run/meta-cmf-wmediumd/wmediumd.pid}
 
-INST=""; FORCE_BUILD=0
+INST=""; FORCE_BUILD=0; COHORT=""; SECURITY="auto"; BAND="auto"
 while true; do
     case "$1" in
-        -i)            INST=$(printf "%03d" "$2" 2>/dev/null) || INST="$2"; shift 2;;
+        -i)
+            # Force decimal interpretation. Recursive status calls pass the
+            # normalized value (for example 010), which printf otherwise treats
+            # as octal and silently turns wlan-client-010 into client 008.
+            if [[ "$2" =~ ^[0-9]+$ ]]; then
+                INST=$(printf "%03d" "$((10#$2))")
+            else
+                INST="$2"
+            fi
+            shift 2
+            ;;
+        --cohort)      COHORT="$2"; shift 2;;
+        --security)    SECURITY="$2"; shift 2;;
+        --band)        BAND="$2"; shift 2;;
         --build-image) FORCE_BUILD=1; shift;;
         --wnm)         shift;;   # deprecated: WNM is baked into wlan-client-base now (accepted, ignored)
         *)             break;;
@@ -41,6 +57,44 @@ done
 
 CT="wlan-client${INST:+-$INST}"
 PROFILE="$CT"
+
+# Resolve a band request against the channels which the live mesh is actually
+# advertising.  A band preference is not a channel preference: pinning 6 GHz
+# to one historical frequency (6135 MHz) made a valid 5955 MHz lab impossible
+# to join.  Keep every observed frequency in the selected band so a client can
+# still roam between APs if their same-band channels later differ.
+active_band_frequencies() {
+    local band=$1 container frequencies
+    for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+        lxc info "$container" >/dev/null 2>&1 || continue
+        lxc exec "$container" -- iw dev 2>/dev/null || true
+    done | awk -v band="$band" '
+        $1 == "channel" {
+            frequency=$3
+            gsub(/[^0-9]/, "", frequency)
+            if ((band == "2.4" && frequency >= 2400 && frequency < 2500) ||
+                (band == "5"   && frequency >= 5000 && frequency < 5955) ||
+                (band == "6"   && frequency >= 5955 && frequency <= 7115))
+                seen[frequency]=1
+        }
+        END {
+            separator=""
+            for (frequency in seen) {
+                values[++count]=frequency + 0
+            }
+            for (i=1; i<=count; i++)
+                for (j=i+1; j<=count; j++)
+                    if (values[j] < values[i]) {
+                        value=values[i]; values[i]=values[j]; values[j]=value
+                    }
+            for (i=1; i<=count; i++) {
+                printf "%s%d", separator, values[i]
+                separator=" "
+            }
+            if (count)
+                printf "\n"
+        }'
+}
 
 # Initialize a container without physical hwsim devices in its profile, attach
 # the requested radios to the stopped instance, and only then start it. LXD 6.7
@@ -100,7 +154,15 @@ _build_base_image() {
     lxc exec "$B" -- sh -c 'mkdir -p /etc/local.d; cat > /etc/local.d/wlan.start <<'\''EOS'\''
 #!/bin/sh
 [ -f /etc/wpa.conf ] || exit 0
-ip link set wlan0 up 2>/dev/null
+# LXD can start OpenRC before the physical hwsim device has completed its
+# move/rename into this namespace. Wait for that handoff, then assert UP on
+# both sides of a short settling interval; otherwise a supplicant can remain
+# alive forever on a DOWN 6 GHz interface without authenticating.
+i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+[ -e /sys/class/net/wlan0 ] || exit 1
+ip link set wlan0 up 2>/dev/null || exit 1
+sleep 1
+ip link set wlan0 up 2>/dev/null || exit 1
 [ -x /usr/local/sbin/wpa_supplicant-wnm ] && SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant
 pgrep -f "$SUP" >/dev/null || $SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1
 i=0; while [ $i -lt 20 ]; do iw dev wlan0 link 2>/dev/null | grep -q Connected && break; i=$((i+1)); sleep 1; done
@@ -122,6 +184,62 @@ build-image)
     ;;
 up)
     SSID="${2:-PlumeSim}"; PSK="$3"
+    EXPECTED_FREQS=
+    case "$BAND" in
+        auto) FREQ_DIRECTED= ;;
+        2.4|5|6)
+            EXPECTED_FREQS=$(active_band_frequencies "$BAND")
+            if [ -z "$EXPECTED_FREQS" ]; then
+                echo "$CT: no active $BAND GHz AP frequency was found" >&2
+                exit 1
+            fi
+            FREQ_DIRECTED="\n scan_freq=$EXPECTED_FREQS\n freq_list=$EXPECTED_FREQS"
+            ;;
+        *) echo "$CT: unsupported band '$BAND' (use auto, 2.4, 5 or 6)" >&2; exit 2 ;;
+    esac
+    if [ "$SECURITY" = auto ]; then
+        if [ -z "$PSK" ]; then
+            SECURITY=open
+        else
+            SECURITY=wpa2
+        fi
+    fi
+    # Current HWSIM OneWifi builds keep iot_ssid non-broadcast.  A directed
+    # scan is therefore required regardless of the selected authentication
+    # mode. Reset.json describes the physical-platform SAE/PMF intent, while
+    # the HWSIM compatibility path deliberately advertises WPA2-PSK; auto
+    # follows the observable interface contract.
+    SCAN_DIRECTED=
+    [ "$SSID" != iot_ssid ] || SCAN_DIRECTED='\n scan_ssid=1'
+    if [ "$BAND" = 6 ] && [ "$SECURITY" != sae ]; then
+        echo "$CT: 6 GHz requires --security sae and protected management frames" >&2
+        exit 2
+    fi
+    if [ "$BAND" = 6 ] && [ "$SSID" = iot_ssid ]; then
+        echo "$CT: hidden iot_ssid does not answer directed 6 GHz probes in the current HWSIM AP" >&2
+        exit 2
+    fi
+    case "$SECURITY" in
+        open)
+            [ -z "$PSK" ] || { echo "$CT: open security cannot use a passphrase" >&2; exit 2; }
+            NET="network={\n ssid=\"$SSID\"$SCAN_DIRECTED$FREQ_DIRECTED\n key_mgmt=NONE\n}"
+            ;;
+        wpa2)
+            [ -n "$PSK" ] || { echo "$CT: WPA2 requires a passphrase" >&2; exit 2; }
+            NET="network={\n ssid=\"$SSID\"$SCAN_DIRECTED$FREQ_DIRECTED\n psk=\"$PSK\"\n key_mgmt=WPA-PSK\n}"
+            ;;
+        sae)
+            [ -n "$PSK" ] || { echo "$CT: SAE requires a passphrase" >&2; exit 2; }
+            SAE_GLOBAL=
+            [ "$BAND" != 6 ] || SAE_GLOBAL='sae_pwe=1\n'
+            NET="${SAE_GLOBAL}network={\n ssid=\"$SSID\"$SCAN_DIRECTED$FREQ_DIRECTED\n sae_password=\"$PSK\"\n key_mgmt=SAE\n ieee80211w=2\n}"
+            ;;
+        *)
+            echo "$CT: unsupported security '$SECURITY' (use auto, open, wpa2 or sae)" >&2
+            exit 2
+            ;;
+    esac
+    [ -n "$COHORT" ] || COHORT=$([ "$SSID" = iot_ssid ] && echo iot || echo private)
     LAB_POOL=$(ensure_lxd_lab_pool) || exit 1
     # ensure the self-contained image (build once, or on --build-image)
     if [ "$FORCE_BUILD" = 1 ] || ! lxc image info "$BASE_IMG" >/dev/null 2>&1; then
@@ -130,21 +248,27 @@ up)
     _lxc_remove_clean "$CT"
     lxc profile delete "$PROFILE" 2>/dev/null
     lxc profile create "$PROFILE" >/dev/null
+    # A lab-level runtime service owns cold-boot order. Explicitly prevent LXD
+    # from restoring clients before the controller and extenders have completed
+    # onboarding; the OpenRC local.d hook still reconnects whenever this
+    # container is deliberately started.
+    lxc profile set "$PROFILE" boot.autostart=false >/dev/null
     lxc profile set "$PROFILE" limits.memory=128MB >/dev/null
     lxc profile set "$PROFILE" limits.cpu=1 >/dev/null
     lxc profile device add "$PROFILE" root disk path=/ pool="$LAB_POOL" >/dev/null
     lxc profile device add "$PROFILE" eth0 nic nictype=bridged parent=lxdbr0 name=eth0 >/dev/null
     _lxc_launch "$BASE_IMG" "$CT" "$PROFILE" 1 || { echo "$CT: failed to launch"; exit 1; }
+    # Persist intent outside the disposable rootfs so inventory, cold-start and
+    # scale tooling can distinguish cohorts without relying on MAC allocation.
+    lxc config set "$CT" user.easymesh.cohort "$COHORT"
+    lxc config set "$CT" user.easymesh.ssid "$SSID"
+    lxc config set "$CT" user.easymesh.security "$SECURITY"
+    lxc config set "$CT" user.easymesh.band "$BAND"
     # base image already has iw + wpa_supplicant + the WNM binary; only apk-install
     # if we fell back to the raw Alpine base
     if [ "$BASE_IMG" = "$SRC_IMG" ]; then
         lxc exec "$CT" -- sh -c 'command -v wpa_supplicant >/dev/null && command -v iw >/dev/null || apk add --no-cache wpa_supplicant iw >/dev/null 2>&1'
         [ -f "$WNMBIN" ] && lxc file push -p "$WNMBIN" "$CT/usr/local/sbin/wpa_supplicant-wnm" 2>/dev/null && lxc exec "$CT" -- chmod +x /usr/local/sbin/wpa_supplicant-wnm 2>/dev/null
-    fi
-    if [ -n "$PSK" ]; then
-        NET="network={\n ssid=\"$SSID\"\n psk=\"$PSK\"\n key_mgmt=WPA-PSK\n}"
-    else
-        NET="network={\n ssid=\"$SSID\"\n key_mgmt=NONE\n}"
     fi
     # A running wmediumd has a fixed radio matrix.  Adding a client radio after
     # REGISTER leaves that radio outside the medium until the daemon is
@@ -153,8 +277,8 @@ up)
     # wmediumd-up.sh replaces the old daemon atomically enough for this lab and
     # preserves the caller's requested baseline SNR.
     if [ -x "$HERE/wmediumd/wmediumd-up.sh" ] &&
-       [ -s /tmp/wmediumd.pid ] &&
-       sudo kill -0 "$(cat /tmp/wmediumd.pid)" 2>/dev/null; then
+       [ -s "$WMD_PIDF" ] &&
+       sudo kill -0 "$(cat "$WMD_PIDF")" 2>/dev/null; then
         echo "  wmediumd: refreshing active-radio matrix for $CT"
         SNR="${SNR:-40}" "$HERE/wmediumd/wmediumd-up.sh" up
     fi
@@ -162,18 +286,58 @@ up)
     # persists the connection across container restarts)
     lxc exec "$CT" -- sh -c "printf '$NET\n' > /etc/wpa.conf
         [ -x /etc/local.d/wlan.start ] || { mkdir -p /etc/local.d; printf '#!/bin/sh\n[ -f /etc/wpa.conf ] || exit 0\nip link set wlan0 up\n[ -x /usr/local/sbin/wpa_supplicant-wnm ] \&\& SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant\npgrep -f \"\$SUP\" >/dev/null || \$SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1\nudhcpc -i wlan0 -n -q >/dev/null 2>&1 || true\n' > /etc/local.d/wlan.start; chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1; }
+        i=0; while [ ! -e /sys/class/net/wlan0 ] && [ \$i -lt 50 ]; do i=\$((i+1)); sleep 0.1; done
+        [ -e /sys/class/net/wlan0 ] || exit 1
+        ip link set wlan0 up || exit 1
+        sleep 1
+        ip link set wlan0 up || exit 1
         /etc/local.d/wlan.start"
     # Treat a client as deployed only when both the WLAN association and DHCP
     # lease exist.  The baked startup script normally establishes both; this
     # bounded check catches a broken medium/configuration immediately.
+    association_ready() {
+        lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to'
+    }
     for n in $(seq 1 20); do
-        lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to' && break
+        association_ready && break
         sleep 1
     done
-    lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to' || {
+    # A directed 6 GHz SAE scan can occasionally finish without selecting a
+    # BSS while many hwsim radios are being created.  Re-run the exact persisted
+    # configuration with a fresh supplicant process before rejecting the
+    # client.  This is bounded and applies only when the initial association
+    # window failed; ordinary client creation remains unchanged.
+    if ! association_ready; then
+        for retry in 1 2; do
+            echo "$CT: association incomplete; retrying persisted WLAN configuration ($retry/2)"
+            lxc exec "$CT" -- sh -c '
+                for pid in $(pgrep -f "^[^ ]*wpa_supplicant" 2>/dev/null); do
+                    kill "$pid" 2>/dev/null || true
+                done
+                sleep 1
+                rm -f /run/wpa_supplicant/wlan0 /var/run/wpa_supplicant/wlan0
+                /etc/local.d/wlan.start'
+            for n in $(seq 1 30); do
+                association_ready && break 2
+                sleep 1
+            done
+        done
+    fi
+    association_ready || {
         echo "$CT: failed to associate with $SSID" >&2
         exit 1
     }
+    if [ -n "$EXPECTED_FREQS" ]; then
+        actual_freq=$(lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null \
+            | awk '/freq:/ {print $2; exit}')
+        case " $EXPECTED_FREQS " in
+            *" $actual_freq "*) ;;
+            *)
+                echo "$CT: expected band $BAND (${EXPECTED_FREQS// /,} MHz), associated at ${actual_freq:-unknown}" >&2
+                exit 1
+                ;;
+        esac
+    fi
     if ! lxc exec "$CT" -- ip -4 -o addr show wlan0 2>/dev/null | grep -q 'inet '; then
         lxc exec "$CT" -- udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true
     fi
@@ -181,6 +345,38 @@ up)
         echo "$CT: associated but DHCP did not provide an address" >&2
         exit 1
     }
+
+    # Do not let a caller immediately add another station (which refreshes the
+    # fixed wmediumd registration matrix) while the controller is still doing
+    # the new STA capability exchange. Losing that short exchange leaves a
+    # physically associated client absent from STAList/WebUI until it roams.
+    # When this is a standalone WLAN test with no controller, skip the gate.
+    if [ "${WAIT_EASYMESH_EXPORT:-1}" = 1 ] \
+       && lxc info bpibroadband >/dev/null 2>&1 \
+       && [ "$(lxc exec bpibroadband -- systemctl is-active em_ctrl 2>/dev/null || true)" = active ]; then
+        sta=$(lxc exec "$CT" -- iw dev wlan0 info | awk '/addr/{print $2; exit}')
+        exported=0
+        # A newly started controller/agent can need more than ten seconds to
+        # finish the topology notification and client-capability exchange.  A
+        # short timeout turns that healthy convergence into a deployment
+        # failure; keep the wait bounded, but cover one full 30-second model
+        # reconciliation interval.  Tests may override the poll count without
+        # bypassing the readiness contract.
+        export_polls=${EASYMESH_EXPORT_POLLS:-150}
+        for n in $(seq 1 "$export_polls"); do
+            if [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
+                    -e "select count(*) from STAList where MACAddress='$sta' and Associated=1" \
+                    2>/dev/null || true)" = 1 ]; then
+                exported=1
+                break
+            fi
+            sleep 0.2
+        done
+        if [ "$exported" != 1 ]; then
+            echo "$CT: associated but EasyMesh controller did not export STA $sta" >&2
+            exit 1
+        fi
+    fi
     "$0" ${INST:+-i $INST} status
     ;;
 status)
@@ -194,5 +390,5 @@ down)
     echo "$CT removed (radio returned to pool)"
     ;;
 *)
-    echo "usage: $0 build-image | [-i NNN] [--build-image] up [ssid] [psk] | status | down"; exit 1;;
+    echo "usage: $0 build-image | [-i NNN] [--security MODE] [--band auto|2.4|5|6] [--build-image] up [ssid] [psk] | status | down"; exit 1;;
 esac
