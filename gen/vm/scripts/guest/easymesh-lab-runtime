@@ -199,6 +199,22 @@ wait_client_live() {
                 "iw dev wlan0 link | grep -q 'Connected to'" 2>/dev/null; then
             lxc exec "$client" -- udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true
         fi
+        # Warm LXC startup can race OpenRC against the physical hwsim
+        # move/rename. The symptom is a live supplicant on a DOWN wlan0 which
+        # never sends authentication. Repeat the persisted transaction only
+        # when association has made no progress; this repairs the namespace
+        # handoff without restarting an EasyMesh component.
+        if [ "$attempt" -eq 12 ] || [ "$attempt" -eq 24 ]; then
+            echo "$client association incomplete; retrying persisted WLAN configuration"
+            lxc exec "$client" -- sh -c '
+                for pid in $(pgrep -f "^[^ ]*wpa_supplicant" 2>/dev/null); do
+                    kill "$pid" 2>/dev/null || true
+                done
+                sleep 1
+                rm -f /run/wpa_supplicant/wlan0 /var/run/wpa_supplicant/wlan0
+                ip link set wlan0 up
+                /etc/local.d/wlan.start'
+        fi
         sleep 5
     done
     echo "$client did not associate and obtain DHCP after boot" >&2

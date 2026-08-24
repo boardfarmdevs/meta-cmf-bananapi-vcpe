@@ -116,7 +116,15 @@ _build_base_image() {
     lxc exec "$B" -- sh -c 'mkdir -p /etc/local.d; cat > /etc/local.d/wlan.start <<'\''EOS'\''
 #!/bin/sh
 [ -f /etc/wpa.conf ] || exit 0
-ip link set wlan0 up 2>/dev/null
+# LXD can start OpenRC before the physical hwsim device has completed its
+# move/rename into this namespace. Wait for that handoff, then assert UP on
+# both sides of a short settling interval; otherwise a supplicant can remain
+# alive forever on a DOWN 6 GHz interface without authenticating.
+i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+[ -e /sys/class/net/wlan0 ] || exit 1
+ip link set wlan0 up 2>/dev/null || exit 1
+sleep 1
+ip link set wlan0 up 2>/dev/null || exit 1
 [ -x /usr/local/sbin/wpa_supplicant-wnm ] && SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant
 pgrep -f "$SUP" >/dev/null || $SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1
 i=0; while [ $i -lt 20 ]; do iw dev wlan0 link 2>/dev/null | grep -q Connected && break; i=$((i+1)); sleep 1; done
@@ -234,6 +242,11 @@ up)
     # persists the connection across container restarts)
     lxc exec "$CT" -- sh -c "printf '$NET\n' > /etc/wpa.conf
         [ -x /etc/local.d/wlan.start ] || { mkdir -p /etc/local.d; printf '#!/bin/sh\n[ -f /etc/wpa.conf ] || exit 0\nip link set wlan0 up\n[ -x /usr/local/sbin/wpa_supplicant-wnm ] \&\& SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant\npgrep -f \"\$SUP\" >/dev/null || \$SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1\nudhcpc -i wlan0 -n -q >/dev/null 2>&1 || true\n' > /etc/local.d/wlan.start; chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1; }
+        i=0; while [ ! -e /sys/class/net/wlan0 ] && [ \$i -lt 50 ]; do i=\$((i+1)); sleep 0.1; done
+        [ -e /sys/class/net/wlan0 ] || exit 1
+        ip link set wlan0 up || exit 1
+        sleep 1
+        ip link set wlan0 up || exit 1
         /etc/local.d/wlan.start"
     # Treat a client as deployed only when both the WLAN association and DHCP
     # lease exist.  The baked startup script normally establishes both; this
