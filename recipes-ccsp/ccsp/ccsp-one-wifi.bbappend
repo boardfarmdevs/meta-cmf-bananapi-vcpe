@@ -27,7 +27,9 @@ WIFI_NASTA_RESPONSE_NAME_PATCH := "${THISDIR}/${BPN}/0015-nasta-label-response-s
 WIFI_STA_BSSID_SET_PATCH := "${THISDIR}/${BPN}/0016-rbus-apply-mesh-sta-bssid.patch"
 WIFI_STA_STATUS_PUBLISH_PATCH := "${THISDIR}/${BPN}/0017-publish-mesh-sta-on-connection-change.patch"
 WIFI_STA_PARENT_CACHE_PATCH := "${THISDIR}/${BPN}/0018-cache-confirmed-mesh-sta-parent.patch"
+WIFI_EM_EVENT_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0019-easymesh-release-encoded-event-data.patch"
 python do_patch_append() {
+    import os
     import subprocess
     s = d.getVar('S')
     # -N: skip a patch that's already applied instead of erroring. Plain
@@ -152,6 +154,23 @@ python do_patch_append() {
         bb.note("meta-cmf-bananapi-vcpe: caching confirmed live mesh-STA parents")
         with open(d.getVar('WIFI_STA_PARENT_CACHE_PATCH'), 'rb') as f:
             subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+    # webconfig_encode() returns a separately allocated encoded buffer.  The
+    # periodic EasyMesh metrics publishers released only their wrapper, leaking
+    # one report every interval.  Release encoded data through the webconfig
+    # ownership API, including error and less-frequent report paths.
+    bb.note("meta-cmf-bananapi-vcpe: releasing encoded EasyMesh event buffers")
+    with open(d.getVar('WIFI_EM_EVENT_OWNERSHIP_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+
+    # GNU patch -N can return success after skipping later hunks when an older
+    # revision of this hand-applied patch left the WORKDIR only partly patched.
+    # Never turn that mixed source tree into an apparently successful image.
+    wifi_em = os.path.join(s, 'source/apps/em/wifi_em.c')
+    with open(wifi_em, 'r', encoding='utf-8') as f:
+        wifi_em_source = f.read()
+    if (wifi_em_source.count('webconfig_data_free(data);') < 7 or
+            wifi_em_source.count('webconfig_data_free(wb_data);') < 3):
+        bb.fatal('meta-cmf-bananapi-vcpe: EasyMesh encoded-event ownership patch is incomplete; clean ccsp-one-wifi and retry')
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -169,7 +188,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
     WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH \
     WIFI_STA_BSSID_SET_PATCH WIFI_STA_STATUS_PUBLISH_PATCH \
-    WIFI_STA_PARENT_CACHE_PATCH"
+    WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_EVENT_OWNERSHIP_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -187,6 +206,7 @@ do_patch[file-checksums] += "${WIFI_NASTA_RESPONSE_NAME_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_BSSID_SET_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_STATUS_PUBLISH_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_PARENT_CACHE_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_EVENT_OWNERSHIP_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.

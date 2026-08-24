@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000012 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Tue, 25 Aug 2026 19:20:00 -0700
+Subject: [PATCH] webconfig: release decoded AP metrics objects
+
+webconfig_set parses every encoded subdocument into a cJSON tree before
+dispatching its decoder. The AP metrics decoder retained that tree after
+every successful report. It also allocated temporary per-BSS station traffic
+and link-metric arrays which remained allocated after their contents had been
+translated into the EasyMesh data model.
+
+Keep the decoded objects alive through translation, then release them at the
+subdocument ownership boundary. Release partial allocations on decode failure
+and reject oversized radio arrays before indexing the fixed report storage.
+Periodic AP metrics reporting then has bounded temporary ownership.
+
+Upstream-Status: Pending
+---
+ .../wifi_webconfig_em_ap_metrics_report.c     | 40 ++++++++++++++++++++--
+ 1 file changed, 38 insertions(+), 2 deletions(-)
+
+diff --git a/source/webconfig/wifi_webconfig_em_ap_metrics_report.c b/source/webconfig/wifi_webconfig_em_ap_metrics_report.c
+index 5487319..088f48e 100644
+--- a/source/webconfig/wifi_webconfig_em_ap_metrics_report.c
++++ b/source/webconfig/wifi_webconfig_em_ap_metrics_report.c
+@@ -35,6 +35,25 @@ webconfig_subdoc_object_t   em_ap_metrics_objects[3] = {
+     { webconfig_subdoc_object_type_em_ap_metrics_report, "EMAPMetricsReport" },
+ };
+ 
++static void free_em_ap_metrics_report_allocations(em_ap_metrics_report_t *report)
++{
++    em_vap_metrics_t *vap_report;
++
++    if (report == NULL) {
++        return;
++    }
++
++    for (unsigned int radio = 0; radio < MAX_NUM_RADIOS; radio++) {
++        for (unsigned int vap = 0; vap < MAX_NUM_VAP_PER_RADIO; vap++) {
++            vap_report = &report->radio_reports[radio].vap_reports[vap];
++            free(vap_report->sta_traffic_stats);
++            vap_report->sta_traffic_stats = NULL;
++            free(vap_report->sta_link_metrics);
++            vap_report->sta_link_metrics = NULL;
++        }
++    }
++}
++
+ webconfig_error_t init_em_ap_metrics_report_subdoc(webconfig_subdoc_t *doc)
+ {
+     doc->num_objects = sizeof(em_ap_metrics_objects)/sizeof(webconfig_subdoc_object_t);
+@@ -51,7 +70,11 @@ webconfig_error_t access_check_em_ap_metrics_report_subdoc(webconfig_t *config,
+ webconfig_error_t translate_from_em_ap_metrics_report_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data)
+ {
+     if ((data->descriptor & webconfig_data_descriptor_translate_to_easymesh) == webconfig_data_descriptor_translate_to_easymesh) {
+-        if (config->proto_desc.translate_to(webconfig_subdoc_type_em_ap_metrics_report, data) != webconfig_error_none) {
++        webconfig_error_t ret = config->proto_desc.translate_to(
++            webconfig_subdoc_type_em_ap_metrics_report, data);
++
++        free_em_ap_metrics_report_allocations(&data->u.decoded.em_ap_metrics_report);
++        if (ret != webconfig_error_none) {
+             if ((data->descriptor & webconfig_error_translate_to_easymesh) == webconfig_error_translate_to_easymesh) {
+                 return webconfig_error_translate_to_easymesh;
+             }
+@@ -151,6 +174,7 @@ webconfig_error_t decode_em_ap_metrics_report_subdoc(webconfig_t *config, webcon
+         wifi_util_error_print(WIFI_WEBCONFIG, "%s:%d: NULL json pointer\n", __func__, __LINE__);
+         return webconfig_error_decode;
+     }
++    data->u.encoded.json = NULL;
+ 
+     char *str;
+     str = cJSON_Print(json);
+@@ -174,6 +198,14 @@ webconfig_error_t decode_em_ap_metrics_report_subdoc(webconfig_t *config, webcon
+     if (em_ap_report_arr == NULL || !cJSON_IsArray(em_ap_report_arr)) {
+         wifi_util_error_print(WIFI_WEBCONFIG, "%s:%d: Invalid or missing EMAPMetricsReport\n",
+             __func__, __LINE__);
++        cJSON_Delete(json);
++        return webconfig_error_decode;
++    }
++
++    if (cJSON_GetArraySize(em_ap_report_arr) > MAX_NUM_RADIOS) {
++        wifi_util_error_print(WIFI_WEBCONFIG, "%s:%d: Too many radio reports\n", __func__,
++            __LINE__);
++        cJSON_Delete(json);
+         return webconfig_error_decode;
+     }
+ 
+@@ -182,17 +214,21 @@ webconfig_error_t decode_em_ap_metrics_report_subdoc(webconfig_t *config, webcon
+         if (em_ap_report_obj == NULL) {
+             wifi_util_error_print(WIFI_WEBCONFIG, "%s:%d: Invalid EMAPMetricsReport object at index %d\n",
+                 __func__, __LINE__, i);
++            free_em_ap_metrics_report_allocations(&params->em_ap_metrics_report);
++            cJSON_Delete(json);
+             return webconfig_error_decode;
+         }
+ 
+         if(decode_em_ap_metrics_report_object(em_ap_report_obj, &params->em_ap_metrics_report.radio_reports[i]) != webconfig_error_none) {
+             wifi_util_error_print(WIFI_WEBCONFIG, "%s:%d: decode_em_ap_metrics_report_object failed\n", __func__, __LINE__);
++            free_em_ap_metrics_report_allocations(&params->em_ap_metrics_report);
+             cJSON_Delete(json);
+             return webconfig_error_decode;
+         }
+     }
+     params->em_ap_metrics_report.radio_count = i;
++    cJSON_Delete(json);
+ 
+     return webconfig_error_none;
+ }
+-#endif
+\ No newline at end of file
++#endif
+-- 
+2.43.0

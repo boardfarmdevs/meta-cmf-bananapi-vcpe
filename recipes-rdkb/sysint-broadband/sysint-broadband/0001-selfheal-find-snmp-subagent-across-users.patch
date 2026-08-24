@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 10:20:00 -0700
+Subject: [PATCH] selfheal: find SNMP subagent across users
+
+The resource monitor runs as root, while snmp_subagent drops to the non-root
+account.  `ps ww` uses the default process selection, so the systemd-owned
+monitor cannot see the subagent.  Every 15-minute health pass consequently
+declares SNMP dead and launches another copy through corrective_action.sh.
+
+Use pidof, as the same health monitor already does for the other named RDK-B
+processes.  pidof searches all processes by executable name regardless of the
+caller's UID or controlling terminal.
+
+On the affected controller, the old predicate returned no PID while pidof
+returned all 52 live snmp_subagent processes.  The accumulated launch times
+were separated by the configured 15-minute resource-monitor interval plus its
+30-second sampling window.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ devicebpi/scripts/task_health_monitor.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/devicebpi/scripts/task_health_monitor.sh b/devicebpi/scripts/task_health_monitor.sh
+index 25ed2d4..325895c 100755
+--- a/devicebpi/scripts/task_health_monitor.sh
++++ b/devicebpi/scripts/task_health_monitor.sh
+@@ -192,7 +192,7 @@ case $SELFHEAL_TYPE in
+         fi
+ 
+         # Checking snmp v2 subagent PID
+-        SNMP_PID=`ps ww | grep snmp_subagent | grep -v cm_snmp_ma_2 | grep -v grep | awk '{print $1}'`
++        SNMP_PID=$(pidof snmp_subagent)
+         if [ "$SNMP_PID" = "" ]; then
+             if [ -f /tmp/.snmp_agent_restarting ]; then
+                 echo_t "[RDKB_SELFHEAL] : snmp process is restarted through maintanance window"
+-- 
+2.43.0
+

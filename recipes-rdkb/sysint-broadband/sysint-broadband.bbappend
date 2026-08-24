@@ -3,6 +3,12 @@
 # list removes it entirely. Symlink it to where libtr181 expects it.
 # Same for exec_curl_mtls.sh (used by uploadDumps.sh).
 
+FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
+
+SRC_URI_append = " \
+    file://0001-selfheal-find-snmp-subagent-across-users.patch \
+"
+
 do_install_append() {
     install -d ${D}${base_libdir}/rdk
     for script in startTunnel.sh startStunnel.sh exec_curl_mtls.sh; do
