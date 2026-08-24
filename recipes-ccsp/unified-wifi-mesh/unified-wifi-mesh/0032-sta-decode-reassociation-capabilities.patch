@@ -1,0 +1,85 @@
+From 3f78b4e7dc2af6e3ef447a0e63081b0539000032 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 17 Aug 2026 01:03:00 -0700
+Subject: [PATCH] dm: decode reassociation request capabilities after current AP
+
+The Client Capability Report carries the 802.11 (Re)Association Request
+frame body.  Association Request bodies have four fixed bytes before their
+IEs, but Reassociation Request bodies have an additional six-byte Current AP
+Address.  decode_sta_capability() always started at byte four, so after a
+steer it interpreted the old AP address as an IE header and returned before
+decoding SSID and the capability IEs.
+
+This left the controller's otherwise-correct new STA record with an empty
+SSID.  The WebUI deliberately hides records without an SSID, making a
+successful steer look as if the client disappeared from the topology.
+
+Recognize the mandatory SSID-first IE chain at offsets four and ten.  Use the
+reassociation offset only when the association layout is invalid and the
+reassociation layout is valid, keeping the association path as the safe
+default for ambiguous or malformed bodies.
+
+Upstream-Status: Pending
+Signed-off-by: Codex <codex@openai.com>
+---
+ src/dm/dm_sta.cpp | 33 ++++++++++++++++++++++++++++++---
+ 1 file changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/src/dm/dm_sta.cpp b/src/dm/dm_sta.cpp
+index 9da941d..25da0d0 100644
+--- a/src/dm/dm_sta.cpp
++++ b/src/dm/dm_sta.cpp
+@@ -394,7 +394,7 @@ void dm_sta_t::parse_sta_bss_radio_from_key(const char *key, mac_address_t sta,
+ 
+ void dm_sta_t::decode_sta_capability(dm_sta_t *sta)
+ {
+-    unsigned int offset = 0;
++    unsigned int offset;
+     unsigned char length;
+     tag_type_t tag_id;
+     unsigned char *ext_ptr;
+@@ -403,13 +403,40 @@ void dm_sta_t::decode_sta_capability(dm_sta_t *sta)
+ 
+     sta->m_sta_info.num_vendor_infos = 0;
+ 
+-    /* The frame_body stores the full 802.11 (Re)Association Request frame body:
+-     * capab_info (2B) + listen_interval (2B) + IEs. Skip the fixed fields. */
++    /* Association Request: capab_info (2B) + listen_interval (2B) + IEs.
++     * Reassociation Request adds Current AP Address (6B) before the IEs. */
+     if (sta->m_sta_info.frame_body_len < 4) {
+         return;
+     }
+     offset = 4;
+ 
++    const auto valid_ie_chain = [sta](unsigned int candidate) {
++        unsigned int pos = candidate;
++        unsigned int frame_len = sta->m_sta_info.frame_body_len;
++
++        /* SSID is the first mandatory IE in both request body layouts. */
++        if ((pos + 2 > frame_len) ||
++                (sta->m_sta_info.frame_body[pos] != tag_ssid)) {
++            return false;
++        }
++
++        while (pos < frame_len) {
++            if (pos + 2 > frame_len) {
++                return false;
++            }
++            unsigned int ie_len = sta->m_sta_info.frame_body[pos + 1];
++            if (pos + 2 + ie_len > frame_len) {
++                return false;
++            }
++            pos += 2 + ie_len;
++        }
++        return pos == frame_len;
++    };
++
++    if (!valid_ie_chain(4) && valid_ie_chain(10)) {
++        offset = 10;
++    }
++
+     while (offset < sta->m_sta_info.frame_body_len) {
+         if (offset + 2 > sta->m_sta_info.frame_body_len) {
+             printf("%s:%d: Insufficient data for tag header\n", __func__, __LINE__);
+-- 
+2.34.1

@@ -1,0 +1,181 @@
+From 9e737667b2d21a0e623e871105bac03a60599fac Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 17 Aug 2026 01:28:00 -0700
+Subject: [PATCH] cli: serialize native command and tree lifetime
+
+net/http dispatches handlers concurrently, but em_cli_t::exec uses the single
+global g_cli instance and get_command mutates shared client-command templates.
+The native tree returned by exec is also traversed and freed after exec returns.
+Concurrent topology requests can therefore overlap native command and tree
+ownership; under a 12-way request load this crashed both em_ctrl and em_cli.
+
+Serialize every native exec call and the complete lifetime of API requests.
+The controller command socket is a serialized control plane, so parallel native
+commands provide no useful throughput. Exclude the persistent WebSocket route.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/main.go | 51 +++++++++++++++++++++++++++++++++--------
+ 1 file changed, 39 insertions(+), 12 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -682,6 +682,8 @@ var (
+         performanceMutex   sync.RWMutex
+         metricsHistory     []TimeSeriesMetric
+         maxHistoryPoints   = 100    
++        emExecMutex        sync.Mutex
++        apiRequestMutex    sync.Mutex
+ )
+ 
+ // ===== INITIALIZATION =====
+@@ -1860,7 +1862,7 @@ func getWirelessProfilesHandler(w http.ResponseWriter, r *http.Request) {
+     defer C.free(unsafe.Pointer(ssidCmd))
+ 
+     // Get SSID
+-    ssidTree := C.exec(ssidCmd, C.strlen(ssidCmd), nil)
++    ssidTree := execEMCommand(ssidCmd, nil)
+     if ssidTree == nil {
+         http.Error(w, "Failed to fetch ssid tree", http.StatusInternalServerError)
+         return
+@@ -1931,7 +1933,7 @@ func getRadioConfigsHandler(w http.ResponseWriter, r *http.Request) {
+     // Fetch tree for previous configuration tree
+     get_channel_Pref_cmd := C.CString("get_channel OneWifiMesh 1")
+     defer C.free(unsafe.Pointer(get_channel_Pref_cmd))
+-    wifiChannelUpdateTree := C.exec(get_channel_Pref_cmd, C.strlen(get_channel_Pref_cmd), nil)
++    wifiChannelUpdateTree := execEMCommand(get_channel_Pref_cmd, nil)
+     if wifiChannelUpdateTree == nil {
+         http.Error(w, "Failed to fetch channel preference tree", http.StatusInternalServerError)
+         return
+@@ -1948,7 +1950,7 @@ func getRadioConfigsHandler(w http.ResponseWriter, r *http.Request) {
+             defer C.free(unsafe.Pointer(wifiChannelCmd))
+ 
+             // Get SSID //Note: observed crash here one time
+-            wifiChannelTree := C.exec(wifiChannelCmd, C.strlen(wifiChannelCmd), nil)
++            wifiChannelTree := execEMCommand(wifiChannelCmd, nil)
+             if wifiChannelTree == nil {
+                 http.Error(w, "Failed to fetch channel tree", http.StatusInternalServerError)
+                 return
+@@ -2221,7 +2223,7 @@ func getWirelessPolicyHandler(w http.ResponseWriter, r *http.Request) {
+     defer C.free(unsafe.Pointer(policyCmd))
+ 
+     // GET policy
+-    policyTree := C.exec(policyCmd, C.strlen(policyCmd), nil)
++    policyTree := execEMCommand(policyCmd, nil)
+     if policyTree == nil {
+         http.Error(w, "Failed to fetch ssid tree", http.StatusInternalServerError)
+         return
+@@ -2798,6 +2800,7 @@ func main() {
+ 
+ 	// API Routes
+ 	api := router.PathPrefix("/api/v1").Subrouter()
++	api.Use(serializeAPIRequests)
+ 
+ 	//system setting Wifi Reset
+ 	api.HandleFunc("/controllerIPConfig", controllerIPHandler).Methods("GET", "POST")
+@@ -2932,6 +2935,22 @@ func main() {
+ 
+ // ===== MIDDLEWARE =====
+ 
++// serializeAPIRequests keeps each native command's returned tree private until
++// the handler has finished traversing and freeing it. The WebSocket is excluded
++// because its handler remains open for the life of the connection.
++func serializeAPIRequests(next http.Handler) http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/api/v1/ws" || r.Method == http.MethodOptions {
++			next.ServeHTTP(w, r)
++			return
++		}
++
++		apiRequestMutex.Lock()
++		defer apiRequestMutex.Unlock()
++		next.ServeHTTP(w, r)
++	})
++}
++
+ func corsMiddleware(next http.Handler) http.Handler {
+ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		// Relaxed CORS for demo; scope for prod
+@@ -3432,7 +3451,7 @@ func WifiResetHandler(w http.ResponseWriter, r *http.Request) {
+     // Get the reset tree
+     resetCmd := C.CString("get_reset OneWifiMesh")
+     defer C.free(unsafe.Pointer(resetCmd))
+-    resetTree := C.exec(resetCmd, C.strlen(resetCmd), nil)
++    resetTree := execEMCommand(resetCmd, nil)
+     if resetTree == nil {
+         http.Error(w, "Failed to fetch reset tree", http.StatusInternalServerError)
+         return
+@@ -3610,7 +3629,7 @@ func executeUnassocStaQuery(w http.ResponseWriter, node *C.em_network_node_t) {
+ 
+     cmd := C.CString("unassoc_sta_query OneWifiMesh")
+     defer C.free(unsafe.Pointer(cmd))
+-    result := C.exec(cmd, C.strlen(cmd), node)
++    result := execEMCommand(cmd, node)
+ 
+     if result == nil {
+         http.Error(w, "Command execution failed", http.StatusInternalServerError)
+@@ -3899,7 +3918,7 @@ func applyResetConfig(resetTree *C.em_network_node_t) bool {
+         return false
+     }
+ 
+-    result := C.exec(cmd, C.strlen(cmd), resetNode)
++    result := execEMCommand(cmd, resetNode)
+     if result != nil {
+         C.free_network_tree(result)
+     }
+@@ -3920,7 +3939,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+     cmd := C.CString("get_network OneWifiMesh")
+     defer C.free(unsafe.Pointer(cmd))
+ 
+-    topologyTree := C.exec(cmd, C.strlen(cmd), nil)
++    topologyTree := execEMCommand(cmd, nil)
+     if topologyTree == nil {
+         http.Error(w, "Failed to fetch reset tree", http.StatusInternalServerError)
+         return
+@@ -4992,7 +5011,7 @@ func applyPolicyConfig(policyTree *C.em_network_node_t) bool {
+     }
+ 
+     //Execute the set_policy command with updated policies
+-    result := C.exec(cmd, C.strlen(cmd), set_policy_node)
++    result := execEMCommand(cmd, set_policy_node)
+     if result != nil {
+         C.free_network_tree(result)
+     }
+@@ -5054,7 +5073,7 @@ func applySSIDConfig(ssidTree *C.em_network_node_t) bool {
+         return false
+     }
+ 
+-    result := C.exec(cmd, C.strlen(cmd), ssidNode)
++    result := execEMCommand(cmd, ssidNode)
+     if result != nil {
+         C.free_network_tree(result)
+     }
+@@ -5494,13 +5513,23 @@ func applyChannelConfig(ssidTree *C.em_network_node_t) bool {
+     }
+ 
+     //Execute the set_channel command with updated chanelList
+-    result := C.exec(cmd, C.strlen(cmd), set_channel_node)
++    result := execEMCommand(cmd, set_channel_node)
+     if result != nil {
+         C.free_network_tree(result)
+     }
+     return true
+ }
+ 
++// execEMCommand serializes access to libemcli's process-global g_cli object.
++// net/http may run all API handlers concurrently, while the native command
++// parser and command templates are explicitly shared and are not reentrant.
++func execEMCommand(cmd *C.char, node *C.em_network_node_t) *C.em_network_node_t {
++    emExecMutex.Lock()
++    defer emExecMutex.Unlock()
++
++    return C.exec(cmd, C.strlen(cmd), node)
++}
++
+ /* func: filterDeviceSelectionByBand()
+  * Description:
+  * get the previously selected channel config
+-- 
+2.43.0
+

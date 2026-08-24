@@ -1,0 +1,334 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: release native response-tree allocations
+
+The WebUI has a second ownership boundary: exec() returns a newly allocated C
+network tree. Live topology and configuration handlers never released most
+returned trees, and traversal helpers leaked every temporary CString key.
+Because the topology page polls once per minute, this eventually OOM-killed
+onewifi_em_cli in the 1 GiB controller container.
+
+Bound temporary CString ownership, free command result trees (including
+set-command replies), and close two smaller error/update path leaks in the CLI
+C++ layer.
+
+---
+--- a/src/rdkb-cli/em_cli.cpp
++++ b/src/rdkb-cli/em_cli.cpp
+@@ -225,6 +225,7 @@
+ 
+     if (cli_cmd->init() != 0) {
+ 		printf("%s:%d: Failed to init command\n", __func__, __LINE__);
++		delete cli_cmd;
+ 		return NULL;
+ 	}
+ 
+--- a/src/rdkb-cli/em_cmd_cli.cpp
++++ b/src/rdkb-cli/em_cmd_cli.cpp
+@@ -117,6 +117,7 @@
+     unsigned int i;
+ 	em_long_string_t	key;
+ 	char *net_id = m_cmd.m_param.u.args.args[1], *formatted, *node_str;
++	int formatted_len;
+ 
+     for (i = 0; i < node->num_children; i++) {
+         if (strncmp(node->child[i]->key, "Result", strlen("Result")) == 0) {
+@@ -163,10 +164,12 @@
+ 	obj = (cJSON *)em_net_node_t::network_tree_to_json(new_node);
+ 	formatted = cJSON_Print(obj);
+ 	strncpy(buff, formatted, strlen(formatted) + 1);
++	formatted_len = strlen(formatted) + 1;
++	free(formatted);
+ 	cJSON_Delete(obj);
+     em_net_node_t::free_network_tree(new_node);
+ 
+-	return strlen(formatted) + 1;
++	return formatted_len;
+ }
+ 
+ int em_cmd_cli_t::execute(char *result)
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -1865,6 +1865,7 @@
+         http.Error(w, "Failed to fetch ssid tree", http.StatusInternalServerError)
+         return
+     }
++    defer C.free_network_tree(ssidTree)
+ 
+     switch r.Method {
+         case http.MethodGet:
+@@ -1931,6 +1932,11 @@
+     get_channel_Pref_cmd := C.CString("get_channel OneWifiMesh 1")
+     defer C.free(unsafe.Pointer(get_channel_Pref_cmd))
+     wifiChannelUpdateTree := C.exec(get_channel_Pref_cmd, C.strlen(get_channel_Pref_cmd), nil)
++    if wifiChannelUpdateTree == nil {
++        http.Error(w, "Failed to fetch channel preference tree", http.StatusInternalServerError)
++        return
++    }
++    defer C.free_network_tree(wifiChannelUpdateTree)
+ 
+     switch r.Method {
+         case http.MethodGet:
+@@ -1947,9 +1953,10 @@
+                 http.Error(w, "Failed to fetch channel tree", http.StatusInternalServerError)
+                 return
+             }
++            defer C.free_network_tree(wifiChannelTree)
+ 
+             //Get the DeviceList node
+-            deviceListTree := C.get_network_tree_by_key(wifiChannelTree, C.CString("DeviceList"))
++            deviceListTree := getNetworkTreeByKey(wifiChannelTree, "DeviceList")
+             capabilityMap := getChannelCapabilityFromTree(deviceListTree)
+ 
+             bandLabelMap := map[int]string{0: "2.4GHz", 1: "5GHz", 3: "6GHz"}
+@@ -2219,6 +2226,7 @@
+         http.Error(w, "Failed to fetch ssid tree", http.StatusInternalServerError)
+         return
+     }
++    defer C.free_network_tree(policyTree)
+ 
+     //Network node
+     cNetwork := C.CString("Network")
+@@ -3422,11 +3430,14 @@
+ func WifiResetHandler(w http.ResponseWriter, r *http.Request) {
+ 
+     // Get the reset tree
+-    resetTree := C.exec(C.CString("get_reset OneWifiMesh"), C.strlen(C.CString("get_reset OneWifiMesh")), nil)
++    resetCmd := C.CString("get_reset OneWifiMesh")
++    defer C.free(unsafe.Pointer(resetCmd))
++    resetTree := C.exec(resetCmd, C.strlen(resetCmd), nil)
+     if resetTree == nil {
+         http.Error(w, "Failed to fetch reset tree", http.StatusInternalServerError)
+         return
+     }
++    defer C.free_network_tree(resetTree)
+ 
+     switch r.Method {
+         case http.MethodGet:
+@@ -3434,7 +3445,7 @@
+             controllerValue := getTreeValue(resetTree, "ControllerID")
+ 
+             // Interface MACs
+-            interfacesList := C.get_network_tree_by_key(resetTree, C.CString("List"))
++            interfacesList := getNetworkTreeByKey(resetTree, "List")
+             macOptions := getInterfacePrefence(interfacesList)
+ 
+             // Parse NetworkSSIDList
+@@ -3627,7 +3638,7 @@
+  */
+ func getConfiguredHauls(tree *C.em_network_node_t) []HaulConfig {
+     var haulConfigs []HaulConfig
+-    networkssidListNode := C.get_network_tree_by_key(tree, C.CString("NetworkSSIDList"))
++    networkssidListNode := getNetworkTreeByKey(tree, "NetworkSSIDList")
+     if networkssidListNode == nil {
+         return haulConfigs
+     }
+@@ -3640,7 +3651,7 @@
+         node := networkssidListNode.child[i]
+ 
+         // Handle HaulType as list
+-        haulTypeNode := C.get_network_tree_by_key(node, C.CString("HaulType"))
++        haulTypeNode := getNetworkTreeByKey(node, "HaulType")
+         if haulTypeNode == nil || int(haulTypeNode.num_children) == 0 {
+             continue
+         }
+@@ -3653,7 +3664,7 @@
+         }
+ 
+         // Prase the available band for the haultype
+-        BandObj := C.get_network_tree_by_key(node, C.CString("Band"))
++        BandObj := getNetworkTreeByKey(node, "Band")
+         if BandObj == nil || int(BandObj.num_children) == 0 {
+             continue
+         }
+@@ -3867,7 +3878,7 @@
+ 
+ 	C.set_node_type(node, C.em_network_node_data_type_array_str)
+ 	node.num_children = 0
+-	C.set_node_array_value(node, C.CString(band))
++	setNodeArrayValue(node, band)
+ }
+ 
+ /* func: applyResetConfig()
+@@ -3888,7 +3899,10 @@
+         return false
+     }
+ 
+-    C.exec(cmd, C.strlen(cmd), resetNode)
++    result := C.exec(cmd, C.strlen(cmd), resetNode)
++    if result != nil {
++        C.free_network_tree(result)
++    }
+     return true
+ }
+ 
+@@ -3911,8 +3925,9 @@
+         http.Error(w, "Failed to fetch reset tree", http.StatusInternalServerError)
+         return
+     }
++    defer C.free_network_tree(topologyTree)
+ 
+-    topoDeviceTree := C.get_network_tree_by_key(topologyTree, C.CString("Device"))
++    topoDeviceTree := getNetworkTreeByKey(topologyTree, "Device")
+ 
+     // Helper to create STA list with circular layout
+     createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
+@@ -3958,7 +3973,7 @@
+         // get the device ID
+         deviceID := getTreeValue(deviceNode, "ID")
+ 
+-        backhaulTree := C.get_network_tree_by_key(deviceNode, C.CString("Backhaul"))
++        backhaulTree := getNetworkTreeByKey(deviceNode, "Backhaul")
+         if backhaulTree == nil {
+             return
+         }
+@@ -4007,7 +4022,7 @@
+             "STAList": createSTAList(x, y, radioList),
+         })
+ 
+-        childList := C.get_network_tree_by_key(backhaulTree, C.CString("Child"))
++        childList := getNetworkTreeByKey(backhaulTree, "Child")
+         if childList == nil {
+             return
+         }
+@@ -4230,7 +4245,7 @@
+             continue
+         }
+ 
+-        bssNode := C.get_network_tree_by_key(radio, C.CString("BSSList"))
++        bssNode := getNetworkTreeByKey(radio, "BSSList")
+         var bssList []BSS
+         for j := 0; j < int(bssNode.num_children); j++ {
+             bss := bssNode.child[j]
+@@ -4238,7 +4253,7 @@
+                 continue
+             }
+ 
+-            staNode := C.get_network_tree_by_key(bss, C.CString("STAList"))
++            staNode := getNetworkTreeByKey(bss, "STAList")
+             var staList []STA
+             for k := 0; k < int(staNode.num_children); k++ {
+                 sta := staNode.child[k]
+@@ -4284,7 +4299,7 @@
+         }
+ 
+         // BSSList node
+-        bssListNode := C.get_network_tree_by_key(radio, C.CString("BSSList"))
++        bssListNode := getNetworkTreeByKey(radio, "BSSList")
+         for i := 0; i < int(bssListNode.num_children); i++ {
+             bss := bssListNode.child[i]
+             vapMode := getKeyIntValue(bss, "VapMode")
+@@ -4977,7 +4992,10 @@
+     }
+ 
+     //Execute the set_policy command with updated policies
+-    C.exec(cmd, C.strlen(cmd), set_policy_node)
++    result := C.exec(cmd, C.strlen(cmd), set_policy_node)
++    if result != nil {
++        C.free_network_tree(result)
++    }
+     return true
+ }
+ 
+@@ -5036,7 +5054,10 @@
+         return false
+     }
+ 
+-    C.exec(cmd, C.strlen(cmd), ssidNode)
++    result := C.exec(cmd, C.strlen(cmd), ssidNode)
++    if result != nil {
++        C.free_network_tree(result)
++    }
+     return true
+ }
+ 
+@@ -5370,14 +5391,14 @@
+             channelListNode := C.get_network_tree_by_key(channelPrefNode, keyChannelList)
+             C.set_node_type(channelListNode, C.em_network_node_data_type_array_num)
+             channelListNode.num_children = 0
+-            C.set_node_array_value(channelListNode, C.CString(mapchannelsToSlice(cfg.Channels)))
++            setNodeArrayValue(channelListNode, mapchannelsToSlice(cfg.Channels))
+ 
+             //update channel preference list
+             channelPrefListNode := C.get_network_tree_by_key(channelPrefNode, keyChannelPrefList)
+             if channelPrefListNode != nil {
+                C.set_node_type(channelPrefListNode, C.em_network_node_data_type_array_num)
+                channelPrefListNode.num_children = 0
+-               C.set_node_array_value(channelPrefListNode, C.CString(mapchannelsToSlice(cfg.Preferences)))
++               setNodeArrayValue(channelPrefListNode, mapchannelsToSlice(cfg.Preferences))
+            }
+         } else {
+             // update for specific radio
+@@ -5431,14 +5452,14 @@
+                             channelListNode := C.get_network_tree_by_key(channelPrefNode, keyChannelList)
+                             C.set_node_type(channelListNode, C.em_network_node_data_type_array_num)
+                             channelListNode.num_children = 0
+-                            C.set_node_array_value(channelListNode, C.CString(mapchannelsToSlice(cfg.Channels)))
++                            setNodeArrayValue(channelListNode, mapchannelsToSlice(cfg.Channels))
+ 
+                             //update channel preference list
+                             channelPrefListNode := C.get_network_tree_by_key(channelPrefNode, keyChannelPrefList)
+                             if channelPrefListNode != nil {
+                                 C.set_node_type(channelPrefListNode, C.em_network_node_data_type_array_num)
+                                 channelPrefListNode.num_children = 0
+-                                C.set_node_array_value(channelPrefListNode, C.CString(mapchannelsToSlice(cfg.Preferences)))
++                                setNodeArrayValue(channelPrefListNode, mapchannelsToSlice(cfg.Preferences))
+                             }
+                             break
+                         }
+@@ -5473,7 +5494,10 @@
+     }
+ 
+     //Execute the set_channel command with updated chanelList
+-    C.exec(cmd, C.strlen(cmd), set_channel_node)
++    result := C.exec(cmd, C.strlen(cmd), set_channel_node)
++    if result != nil {
++        C.free_network_tree(result)
++    }
+     return true
+ }
+ 
+@@ -5771,7 +5795,7 @@
+  * Return: value of key in String format.
+  */
+ func getTreeValue(tree *C.em_network_node_t, key string) string {
+-    node := C.get_network_tree_by_key(tree, C.CString(key))
++    node := getNetworkTreeByKey(tree, key)
+     if node != nil {
+         switch C.get_node_type(node) {
+         case C.em_network_node_data_type_string:
+@@ -5791,7 +5815,7 @@
+  * returns: int value of node.
+  */
+ func getKeyIntValue(tree *C.em_network_node_t, key string) int {
+-    node := C.get_network_tree_by_key(tree, C.CString(key))
++    node := getNetworkTreeByKey(tree, key)
+     if node != nil {
+         switch C.get_node_type(node) {
+         case C.em_network_node_data_type_number:
+@@ -5801,6 +5825,26 @@
+     return 0
+ }
+ 
++// getNetworkTreeByKey confines ownership of the temporary C key string to a
++// single lookup. Returning a node is safe because the parent tree owns it.
++func getNetworkTreeByKey(tree *C.em_network_node_t, key string) *C.em_network_node_t {
++    if tree == nil {
++        return nil
++    }
++    cKey := C.CString(key)
++    defer C.free(unsafe.Pointer(cKey))
++    return C.get_network_tree_by_key(tree, cKey)
++}
++
++func setNodeArrayValue(node *C.em_network_node_t, value string) {
++    if node == nil {
++        return
++    }
++    cValue := C.CString(value)
++    defer C.free(unsafe.Pointer(cValue))
++    C.set_node_array_value(node, cValue)
++}
++
+ /* func: setRemoteIPandPort()
+  * Description: helper function to set remote IP and port for ssh connection
+  * Return: NA

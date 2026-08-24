@@ -1,0 +1,83 @@
+From 3f445e9ce31b9904c18edbe01fcaa109829fc18e Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 17 Aug 2026 02:24:00 -0700
+Subject: [PATCH] cli: remove unused command data-model initialization
+
+em_cmd_cli_t::execute placed a roughly 2.3 MiB dm_easy_mesh_t on the
+stack for every command and passed it to em_cmd_t::init(). Nothing in the
+remaining command-send path reads the initialized data model.
+
+This is particularly harmful in the Go/cgo WebUI helper: the large C++ stack
+expansion remains mapped after every C.exec call, consuming about 2.23 MiB of
+32-bit virtual address space per topology request. The helper consequently
+runs out of address space after roughly 1,500 requests even though its RSS is
+only about 100 MiB. em_cmd_t::init() also creates a queue and data-model maps
+which are not released by the command destructor.
+
+Remove the unused local data model and initialization. Event construction,
+validation, TLS transport, response parsing and command data are unchanged.
+
+Upstream-Status: Pending
+---
+ src/cli/em_cmd_cli.cpp      | 3 ---
+ src/rdkb-cli/em_cmd_cli.cpp | 3 ---
+ 2 files changed, 6 deletions(-)
+
+diff --git a/src/cli/em_cmd_cli.cpp b/src/cli/em_cmd_cli.cpp
+--- a/src/cli/em_cmd_cli.cpp
++++ b/src/cli/em_cmd_cli.cpp
+@@ -168,11 +168,10 @@ int em_cmd_cli_t::execute(char *result)
+     int ret, dsock;
+     em_bus_event_t *bevt;
+     em_subdoc_info_t    *info;
+     em_event_t *evt;
+     em_cmd_params_t *param;
+-    dm_easy_mesh_t dm;
+     unsigned char *tmp;
+     em_long_string_t	in;
+     em_status_string_t out;
+ 	em_network_node_t *node;
+ 	SSL_CTX *ctx;
+@@ -460,12 +459,10 @@ int em_cmd_cli_t::execute(char *result)
+             break;
+     }
+ 
+ 	//printf("%s:%d: Length: %d Event len: %d\n", __func__, __LINE__, bevt->data_len, get_event_length());
+ 
+-    get_cmd()->init(dm);
+-
+ 	ctx = SSL_CTX_new(TLS_client_method());
+     SSL_CTX_use_certificate_file(ctx, EM_CERT_FILE, SSL_FILETYPE_PEM);
+  
+ 	if ((ssl = get_ep_for_dst_svc(ctx, em_service_type_ctrl)) == NULL) {
+ 		//printf("%s:%d: Can not get socket for service\n", __func__, __LINE__);
+diff --git a/src/rdkb-cli/em_cmd_cli.cpp b/src/rdkb-cli/em_cmd_cli.cpp
+--- a/src/rdkb-cli/em_cmd_cli.cpp
++++ b/src/rdkb-cli/em_cmd_cli.cpp
+@@ -177,11 +177,10 @@ int em_cmd_cli_t::execute(char *result)
+     int ret, dsock;
+     em_bus_event_t *bevt;
+     em_subdoc_info_t    *info;
+     em_event_t *evt;
+     em_cmd_params_t *param;
+-    dm_easy_mesh_t dm;
+     unsigned char *tmp;
+     em_long_string_t	in;
+     em_status_string_t out;
+ 	em_network_node_t *node;
+ 	SSL_CTX *ctx;
+@@ -487,12 +486,10 @@ int em_cmd_cli_t::execute(char *result)
+             break;
+     }
+ 
+ 	//printf("%s:%d: Length: %d Event len: %d\n", __func__, __LINE__, bevt->data_len, get_event_length());
+ 
+-    get_cmd()->init(dm);
+-
+ 	ctx = SSL_CTX_new(TLS_client_method());
+     SSL_CTX_use_certificate_file(ctx, EM_CERT_FILE, SSL_FILETYPE_PEM);
+  
+ 	if ((ssl = get_ep_for_dst_svc(ctx, em_service_type_ctrl)) == NULL) {
+ 		printf("%s:%d: Can not get socket for service\n", __func__, __LINE__);
+-- 
+2.43.0

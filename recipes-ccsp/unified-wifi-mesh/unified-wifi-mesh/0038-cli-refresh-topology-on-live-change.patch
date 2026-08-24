@@ -1,0 +1,46 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: refresh visible topology on live change
+
+The topology tab refreshed only once per minute.  A steering or RF-loss test
+therefore appeared stale unless the operator reloaded the page.
+
+Poll the live endpoint every two seconds while the topology tab is visible,
+serialize requests, and redraw only when the returned topology changes.  The
+existing renderer retains cached node positions, so association movement is
+shown without discarding an operator-arranged layout.
+
+---
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2035 +2035 @@
+-    <script src="static/script.js?v=topology-tools-2"></script>
++    <script src="static/script.js?v=topology-live-1"></script>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3658 +3658,2 @@
+-    // Refresh topology every 60 seconds
++    // Keep steering and RF-loss experiments visible without a page reload.
++    // Do not overlap native/API requests and redraw only on a real change.
+@@ -3660 +3661,2 @@
+-      if (this.currentTab === 'topology') {
++      if (this.currentTab === 'topology' && !this.topologyRefreshInFlight) {
++        this.topologyRefreshInFlight = true;
+@@ -3663,2 +3665,10 @@
+-          this.topology = response;
+-          this.updateTopologyVisualization();
++          const signature = value => JSON.stringify(value || {}, (key, item) =>
++            ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
++              ? undefined : item
++          );
++          const previous = signature(this.topology);
++          const current = signature(response);
++          if (current !== previous) {
++            this.topology = response;
++            this.updateTopologyVisualization();
++          }
+@@ -3667,0 +3678,2 @@
++        } finally {
++          this.topologyRefreshInFlight = false;
+@@ -3670 +3682 @@
+-    }, 60000);
++    }, 2000);

@@ -29,6 +29,20 @@ EASYMESH_CORE_PATCHES = " \
     file://0025-controller-size-sta-frame-body-hex-buffer.patch \
     file://0026-orch-complete-cancelled-commands-independently.patch \
     file://0027-metrics-size-ap-response-for-model.patch \
+    file://0028-cli-topology-layout-and-export.patch \
+    file://0029-cli-release-native-tree-allocations.patch \
+    file://0030-db-drain-result-sets-before-early-return.patch \
+    file://0031-association-refresh-topology-before-publish.patch \
+    file://0032-sta-decode-reassociation-capabilities.patch \
+    file://0033-sta-retain-capability-on-empty-roam-report.patch \
+    file://0034-cli-serialize-native-command-execution.patch \
+    file://0035-cli-remove-unused-command-data-model-init.patch \
+    file://0036-controller-release-json-output.patch \
+    file://0037-cli-serve-live-device-client-inventory.patch \
+    file://0038-cli-refresh-topology-on-live-change.patch \
+    file://0039-cli-identify-and-enlarge-topology-stas.patch \
+    file://0040-cli-preserve-active-topology-drag.patch \
+    file://0041-cli-enlarge-topology-network-labels.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -483,6 +497,14 @@ do_install_append_qemux86bpibroadband() {
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
     install -d ${D}/usr/ccsp/EasyMesh/static
     cp -rf ${WORKDIR}/static/. ${D}/usr/ccsp/EasyMesh/static/
+    # The helper archive supplies the cross-built Go binary and its baseline
+    # assets.  Overlay the static files from the patched source tree so WebUI
+    # fixes remain normal, reviewable source patches instead of binary tarball
+    # replacements.
+    install -m 0644 ${S}/src/rdkb-cli/static/index.html \
+        ${S}/src/rdkb-cli/static/script.js \
+        ${S}/src/rdkb-cli/static/style.css \
+        ${D}/usr/ccsp/EasyMesh/static/
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
 

@@ -1,0 +1,350 @@
+Serve live Devices and Clients inventory from the EasyMesh controller.
+
+The stock dashboard loads packaged devices.json and clients.json samples and
+also sends them again on every WebSocket reconnect. Build both lists from the
+live get_network tree instead, use a leak-safe serialized native call, and
+cache only the last successful live snapshot. Device/client detail and metrics
+routes use the same inventory, so canned MAC addresses cannot reappear.
+
+Values that EasyMesh does not supply remain empty or zero. This deliberately
+avoids presenting demonstration RSSI, throughput, CPU, vendor, IP, or uptime
+values as observations.
+---
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -684,6 +684,10 @@
+         maxHistoryPoints   = 100    
+         emExecMutex        sync.Mutex
+         apiRequestMutex    sync.Mutex
++        liveInventoryMutex sync.RWMutex
++        liveDevices        []Device
++        liveClients        []Client
++        haveLiveInventory  bool
+ )
+ 
+ // ===== INITIALIZATION =====
+@@ -3013,19 +3017,161 @@
+     }
+ 
+ }
++// buildLiveInventory maps the current controller tree to the dashboard models.
++// Fields absent from EasyMesh stay empty rather than inheriting demo values.
++func buildLiveInventory() ([]Device, []Client, error) {
++	cmd := C.CString("get_network OneWifiMesh")
++	defer C.free(unsafe.Pointer(cmd))
++
++	var tree *C.em_network_node_t
++	for attempt := 0; attempt < 3; attempt++ {
++		tree = execEMCommand(cmd, nil)
++		if tree != nil {
++			break
++		}
++		time.Sleep(200 * time.Millisecond)
++	}
++	if tree == nil {
++		return nil, nil, fmt.Errorf("controller returned no network data")
++	}
++	defer C.free_network_tree(tree)
++
++	root := getNetworkTreeByKey(tree, "Device")
++	if root == nil {
++		return nil, nil, fmt.Errorf("controller network tree has no Device root")
++	}
++
++	var inventoryDevices []Device
++	var inventoryClients []Client
++	agentCount, extenderCount := 1, 1
++	observedAt := time.Now()
++	seenClients := make(map[string]struct{})
++
++	var traverse func(*C.em_network_node_t, int)
++	traverse = func(deviceNode *C.em_network_node_t, depth int) {
++		if deviceNode == nil {
++			return
++		}
++		deviceID := getTreeValue(deviceNode, "ID")
++		backhaul := getNetworkTreeByKey(deviceNode, "Backhaul")
++		if deviceID == "" || backhaul == nil {
++			return
++		}
++		radios := parseRadioList(deviceNode.child[2])
++
++		role := "Controller"
++		if depth != 0 {
++			backhaulMAC := getTreeValue(backhaul, "MACAddress")
++			backhaulMedia := getTreeValue(backhaul, "MediaType")
++			if backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet" {
++				role = fmt.Sprintf("Agent-%d", agentCount)
++				agentCount++
++			} else {
++				role = fmt.Sprintf("Extender-%d", extenderCount)
++				extenderCount++
++			}
++		}
++
++		bands := make([]string, 0, 3)
++		seenBands := make(map[string]struct{})
++		for _, radio := range radios {
++			band := ""
++			switch radio.Band {
++			case 0:
++				band = "2.4 GHz"
++			case 1:
++				band = "5 GHz"
++			case 3:
++				band = "6 GHz"
++			}
++			if _, found := seenBands[band]; band != "" && !found {
++				seenBands[band] = struct{}{}
++				bands = append(bands, band)
++			}
++		}
++
++		inventoryDevices = append(inventoryDevices, Device{
++			MAC: deviceID, Role: role, Vendor: "RDK-B", Model: "EasyMesh node",
++			Status: "Online", LastSeen: observedAt, Uptime: "Unknown",
++			Capabilities: Capability{SupportedBands: bands},
++		})
++
++		for _, radio := range radios {
++			for _, bss := range radio.BSSList {
++				if bss.HaulType == "Backhaul" || bss.SSID == "" {
++					continue
++				}
++				for _, sta := range bss.STAList {
++					if !sta.Associated || sta.MACAddress == "" {
++						continue
++					}
++					identity := sta.MACAddress + "_" + sta.MLDAddr
++					if _, found := seenClients[identity]; found {
++						continue
++					}
++					seenClients[identity] = struct{}{}
++					inventoryClients = append(inventoryClients, Client{
++						MAC: sta.MACAddress, Hostname: sta.MACAddress,
++						ConnectedAP: deviceID, ConnectedBSSID: bss.BSSID,
++						DeviceType: "Wi-Fi Client", LastActivity: observedAt,
++					})
++				}
++			}
++		}
++
++		children := getNetworkTreeByKey(backhaul, "Child")
++		if children == nil {
++			return
++		}
++		for i := 0; i < int(children.num_children); i++ {
++			traverse(children.child[i], depth+1)
++		}
++	}
++	traverse(root, 0)
++	if len(inventoryDevices) == 0 {
++		return nil, nil, fmt.Errorf("controller network tree contains no devices")
++	}
++	return inventoryDevices, inventoryClients, nil
++}
++
++// getLiveInventory falls back only to the last successful live snapshot.
++func getLiveInventory() ([]Device, []Client, error) {
++	inventoryDevices, inventoryClients, err := buildLiveInventory()
++	if err == nil {
++		liveInventoryMutex.Lock()
++		liveDevices = append([]Device(nil), inventoryDevices...)
++		liveClients = append([]Client(nil), inventoryClients...)
++		haveLiveInventory = true
++		liveInventoryMutex.Unlock()
++		return inventoryDevices, inventoryClients, nil
++	}
++
++	liveInventoryMutex.RLock()
++	defer liveInventoryMutex.RUnlock()
++	if haveLiveInventory {
++		return append([]Device(nil), liveDevices...), append([]Client(nil), liveClients...), nil
++	}
++	return nil, nil, err
++}
++
+ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
++	liveDeviceList, _, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 
+ 	onlineCount := 0
+-	for _, device := range devices {
++	for _, device := range liveDeviceList {
+ 		if device.Status == "Online" {
+ 			onlineCount++
+ 		}
+ 	}
+ 
+ 	response := map[string]interface{}{
+-		"devices": devices,
+-		"total":   len(devices),
++		"devices": liveDeviceList,
++		"total":   len(liveDeviceList),
+ 		"online":  onlineCount,
+ 		"updated": time.Now(),
+ 	}
+@@ -3036,8 +3182,13 @@
+ func getDeviceHandler(w http.ResponseWriter, r *http.Request) {
+ 	vars := mux.Vars(r)
+ 	mac := vars["mac"]
++	liveDeviceList, _, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 
+-	for _, device := range devices {
++	for _, device := range liveDeviceList {
+ 		if device.MAC == mac {
+ 			w.Header().Set("Content-Type", "application/json")
+ 			_ = json.NewEncoder(w).Encode(device)
+@@ -3080,17 +3231,22 @@
+ 
+ func getClientsHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
++	_, liveClientList, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 
+ 	activeCount := 0
+-	for _, client := range clients {
++	for _, client := range liveClientList {
+ 		if time.Since(client.LastActivity) < 5*time.Minute {
+ 			activeCount++
+ 		}
+ 	}
+ 
+ 	response := map[string]interface{}{
+-		"clients": clients,
+-		"total":   len(clients),
++		"clients": liveClientList,
++		"total":   len(liveClientList),
+ 		"active":  activeCount,
+ 		"updated": time.Now(),
+ 	}
+@@ -3101,8 +3257,13 @@
+ func getClientHandler(w http.ResponseWriter, r *http.Request) {
+ 	vars := mux.Vars(r)
+ 	mac := vars["mac"]
++	_, liveClientList, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 
+-	for _, client := range clients {
++	for _, client := range liveClientList {
+ 		if client.MAC == mac {
+ 			w.Header().Set("Content-Type", "application/json")
+ 			_ = json.NewEncoder(w).Encode(client)
+@@ -3203,8 +3364,13 @@
+ }
+ 
+ func getDeviceMetricsHandler(w http.ResponseWriter, r *http.Request) {
++	liveDeviceList, _, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 	metrics := make(map[string]interface{})
+-	for _, device := range devices {
++	for _, device := range liveDeviceList {
+ 		metrics[device.MAC] = device.Metrics
+ 	}
+ 	w.Header().Set("Content-Type", "application/json")
+@@ -3215,8 +3381,13 @@
+ }
+ 
+ func getClientMetricsHandler(w http.ResponseWriter, r *http.Request) {
++	_, liveClientList, err := getLiveInventory()
++	if err != nil {
++		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
++		return
++	}
+ 	metrics := make(map[string]interface{})
+-	for _, client := range clients {
++	for _, client := range liveClientList {
+ 		metrics[client.MAC] = client.ClientMetrics
+ 	}
+ 	w.Header().Set("Content-Type", "application/json")
+@@ -5631,11 +5802,17 @@
+ 	wsMu.Unlock()
+ 	log.Printf("WebSocket client connected. Total: %d", total)
+ 
+-	// Send initial payload
++	// Never let a WebSocket reconnect replace live API data with demo JSON.
++	initialDevices, initialClients, inventoryErr := getLiveInventory()
++	if inventoryErr != nil {
++		log.Printf("WebSocket initial live inventory unavailable: %v", inventoryErr)
++		initialDevices = []Device{}
++		initialClients = []Client{}
++	}
+ 	initialData := map[string]interface{}{
+ 		"type":      "initial",
+-		"devices":   devices,
+-		"clients":   clients,
++		"devices":   initialDevices,
++		"clients":   initialClients,
+ 		"topology":  meshTopology,
+ 		"timestamp": time.Now(),
+ 	}
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -1948,7 +1948,9 @@
+     card.onclick = () => this.showDeviceDetails(device);
+ 
+     const statusClass = device.status === 'Online' ? 'online' : 'offline';
+-    const signalStrength = this.getSignalStrengthIcon(device.signal || -50);
++    const signalStrength = Number.isFinite(device.signal)
++      ? this.getSignalStrengthIcon(device.signal)
++      : 'N/A';
+     const uptime = device.uptime || 'Unknown';
+ 
+     card.innerHTML = `
+@@ -2017,7 +2019,14 @@
+     const row = document.createElement('tr');
+ 
+     const deviceIcon = this.getDeviceTypeIcon(client.device_type);
+-    const signalBars = this.createSignalBars(client.client_metrics?.rssi || -70);
++    const metrics = client.client_metrics || {};
++    const hasRSSI = Number.isFinite(metrics.rssi_dbm) && metrics.rssi_dbm !== 0;
++    const hasTxRate = Number.isFinite(metrics.tx_rate_mbps) && metrics.tx_rate_mbps > 0;
++    const hasRxRate = Number.isFinite(metrics.rx_rate_mbps) && metrics.rx_rate_mbps > 0;
++    const hasUsage = Number.isFinite(metrics.data_usage_bytes) && metrics.data_usage_bytes > 0;
++    const signalDisplay = hasRSSI
++      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm</span>`
++      : '<span>N/A</span>';
+     const connectionInfo = this.getClientConnectionInfo(client);
+ 
+     row.innerHTML = `
+@@ -2040,19 +2049,18 @@
+       </td>
+       <td>
+         <div class="signal-strength">
+-          ${signalBars}
+-          <span>${client.client_metrics?.rssi || 'N/A'} dBm</span>
++          ${signalDisplay}
+         </div>
+       </td>
+       <td>
+         <div class="speed-info">
+-          ↑${this.formatSpeed(client.client_metrics?.tx_rate || 0)}<br>
+-          ↓${this.formatSpeed(client.client_metrics?.rx_rate || 0)}
++          ↑${hasTxRate ? this.formatSpeed(metrics.tx_rate_mbps) : 'N/A'}<br>
++          ↓${hasRxRate ? this.formatSpeed(metrics.rx_rate_mbps) : 'N/A'}
+         </div>
+       </td>
+       <td>
+         <div class="usage-info">
+-          ${this.formatBytes(client.client_metrics?.data_usage || 0)}
++          ${hasUsage ? this.formatBytes(metrics.data_usage_bytes) : 'N/A'}
+         </div>
+       </td>
+       <td>
