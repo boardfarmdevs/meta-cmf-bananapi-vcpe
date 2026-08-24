@@ -1,0 +1,213 @@
+# WLAN client cohorts and scale
+
+## Purpose
+
+The lab must grow without changing its operating model every time more clients
+are required. Client count, SSID cohort and test intensity are therefore
+separate inputs:
+
+| Profile | Private clients | IoT clients | Total | State |
+| --- | ---: | ---: | ---: | --- |
+| `small` | 10 | 10 | 20 | current rev130 acceptance profile |
+| `medium` | 25 | 25 | 50 | next capacity profile; provisioner is ready, acceptance is not complete |
+| `stress` | 50 | 50 | 100 | target profile; blocked on a pool larger than the static hwsim limit |
+
+Twenty clients are enough for current policy development. Fifty and one
+hundred are capacity milestones, not claims that those profiles are already
+stable.
+
+The profiles use the same deterministic global indexes:
+
+```text
+wlan-client       index 0
+wlan-client-001   index 1
+...
+wlan-client-099   index 99
+```
+
+Each container also records `user.easymesh.cohort`, `ssid`, `security` and a
+cohort-local `ordinal` in its LXD metadata. Tests and the WebUI use that intent
+instead of guessing a role from a MAC address.
+
+## Current 20-client topology
+
+```text
+                         EasyMesh controller
+                                |
+             +------------------+------------------+
+             |                  |                  |
+      colocated Agent       four extenders     external optimizer
+             |                  |              observes all clients
+             +---------+--------+                    |
+                       |                             |
+       private_ssid: STA-01 ... STA-0A               |
+       iot_ssid:     IOT-01 ... IOT-0A               |
+                       |                             |
+              mac80211_hwsim radios <---- control --+
+                       |
+              one patched wmediumd
+```
+
+The WebUI renders `iot_ssid` stations with the IoT icon and `IOT-xx` label.
+Private stations retain the client icon and `STA-xx` label. This is only a
+presentation distinction; both cohorts remain ordinary EasyMesh fronthaul
+stations and can be observed, steered and subjected to wmediumd RF scenarios.
+
+## Provisioning
+
+Preview a profile without changing the lab:
+
+```sh
+cd gen
+./wlan-client-pool.sh plan --profile small
+./wlan-client-pool.sh plan --profile medium
+./wlan-client-pool.sh plan --profile stress
+```
+
+Create or resume the current profile:
+
+```sh
+./wlan-client-pool.sh up --profile small
+./wlan-client-pool.sh status
+```
+
+The operation is intentionally resumable. A running client is retained only
+when its cohort, SSID, security, live association and IPv4 address all match
+the requested plan. A missing or inconsistent client is recreated. This keeps
+its radio and identity stable when a partially completed 20- or 50-client run
+is resumed.
+
+wmediumd has a fixed registration set for each daemon invocation. The pool
+helper therefore stops it, creates and verifies clients over hwsim's built-in
+medium, and starts it once after the complete active-radio set exists. An exit
+trap restores wmediumd after a failed or interrupted provisioning attempt.
+Creating a single client with `wlan-client.sh` still refreshes wmediumd by
+itself.
+
+To remove the selected profile's clients:
+
+```sh
+./wlan-client-pool.sh down --profile small
+```
+
+This is destructive for those disposable client containers, but does not
+remove the controller, extenders or their preserved `/nvram` identities.
+
+## IoT SSID security reality
+
+The current HWSIM OneWifi build exposes `iot_ssid` as a hidden WPA2-PSK BSS.
+The Reset model expresses the physical-platform SAE/PMF intent, while the HWSIM
+compatibility patches deliberately downgrade unsupported WPA3 defaults.
+Directed scan evidence from the live BSS consequently rejects an SAE network
+for key-management and MFP mismatch. The client helper uses `scan_ssid=1` and
+WPA2-PSK for the accepted IoT cohort. Explicit `--security sae` remains
+available for a future HWSIM image that actually advertises SAE/PMF.
+
+Do not describe the present IoT cohort as WPA3 until the beacon/probe response,
+association and reconnect path have been independently accepted.
+
+## Radio capacity
+
+Five mesh nodes consume five hwsim radios. The current requirements are:
+
+| Profile | Active radios required | Provisioned pool |
+| --- | ---: | ---: |
+| small | 25 | 32 |
+| medium | 55 | 64 |
+| stress | 105 | not yet accepted |
+
+wmediumd materializes directed pair state for the active radios even though the
+generated configuration writes only non-default links. That state grows as
+`N × (N - 1)`:
+
+| Profile | Active radios | Directed pair cells |
+| --- | ---: | ---: |
+| small | 25 | 600 |
+| medium | 55 | 2,970 |
+| stress | 105 | 10,920 |
+
+The pool must be selected while every hwsim-owning container is stopped; never
+reload `mac80211_hwsim` underneath a running BPI or WLAN client. An already
+loaded 32- or 64-radio pool is treated as authoritative by the helpers.
+
+The current static hwsim load path is bounded to 100 radios, so five mesh nodes
+plus 100 clients cannot be represented by `radios=` alone. Before accepting
+the stress profile, choose and test one solution: validated dynamic radio
+creation through hwsim's management interface, or a narrowly reviewed increase
+to the module's static bound. Stable naming, LXD ownership, wmediumd
+registration, teardown and cold reconstruction are all part of that gate.
+
+## Acceptance gates
+
+A profile passes only when all of the following agree:
+
+1. every requested client container is running, associated to its intended
+   SSID and has DHCP;
+2. `/api/v1/topology` contains the exact unique private and IoT counts;
+3. the controller `STAList` contains `clients + 4` associated records, where
+   four are extender backhauls;
+4. all clients reach `10.0.0.1` with no unexplained loss;
+5. OneWifi, agent, controller and CLI restart counters remain zero;
+6. private and IoT carousel scenarios each converge and restore the medium;
+7. wmediumd RSS, CPU, netlink socket drops and scenario lateness remain inside
+   the profile's recorded envelope; and
+8. the duration-bound churn soak passes without topology drift, stale client
+   ownership, coredumps, OOM events or restoration failure.
+
+On 2026-08-23 rev130 passed the immediate small-profile gates at
+`5 devices / 15 radios / 50 BSS / 24 associated records`. The WebUI API exposed
+10 `private_ssid` and 10 `iot_ssid` clients, and all 20 clients completed the
+gateway traffic audit with zero packet loss and zero monitored service
+restarts. Cold chain, cold branch and controller-only restart verification
+retained the same exact model. Duration and RF-churn evidence is recorded separately in
+[soak-acceptance.md](soak-acceptance.md).
+
+## wmediumd capacity and overload
+
+wmediumd is currently one process with one execution thread. Its default file
+is sparse: it lists the active radio identities and only explicit baseline
+links, while unspecified pairs use `default_snr`. Scenario control updates are
+also sparse and batched into generations. This avoids constructing a complete
+pair table for every movement, but frame delivery still has to consider the
+eligible simulated receivers. Client count and offered WLAN traffic therefore
+both matter.
+
+During the 20-client IoT carousel on rev130, wmediumd reported 25 stations and
+600 directed links while using approximately 3 MiB RSS and 24-25% of one host
+CPU. This is healthy, but it is not evidence for 50 or 100 clients. The soak
+sampler records peak RSS, lifetime CPU, thread count and the matching netlink
+socket drop counter so overload becomes a test failure instead of a visual
+impression.
+
+If a larger profile approaches one full CPU, accumulates netlink drops or
+misses scenario deadlines, apply remedies in this order:
+
+1. keep RF overrides sparse and send one batched generation per scenario tick;
+2. make traffic profiles explicit, avoiding accidental broadcast storms and
+   unrealistic always-on traffic from every client;
+3. dedicate/pin a host CPU to wmediumd and keep unrelated build or VM work off
+   the runtime host;
+4. profile the frame receive/delivery loop and optimize lookup, allocation and
+   logging hot paths before changing semantics;
+5. split independent experiments across lab VMs when they do not require one
+   shared mesh; and
+6. only then evaluate a more invasive parallel or sharded medium design.
+
+CPU affinity can reduce scheduling jitter but cannot increase the capacity of
+a saturated single-thread loop. Multiple wmediumd processes also cannot simply
+share one hwsim radio set; that would require an explicit isolation design.
+
+## Progression
+
+The next capacity step is not “start 50 and see.” It is:
+
+1. load a 64-radio idle pool and cold-build the five-node mesh;
+2. provision the `medium` profile with the same resumable command;
+3. measure marginal container, controller, WebUI and wmediumd cost during
+   onboarding and steady state;
+4. run private and IoT RF churn separately, then together with declared traffic
+   profiles; and
+5. publish the 50-client envelope before enabling the profile in routine demos.
+
+Only after that should the 105-radio mechanism and 100-client stress profile be
+implemented and accepted.
