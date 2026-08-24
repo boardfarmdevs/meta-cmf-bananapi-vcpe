@@ -12,7 +12,7 @@ mkdir -p $HOME/yocto/rdkb-bpi-nosrc-vcpe-$(date +%m%d)
 cd $HOME/yocto/rdkb-bpi-nosrc-vcpe-$(date +%m%d)
 
 # must precede setup-environment: MACHINE is resolved from conf/machine here
-git clone --branch codex/0815-clean \
+git clone --branch codex/0824-clean \
   git@github.com:robvogelaar/meta-cmf-bananapi-vcpe.git
 
 repo init -u https://code.rdkcentral.com/r/manifests -b kirkstone -m rdkb-bpi-nosrc.xml

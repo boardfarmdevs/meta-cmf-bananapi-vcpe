@@ -11,10 +11,10 @@ gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
 state=${EASYMESH_STATE:-/home/vagrant/.local/state/easymesh-vagrant}
 boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-vagrant/boardfarm.status}
-controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2"}
-extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2"}
-expected_repo_head=${EXPECTED_REPO_HEAD:-c2e8ce74385d64c788ac750c18342e373d35e878}
-expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-b7fdaf23c5c490dcfc42f1459cb31b78ab2c801f58c86bbbb7a12eca2a7f2ca9}
+controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2"}
+extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2"}
+expected_repo_head=${EXPECTED_REPO_HEAD:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
+expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f}
 
 mkdir -p "$state"
 test -f "$boardfarm_status"

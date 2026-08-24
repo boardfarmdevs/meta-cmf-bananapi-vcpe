@@ -391,7 +391,7 @@ terminal. Use a timestamped result directory outside the source tree for
 long-term evidence.
 
 ```sh
-cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
 
 ./gen/tests/bpibroadband-memory-profile.py \
   --duration 900 \
@@ -401,7 +401,7 @@ cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex
 ```
 
 ```sh
-cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
 ./gen/tests/p0-cold-reconstruction.sh
 ```
 

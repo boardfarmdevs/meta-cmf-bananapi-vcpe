@@ -10,7 +10,7 @@ assets=/home/vagrant/easymesh-assets
 meta_workspace=/home/vagrant/git
 boardfarm_workspace=/home/vagrant/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
-expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-c2e8ce74385d64c788ac750c18342e373d35e878}
+expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2
@@ -34,7 +34,7 @@ if [ "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-pars
         sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch origin
     fi
     sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" checkout -B \
-        codex/0815-clean "$expected_meta_head"
+        codex/0824-clean "$expected_meta_head"
 fi
 test "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" = \
     "$expected_meta_head"

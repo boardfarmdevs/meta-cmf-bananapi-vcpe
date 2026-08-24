@@ -1,8 +1,9 @@
-# 0815-codex patch set
+# Consolidated EasyMesh patch set
 
 ## Purpose
 
-0815-codex is an independent reconstruction of the container/hwsim EasyMesh
+The patch set consolidated on `codex/0824-clean` is an independent
+reconstruction of the container/hwsim EasyMesh
 layer. It starts at `6d87e23`, the last commit before the first EasyMesh change,
 and reorganizes the work into reviewable ownership boundaries.
 
@@ -327,8 +328,8 @@ role retains its exact artifact hash:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2` | `1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2` | `27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2` | `5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54` |
 
 The preceding EasyMesh `0113` controller artifact (`20260824075700`, SHA-256
 `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d`) passed
@@ -347,10 +348,11 @@ recorded zero automatic service restarts. Each same run then passed persistent
 controller -> extender -> client reconstruction, four wireless backhaul metric
 edges and a 120-second stable hold. The current `0114` controller artifact adds
 the structured freshness contract to Mesh Devices as well as Network Topology.
-A clean rev130 deployment passed the same model with four fresh device records,
-20/20 client RCPI, 20/20 zero-loss traffic and the read-only Console at 25
-identities/600 directed pairs. Evidence is
-`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`. The rendered model
+A clean rev130 deployment from the reconstructed `codex/0824-clean` branch
+passed the same model with four fresh device records, 20/20 client RCPI,
+20/20 zero-loss traffic and the read-only Console at 25 identities/600 directed
+pairs. Evidence is
+`/home/rev/easymesh-evidence/history-reconstruction-20260824-after`. The rendered model
 remains `Controller`, colocated `Agent-1`, and `Extender-1` through
 `Extender-4`.
 

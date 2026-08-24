@@ -25,7 +25,7 @@ Linux workstation
   -> install VirtualBox + Vagrant
   -> import thin Ubuntu 24.04/Linux 7 box
   -> vagrant up; vagrant ssh
-  -> clone codex/0815-clean bootstrap repository
+  -> clone codex/0824-clean bootstrap repository
   -> one-time install + first cold start (downloads, builds, deploys, verifies)
   -> check -> WebUI + wmediumd Console -> steering tests
   -> optional VM snapshot

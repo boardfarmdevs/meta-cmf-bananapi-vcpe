@@ -15,7 +15,7 @@
 | rev150 Vagrant VM | portable Linux 7.0/LXD runtime; accepted peer result |
 | rev120 Vagrant VM | clean-install/portability acceptance runtime |
 
-0815-codex is authoritative on all four systems. The three runtime labs are
+`codex/0824-clean` is authoritative on all four systems. The three runtime labs are
 peers: results are comparable only when source revision, image hashes, kernel,
 topology, clients, wmediumd and test parameters match.
 
@@ -25,12 +25,12 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-runtime source            3895d1fbee2e125bfa0090fa2e6296d194383135
+runtime source            dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c
 image EasyMesh content    controller through 0114; extender through 0112
-controller image input    3895d1f (cross-built em_cli helper included)
+controller image input    dee4dd4 (cross-built em_cli helper included)
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -40,8 +40,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063  controller
-676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd  extender
+27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2  controller
+5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -51,7 +51,7 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 Artifacts are built on rev140 under
-`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0815-codex`. Build instructions are in
+`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0824-clean`. Build instructions are in
 [../build/README.md](../build/README.md).
 
 ## Runtime prerequisites
@@ -83,7 +83,8 @@ Do not unload hwsim while any lab container owns a radio.
 
 ## Source layout
 
-The runtime checkout is `meta-cmf-bananapi-vcpe-0815-codex`. Host-side entry
+The validated direct-runtime checkout is
+`/home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe`. Host-side entry
 points are:
 
 ```text
@@ -210,7 +211,7 @@ this order.
 From the rev130 host:
 
 ```sh
-cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex/gen
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen
 
 # Boardfarm CPE-5 supplies DHCP, IPv4/IPv6 and Internet on br-wan105.
 docker start wan-cpe5 dhcp-cpe5
@@ -613,8 +614,9 @@ creation of the small client profile, passed:
   Console was restarted.
 
 The exact served JavaScript passed the Mesh Devices signal, topology-edge
-signal, topology-layout and metrics-reporting tests. Evidence is retained at
-`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`.
+signal, topology-layout and metrics-reporting tests. Current reconstructed-lab
+evidence is retained at
+`/home/rev/easymesh-evidence/history-reconstruction-20260824-after`.
 
 `health-audit.sh` defaults to ten one-second probes per client and fails if any
 packet is lost. Higher offered loads are explicit experiments, for example:

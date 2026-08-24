@@ -143,7 +143,7 @@ Run the capture and scenario from separate terminals. Start the capture first:
 # Terminal 1: use the recommended five-minute EasyMesh capture above.
 
 # Terminal 2:
-cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex/gen/wmediumd/configurator
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen/wmediumd/configurator
 ./run-rcpi-monitor.sh wlan-client
 ```
 

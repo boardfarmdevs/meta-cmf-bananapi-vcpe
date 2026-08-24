@@ -144,7 +144,7 @@ For LAN WebUI access, add `EASYMESH_WEBUI_HOST_IP=0.0.0.0` and the desired
 Inside the VM, clone the bootstrap repository using forwarded SSH credentials:
 
 ```sh
-git clone --branch codex/0815-clean \
+git clone --branch codex/0824-clean \
   git@github.com:robvogelaar/meta-cmf-bananapi-vcpe.git
 cd meta-cmf-bananapi-vcpe
 ```

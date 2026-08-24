@@ -22,7 +22,7 @@ scenario writer, steering optimizer or source of EasyMesh measurements.
 
 ## Implementation status
 
-Phases 1 and 2 are implemented in the current `codex/0815-clean` series:
+Phases 1 and 2 are implemented in the current `codex/0824-clean` series:
 
 - patched wmediumd exposes bounded packet telemetry through a separate,
   host-only `-O` Unix socket;
@@ -190,13 +190,15 @@ Fresh-deployment evidence is retained under
 `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
 `/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
 
-The primary rev130 lab was cleanly recreated from source `3895d1f` on the same
-date. Its read-only Console is directly available at
-`http://192.168.2.130:8890/` and reported 25 matched identities, 600 directed
-pairs, live packet telemetry and `health: ok`. Restarting the Console left the
-wmediumd PID unchanged; the documented 20-client traffic gate subsequently
-passed at 0% loss. Evidence is
-`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`.
+An earlier primary rev130 acceptance was recreated from source `3895d1f` on the
+same date. The final history-reconstruction acceptance then recreated rev130
+from `dee4dd4` on `codex/0824-clean`. Its read-only Console is directly
+available at `http://192.168.2.130:8890/` and passed 25 matched identities,
+600 directed pairs, every REST resource, Prometheus export, exact daemon/config
+hashes, live packet telemetry, `health: ok`, and HTTP 405 rejection of a write
+attempt. The documented 20-client traffic gate passed at 0% loss. Current
+evidence is under
+`/home/rev/easymesh-evidence/history-reconstruction-20260824-after`.
 
 ## Target closed-loop correlation architecture
 

@@ -1,7 +1,8 @@
 # EasyMesh evaluation lab
 
-This directory is the authoritative documentation for the 0815-codex EasyMesh
-lab. The lab runs the Banana Pi RDK-B EasyMesh userspace in LXD containers with
+This directory is the authoritative documentation for the consolidated
+`codex/0824-clean` EasyMesh lab. The lab runs the Banana Pi RDK-B EasyMesh
+userspace in LXD containers with
 Linux 7.0 `mac80211_hwsim` radios and a patched multichannel wmediumd.
 
 The purpose is repeatable onboarding and steering experimentation, including RF
@@ -39,7 +40,7 @@ than beside current operating instructions.
 ## Current source and accepted scale
 
 ```text
-source             codex/0815-clean
+source             codex/0824-clean
 patch series       EasyMesh through 0114, IEEE1905 through 0006
 image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
@@ -58,10 +59,11 @@ Wi-Fi HAL, log4c and SNMP fixes remain in both roles as applicable.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2` | `1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063` |
-| extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2` | `27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2` |
+| extender | `X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2` | `5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54` |
 
-The current rev130 runtime checkout is `3895d1f`. The controller also refreshes packaged
+The validated image source checkpoint is `dee4dd4` on `codex/0824-clean`.
+The controller also refreshes packaged
 WebUI assets into persistent `/nvram/static` on every service start, so a
 same-identity upgrade cannot continue serving an older UI. Never infer image
 contents from a newer host checkout.
@@ -83,14 +85,18 @@ duration/RF-churn gate remains
 distinct from these immediate results; see
 [client-scale.md](client-scale.md) and [soak-acceptance.md](soak-acceptance.md).
 
-On 2026-08-24 rev130 was then recreated from a clean `0824` checkout using the
-artifact pair above. It reached `5/15/50/24`, 20 live clients, 20/20 non-zero
-client RCPI, four fresh Mesh Devices backhaul-signal records and zero monitored
-restarts. The documented ten-packet health gate passed at 0% loss on all 20
-clients. The read-only wmediumd Console passed 25/25 identity matches, 600
-directed pairs, live packet telemetry and failure isolation from wmediumd.
-Evidence is under
-`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z` on rev130.
+On 2026-08-24 rev130 was recreated again from the reconstructed
+`codex/0824-clean` history and the artifact pair above. It reached
+`5/15/50/24`, 10 private plus 10 IoT clients, 20/20 current client RCPI,
+four fresh backhaul-signal records and zero monitored restarts. All 20 clients
+passed the ten-packet gateway gate at 0% loss. A named 2.4 GHz steer of
+`sta-11` to `Extender-2` converged in the client link, controller database and
+WebUI topology in 1.379 seconds with 0% loss. The read-only wmediumd Console
+passed 25/25 identities, 600 directed pairs, all REST resources, Prometheus
+export, live packet telemetry and write rejection. Exactly one controller
+`snmp_subagent` remained systemd-owned with zero restarts and no launcher
+wrappers. Evidence is under
+`/home/rev/easymesh-evidence/history-reconstruction-20260824-after` on rev130.
 
 The previously accepted ready-to-run Vagrant/VirtualBox package is
 `easymesh-lab-0824-a9689eb.box` (`16,560,643,152` bytes), SHA-256
@@ -130,7 +136,10 @@ ssh -tt rev@192.168.2.120 \
 
 ## Documentation rules
 
-- 0815-codex is the working implementation; 0814 is comparison material only.
+- `codex/0824-clean` is the authoritative, consolidated history.
+  `codex/0815-clean` remains an immutable backup/reference; 0814 is represented
+  as intrinsic earlier work in that retained history rather than as a separate
+  implementation line.
 - Record source revision, image hashes and live container provenance for every
   result.
 - Do not describe commanded steering as an autonomous steering policy.

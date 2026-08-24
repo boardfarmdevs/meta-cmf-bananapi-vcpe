@@ -13,6 +13,77 @@ boundaries. Mapping means that the final accepted effect is owned by the named
 new commit; intermediate approaches that were later superseded were not
 reintroduced.
 
+## Safety and preservation
+
+The reconstruction did not rewrite or force-push `codex/0815-clean`. Its
+accepted tip remains `9703300`, and the annotated preservation tag
+`archive/0815-clean-20260824` resolves to that commit. The uncommitted August
+evaluation report from the original checkout was copied outside Git before any
+history work and was deliberately not added to this branch.
+
+The reconstructed branch contains 27 functional commits between the common
+base and the identical functional checkpoint. Those commits distinguish:
+
+- product defects with `fix(...)`;
+- platform adaptation with `adapt(...)`;
+- product capabilities with `feat(...)`;
+- host-side research infrastructure with `lab(...)` and `optimizer(...)`;
+- verification with `test(...)`; and
+- operator and design material with `docs:`.
+
+This reduces 191 development commits to 27 functional ownership units. The
+reduction is in Git history, not in the product recipe: the 170 ordered Yocto
+patch applications remain explicit because they have distinct upstream
+application contexts and ordering constraints.
+
+## Reconstruction acceptance
+
+The functional checkpoint and original accepted tip have the same Git tree:
+
+```text
+original  9703300^{tree}  207ab4be6f16225ca43ee79f354e0df07e44738c
+clean     c67c804^{tree}  207ab4be6f16225ca43ee79f354e0df07e44738c
+```
+
+Local validation passed 26 configurator tests with one intentional skip, 64
+optimizer tests, shell syntax checks, four patched-source WebUI regressions,
+and the Console's normal, ten-repeat, race, vet and static-build test gates.
+
+Fresh role builds on rev140 then completed from `dee4dd4` in
+`rdkb-bpi-nosrc-vcpe-0824-clean`:
+
+| Role | BitBake result | LXC artifact | SHA-256 |
+| --- | --- | --- | --- |
+| controller | 5,792/5,792 tasks passed | `X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2` | `27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2` |
+| extender | 4,988/4,988 tasks passed | `X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2` | `5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54` |
+
+A destructive fresh-identity deployment on rev130 passed without an operator
+nudge:
+
+```text
+model                         5 devices / 15 radios / 50 BSSs / 24 associated STAs
+fronthaul                     10 private + 10 IoT clients
+current client metrics        20/20
+fresh extender backhaul       4/4
+service restarts              0
+gateway traffic               20/20 clients, 10 packets each, 0% loss
+named steering                sta-11 -> Extender-2, link/DB/API 1.379 s, 0% loss
+wmediumd Console              25/25 identities, 600 directed pairs, health ok
+SNMP self-heal                one systemd-owned subagent, no wrapper, 0 restarts
+```
+
+The Console also passed every REST resource, Prometheus export, binary/config
+provenance, and read-only POST rejection. Before and after evidence is retained
+on rev130 under:
+
+```text
+/home/rev/easymesh-evidence/history-reconstruction-20260824-before
+/home/rev/easymesh-evidence/history-reconstruction-20260824-after
+```
+
+These checks establish functional equivalence plus deployability; they do not
+replace the separately defined long-duration soak gate.
+
 | Original | Reconstructed owner(s) | Original subject |
 | --- | --- | --- |
 | `24a95d9` | `a96afee` | platform: establish x86 EasyMesh container targets |
@@ -206,4 +277,3 @@ reintroduced.
 | `4ff8b4b` | `47b57f1`, `c67c804` | docs: document wmediumd Console acceptance |
 | `3895d1f` | `d5a16fa`, `f7a1a0d` | webui: report mesh device backhaul signal |
 | `9703300` | `aaa4d00`, `c67c804` | docs: record rev130 signal and Console acceptance |
-

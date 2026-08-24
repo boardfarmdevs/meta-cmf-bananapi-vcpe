@@ -178,7 +178,7 @@ observed and recorded but does not rewrite the matrix.
 Run inside the runtime that owns LXD/hwsim:
 
 ```sh
-cd /home/vagrant/git/meta-cmf-bananapi-vcpe-0815-codex/gen/wmediumd/configurator
+cd /home/vagrant/git/meta-cmf-bananapi-vcpe/gen/wmediumd/configurator
 
 python3 -m unittest discover -s tests -v
 python3 -m wmdcfg.cli inventory -o /tmp/inventory.json

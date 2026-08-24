@@ -65,7 +65,7 @@ Open the WebUI Network Topology tab first and optionally click **Optimize
 Layout** once. Then run on the lab host/VM:
 
 ```sh
-cd /home/rev/git/meta-cmf-bananapi-vcpe-0815-codex
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
 gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
 ```
 

@@ -16,23 +16,23 @@ vm_dir=$(cd "$thin_dir/.." && pwd)
 source_root=$(cd "$vm_dir/../.." && pwd)
 assets=/home/vagrant/easymesh-assets
 runtime_repo=/home/vagrant/git/meta-cmf-bananapi-vcpe
-runtime_commit=${EASYMESH_RUNTIME_COMMIT:-c2e8ce74385d64c788ac750c18342e373d35e878}
+runtime_commit=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
 bf_workspace=/home/vagrant/boardfarm-open-0406
 lab_user=vagrant
 
-controller=${EASYMESH_CONTROLLER_IMAGE_NAME:-X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2}
-ap=${EASYMESH_AP_IMAGE_NAME:-X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2}
+controller=${EASYMESH_CONTROLLER_IMAGE_NAME:-X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2}
+ap=${EASYMESH_AP_IMAGE_NAME:-X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2}
 alpine_meta=alpine-3.19-amd64-meta.tar.xz
 alpine_rootfs=alpine-3.19-amd64-rootfs.tar.xz
 : "${EASYMESH_CONTROLLER_IMAGE_URL:?set it in /etc/easymesh-online.env}"
 : "${EASYMESH_AP_IMAGE_URL:?set it in /etc/easymesh-online.env}"
 : "${EASYMESH_ALPINE_META_URL:?set it in /etc/easymesh-online.env}"
 : "${EASYMESH_ALPINE_ROOTFS_URL:?set it in /etc/easymesh-online.env}"
-: "${EASYMESH_CONTROLLER_IMAGE_SHA256:=b0a299b58b921733a573de501f8405e8da1579dde9eadf8c7a62c00cf86fb4e7}"
-: "${EASYMESH_AP_IMAGE_SHA256:=a4491eec0116d2bc0b2f6f0b438c43e77ec0ca95214d36ac7f80d039e818e6cd}"
+: "${EASYMESH_CONTROLLER_IMAGE_SHA256:=27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2}"
+: "${EASYMESH_AP_IMAGE_SHA256:=5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54}"
 : "${EASYMESH_ALPINE_META_SHA256:=c04158f82707f34cfca17bf01367b8330b0d53aaf6a801c4852c3a2bf3bcabac}"
 : "${EASYMESH_ALPINE_ROOTFS_SHA256:=16d0b946436bd42ba43ace0b9b075a2f15b9fbc31393ecccfe45694db8653ac4}"
-: "${EASYMESH_WMEDIUMD_SHA256:=b7fdaf23c5c490dcfc42f1459cb31b78ab2c801f58c86bbbb7a12eca2a7f2ca9}"
+: "${EASYMESH_WMEDIUMD_SHA256:=f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f}"
 
 test "$(uname -r)" = 7.0.0-28-generic
 test -d "$source_root/.git"
