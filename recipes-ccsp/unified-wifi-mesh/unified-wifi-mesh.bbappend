@@ -114,6 +114,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0111-agent-recover-orphaned-wsc-subdocs.patch \
     file://0112-agent-finish-onewifi-callback-at-bss-config.patch \
     file://0113-cli-report-extender-signal-freshness-end-to-end.patch \
+    file://0114-cli-show-mesh-device-backhaul-signal.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
