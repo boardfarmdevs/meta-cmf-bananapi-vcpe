@@ -163,7 +163,17 @@ test "$counts" = 5/15/50/24
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "private_ssid") | .staMAC] | unique | length' <<< "$topology")" = 10
 test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "iot_ssid") | .staMAC] | unique | length' <<< "$topology")" = 10
-test "$(jq '[.edges[]? | select(.mediaType == "Wireless LAN" and .rssi != null and .rcpi != null)] | length' <<< "$topology")" = 4
+test "$(jq '[.edges[]? | select(
+    .mediaType == "Wireless LAN" and
+    .signal.status == "fresh" and
+    (.signal.source | type) == "string" and
+    (.signal.rcpi | type) == "number" and
+    (.signal.rssi_dbm | type) == "number" and
+    (.signal.observed_at | type) == "string" and
+    (.signal.age_seconds | type) == "number" and
+    .rssi == .signal.rssi_dbm and
+    .rcpi == .signal.rcpi
+)] | length' <<< "$topology")" = 4
 
 lxc list -c ns4,user.build > "$evidence/lxc-list.txt"
 printf '%s\n' "$topology" > "$evidence/topology.json"
