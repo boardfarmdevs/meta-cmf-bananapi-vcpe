@@ -25,11 +25,11 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-runtime source            8d1c49a34eef9cec526f5a66d188447622eb0981
-image EasyMesh content    controller through 0113; extender through 0112
-controller image input    fb3bf7e (cross-built em_cli helper included)
+runtime source            3895d1fbee2e125bfa0090fa2e6296d194383135
+image EasyMesh content    controller through 0114; extender through 0112
+controller image input    3895d1f (cross-built em_cli helper included)
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2
 extender image            X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2
 ```
 
@@ -40,7 +40,7 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d  controller
+1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063  controller
 676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd  extender
 ```
 
@@ -408,6 +408,7 @@ From the lab LAN:
 
 ```text
 http://192.168.2.130:8888    rev130
+http://192.168.2.130:8890    rev130 wmediumd Console
 http://192.168.2.150:18889   rev150 VM
 http://192.168.2.120:18889   rev120 VM
 http://192.168.2.150:18890   rev150 VM wmediumd Console
@@ -503,7 +504,8 @@ one-time input assets. Import and start the copy as described in
 ### Current Phase 1/2 rev120/rev150 acceptance
 
 On 2026-08-24, rev120 and rev150 were independently and destructively
-redeployed from source `8d1c49a` and the current image pair above. Each
+redeployed from source `8d1c49a` and the preceding EasyMesh `0113` controller
+artifact (`20260824075700`, SHA-256 `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d`). Each
 acceptance invoked the persistent managed reconstruction before recording its
 result. Both passed:
 
@@ -521,6 +523,9 @@ Evidence is `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
 `/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
 The exact served JavaScript separately passed the signal-freshness,
 topology-layout and one-action metrics regressions.
+
+These two VM results have not yet been rolled forward to the rev130-only
+`0114` controller artifact listed above.
 
 ## Parity procedure
 
@@ -586,22 +591,30 @@ intervals had the same SHA-256, and the live
 
 ### Current rev130 acceptance
 
-The 2026-08-23 artifacts listed under **Image provenance** supersede those
-historical samples. A fully destructive role/container redeploy, followed by
-fresh creation of the small client profile, passed:
+The 2026-08-24 artifacts listed under **Image provenance** supersede those
+historical samples. A fully destructive deployment from clean checkout
+`/home/rev/easymesh-lab/0824/meta-cmf-bananapi-vcpe`, followed by fresh
+creation of the small client profile, passed:
 
 - `5/15/50/24` exactly: five devices, fifteen radios, fifty BSS rows, twenty
   fronthaul clients and four extender backhaul STAs;
 - ten `private_ssid` and ten `iot_ssid` clients, all associated, addressed and
   forwarding, including explicit 2.4, 5 and 6 GHz client cases;
-- one metrics API/UI action populating all four direct-backhaul RSSI/RCPI
-  values in 10.8 seconds;
+- one metrics API/UI action populating all 20 client RCPI values and all four
+  exact bSTA/upstream-BSSID Mesh Devices backhaul-signal records;
 - cold chain and cold branch multi-hop onboarding, including exact parent
   BSSID, parent-side station, traffic, controller edge and signal checks;
 - controller-only restart reconstruction of the live branch at the same exact
   database invariant; and
 - one `snmp_subagent`, no retained launcher, no automatic service restart and
-  0% loss for the default 20-client health probe.
+  0% loss for the default 20-client health probe; and
+- wmediumd Console ready/read-only on port 8890 with 25/25 identities, 600
+  directed pairs, packet telemetry and no change to the wmediumd PID when the
+  Console was restarted.
+
+The exact served JavaScript passed the Mesh Devices signal, topology-edge
+signal, topology-layout and metrics-reporting tests. Evidence is retained at
+`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`.
 
 `health-audit.sh` defaults to ten one-second probes per client and fails if any
 packet is lost. Higher offered loads are explicit experiments, for example:

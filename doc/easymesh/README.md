@@ -40,7 +40,7 @@ than beside current operating instructions.
 
 ```text
 source             codex/0815-clean
-patch series       EasyMesh through 0113, IEEE1905 through 0006
+patch series       EasyMesh through 0114, IEEE1905 through 0006
 image provenance   record filename, SHA-256 and source revision per deployment
 kernel             Linux 7.0.0-28
 topology           controller + colocated agent + four extenders
@@ -50,19 +50,18 @@ medium             patched multichannel wmediumd
 ```
 
 The current deployment deliberately records each role independently. The
-controller artifact contains EasyMesh through `0113`, including end-to-end
-backhaul-signal freshness and the current WebUI/API helper. The extender
+controller artifact contains EasyMesh through `0114`, including end-to-end
+backhaul-signal freshness in both Network Topology and Mesh Devices. The extender
 artifact contains the complete Agent recovery series through `0112`.
 IEEE1905 remains at `0006`; the previously accepted OneWifi, libwebconfig,
 Wi-Fi HAL, log4c and SNMP fixes remain in both roles as applicable.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2` | `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2` | `1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063` |
 | extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
 
-The current Phase 1/2 runtime checkout is `8d1c49a`; the controller helper and
-image input are captured by `fb3bf7e`. The controller also refreshes packaged
+The current rev130 runtime checkout is `3895d1f`. The controller also refreshes packaged
 WebUI assets into persistent `/nvram/static` on every service start, so a
 same-identity upgrade cannot continue serving an older UI. Never infer image
 contents from a newer host checkout.
@@ -73,8 +72,8 @@ initial deployment and persistent stop/start reconstruction passed
 `5/15/50/24`, 10 private plus 10 IoT clients, all 20 non-zero RCPI reports,
 four live backhaul metric edges, 20/20 zero-loss health traffic and zero
 automatic EasyMesh/OneWifi restarts. Client associations included 2.4, 5 and
-6 GHz. Current Phase 1/2 acceptance adds structured signal-freshness and
-wmediumd Console gates on both rev120 and rev150. Independent destructive fresh
+6 GHz. The subsequent EasyMesh `0113` Phase 1/2 acceptance added structured
+signal-freshness and wmediumd Console gates on both rev120 and rev150. Independent destructive fresh
 deployments and managed reconstructions passed at `5/15/50/24`, with four
 `fresh` structured extender signals, 25/25 Console identities, 600 directed
 pairs, packet telemetry, 20/20 traffic and zero monitored restarts. Evidence is
@@ -84,11 +83,20 @@ duration/RF-churn gate remains
 distinct from these immediate results; see
 [client-scale.md](client-scale.md) and [soak-acceptance.md](soak-acceptance.md).
 
+On 2026-08-24 rev130 was then recreated from a clean `0824` checkout using the
+artifact pair above. It reached `5/15/50/24`, 20 live clients, 20/20 non-zero
+client RCPI, four fresh Mesh Devices backhaul-signal records and zero monitored
+restarts. The documented ten-packet health gate passed at 0% loss on all 20
+clients. The read-only wmediumd Console passed 25/25 identity matches, 600
+directed pairs, live packet telemetry and failure isolation from wmediumd.
+Evidence is under
+`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z` on rev130.
+
 The previously accepted ready-to-run Vagrant/VirtualBox package is
 `easymesh-lab-0824-a9689eb.box` (`16,560,643,152` bytes), SHA-256
 `7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1`.
 That immutable package is the `a9689eb` baseline and predates the wmediumd
-Console and EasyMesh `0113`; regenerate a box from the current VM before
+Console and EasyMesh `0113`/`0114`; regenerate a box from the current VM before
 claiming those additions in a distributable appliance.
 Use `gen/vm/consumer/Vagrantfile` and the import/start procedure in
 `gen/vm/packaged/README.md`.
@@ -99,6 +107,7 @@ From the `192.168.2.0/24` lab network:
 
 ```text
 http://192.168.2.130:8888    rev130 WebUI
+http://192.168.2.130:8890    rev130 wmediumd Console
 http://192.168.2.150:18889   rev150 Vagrant-VM WebUI
 http://192.168.2.120:18889   rev120 Vagrant-VM WebUI
 http://192.168.2.150:18890   rev150 Vagrant-VM wmediumd Console

@@ -32,7 +32,7 @@ was an exploratory hypothesis superseded by root-cause evidence.
 | `796cd5e` | make WLAN-client cold-boot order runtime-owned |
 | `ca17171` | preserve length-delimited AL-SAP messages over stream sockets |
 
-The current source series contains EasyMesh patches through `0113`, IEEE1905
+The current source series contains EasyMesh patches through `0114`, IEEE1905
 patches through `0006`, libwebconfig patches through `0011`, OneWifi patches
 through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
 category-factory serialization fix. The
@@ -210,10 +210,12 @@ authority. Its dependency order is:
 49. complete a successful OneWifi callback at its own BSS-configuration
     terminal state instead of waiting for a later Topology Query; and
 50. preserve IEEE1905 measurement age end to end and publish an explicit
-    fresh/stale/unknown backhaul-signal contract to the WebUI.
+    fresh/stale/unknown backhaul-signal contract to the WebUI; and
+51. join that exact current backhaul metric into the Mesh Devices endpoint and
+    refresh the visible device cards without rebuilding the topology layout.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0113`; the
+component or image build. The current source series ends at `0114`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
@@ -317,7 +319,7 @@ can therefore cancel obsolete work without leaving the radio permanently busy.
 ## Build and acceptance
 
 The current portable-VM deployment is a clean role-specific roll-up. The
-controller contains EasyMesh through `0113`, including the corrected
+controller contains EasyMesh through `0114`, including the corrected
 cross-built WebUI/API helper; the extender contains the complete Agent recovery
 sequence through `0112`. IEEE1905 remains at `0006`, with the accepted OneWifi,
 libwebconfig, Wi-Fi HAL, log4c and SNMP changes applied by role. Each deployed
@@ -325,11 +327,13 @@ role retains its exact artifact hash:
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| controller | `X86EMLTRBPIBB_rdk-next_20260824075700.rootfs.lxc.tar.bz2` | `894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d` |
+| controller | `X86EMLTRBPIBB_rdk-next_20260824163203.rootfs.lxc.tar.bz2` | `1040332ab069667b676f831073355d7c36edf1653d43fc48f7819c17406fe063` |
 | extender | `X86EMLTRBPIAP_rdk-next_20260824045243.rootfs.lxc.tar.bz2` | `676aa29dc9a3133b63dd48d09aca3457ac4c398fc77c4f54e7c4e113acaf61bd` |
 
-The exact current pair passed independent destructive fresh deployments plus
-managed persistent reconstructions on rev120 and rev150 at `5/15/50/24`,
+The preceding EasyMesh `0113` controller artifact (`20260824075700`, SHA-256
+`894fa478298afa8de7f8198df6e158e9f9d2dae525d867d982f9ecaf8047122d`) passed
+independent destructive fresh deployments plus managed persistent
+reconstructions on rev120 and rev150 at `5/15/50/24`,
 20/20 traffic and zero monitored restarts. All four wireless extender edges
 carried the new nested `fresh` signal object, and the served WebUI passed the
 signal/layout/metrics regressions. Evidence is
@@ -341,10 +345,14 @@ the rev120 and rev150 VMs each reached `5/15/50/24`, exposed ten private and
 ten IoT clients, passed 20/20 non-zero RCPI and zero-loss health traffic, and
 recorded zero automatic service restarts. Each same run then passed persistent
 controller -> extender -> client reconstruction, four wireless backhaul metric
-edges and a 120-second stable hold. The current `0113` controller artifact adds
-the structured freshness contract and is accepted separately against the same
-model. The rendered model remains `Controller`, colocated `Agent-1`, and
-`Extender-1` through `Extender-4`.
+edges and a 120-second stable hold. The current `0114` controller artifact adds
+the structured freshness contract to Mesh Devices as well as Network Topology.
+A clean rev130 deployment passed the same model with four fresh device records,
+20/20 client RCPI, 20/20 zero-loss traffic and the read-only Console at 25
+identities/600 directed pairs. Evidence is
+`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`. The rendered model
+remains `Controller`, colocated `Agent-1`, and `Extender-1` through
+`Extender-4`.
 
 ### SNMP self-heal correction
 
@@ -495,7 +503,7 @@ coalesced second SDU became trailing bytes and was discarded. It now reads the
 prefix and exactly the declared body, handles short reads and `EINTR`, and
 leaves the next frame queued.
 
-Patches `0047` through `0113` close the follow-on P0 state, service,
+Patches `0047` through `0114` close the follow-on P0 state, service,
 multi-hop, metrics, and
 presentation boundaries:
 
@@ -545,6 +553,7 @@ presentation boundaries:
 | `0111` | recover serialized WSC subdocs that outlive their initiating orchestration command and otherwise have no callback/retry owner |
 | `0112` | finish `onewifi_cb` at `onewifi_bssconfig_ind`; leave the later topology-synchronized transition to Topology Query processing |
 | `0113` | preserve measurement time from the IEEE1905 wire delta, select the newest exact bSTA/upstream-BSSID sample deterministically, and expose explicit fresh/stale/unknown extender signal in the API and WebUI |
+| `0114` | use the same exact current metric in `/api/v1/devices`, render fresh/stale/unknown Mesh Devices backhaul signal, and refresh visible device cards every two seconds without topology relayout |
 
 The controller service drop-in also copies packaged WebUI assets over the
 persistent `/nvram/static` files on every start. The earlier no-clobber copy

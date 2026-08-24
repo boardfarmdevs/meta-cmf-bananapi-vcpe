@@ -64,6 +64,10 @@ Open `http://127.0.0.1:8890/` or use an SSH forward. The collector recovers
 when wmediumd is restarted. Read-only is the default: the process never opens
 the writable scenario socket and every HTTP mutation returns 405.
 
+The primary rev130 installation binds this read-only service to the lab LAN at
+`http://192.168.2.130:8890/`. Typed controls remain disabled unless explicitly
+enabled for a bounded diagnostic session.
+
 Important flags:
 
 | Flag | Default | Meaning |

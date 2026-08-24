@@ -190,6 +190,14 @@ Fresh-deployment evidence is retained under
 `/home/vagrant/easymesh-evidence/20260824T085518Z` on rev120 and
 `/home/vagrant/easymesh-evidence/20260824T081445Z` on rev150.
 
+The primary rev130 lab was cleanly recreated from source `3895d1f` on the same
+date. Its read-only Console is directly available at
+`http://192.168.2.130:8890/` and reported 25 matched identities, 600 directed
+pairs, live packet telemetry and `health: ok`. Restarting the Console left the
+wmediumd PID unchanged; the documented 20-client traffic gate subsequently
+passed at 0% loss. Evidence is
+`/home/rev/easymesh-evidence/3895d1f/20260824T173502Z`.
+
 ## Target closed-loop correlation architecture
 
 The solid Phase 1/2 medium and service paths below are implemented. SQLite
