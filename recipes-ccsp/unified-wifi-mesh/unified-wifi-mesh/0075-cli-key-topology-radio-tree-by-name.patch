@@ -1,0 +1,44 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] cli: key topology radio trees by name
+
+The topology renderer assumes RadioList is always child index two in both a
+device and its nested child record.  That ordering is not an API contract and
+the current controller tree places another field there.  The live model still
+contains 5 devices, 15 radios and 50 BSS records, while `/api/v1/topology`
+therefore emits empty haulTypes and edges with band -1/channel 0.  The WebUI
+consequently loses every 2.4/5/6 GHz bubble despite a complete mesh.
+
+Resolve RadioList by key, as the newer client and BSS API adapters already do.
+This changes presentation only; it neither changes the controller model nor
+invents band data when RadioList is genuinely absent.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/main.go | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4759,7 +4759,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+             return
+         }
+ 
+-        radioList := parseRadioList(deviceNode.child[2])
++        radioTree := getNetworkTreeByKey(deviceNode, "RadioList")
++        radioList := parseRadioList(radioTree)
+         haulTypes := buildHaulTypes(radioList)
+ 
+         backhaulMacAddr := getTreeValue(backhaulTree, "MACAddress")
+@@ -4818,7 +4819,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+             channel := 0
+ 
+             // parse the band with extender connected
+-            band, channel = getBandAndChannelFromRadioTree(child.child[2])
++            childRadioTree := getNetworkTreeByKey(child, "RadioList")
++            band, channel = getBandAndChannelFromRadioTree(childRadioTree)
+ 
+            edges = append(edges, map[string]interface{}{
+                "from":     deviceID,
+-- 
+2.43.0

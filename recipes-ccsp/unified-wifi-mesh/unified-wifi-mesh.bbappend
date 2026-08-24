@@ -70,7 +70,16 @@ EASYMESH_CORE_PATCHES = " \
     file://0066-controller-synchronize-runtime-agent-profile.patch \
     file://0067-controller-replay-explicit-policy.patch \
     file://0068-cli-expose-live-bss-inventory.patch \
-"
+    file://0069-candidate-rcpi-complete-unassociated-transaction.patch \
+    file://0070-agent-accept-onewifi-nasta-response.patch \
+    file://0071-agent-correlate-candidate-metrics-response.patch \
+    file://0072-metrics-preserve-associated-report-receipt-time.patch \
+    file://0073-wsc-retry-with-fresh-enrollee-transaction.patch \
+    file://0074-candidate-metrics-store-on-correlated-radio.patch \
+    file://0075-cli-key-topology-radio-tree-by-name.patch \
+    file://0076-controller-complete-candidate-command-on-response.patch \
+    file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
+    "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t

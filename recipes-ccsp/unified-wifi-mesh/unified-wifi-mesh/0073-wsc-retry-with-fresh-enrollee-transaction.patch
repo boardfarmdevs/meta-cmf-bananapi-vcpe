@@ -1,0 +1,81 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] WSC: retry with a fresh enrollee transaction
+
+The bounded M1 retry still leaves an extender partially onboarded when an M2
+is lost and a later key exchange is rejected.  A cold rev150 deployment showed
+all three initial M1 frames, only two M2 frames at the agent, and the missing
+radio retrying the same 499-byte M1.  The controller sent the first retry M2,
+which was lost, then rejected the next two exchanges in
+EVP_PKEY_derive_set_peer.  A final M1 was lost and the four-attempt budget was
+exhausted.  The agent remained in wsc_m2_pending with no operational BSS.
+
+An M1 retry is a new WSC transaction, so regenerate the enrollee nonce and DH
+keypair before serializing it.  Patch 0023 already regenerates the registrar
+half for every received M1; refreshing both halves prevents a rejected key
+from being repeated.  Allow eight bounded retries (24 seconds at the existing
+three-second interval), still well inside the controller command lifetime and
+large enough to tolerate loss of both an M1 and its M2 during tri-band startup.
+
+Repeated initialization exposed an upstream ownership leak: em_crypto_t::init
+copies generated key material into m_crypto_info but never releases the DH or
+EVP generation objects on success.  Release those temporary objects after the
+copy so retries do not leak cryptographic state.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 10 ++++++++--
+ src/em/crypto/em_crypto.cpp         | 11 +++++++++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6081,7 +6081,7 @@ void em_configuration_t::handle_state_wsc_m1_pending()
+ // number of M1 re-sends used to solicit a fresh M2. Reset each time a fresh M1 is
+ // sent (handle_autoconfig_resp).
+ #define EM_AGENT_M2_RESEND_TICKS 3
+-#define EM_AGENT_M2_MAX_RESENDS  4
++#define EM_AGENT_M2_MAX_RESENDS  8
+ 
+ void em_configuration_t::handle_state_wsc_m2_pending()
+ {
+@@ -6102,6 +6102,15 @@ void em_configuration_t::handle_state_wsc_m2_pending()
+         return;
+     }
+ 
++    // A retry starts a new WSC transaction.  Refresh the enrollee nonce and
++    // DH keypair so an exchange rejected by OpenSSL is not repeated with the
++    // same enrollee material.  The controller independently refreshes its
++    // registrar half for every received M1.
++    if (m_crypto.init() != 0) {
++        em_printfout("radio %s failed to refresh WSC crypto before M1 retry",
++            util::mac_to_string(get_radio_interface_mac()).c_str());
++        return;
++    }
+     unsigned char msg[MAX_EM_BUFF_SZ];
+     int msg_len = create_autoconfig_wsc_m1_msg(msg, get_peer_mac());
+     if (msg_len < 0) {
+diff --git a/src/em/crypto/em_crypto.cpp b/src/em/crypto/em_crypto.cpp
+--- a/src/em/crypto/em_crypto.cpp
++++ b/src/em/crypto/em_crypto.cpp
+@@ -211,6 +211,18 @@ int em_crypto_t::init()
+     m_crypto_info.r_pub_len = static_cast<unsigned int> (BN_num_bytes(pub_key));
+     m_crypto_info.r_priv_len = static_cast<unsigned int> (BN_num_bytes(priv_key));
+     
++    // The generated values have been copied into m_crypto_info; the OpenSSL
++    // objects are temporary.  init() is also used for WSC retransmissions, so
++    // retaining these on every successful call creates an unbounded leak.
++#if OPENSSL_VERSION_NUMBER < 0x30000000L
++    DH_free(dh); // owns p, g, pub_key and priv_key after DH_set0/generate
++#else
++    EVP_PKEY_free(param_pkey);
++    EVP_PKEY_CTX_free(pkey_ctx);
++    EVP_PKEY_free(pkey);
++    cleanup_bignums(p, g, priv_key, pub_key);
++#endif
++
+     return 0;
+ bail:
+ 
+-- 
+2.43.0

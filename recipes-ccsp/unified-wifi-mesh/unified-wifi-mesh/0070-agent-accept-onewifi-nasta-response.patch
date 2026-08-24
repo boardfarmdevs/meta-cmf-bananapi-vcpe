@@ -1,0 +1,37 @@
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Subject: [PATCH] metrics: accept the actual OneWifi NaSta response envelope
+
+The candidate-RCPI transaction parser consumes OneWifi's
+UnassociatedSTALinkMetricsResponse object, but the RBUS callback still
+validated the obsolete UnassocStaLinkMetricsResponse array contract.  It
+therefore discarded every valid asynchronous result before the parser could
+construct the 1905 response.
+
+Validate the same response object and SubDocName used by the parser and pass
+the payload into the agent event queue.
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1648,15 +1648,17 @@ int em_agent_t::unassoc_sta_link_metrics_cb(char *event_name, bus_data_prop_t *
+         return -1;
+     }
+ 
+-    if (strcmp(subdoc_name->valuestring, "UnassocStaLinkMetricsResponse") != 0) {
++    if (strcmp(subdoc_name->valuestring,
++            "UnassociatedSTALinkMetricsResponse") != 0) {
+         em_printfout("%s:%d unexpected SubDocName=%s",__func__, __LINE__, subdoc_name->valuestring);
+         cJSON_Delete(json);
+         return -1;
+     }
+ 
+-    cJSON *resp = cJSON_GetObjectItemCaseSensitive(json, "UnassocStaLinkMetricsResponse");
+-    if ((resp == NULL) || (!cJSON_IsArray(resp))) {
+-        em_printfout("%s:%d response array missing",__func__,__LINE__);
++    cJSON *resp = cJSON_GetObjectItemCaseSensitive(json,
++        "UnassociatedSTALinkMetricsResponse");
++    if ((resp == NULL) || (!cJSON_IsObject(resp))) {
++        em_printfout("%s:%d response object missing",__func__,__LINE__);
+         cJSON_Delete(json);
+         return -1;
+     }
