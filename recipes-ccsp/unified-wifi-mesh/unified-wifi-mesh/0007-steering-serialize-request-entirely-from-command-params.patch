@@ -1,0 +1,147 @@
+From: Rene Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] steering: build the Steering Request TLV entirely from command params
+
+em_steering_t::create_btm_request_tlv() took every field of the 1905 Steering
+Request from the command's steer params EXCEPT the source BSSID, which it read
+from the data model:
+
+    memcpy(&req->bssid, get_data_model()->m_bss[0].m_bss_info.bssid.mac, ...);
+
+params->source -- the BSS the controller actually asked to steer the client
+away from -- was available and ignored. So whichever BSS happened to occupy
+slot zero was substituted into every steering request. Observed on the
+BananaPi/hwsim mesh: a client associated on the extender's 5GHz VAP
+
+    requested source   02:00:00:87:f8:50   (wifi1, 5GHz)
+    BSSID on the wire  02:00:00:6e:a9:a5   (wifi0, 2.4GHz -- m_bss[0])
+
+The agent resolved the received BSSID to its 2.4GHz VAP, selected that
+VapIndex, and transmitted from a radio the client was not on.
+
+Split the byte-writing half out into a stateless helper that takes the
+parameters explicitly. The helper has no way to reach a data model, which is
+what stops the substitution from being reintroduced, and it can be unit tested
+without a command, a data model, or a deployment.
+
+Three further defects fixed while the code moved:
+
+  * the emitted object was never zeroed. em_steering_req_t has a four-bit
+    reserved field sharing an octet with the request flags, so those bits kept
+    whatever the caller's buffer held and identical parameters could serialise
+    to different bytes. Zero it in the helper -- callers should not have to
+    know part of a wire object needs pre-zeroing.
+
+  * steering_opportunity_window and btm_dissoc_timer are both two-octet 1905
+    wire integers, but only the timer was htons()'d. On this little-endian
+    target the window went out byte-swapped.
+
+  * the request mode was compared against a bare 1; use the existing
+    em_steering_req_mode_t constants.
+
+Covered by tests/test_l1_em_steering.cpp. With all four defects reintroduced,
+four of the seven cases fail; with them fixed, all seven pass under
+ASan/UBSan.
+
+Upstream-Status: Pending
+---
+diff --git a/inc/em_steering.h b/inc/em_steering.h
+index bb24435f..f3084234 100644
+--- a/inc/em_steering.h
++++ b/inc/em_steering.h
+@@ -216,6 +216,13 @@ class em_steering_t {
+ 	short create_btm_request_tlv(unsigned char *buff);
+ 
+ public:
++	// Stateless serializer for the Steering Request TLV. The emitted bytes are
++	// driven ONLY by params -- it has no access to a data model by construction,
++	// which is what prevents the m_bss[0] source-rewrite bug from returning.
++	// Public so it can be unit tested without a command or data model.
++	static short build_steering_request_tlv(unsigned char *buff, size_t capacity,
++		const em_cmd_steer_params_t *params);
++
+ 	
+ 	/**!
+ 	 * @brief Retrieves the manager instance.
+diff --git a/src/em/steering/em_steering.cpp b/src/em/steering/em_steering.cpp
+index d2256388..89eeedd2 100644
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -374,23 +374,54 @@ int em_steering_t::send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_
+     return static_cast<int> (len);
+ }
+ 
+-short em_steering_t::create_btm_request_tlv(unsigned char *buff)
++// Stateless serializer for the 1905 Steering Request TLV.
++//
++// Extracted from em_steering_t::create_btm_request_tlv() so that what goes on
++// the wire is driven ENTIRELY by the caller's parameters and can be unit tested
++// without a data model, a current command, or a deployment. The original
++// in-place version read the BSSID from get_data_model()->m_bss[0] while taking
++// every other field from params, which silently rewrote the source BSS of every
++// steering request: a client on the extender's 5GHz VAP (02:00:00:87:f8:50) was
++// steered with 02:00:00:6e:a9:a5 -- that agent's 2.4GHz VAP -- on the wire, so
++// the agent transmitted from the wrong radio and no BTM Request ever reached
++// the client.
++//
++// This helper has no access to a data model by construction, which is the point:
++// there is no way to reintroduce that bug here.
++short em_steering_t::build_steering_request_tlv(unsigned char *buff, size_t capacity,
++    const em_cmd_steer_params_t *params)
+ {
+     size_t len = 0;
+-    em_steering_req_t *req = reinterpret_cast<em_steering_req_t *> (buff);
+-    em_cmd_steer_params_t *params = &get_current_cmd()->m_param.u.steer_params;
++    em_steering_req_t *req;
++
++    if ((buff == NULL) || (params == NULL) || (capacity < sizeof(em_steering_req_t))) {
++        return 0;
++    }
++
++    req = reinterpret_cast<em_steering_req_t *> (buff);
+ 
+-    memcpy(&req->bssid, get_data_model()->m_bss[0].m_bss_info.bssid.mac, sizeof(bssid_t));
+-    req->req_mode                           = static_cast<unsigned char>(params->request_mode) & 0x01;
++    // Zero the whole object first. em_steering_req_t carries a reserved nibble
++    // sharing a byte with the request flags; assigning only the named bits
++    // would leave it holding whatever the caller's buffer happened to contain,
++    // so identical parameters could serialise to different bytes. The contract
++    // here is "build this wire object", which means callers must not have to
++    // know that part of it needs pre-zeroing.
++    memset(req, 0, sizeof(em_steering_req_t));
++
++    // The Steering Request's BSSID identifies the BSS the STA is steered FROM.
++    memcpy(&req->bssid, params->source, sizeof(bssid_t));
++    req->req_mode                           = (params->request_mode == em_steering_req_mode_mandate) ? 1 : 0;
+     req->btm_dissoc_imminent                = params->disassoc_imminent;
+     req->btm_abridged                       = params->btm_abridged;
+-    req->btm_link_removal_imminent = params->link_removal_imminent;
+-    if(params->request_mode == 1)
+-    {
+-        //ignore this
+-    req->steering_opportunity_window        = 0;
++    req->btm_link_removal_imminent          = params->link_removal_imminent;
++    if (params->request_mode == em_steering_req_mode_mandate) {
++        // A Steering Mandate has no opportunity window; the field stays zero.
++        req->steering_opportunity_window    = 0;
+     } else {
+-        req->steering_opportunity_window    = static_cast<short unsigned int> (params->steer_opportunity_win);
++        // Both two-octet fields in this TLV take the same wire order. The timer
++        // below was already htons()'d while this one was written in host order,
++        // which is inconsistent on a little-endian target.
++        req->steering_opportunity_window    = htons(static_cast<uint16_t> (params->steer_opportunity_win));
+     }
+     req->btm_dissoc_timer                   = htons(static_cast<uint16_t> (params->btm_disassociation_timer));
+     req->sta_list_count                     = 1;
+@@ -405,6 +436,12 @@ short em_steering_t::create_btm_request_tlv(unsigned char *buff)
+     return static_cast<short> (len);
+ }
+ 
++short em_steering_t::create_btm_request_tlv(unsigned char *buff)
++{
++    return build_steering_request_tlv(buff, sizeof(em_steering_req_t),
++        &get_current_cmd()->m_param.u.steer_params);
++}
++
+ short em_steering_t::create_btm_report_tlv(unsigned char *buff)
+ {
+     short len = 0;

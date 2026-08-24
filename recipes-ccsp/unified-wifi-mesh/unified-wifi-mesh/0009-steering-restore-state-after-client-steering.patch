@@ -1,0 +1,125 @@
+From b2abe41fb71e284c5dcd8a3bfab13832e1167d02 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 9 Aug 2026 15:02:56 -0700
+Subject: [PATCH 1/2] steering: restore state after client steering
+
+---
+ inc/em_steering.h               |  3 +++
+ src/em/em.cpp                   |  6 ++++++
+ src/em/steering/em_steering.cpp |  1 +
+ src/orch/em_orch_ctrl.cpp       | 32 ++++++++++++++++++++++++++++++--
+ 4 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/inc/em_steering.h b/inc/em_steering.h
+index f308423..1658afc 100644
+--- a/inc/em_steering.h
++++ b/inc/em_steering.h
+@@ -24,6 +24,7 @@
+ class em_steering_t {
+ 
+     unsigned int m_client_steering_req_tx_cnt;
++    em_state_t m_client_steering_prev_state;
+     unsigned int m_client_assoc_ctrl_req_tx_cnt;
+ 
+     
+@@ -326,6 +327,8 @@ public:
+ 	 * @note Ensure that the count is a valid unsigned integer.
+ 	 */
+ 	void set_client_steering_req_tx_count(unsigned int cnt) { m_client_steering_req_tx_cnt = cnt; }
++	void set_client_steering_prev_state(em_state_t state) { m_client_steering_prev_state = state; }
++	em_state_t get_client_steering_prev_state() { return m_client_steering_prev_state; }
+     
+ 	/**!
+ 	 * @brief Retrieves the count of client association control request transmissions.
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index 29eee9f..9699fbf 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -212,6 +212,12 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+             break;
+ 
+         case em_cmd_type_sta_steer:
++            if ((m_sm.get_state() == em_state_ctrl_configured) ||
++                (m_sm.get_state() == em_state_ctrl_topo_synchronized)) {
++                set_client_steering_prev_state(m_sm.get_state());
++            } else {
++                set_client_steering_prev_state(em_state_ctrl_unconfigured);
++            }
+             m_sm.set_state(em_state_ctrl_sta_steer_pending);
+             break;
+ 
+diff --git a/src/em/steering/em_steering.cpp b/src/em/steering/em_steering.cpp
+index 89eeedd..1454770 100644
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -643,6 +643,7 @@ void em_steering_t::process_msg(unsigned char *data, unsigned int len)
+ em_steering_t::em_steering_t()
+ {
+     m_client_steering_req_tx_cnt = 0;
++    m_client_steering_prev_state = em_state_ctrl_unconfigured;
+     m_client_assoc_ctrl_req_tx_cnt = 0;
+ }
+ 
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index dc1f992..b5eb368 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -232,11 +232,19 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+         case em_cmd_type_sta_steer:
+             if (em->get_client_steering_req_tx_count() >= EM_MAX_CLIENT_STEER_REQ_TX_THRESH
+                 || (em->get_state() == em_state_ctrl_steer_btm_req_ack_rcvd)) {
++                em_state_t previous = em->get_client_steering_prev_state();
+                 em->set_client_steering_req_tx_count(0);
+-                em->set_state(em_state_ctrl_configured);
++                if ((previous == em_state_ctrl_configured) ||
++                    (previous == em_state_ctrl_topo_synchronized)) {
++                    em->set_state(previous);
++                } else {
++                    em->set_state(em_state_ctrl_configured);
++                }
++                em->set_client_steering_prev_state(em_state_ctrl_unconfigured);
+                 printf("%s:%d: Maximum client steering req threshold crossed, transitioning to fini\n", __func__, __LINE__);
+                 return true;
+-            } else if (em->get_state() == em_state_ctrl_configured) {
++            } else if ((em->get_state() == em_state_ctrl_configured) ||
++                (em->get_state() == em_state_ctrl_topo_synchronized)) {
+                 return true;
+             }
+             break;
+@@ -345,6 +353,12 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+ 	    }
+ 	break;
+         case em_cmd_type_sta_steer:
++            if ((em->get_state() == em_state_ctrl_configured) ||
++                (em->get_state() == em_state_ctrl_topo_synchronized)) {
++                return true;
++            }
++            break;
++
+         case em_cmd_type_sta_disassoc:
+         case em_cmd_type_sta_link_metrics:
+         case em_cmd_type_scan_channel:
+@@ -404,6 +418,20 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+             em->set_state(em_state_ctrl_configured);
+             break;
+ 
++        case em_cmd_type_sta_steer:
++        {
++            em_state_t previous = em->get_client_steering_prev_state();
++            em->set_client_steering_req_tx_count(0);
++            if ((previous == em_state_ctrl_configured) ||
++                (previous == em_state_ctrl_topo_synchronized)) {
++                em->set_state(previous);
++            } else {
++                em->set_state(em_state_ctrl_configured);
++            }
++            em->set_client_steering_prev_state(em_state_ctrl_unconfigured);
++            break;
++        }
++
+         default:
+             break;
+ 	}
+-- 
+2.53.0
+

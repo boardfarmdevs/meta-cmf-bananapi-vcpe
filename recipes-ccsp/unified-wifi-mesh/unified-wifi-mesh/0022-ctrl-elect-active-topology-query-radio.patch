@@ -1,0 +1,41 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] ctrl: elect an active radio to send the topology query
+
+During simultaneous three-radio onboarding, the radio at em_radios.front() can
+finish or be removed from the active em_config candidate set before the last
+radio reaches topo_sync_pending.  process_ctrl_state() is then called only for
+the remaining active candidates, but its `this == em_radios.front()` gate can
+never become true.  All radios remain in topo_sync_pending until the command
+times out, no Topology Query is transmitted, and the controller keeps the
+device/radios while never learning its BSSList.
+
+Select the first radio for this AL that is still in orchestration progress as
+the topology-query leader.  This preserves the one-sender behavior while
+ensuring the selected sender is one whose state machine is actually executing.
+---
+ src/em/config/em_configuration.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6233,9 +6233,14 @@ void em_configuration_t::process_ctrl_state()
+                 // Reset the mismatch and topo_query_last sent values before sending topo query
+                 dm->set_ssid_mismatch_check_time(0);
+                 dm->set_last_topo_query_sent_time(0);
+-                // If all radios are in topo sync pending state, send topo query on one of them, 
+-                // ignore sending topo query on other radios
+-                if (this == em_radios.front()){
++                // The vector front is not necessarily still an active candidate: a radio
++                // can finish its orchestration before the last sibling reaches this state.
++                // Elect a radio whose state machine is actually still executing, otherwise
++                // no candidate can pass the old `this == em_radios.front()` gate.
++                auto query_em = std::find_if(em_radios.begin(), em_radios.end(), [](em_t *radio) {
++                    return radio->get_orch_state() == em_orch_state_progress;
++                });
++                if (query_em != em_radios.end() && this == *query_em) {
+                     em_printfout("Sending the Topology query message to agent al_mac:%s on radio: %s",
+                         util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
+                         util::mac_to_string(get_radio_interface_mac()).c_str());
+-- 
+2.43.0

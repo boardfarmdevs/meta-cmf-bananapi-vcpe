@@ -1,0 +1,225 @@
+From 0000000000000000000000000000000000000013 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] steering: acknowledge and complete BTM report
+
+The controller receives Client Steering BTM Reports but does not send the
+required 1905 ACK: the existing ACK call is commented out.  The agent therefore
+re-sends the same report until orchestration times out.
+
+Send the ACK with the received MID and source AL MAC, retain the report MID on
+the sending radio, route the ACK back to that pending radio, and return the
+agent state to configured when the matching ACK arrives.  Limit BTM-report
+orchestration to the radio that owns the source BSS; the shared data model can
+otherwise make the same STA appear on every radio and leave unrelated
+candidates pending until timeout.
+---
+diff --git a/inc/em_steering.h b/inc/em_steering.h
+--- a/inc/em_steering.h
++++ b/inc/em_steering.h
+@@ -25,6 +25,7 @@
+ 
+     unsigned int m_client_steering_req_tx_cnt;
+     unsigned short m_client_steering_req_msg_id;
++    unsigned short m_btm_report_msg_id;
+     em_state_t m_client_steering_prev_state;
+     unsigned int m_client_assoc_ctrl_req_tx_cnt;
+ 
+@@ -106,7 +107,7 @@
+ 	 * @note Ensure that the MAC address is valid and the station is reachable
+ 	 * before calling this function.
+ 	 */
+-	int send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_id, unsigned char reason = 0, unsigned char *dst = nullptr);
++	int send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_id, unsigned char reason = 0, unsigned char *dst = nullptr, unsigned char *src = nullptr);
+     
+ 	/**!
+ 	 * @brief Handles the client steering request.
+@@ -330,6 +331,8 @@
+ 	void set_client_steering_req_tx_count(unsigned int cnt) { m_client_steering_req_tx_cnt = cnt; }
+ 	void set_client_steering_req_msg_id(unsigned short msg_id) { m_client_steering_req_msg_id = msg_id; }
+ 	unsigned short get_client_steering_req_msg_id() { return m_client_steering_req_msg_id; }
++	void set_btm_report_msg_id(unsigned short msg_id) { m_btm_report_msg_id = msg_id; }
++	unsigned short get_btm_report_msg_id() { return m_btm_report_msg_id; }
+ 	void set_client_steering_prev_state(em_state_t state) { m_client_steering_prev_state = state; }
+ 	em_state_t get_client_steering_prev_state() { return m_client_steering_prev_state; }
+     
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -2163,7 +2163,6 @@
+         case em_msg_type_autoconf_search:
+         case em_msg_type_topo_resp:
+         case em_msg_type_channel_pref_rprt:
+-        case em_msg_type_1905_ack:
+         case em_msg_type_map_policy_config_req:
+             em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+             while (em != NULL) {
+@@ -2174,6 +2173,32 @@
+             }
+             break;
+ 
++        case em_msg_type_1905_ack:
++        {
++            std::vector<em_t *> em_radios;
++            unsigned short response_msg_id = ntohs(cmdu->id);
++
++            get_all_em_for_al_mac(hdr->dst, em_radios);
++            for (auto &radio_em : em_radios) {
++                if ((radio_em->get_state() == em_state_agent_steer_btm_res_pending) &&
++                    (radio_em->get_btm_report_msg_id() == response_msg_id)) {
++                    em = radio_em;
++                    break;
++                }
++            }
++
++            if (em == NULL) {
++                /* No radio has a BTM report outstanding for this ACK's MID, so
++                 * the ACK is not for a steering BTM report. Do NOT misroute it to
++                 * an arbitrary (first non-AL) radio -- that arbitrary fallback was
++                 * the very defect this patch fixes. Leaving em == NULL makes the
++                 * caller drop the frame; a genuine non-steering ACK has no
++                 * per-radio BTM-report state to advance here, so dropping is the
++                 * correct behaviour. */
++            }
++            break;
++        }
++
+ 		case em_msg_type_channel_scan_rprt:
+         case em_msg_type_beacon_metrics_rsp:
+         case em_msg_type_ap_mld_config_resp:
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -363,7 +363,7 @@
+         case em_msg_type_1905_ack:
+             if (m_sm.get_state() == em_state_ctrl_ap_mld_configured) {
+                 em_configuration_t::process_msg(data, len);
+-            } else if (m_sm.get_state() == em_state_ctrl_sta_steer_pending) {
++            } else if ((m_sm.get_state() == em_state_ctrl_sta_steer_pending) || (m_sm.get_state() == em_state_agent_steer_btm_res_pending)) {
+                 em_steering_t::process_msg(data, len);
+             } else if (m_sm.get_state() == em_state_ctrl_unassoc_sta_link_metrics_pending) {
+                 em_metrics_t::process_msg(data, len);		    
+diff --git a/src/em/steering/em_steering.cpp b/src/em/steering/em_steering.cpp
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -262,7 +262,8 @@
+ 
+     memset(tmp, 0, sizeof(em_cmdu_t));
+     cmdu->type = htons(msg_type);
+-    cmdu->id = htons(get_mgr()->get_next_msg_id());
++    m_btm_report_msg_id = get_mgr()->get_next_msg_id();
++    cmdu->id = htons(m_btm_report_msg_id);
+     cmdu->last_frag_ind = 1;
+ 
+     tmp += sizeof(em_cmdu_t);
+@@ -292,6 +293,7 @@
+ 
+     if (send_frame(buff, static_cast<unsigned int> (len))  < 0) {
+         printf("%s:%d: Steering BTM report send failed, error:%d\n", __func__, __LINE__, errno);
++        m_btm_report_msg_id = 0;
+         return -1;
+     }
+ 
+@@ -300,7 +302,7 @@
+     return static_cast<int> (len);
+ }
+ 
+-int em_steering_t::send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_id, unsigned char reason, unsigned char *dst)
++int em_steering_t::send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_id, unsigned char reason, unsigned char *dst, unsigned char *src)
+ {
+     unsigned char buff[MAX_EM_BUFF_SZ];
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+@@ -314,10 +316,10 @@
+     dm_easy_mesh_t *dm = get_data_model();
+     mac_address_t zero_mac = {0};
+ 
+-    if (memcmp(dm->get_ctrl_al_interface_mac(), zero_mac, sizeof(mac_address_t)) != 0) {
+-        memcpy(tmp, dm->get_ctrl_al_interface_mac(), sizeof(mac_address_t));
+-    } else if (dst != nullptr) {
++    if (dst != nullptr) {
+         memcpy(tmp, const_cast<unsigned char *> (dst), sizeof(mac_address_t));
++    } else if (memcmp(dm->get_ctrl_al_interface_mac(), zero_mac, sizeof(mac_address_t)) != 0) {
++        memcpy(tmp, dm->get_ctrl_al_interface_mac(), sizeof(mac_address_t));
+     } else {
+         printf("%s:%d: no valid destination MAC address available\n", __func__, __LINE__);
+         return 0;
+@@ -325,7 +327,11 @@
+     tmp += sizeof(mac_address_t);
+     len += sizeof(mac_address_t);
+ 
+-    memcpy(tmp, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
++    if (src != nullptr) {
++        memcpy(tmp, const_cast<unsigned char *> (src), sizeof(mac_address_t));
++    } else {
++        memcpy(tmp, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
++    }
+     tmp += sizeof(mac_address_t);
+     len += sizeof(mac_address_t);
+ 
+@@ -518,6 +524,8 @@
+     em_tlv_t *tlv;
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+     em_steering_btm_rprt_t *btm_rprt;
++    em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *> (buff);
++    em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+ 
+     if (em_msg_t(em_msg_type_client_steering_btm_rprt, em_profile_type_2, buff, len).validate(errors) == 0) {
+         printf("%s:%d:Client Steering Request message validation failed\n",__func__,__LINE__);
+@@ -534,14 +542,27 @@
+ 
+     set_state(em_state_ctrl_configured);
+ 
+-    //send ack for report rcvd
+-    //send_1905_ack_message(btm_rprt->sta_mac_addr);
++    send_1905_ack_message(btm_rprt->sta_mac_addr, ntohs(cmdu->id), 0, hdr->src, hdr->dst);
+ 
+     return 0;
+ }
+ 
+ int em_steering_t::handle_ack_msg(unsigned char *buff, unsigned int len)
+ {
++    em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
++    unsigned short response_msg_id = ntohs(cmdu->id);
++
++    if (get_state() == em_state_agent_steer_btm_res_pending) {
++        if (response_msg_id != m_btm_report_msg_id) {
++            printf("%s:%d: ignoring BTM report ACK MID %u; expected %u\n", __func__, __LINE__,
++                response_msg_id, m_btm_report_msg_id);
++            return -1;
++        }
++        m_btm_report_msg_id = 0;
++        set_state(em_state_agent_configured);
++        return 0;
++    }
++
+     m_client_steering_req_msg_id = 0;
+     set_state(em_state_ctrl_steer_btm_req_ack_rcvd);
+     return 0;
+@@ -647,6 +668,7 @@
+ {
+     m_client_steering_req_tx_cnt = 0;
+     m_client_steering_req_msg_id = 0;
++    m_btm_report_msg_id = 0;
+     m_client_steering_prev_state = em_state_ctrl_unconfigured;
+     m_client_assoc_ctrl_req_tx_cnt = 0;
+ }
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -369,6 +369,7 @@
+     dm_easy_mesh_t dm;
+     mac_address_t	radio_mac, mac1, mac2;
+     dm_sta_t *sta;
++    em_bss_info_t *source_bss;
+ 
+     ctx = pcmd->m_data_model.get_cmd_ctx();
+ 	pthread_mutex_lock(&m_mgr->m_mutex);
+@@ -477,7 +478,9 @@
+             case em_cmd_type_btm_report:
+                 if (!(em->is_al_interface_em())) {
+                     sta = em->get_data_model()->find_sta(pcmd->m_param.u.btm_report_params.sta_mac, pcmd->m_param.u.btm_report_params.source);
+-                    if (sta != NULL) {
++                    source_bss = em->get_data_model()->get_bss_info_with_mac(pcmd->m_param.u.btm_report_params.source);
++                    if ((sta != NULL) && (source_bss != NULL) &&
++                        (memcmp(source_bss->ruid.mac, em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0)) {
+                         dm_easy_mesh_t::macbytes_to_string(pcmd->m_param.u.btm_report_params.sta_mac, src_mac_str);
+                         printf("%s:%d BTM report build candidate sta mac=%s\n", __func__, __LINE__, src_mac_str);
+                         queue_push(pcmd->m_em_candidates, em);

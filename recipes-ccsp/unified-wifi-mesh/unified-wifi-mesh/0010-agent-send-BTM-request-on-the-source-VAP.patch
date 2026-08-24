@@ -1,0 +1,95 @@
+From 680f84b470c3dc9f00c7e82ffd2c9c360e43b799 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 9 Aug 2026 15:02:56 -0700
+Subject: [PATCH 2/2] agent: send BTM request on the source VAP
+
+---
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -799,11 +799,22 @@
+ {
+     struct ieee80211_mgmt *ieeeframe;
+     action_frame_params_t *aframe;
+-    raw_data_t l_bus_data;
++    raw_data_t l_bus_data = {};
+     int len = 0;
+     size_t scratch_len = 0, alloc_len = 0;
+     mac_addr_str_t mac_str;
++    char bus_path[128];
+     em_steering_req_t *steer_req = reinterpret_cast<em_steering_req_t *> (&evt->u.raw_buff);
++    em_bss_info_t *source_bss = get_bss_info_with_mac(steer_req->bssid);
++
++    if (source_bss == NULL) {
++        em_printfout("BTM request source BSSID is not local");
++        return -1;
++    }
++    if (is_sta_associated(steer_req->bssid, steer_req->sta_mac_addr) == false) {
++        em_printfout("BTM request STA is not associated on the source BSSID");
++        return -1;
++    }
+ 
+     len = sizeof(ieeeframe->u.action.category) + sizeof(ieeeframe->u.action.u.bss_tm_req) \
+         + sizeof(em_80211_neighbor_report_t);
+@@ -826,7 +837,7 @@
+         + sizeof(em_80211_neighbor_report_t);
+     alloc_len = sizeof(action_frame_params_t)
+         + ((static_cast<size_t>(len) > scratch_len) ? static_cast<size_t>(len) : scratch_len);
+-    aframe = static_cast<action_frame_params_t *> (malloc(alloc_len));
++    aframe = static_cast<action_frame_params_t *> (calloc(1, alloc_len));
+     if (aframe == NULL) {
+         em_printfout("Error: Failed to allocate action frame");
+         return -1;
+@@ -839,19 +850,19 @@
+     ieeeframe->u.action.u.bss_tm_req.action = WLAN_ACTION_HT;
+     ieeeframe->u.action.u.bss_tm_req.dialog_token = 1;
+ 
+-    em_80211_btm_req_reqmode_t req_mode;
+-    req_mode.pref_candidate_list_inc = 0;
++    em_80211_btm_req_reqmode_t req_mode = {};
++    req_mode.pref_candidate_list_inc = 1;
+     req_mode.btm_abridged = steer_req->btm_abridged;
+     req_mode.btm_disassoc_imminent = steer_req->btm_dissoc_imminent;
+-    //todo: check what is this
+-    req_mode.bss_termination_inc = steer_req->btm_dissoc_timer;
+-    //todo: check what is this
+-    req_mode.ess_disassoc_imminent = steer_req->btm_dissoc_imminent;
++    req_mode.bss_termination_inc = 0;
++    req_mode.ess_disassoc_imminent = 0;
+ 
+     ieeeframe->u.action.u.bss_tm_req.req_mode = *reinterpret_cast<uint8_t *> (&req_mode);
+-    memcpy(&ieeeframe->u.action.u.bss_tm_req.disassoc_timer, &steer_req->btm_dissoc_timer, sizeof(steer_req->btm_dissoc_timer));
++    uint16_t disassoc_timer = ntohs(steer_req->btm_dissoc_timer);
++    ieeeframe->u.action.u.bss_tm_req.disassoc_timer[0] = static_cast<uint8_t>(disassoc_timer & 0xff);
++    ieeeframe->u.action.u.bss_tm_req.disassoc_timer[1] = static_cast<uint8_t>(disassoc_timer >> 8);
+     //todo: check this
+-    ieeeframe->u.action.u.bss_tm_req.validity_interval = 0;
++    ieeeframe->u.action.u.bss_tm_req.validity_interval = 1;
+ 
+     // Copy the variable part
+     em_80211_btm_req_var_t *bss_list = reinterpret_cast<em_80211_btm_req_var_t *>(&ieeeframe->u.action.u.bss_tm_req.variable);
+@@ -868,17 +879,20 @@
+     dm_easy_mesh_t::macbytes_to_string(steer_req->sta_mac_addr, mac_str);
+     em_printfout("STA MAC for BTM request %s", mac_str);
+     memcpy(aframe->dest_addr, steer_req->sta_mac_addr, sizeof(mac_addr_t));
+-    aframe->frequency = 2412;
+-    aframe->ap_index = 0;
++    aframe->frequency = 0;
++    aframe->ap_index = static_cast<int>(source_bss->vap_index);
++    aframe->wait_time_ms = 0;
+     //here sendng only the btm_req union to onewifi as header is dealt internally
+     aframe->frame_len = static_cast<unsigned int>(len);
+-    memcpy(aframe->frame_data, &ieeeframe->u.action, static_cast<size_t>(len));
++    memmove(aframe->frame_data, &ieeeframe->u.action, static_cast<size_t>(len));
+ 
+     l_bus_data.data_type = bus_data_type_bytes;
+     l_bus_data.raw_data.bytes = static_cast<void *>(aframe);
+     l_bus_data.raw_data_len = static_cast<size_t>(len) + sizeof(action_frame_params_t);
+ 
+-    if (desc->bus_set_fn(bus_hdl, "Device.WiFi.AccessPoint.1.RawFrame.Mgmt.Action.Tx", &l_bus_data)== 0) {
++    snprintf(bus_path, sizeof(bus_path), "Device.WiFi.AccessPoint.%u.RawFrame.Mgmt.Action.Tx",
++        source_bss->vap_index + 1);
++    if (desc->bus_set_fn(bus_hdl, bus_path, &l_bus_data)== 0) {
+         em_printfout("Frame subdoc send successfull\n");
+     }
+     else {

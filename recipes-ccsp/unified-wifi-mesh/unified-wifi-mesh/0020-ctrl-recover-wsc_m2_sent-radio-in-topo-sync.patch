@@ -1,0 +1,35 @@
+From: Rob Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] ctrl: recover a wsc_m2_sent radio during topo-sync instead of blocking
+
+A 6 GHz radio whose operational-BSS SSID transiently fails is_ssid_match on a
+freshly-seeded controller (NetworkSSIDList not yet loaded) is flagged ssid_mismatch,
+AutoConfig-Renewed, and regresses to em_state_ctrl_wsc_m2_sent. The topo-sync gate
+needs every radio of an AL in topo_sync_pending, so one lagging radio blocks the whole
+AL's topology sync forever (no Topology Query -> BSSList/STAList never populate).
+Upstream only recovers this in the em_config orch path, not running post-onboarding.
+Recover it here too so the mesh self-heals without a manual re-onboard.
+---
+ src/em/config/em_configuration.cpp | 12 ++++++++++++
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6124,6 +6172,19 @@ void em_configuration_t::process_ctrl_state()
+             {
+                 for (auto &em : em_radios) {
+                     if (em->get_state() != em_state_ctrl_topo_sync_pending) {
++                        if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
++                            // meta-cmf-bananapi-vcpe: recover from the known second-M1/M2 regression
++                            // here, not only in the em_config orch path (see em_orch_ctrl.cpp). A 6 GHz
++                            // radio whose operational-BSS SSID transiently fails is_ssid_match on a
++                            // freshly-seeded controller (NetworkSSIDList not yet loaded) is flagged
++                            // ssid_mismatch, gets AutoConfig-Renewed, and regresses to wsc_m2_sent.
++                            // Without this, one lagging radio leaves the whole AL out of topo_sync
++                            // forever -> no Topology Query -> BSSList/STAList never populate.
++                            em_printfout("radio %s stuck in wsc_m2_sent -- recovering to topo_sync_pending",
++                                util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                            em->set_state(em_state_ctrl_topo_sync_pending);
++                            continue;
++                        }
+                         em_printfout("radio %s is in state:%d, not in topo sync pending state, ignoring",
+                             util::mac_to_string(em->get_radio_interface_mac()).c_str(), em->get_state());
+                         em_radios.clear();
