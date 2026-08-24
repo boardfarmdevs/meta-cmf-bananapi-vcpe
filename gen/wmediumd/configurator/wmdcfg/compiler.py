@@ -9,7 +9,9 @@ from .model import HoldAction, LinkAction, MarkAction, Scenario, ScenarioError
 
 
 ROLE_TYPES = {"station", "fronthaul_ap"}
-CAPABILITIES = {"radio_pair_snr", "atomic_generations", "readback"}
+CAPABILITIES = {
+    "radio_pair_snr", "frequency_qualified_snr", "atomic_generations", "readback"
+}
 
 
 def _canonical_hash(value: Any) -> str:
@@ -34,6 +36,15 @@ def validate_scenario(scenario: Scenario) -> None:
         raise ScenarioError(f"unsupported capabilities: {sorted(missing)}")
     if not 100 <= scenario.tick_ms <= 60_000:
         raise ScenarioError("tick must be between 100ms and 60s")
+    links = [
+        action for phase in scenario.phases for action in phase.actions
+        if isinstance(action, LinkAction)
+    ]
+    qualified = [link for link in links if link.band is not None]
+    if qualified and len(qualified) != len(links):
+        raise ScenarioError("a scenario cannot mix radio-pair and band-qualified links")
+    if qualified and "frequency_qualified_snr" not in scenario.requirements:
+        raise ScenarioError("band-qualified links require frequency_qualified_snr")
     for phase in scenario.phases:
         holds = [action for action in phase.actions if isinstance(action, HoldAction)]
         links = [action for action in phase.actions if isinstance(action, LinkAction)]
@@ -75,16 +86,30 @@ def _bind(
         if role_type == "fronthaul_ap":
             candidates = [
                 iface for iface in item.get("interfaces", [])
-                if iface.get("ssid") == "private_ssid" and iface.get("frequency_mhz")
+                if iface.get("ssid") in {"private_ssid", "iot_ssid"}
+                and iface.get("frequency_mhz")
             ]
             if not candidates:
-                raise ScenarioError(f"role {role}: {container} has no live private fronthaul")
+                raise ScenarioError(
+                    f"role {role}: {container} has no live private or IoT fronthaul"
+                )
+            frequencies = {}
+            for candidate in candidates:
+                frequency = int(candidate["frequency_mhz"])
+                band = "2.4" if frequency < 2500 else "5" if frequency < 5925 else "6"
+                if band in frequencies and frequencies[band] != frequency:
+                    raise ScenarioError(
+                        f"role {role}: {container} has ambiguous {band}GHz fronthaul frequencies"
+                    )
+                frequencies[band] = frequency
         result[role] = {
             "role_type": role_type,
             "container": container,
             "radio_tx_mac": item["tx_mac"],
             "radio_permanent_mac": item["permanent_mac"],
         }
+        if role_type == "fronthaul_ap":
+            result[role]["fronthaul_frequencies_mhz"] = frequencies
         used.add(container)
     return result
 
@@ -95,6 +120,24 @@ def _directions(action: LinkAction) -> list[tuple[str, str]]:
     if action.direction == "<-":
         return [(action.destination, action.source)]
     return [(action.source, action.destination), (action.destination, action.source)]
+
+
+def _frequency(
+    action: LinkAction, scenario: Scenario, bindings: dict[str, dict[str, Any]]
+) -> int | None:
+    if action.band is None:
+        return None
+    ap_role = (
+        action.source
+        if scenario.roles[action.source] == "fronthaul_ap"
+        else action.destination
+    )
+    frequency = bindings[ap_role].get("fronthaul_frequencies_mhz", {}).get(action.band)
+    if frequency is None:
+        raise ScenarioError(
+            f"line {action.line}: role {ap_role} has no live {action.band}GHz fronthaul"
+        )
+    return int(frequency)
 
 
 def compile_scenario(
@@ -108,16 +151,32 @@ def compile_scenario(
 
     station_roles = {name for name, kind in scenario.roles.items() if kind == "station"}
     ap_roles = {name for name, kind in scenario.roles.items() if kind == "fronthaul_ap"}
-    baseline_pairs: set[frozenset[str]] = set()
+    baseline_pairs: set[tuple[frozenset[str], str | None]] = set()
     for action in scenario.phases[0].actions:
         if isinstance(action, LinkAction):
-            baseline_pairs.add(frozenset((action.source, action.destination)))
-    required_pairs = {frozenset((sta, ap)) for sta in station_roles for ap in ap_roles}
+            baseline_pairs.add(
+                (frozenset((action.source, action.destination)), action.band)
+            )
+    bands = {
+        action.band for phase in scenario.phases for action in phase.actions
+        if isinstance(action, LinkAction)
+    }
+    if not bands:
+        bands = {None}
+    required_pairs = {
+        (frozenset((sta, ap)), band)
+        for sta in station_roles for ap in ap_roles for band in bands
+    }
     if not required_pairs.issubset(baseline_pairs):
-        missing = sorted("<->".join(sorted(pair)) for pair in required_pairs - baseline_pairs)
+        missing = sorted(
+            "<->".join(sorted(pair)) + (f"@{band}GHz" if band else "")
+            for pair, band in required_pairs - baseline_pairs
+        )
         raise ScenarioError(f"first phase must define every station/AP link: {missing}")
 
-    events_by_time: dict[int, dict[tuple[str, str], dict[str, Any]]] = defaultdict(dict)
+    events_by_time: dict[
+        int, dict[tuple[str, str, int | None], dict[str, Any]]
+    ] = defaultdict(dict)
     marks_by_time: dict[int, list[str]] = defaultdict(list)
     phase_records = []
     cursor_ms = 0
@@ -146,7 +205,8 @@ def compile_scenario(
                 for source_role, destination_role in _directions(action):
                     source_mac = bindings[source_role]["radio_tx_mac"]
                     destination_mac = bindings[destination_role]["radio_tx_mac"]
-                    key = (source_mac, destination_mac)
+                    frequency_mhz = _frequency(action, scenario, bindings)
+                    key = (source_mac, destination_mac, frequency_mhz)
                     update = {
                         "property": "snr_db",
                         "source": source_mac,
@@ -155,6 +215,8 @@ def compile_scenario(
                         "source_role": source_role,
                         "destination_role": destination_role,
                     }
+                    if frequency_mhz is not None:
+                        update["frequency_mhz"] = frequency_mhz
                     existing = events_by_time[phase_start + offset].get(key)
                     if existing is not None and existing["value"] != value:
                         raise ScenarioError(
@@ -172,7 +234,9 @@ def compile_scenario(
     for time_ms in all_times:
         updates = sorted(
             events_by_time[time_ms].values(),
-            key=lambda item: (item["source"], item["destination"]),
+            key=lambda item: (
+                item["source"], item["destination"], item.get("frequency_mhz", 0)
+            ),
         )
         if updates:
             generation += 1
@@ -185,6 +249,12 @@ def compile_scenario(
             }
         )
 
+    inventory_radios = inventory.get("radios", [])
+    expected_lab = {
+        "mesh_devices": sum(item.get("kind") == "mesh" for item in inventory_radios),
+        "clients": sum(item.get("kind") == "station" for item in inventory_radios),
+    }
+
     return {
         "schema": "wmdcfg.event-plan.v1",
         "scenario": scenario.name,
@@ -196,6 +266,11 @@ def compile_scenario(
         "duration_ms": cursor_ms,
         "restore": scenario.restore,
         "protections": sorted(scenario.protections),
+        # Health acceptance describes the complete frozen inventory, not just
+        # the small subset of radios assigned scenario roles. A two-AP
+        # crossover in the five-agent lab must still prove 5/15/50/14 and all
+        # ten clients before and after applying its two touched links.
+        "expected_lab": expected_lab,
         "bindings": bindings,
         "phases": phase_records,
         "events": events,

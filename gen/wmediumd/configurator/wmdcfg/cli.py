@@ -13,6 +13,7 @@ from .inventory import discover
 from .model import ScenarioError
 from .parser import parse
 from .runner import Runner
+from .world import compile_world, export_wmd, load_json, verify_world_plan
 
 
 def _bindings(values: list[str]) -> dict[str, str]:
@@ -62,6 +63,22 @@ def main(argv: list[str] | None = None) -> int:
         "--output-root", default="/tmp/wmdcfg-runs", help="run artifact directory"
     )
 
+    world_compile_cmd = commands.add_parser(
+        "world-compile", help="compile a deterministic 2D layout and mobility plan"
+    )
+    world_compile_cmd.add_argument("--layout", required=True)
+    world_compile_cmd.add_argument("scenario")
+    world_compile_cmd.add_argument("-o", "--output", required=True)
+
+    world_export_cmd = commands.add_parser(
+        "world-export", help="project one golden world band into a runnable .wmd scenario"
+    )
+    world_export_cmd.add_argument("plan")
+    world_export_cmd.add_argument(
+        "--band", required=True, choices=["2.4", "5", "6", "all"]
+    )
+    world_export_cmd.add_argument("-o", "--output", required=True)
+
     args = parser.parse_args(argv)
     try:
         if args.command == "status":
@@ -85,6 +102,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "inventory":
             _write(discover(), args.output)
+            return 0
+        if args.command == "world-compile":
+            plan = compile_world(load_json(args.layout), load_json(args.scenario))
+            _write(plan, args.output)
+            return 0
+        if args.command == "world-export":
+            plan = load_json(args.plan)
+            verify_world_plan(plan)
+            Path(args.output).write_text(export_wmd(plan, args.band), encoding="utf-8")
             return 0
         source = Path(args.scenario).read_text()
         scenario = parse(source)

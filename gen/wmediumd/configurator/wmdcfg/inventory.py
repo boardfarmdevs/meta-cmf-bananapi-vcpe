@@ -4,6 +4,8 @@ import datetime as dt
 import json
 import re
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +16,19 @@ MESH_NAME = re.compile(r"^(bpibroadband|bpiap(?:-\d{3})?)$")
 CLIENT_NAME = re.compile(r"^wlan-client(?:-\d{3})?$")
 
 
-def _run(*args: str) -> str:
-    result = subprocess.run(args, check=True, text=True, capture_output=True)
-    return result.stdout.strip()
+def _run(*args: str, attempts: int = 3) -> str:
+    """Run a read-only inventory probe with bounded LXC transport recovery."""
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    for attempt in range(1, attempts + 1):
+        try:
+            result = subprocess.run(args, check=True, text=True, capture_output=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    raise AssertionError("unreachable")
 
 
 def _exec(container: str, command: str) -> str:
@@ -50,16 +62,30 @@ def _parse_iw(text: str) -> list[dict[str, Any]]:
     return interfaces
 
 
-def discover() -> dict[str, Any]:
+def discover(client_names: set[str] | None = None) -> dict[str, Any]:
+    # A scaled lab intentionally retains stopped containers across cold-start
+    # reconstruction and extender-outage tests.  ``lxc exec`` cannot inspect a
+    # stopped instance, so inventory must describe the active RF world rather
+    # than every matching name in LXD's persistent database.
     names = sorted(
-        [line for line in _run("lxc", "list", "-c", "n", "--format", "csv").splitlines()
-         if MESH_NAME.fullmatch(line) or CLIENT_NAME.fullmatch(line)],
+        [
+            name
+            for line in _run("lxc", "list", "-c", "ns", "--format", "csv").splitlines()
+            for name, _, state in [line.partition(",")]
+            if state.strip().upper() == "RUNNING"
+            and (
+                MESH_NAME.fullmatch(name)
+                or (
+                    CLIENT_NAME.fullmatch(name)
+                    and (client_names is None or name in client_names)
+                )
+            )
+        ],
         key=lambda name: [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)],
     )
     if not names:
         raise ScenarioError("no active EasyMesh or WLAN client containers found")
-    radios = []
-    for name in names:
+    def inspect(name: str) -> dict[str, Any]:
         permanent = _exec(
             name, "cat /sys/class/ieee80211/*/macaddress 2>/dev/null | head -1"
         ).lower()
@@ -77,7 +103,21 @@ def discover() -> dict[str, Any]:
             link = _exec(name, "iw dev wlan0 link 2>/dev/null || true")
             match = re.search(r"Connected to ([0-9a-f:]{17})", link, re.I)
             item["associated_bssid"] = match.group(1).lower() if match else None
-        radios.append(item)
+            ssid_match = re.search(r"^\s*SSID:\s*(.+?)\s*$", link, re.M)
+            item["ssid"] = ssid_match.group(1) if ssid_match else None
+            item["cohort"] = (
+                "iot" if item["ssid"] == "iot_ssid"
+                else "private" if item["ssid"] == "private_ssid"
+                else "other"
+            )
+        return item
+
+    # LXC process startup dominates discovery at scale. Container probes are
+    # independent and read-only, while executor.map retains deterministic name
+    # order. Eight workers avoids turning a 50/100-client inventory into a
+    # serial minute-long operation without flooding the LXD daemon.
+    with ThreadPoolExecutor(max_workers=min(8, len(names))) as executor:
+        radios = list(executor.map(inspect, names))
     return {
         "schema": "wmdcfg.inventory.v1",
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),

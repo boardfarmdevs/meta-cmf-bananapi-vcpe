@@ -19,6 +19,7 @@ def _plan() -> dict:
     return {
         "scenario": "runner_test",
         "duration_ms": 0,
+        "expected_lab": {"mesh_devices": 5, "clients": 10},
         "bindings": {},
         "events": [
             {
@@ -40,6 +41,7 @@ class FakeControlClient:
     def __init__(self, socket_path: str):
         self.generation = 0
         self.matrix = {(SOURCE, DESTINATION): 40}
+        self.frequency = {}
         type(self).last = self
 
     def __enter__(self):
@@ -50,7 +52,7 @@ class FakeControlClient:
 
     def status(self):
         return SimpleNamespace(
-            capabilities=REQUIRED_CAPABILITIES,
+            capabilities=REQUIRED_CAPABILITIES | {"frequency_qualified_snr"},
             generation=self.generation,
         )
 
@@ -70,6 +72,22 @@ class FakeControlClient:
     def get_link(self, source: str, destination: str):
         return self.generation, self.matrix[(source, destination)]
 
+    def get_frequency_link(self, source: str, destination: str, frequency: int):
+        key = (source, destination, frequency)
+        if key in self.frequency:
+            return self.generation, self.frequency[key], True
+        return self.generation, self.matrix[(source, destination)], False
+
+    def apply_frequency(self, generation: int, updates: list[dict]):
+        self.generation = generation
+        for update in updates:
+            key = (update["source"], update["destination"], update["frequency_mhz"])
+            if update.get("override", True):
+                self.frequency[key] = update["value"]
+            else:
+                self.frequency.pop(key, None)
+        return updates
+
 
 class RunnerTests(unittest.TestCase):
     def _execute(self, fail_restore: bool):
@@ -83,13 +101,15 @@ class RunnerTests(unittest.TestCase):
             "complete_nodes": 6,
             "topology_nodes": 6,
         }
-        patches = (
-            patch("wmdcfg.runner.ControlClient", FakeControlClient),
-            patch("wmdcfg.runner.mesh_health", return_value=healthy),
-            patch("wmdcfg.runner.snapshot", return_value={"stations": []}),
+        control_patch = patch("wmdcfg.runner.ControlClient", FakeControlClient)
+        health_patch = patch("wmdcfg.runner.mesh_health", return_value=healthy)
+        snapshot_patch = patch(
+            "wmdcfg.runner.snapshot", return_value={"stations": []}
         )
-        for item in patches:
-            item.start()
+        control_patch.start()
+        self.health_mock = health_patch.start()
+        snapshot_patch.start()
+        for item in (control_patch, health_patch, snapshot_patch):
             self.addCleanup(item.stop)
         runner = Runner(_plan(), "/test/control.sock", root)
         return runner, root
@@ -103,6 +123,10 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(summary["error"])
         self.assertIsNotNone(summary["execution_elapsed_ms"])
         self.assertEqual(FakeControlClient.last.matrix[(SOURCE, DESTINATION)], 40)
+        self.assertEqual(
+            [call.args for call in self.health_mock.call_args_list],
+            [(5, 10), (5, 10)],
+        )
 
     def test_restore_readback_failure_reports_failed(self):
         runner, root = self._execute(True)
@@ -113,6 +137,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(summary["outcome"], "failed")
         self.assertFalse(summary["restored"])
         self.assertIn("restoration readback", summary["error"])
+
+    def test_frequency_override_is_removed_on_restore(self):
+        runner, _ = self._execute(False)
+        runner.plan = _plan()
+        runner.plan["events"][0]["updates"][0].update(
+            {"frequency_mhz": 5180, "override": True}
+        )
+        runner.execute()
+        self.assertEqual(FakeControlClient.last.frequency, {})
 
 
 if __name__ == "__main__":

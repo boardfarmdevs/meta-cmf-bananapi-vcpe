@@ -1,7 +1,7 @@
 # wmediumd configurator
 
 This directory contains the scenario-language implementation described in
-`doc/easymesh/steering/wmediumd-configurator.md`.
+`doc/easymesh/configurator.md`.
 
 Python 3.8 or newer is supported so the offline compiler and tests can also run
 on the rev140 build host; live inventory and execution still run inside the lab
@@ -12,6 +12,14 @@ inventory, frozen role binding, deterministic event-plan compilation, and live
 execution through wmediumd's dedicated atomic control socket. Every generation
 is read back, the captured baseline is restored on normal exit or a handled
 interrupt, and ramps never restart wmediumd.
+
+The `worlds/` front end adds deterministic 2D layouts, physical role paths,
+presence intervals, directed link asymmetry, fixed-loss walls and per-band
+golden timelines. It can export one backward-compatible pair projection or all
+bands into the auditable `.wmd` language. Patch `0012` applies the all-band form
+as frequency-qualified overrides with exact readback and restore. This creates
+valid band-specific RF stimulus; the external optimizer still needs reported
+target-BSSID measurements before it can make a band-steering decision.
 
 Run directly from the source tree:
 
@@ -28,13 +36,34 @@ python3 -m wmdcfg.cli compile scenarios/two-ap-crossover.wmd \
 python3 -m wmdcfg.cli status
 python3 -m wmdcfg.cli run /tmp/two-ap-crossover.plan.json \
     --output-root /tmp/wmdcfg-runs
+
+worlds/build-goldens.sh --check
+python3 -m wmdcfg.cli world-export \
+    worlds/golden/home-a-stationary.world.json \
+    --band all -o /tmp/home-a-stationary-all.wmd
 ```
 
 Every station/AP pair declared by the scenario must be initialized in its first
 phase. Bindings are frozen to hwsim transmitter identities (`permanent | 0x40`)
 and never follow the client's association.
 
+For a two-minute visual check of live RCPI reporting, the wrapper discovers the
+selected client's current serving AP, oscillates only that RF link, samples
+`/api/v1/clients`, and restores the captured medium state:
+
+```sh
+./run-rcpi-monitor.sh wlan-client
+```
+
+Keep the WebUI **Connected Clients** tab open during the run. Its Signal column
+refreshes every two seconds and shows both dBm and raw RCPI. The wrapper keeps
+traffic flowing to `10.0.0.1` so hwsim reports each current phase; set
+`WMD_TRAFFIC_TARGET` to use a different reachable address.
+
 The runner requires a complete EasyMesh topology and all expected WLAN clients
-to be active at preflight and postflight. Run artifacts contain the frozen plan,
-every applied generation and observation, health snapshots, verified restore,
-and a machine-readable summary.
+to be active at preflight and postflight. It checks WebUI topology/client counts
+and the controller's authoritative device/radio/BSS/association counts. Each
+generation obtains all client BSSID/RCPI observations with one controller query,
+so observation cost does not distort a multi-client RF timeline. Run artifacts
+contain the frozen plan, every applied generation and observation, health
+snapshots, verified restore, and a machine-readable summary.

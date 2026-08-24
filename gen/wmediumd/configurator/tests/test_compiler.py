@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,16 @@ class CompilerTests(unittest.TestCase):
         self.assertEqual(values[("client", "ap_a")], 10)
         self.assertEqual(values[("client", "ap_b")], 42)
 
+    def test_health_expectation_covers_unbound_inventory(self):
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["radios"].extend(
+            [{"container": f"extra-ap-{index}", "kind": "mesh"} for index in range(3)]
+            + [{"container": f"extra-sta-{index}", "kind": "station"} for index in range(9)]
+        )
+        source = (ROOT / "scenarios/two-ap-crossover.wmd").read_text()
+        plan = compile_scenario(parse(source), source, inventory, BINDINGS)
+        self.assertEqual(plan["expected_lab"], {"mesh_devices": 5, "clients": 10})
+
     def test_direction_expands_symmetrically(self):
         plan = self.compile("all-strong.wmd")
         pairs = {
@@ -45,6 +56,24 @@ class CompilerTests(unittest.TestCase):
             {("client", "ap_a"), ("ap_a", "client"),
              ("client", "ap_b"), ("ap_b", "client")},
         )
+
+    def test_rcpi_monitor_oscillates_one_live_link(self):
+        source = (ROOT / "scenarios/client-rcpi-monitor.wmd").read_text()
+        plan = compile_scenario(
+            parse(source), source, INVENTORY,
+            {"client": "wlan-client", "ap": "bpibroadband"},
+        )
+        self.assertEqual(plan["duration_ms"], 130_000)
+        values = [
+            update["value"]
+            for event in plan["events"]
+            for update in event["updates"]
+            if update["source_role"] == "client"
+        ]
+        self.assertEqual(min(values), 25)
+        self.assertEqual(max(values), 45)
+        self.assertGreaterEqual(values.count(25), 6)
+        self.assertGreaterEqual(values.count(45), 7)
 
     def test_missing_baseline_pair_is_rejected(self):
         source = """
@@ -86,6 +115,44 @@ scenario bad {
         bindings = dict(BINDINGS, client="bpibroadband", ap_a="wlan-client")
         with self.assertRaisesRegex(ScenarioError, "expected"):
             compile_scenario(parse(source), source, INVENTORY, bindings)
+
+    def test_band_qualified_link_resolves_target_ap_frequency(self):
+        source = """
+scenario band_specific {
+  require frequency_qualified_snr
+  protect backhaul
+  restore captured
+  role client : station
+  role ap_a : fronthaul_ap
+  phase baseline for 1s {
+    link client <-> ap_a band 5GHz snr = 31dB
+  }
+}
+"""
+        plan = compile_scenario(
+            parse(source), source, INVENTORY,
+            {"client": "wlan-client", "ap_a": "bpibroadband"},
+        )
+        self.assertEqual(
+            {item["frequency_mhz"] for item in plan["events"][0]["updates"]},
+            {5180},
+        )
+
+    def test_band_qualified_link_requires_capability_and_cannot_mix(self):
+        missing = """
+scenario bad {
+  protect backhaul
+  restore captured
+  role client : station
+  role ap : fronthaul_ap
+  phase x for 1s { link client <-> ap band 5GHz snr = 30dB }
+}
+"""
+        with self.assertRaisesRegex(ScenarioError, "require frequency_qualified"):
+            compile_scenario(
+                parse(missing), missing, INVENTORY,
+                {"client": "wlan-client", "ap": "bpibroadband"},
+            )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from .model import HoldAction, LinkAction, MarkAction, Phase, Scenario, Scenario
 _TOKEN = re.compile(
     r'(?P<string>"(?:[^"\\]|\\.)*")|'
     r'(?P<arrow><->|->|<-)|'
-    r'(?P<number>-?\d+(?:\.\d+)?(?:ms|s|dB)?)|'
+    r'(?P<number>-?\d+(?:\.\d+)?(?:ms|s|dB|GHz)?)|'
     r'(?P<ident>[A-Za-z_][A-Za-z0-9_-]*)|'
     r'(?P<symbol>[{}:=])'
 )
@@ -148,10 +148,23 @@ class Parser:
         if direction not in {"->", "<-", "<->"}:
             raise ScenarioError(f"line {keyword.line}: invalid link direction {direction!r}")
         destination = self.take().value
+        band = None
+        if self.peek() and self.peek().value == "band":
+            self.take("band")
+            value = self.take()
+            match = re.fullmatch(r"(2\.4|5|6)GHz", value.value)
+            if not match:
+                raise ScenarioError(
+                    f"line {value.line}: band must be 2.4GHz, 5GHz or 6GHz"
+                )
+            band = match.group(1)
         self.take("snr")
         if self.peek() and self.peek().value == "=":
             self.take("=")
-            return LinkAction(source, direction, destination, self.snr(), line=keyword.line)
+            return LinkAction(
+                source, direction, destination, self.snr(), line=keyword.line,
+                band=band,
+            )
         start = self.snr()
         self.take("->")
         end = self.snr()
@@ -161,7 +174,8 @@ class Parser:
                 f"line {keyword.line}: only linear interpolation is supported"
             )
         return LinkAction(
-            source, direction, destination, start, end, interpolation, keyword.line
+            source, direction, destination, start, end, interpolation, keyword.line,
+            band,
         )
 
 

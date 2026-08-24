@@ -17,6 +17,7 @@ class LinkAction:
     end_snr_db: int | None = None
     interpolation: str = "step"
     line: int = 0
+    band: str | None = None
 
 
 @dataclass(frozen=True)
