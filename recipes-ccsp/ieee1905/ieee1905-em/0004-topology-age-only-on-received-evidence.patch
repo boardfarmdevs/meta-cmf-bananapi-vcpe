@@ -1,0 +1,108 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: age neighbors only from received evidence
+
+`Ieee1905NodeInfo::update()` refreshed `last_seen` for every metadata
+transition.  That includes locally generated QuerySent and ResponseSent
+transitions and the state reset performed after sending any Topology
+Notification.  In an active mesh those local actions continuously refreshed
+an isolated neighbor, so the 60-second garbage collector could never expire
+it.
+
+Make the evidence boundary explicit.  Refresh `last_seen` once, at the entry
+to the existing-node path, only for operations caused by a received IEEE1905
+or LLDP frame.  Metadata and local state updates no longer imply remote
+liveness.  This also fixes received frames that previously failed to refresh
+the timer when their protocol state required no transition.
+
+Extend the expiry regression test with local QuerySent and notification-sent
+state changes and prove they preserve the stale timestamp before garbage
+collection publishes NeighborExpired.
+
+Upstream-Status: Pending
+---
+ ieee1905-core/src/topology_manager.rs | 34 +++++++++++++++++++++++++---------
+ 1 file changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/ieee1905-core/src/topology_manager.rs b/ieee1905-core/src/topology_manager.rs
+--- a/ieee1905-core/src/topology_manager.rs
++++ b/ieee1905-core/src/topology_manager.rs
+@@ -292,7 +292,6 @@ impl Ieee1905NodeInfo {
+             self.node_state_remote = remote;
+         }
+ 
+-        self.last_seen = Instant::now();
+     }
+ }
+ 
+@@ -816,6 +815,21 @@ impl TopologyDatabase {
+                 Some(node) => {
+                     tracing::debug!(al_mac = ?al_mac, operation = ?operation, "Updating existing node");
+ 
++                    // Liveness is evidence received from the remote node.  A
++                    // local transmission or protocol-state transition must
++                    // never extend the neighbor's lifetime.
++                    if matches!(
++                        operation,
++                        UpdateType::LldpUpdate
++                            | UpdateType::DiscoveryReceived
++                            | UpdateType::NotificationReceived
++                            | UpdateType::QueryReceived { .. }
++                            | UpdateType::ResponseReceived
++                            | UpdateType::ApAutoConfigSearch
++                    ) {
++                        node.metadata.last_seen = Instant::now();
++                    }
++
+                     node.device_data.local_interface_mac = device_data.local_interface_mac;
+ 
+                     transmission_event = match operation {
+@@ -1357,6 +1370,6 @@ mod tests {
+     use crate::cmdu_codec::MediaType;
+     use crate::topology_manager::{
+-        Ieee1905DeviceData, Ieee1905InterfaceData, TopologyChangeEvent, UpdateType,
++        Ieee1905DeviceData, Ieee1905InterfaceData, StateRemote, TopologyChangeEvent, UpdateType,
+     };
+     use pnet::datalink::MacAddr;
+     use tokio::time::{Duration, Instant};
+@@ -1420,7 +1433,7 @@ mod tests {
+             None,
+         );
+         db.update_ieee1905_topology(
+-            device,
++            device.clone(),
+             UpdateType::DiscoveryReceived,
+             None,
+             None,
+@@ -1429,14 +1442,21 @@ mod tests {
+         .await;
+ 
+         let now = Instant::now();
+-        db.nodes
+-            .write()
+-            .await
+-            .get_mut(&al_mac)
+-            .unwrap()
+-            .metadata
+-            .last_seen = now - Duration::from_secs(61);
++        let stale_at = now - Duration::from_secs(61);
++        {
++            let mut nodes = db.nodes.write().await;
++            let node = nodes.get_mut(&al_mac).unwrap();
++            node.metadata.last_seen = stale_at;
++            node.metadata.node_state_remote = StateRemote::ConvergedRemote;
++        }
++
++        // Neither a local query transition nor the state reset after a local
++        // notification is evidence that the remote neighbor is alive.
++        db.update_ieee1905_topology(device, UpdateType::QuerySent, Some(7), None, None)
++            .await;
++        db.handle_notification_sent().await;
++        assert_eq!(db.get_last_seen(al_mac).await, Some(stale_at));
+ 
+-        db.garbage_collect_topology(now).await;
++        db.garbage_collect_topology(Instant::now()).await;
+ 
+         assert!(db.get_device(al_mac).await.is_none());
+         assert_eq!(
+-- 
+2.43.0
