@@ -238,11 +238,35 @@ up)
     # Treat a client as deployed only when both the WLAN association and DHCP
     # lease exist.  The baked startup script normally establishes both; this
     # bounded check catches a broken medium/configuration immediately.
+    association_ready() {
+        lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to'
+    }
     for n in $(seq 1 20); do
-        lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to' && break
+        association_ready && break
         sleep 1
     done
-    lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null | grep -q 'Connected to' || {
+    # A directed 6 GHz SAE scan can occasionally finish without selecting a
+    # BSS while many hwsim radios are being created.  Re-run the exact persisted
+    # configuration with a fresh supplicant process before rejecting the
+    # client.  This is bounded and applies only when the initial association
+    # window failed; ordinary client creation remains unchanged.
+    if ! association_ready; then
+        for retry in 1 2; do
+            echo "$CT: association incomplete; retrying persisted WLAN configuration ($retry/2)"
+            lxc exec "$CT" -- sh -c '
+                for pid in $(pgrep -f "^[^ ]*wpa_supplicant" 2>/dev/null); do
+                    kill "$pid" 2>/dev/null || true
+                done
+                sleep 1
+                rm -f /run/wpa_supplicant/wlan0 /var/run/wpa_supplicant/wlan0
+                /etc/local.d/wlan.start'
+            for n in $(seq 1 30); do
+                association_ready && break 2
+                sleep 1
+            done
+        done
+    fi
+    association_ready || {
         echo "$CT: failed to associate with $SSID" >&2
         exit 1
     }
