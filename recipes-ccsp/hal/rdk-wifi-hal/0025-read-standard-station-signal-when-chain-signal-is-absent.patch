@@ -1,0 +1,36 @@
+From a1e9a93889f20416c18a55cd8187bf62f776e67f Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 00:02:00 -0700
+Subject: [PATCH] nl80211: fall back to the standard station signal attribute
+
+get_sta_handler() derived cli_RSSI exclusively from
+NL80211_STA_INFO_CHAIN_SIGNAL.  Per-chain signal is optional; mac80211_hwsim
+and other valid drivers can report only NL80211_STA_INFO_SIGNAL.  In that
+case `iw station dump` displays the correct RSSI while the HAL returns zero,
+which OneWifi converts to invalid RCPI 255.
+
+Use the standard signed signal value when no per-chain samples were present.
+Prefer the existing averaged per-chain result when the driver supplies it.
+This makes normal associated-STA metrics, including EasyMesh wireless
+backhaul links, reflect the kernel measurement.
+---
+ wifi_hal_nl80211.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+index da625a19..26a8545d 100644
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -7047,6 +7047,10 @@ static int get_sta_handler(struct nl_msg *msg, void *arg)
+ 
+     if (signals_cnt != 0) {
+         rssi = rssi / signals_cnt;
++    } else if (stats[NL80211_STA_INFO_SIGNAL] != NULL) {
++        /* Per-chain signal is optional.  The standard aggregate signal is
++         * signed dBm carried in a u8 netlink attribute. */
++        rssi = (int8_t)nla_get_u8(stats[NL80211_STA_INFO_SIGNAL]);
+     }
+     associated_dev.cli_RSSI = rssi;
+     wifi_hal_dbg_print("%s:%d: RSSI %d\n", __func__, __LINE__, associated_dev.cli_RSSI);
+-- 
+2.43.0

@@ -104,6 +104,7 @@ PLATFORM_CREATE_VAP_MLD_NULL_PATCH := "${THISDIR}/${BPN}/0005-platform_create_va
 # raw netlink capture of the scan-complete event: kernel-level scanning/multicast
 # event delivery both work fine, the mismatch was purely the broadcast SSID itself.
 PLATFORM_BACKHAUL_SSID_PATCH := "${THISDIR}/${BPN}/0009-backhaul-ssid-passphrase-for-mesh-backhaul-ap.patch"
+PLATFORM_WDS_STA_METRICS_PATCH := "${THISDIR}/${BPN}/0026-include-wds-children-in-associated-station-stats.patch"
 
 python do_patch_append() {
     import subprocess, os
@@ -118,16 +119,21 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: fixing backhaul AP SSID/passphrase defaults")
     with open(d.getVar('PLATFORM_BACKHAUL_SSID_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
+    bb.note("meta-cmf-bananapi-vcpe: including WDS child interfaces in station stats")
+    with open(d.getVar('PLATFORM_WDS_STA_METRICS_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
 }
 # The *_PATCH variables hold absolute paths, so referencing them from do_patch put
 # this layer's checkout location into its basehash and no two trees could share
 # sstate for this recipe. The file-checksums below are what makes the patches'
 # contents an input; the paths themselves are not one.
 do_patch[vardepsexclude] += "PLATFORM_CREATE_VAP_NULL_PATCH \
-    PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH"
+    PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH \
+    PLATFORM_WDS_STA_METRICS_PATCH"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_MLD_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_BACKHAUL_SSID_PATCH}:True"
+do_patch[file-checksums] += "${PLATFORM_WDS_STA_METRICS_PATCH}:True"
 
 # InterfaceMap_em.json (BananaPi R4's EasyMesh interface map) groups every radio's
 # primary VAP (wifi0/wifi1/wifi2 -> private_ssid_*) under "MldName": "mld0", a real
@@ -244,3 +250,14 @@ SRC_URI += "file://0022-single-phy-let-START_AP-set-each-radio-channel.patch"
 # pre-auth EAPOL M4 is not diverted to the WDS netdev -> reason 15). Driven from the HAL's
 # SET_STATION(authorized) path because a leftover WDS netdev suppresses UNEXPECTED_4ADDR.
 SRC_URI += "file://0023-create-wds-sta-on-authorization-not-association.patch"
+
+# The standard non-associated STA query reaches wifi_getNASta(), but the
+# generic HAL has no provider.  For HWSIM_RADIO only, read frequency-qualified
+# SNR from wmediumd's separately mounted read-only metrics endpoint and expose
+# it as candidate-link RCPI.  Physical targets retain their native provider.
+SRC_URI += "file://0024-hwsim-read-candidate-rcpi-from-wmediumd.patch"
+
+# NL80211_STA_INFO_CHAIN_SIGNAL is optional.  Fall back to the standard
+# aggregate signal attribute so EasyMesh associated-STA and backhaul metrics
+# do not become invalid RCPI 255 on drivers that omit per-chain samples.
+SRC_URI += "file://0025-read-standard-station-signal-when-chain-signal-is-absent.patch"

@@ -1,0 +1,241 @@
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Subject: [PATCH] hwsim: read candidate RCPI from read-only wmediumd
+
+Implement the non-associated STA measurement primitive for the hwsim lab at
+the radio-provider boundary.  The HAL reads frequency-qualified SNR through
+wmediumd's separately mounted read-only metrics socket and converts it to
+IEEE 1905 RCPI using wmediumd's fixed -91 dBm noise floor.
+
+The provider fails closed unless the endpoint advertises both frequency
+qualification and read-only capabilities.  This is deliberately HWSIM_RADIO
+only: hardware builds retain their existing scan/provider implementation.
+
+diff --git a/wifi_hal.c b/wifi_hal.c
+index d489ffd..73ff9e6 100644
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -24,8 +24,13 @@
+ #include <errno.h>
+ #include <stdarg.h>
+ #include <pthread.h>
++#include <stdint.h>
++#include <dirent.h>
+ #include <sys/socket.h>
++#include <sys/time.h>
++#include <sys/un.h>
+ #include <sys/ioctl.h>
++#include <arpa/inet.h>
+ #include <net/if.h>
+ #include <linux/rtnetlink.h>
+ #include <netpacket/packet.h>
+@@ -4941,6 +4946,210 @@ INT wifi_getNASta(INT apIndex, const wifi_na_sta_req_params_t *params, wifi_na_s
+     }
+ 
+     return platform_get_nasta(apIndex, params, sta_info);
++#elif defined(HWSIM_RADIO)
++    enum {
++        WMDC_OP_HELLO = 1,
++        WMDC_OP_GET_FREQUENCY = 7,
++        WMDC_OK = 0,
++        WMDC_CAP_FREQUENCY_QUALIFIED_SNR = 1U << 4,
++        WMDC_CAP_READ_ONLY = 1U << 5,
++    };
++    struct wmdc_header {
++        uint32_t magic;
++        uint16_t version;
++        uint16_t opcode;
++        uint32_t payload_len;
++        uint32_t status;
++        uint64_t generation;
++    } __attribute__((packed));
++    struct wmdc_info {
++        uint64_t instance_hi;
++        uint64_t instance_lo;
++        uint32_t capabilities;
++        uint32_t max_updates;
++        uint32_t num_stations;
++        uint32_t reserved;
++    } __attribute__((packed));
++    struct wmdc_frequency_link {
++        uint8_t source[6];
++        uint8_t destination[6];
++        uint32_t frequency_mhz;
++        int16_t snr_db;
++        uint16_t flags;
++    } __attribute__((packed));
++    struct {
++        struct wmdc_header header;
++        struct wmdc_frequency_link link;
++    } request;
++    uint8_t response[sizeof(struct wmdc_header) + sizeof(struct wmdc_info)];
++    struct wmdc_header *header = (struct wmdc_header *)response;
++    struct wmdc_info *info = (struct wmdc_info *)(response + sizeof(*header));
++    struct wmdc_frequency_link *link =
++        (struct wmdc_frequency_link *)(response + sizeof(*header));
++    struct sockaddr_un address;
++    struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
++    DIR *phys;
++    struct dirent *entry;
++    char phy_path[256];
++    char phy_address[32];
++    unsigned int phy_octets[6];
++    uint32_t frequency_mhz;
++    uint32_t capabilities;
++    int16_t snr_db;
++    int rcpi;
++    int fd = -1;
++    int length;
++    int i;
++    FILE *file = NULL;
++    bool found_phy = false;
++
++    AP_INDEX_ASSERT(apIndex);
++    if (!params || !sta_info) {
++        wifi_hal_error_print("%s:%d: Invalid parameters\n", __func__, __LINE__);
++        return WIFI_HAL_ERROR;
++    }
++
++    /* Translate the EasyMesh operating class/channel tuple to MHz.  The
++     * endpoint is frequency-qualified because this single hwsim phy carries
++     * all three logical radios. */
++    if (params->channel == 0) {
++        return WIFI_HAL_ERROR;
++    } else if (params->op_class >= 81 && params->op_class <= 84) {
++        if (params->channel > 14)
++            return WIFI_HAL_ERROR;
++        frequency_mhz = params->channel == 14 ? 2484 :
++            2407 + 5 * params->channel;
++    } else if (params->op_class >= 115 && params->op_class <= 130) {
++        if (params->channel > 177)
++            return WIFI_HAL_ERROR;
++        frequency_mhz = 5000 + 5 * params->channel;
++    } else if (params->op_class >= 131 && params->op_class <= 137) {
++        if (params->channel > 233)
++            return WIFI_HAL_ERROR;
++        frequency_mhz = 5950 + 5 * params->channel;
++    } else {
++        wifi_hal_error_print("%s:%d: Unsupported operating class %u\n",
++            __func__, __LINE__, params->op_class);
++        return WIFI_HAL_ERROR;
++    }
++
++    /* A BPI container owns exactly one passed-through hwsim phy.  wmediumd's
++     * identity is the permanent phy address with the local-admin bit 0x40
++     * added; the per-VAP BSSIDs are not wmediumd station identities. */
++    phys = opendir("/sys/class/ieee80211");
++    if (!phys) {
++        wifi_hal_error_print("%s:%d: Cannot enumerate hwsim phys: %s\n",
++            __func__, __LINE__, strerror(errno));
++        return WIFI_HAL_ERROR;
++    }
++    while ((entry = readdir(phys)) != NULL) {
++        if (entry->d_name[0] == '.')
++            continue;
++        snprintf(phy_path, sizeof(phy_path),
++            "/sys/class/ieee80211/%s/macaddress", entry->d_name);
++        file = fopen(phy_path, "r");
++        if (!file)
++            continue;
++        if (fgets(phy_address, sizeof(phy_address), file) != NULL &&
++            sscanf(phy_address, "%x:%x:%x:%x:%x:%x",
++                &phy_octets[0], &phy_octets[1], &phy_octets[2],
++                &phy_octets[3], &phy_octets[4], &phy_octets[5]) == 6)
++            found_phy = true;
++        fclose(file);
++        file = NULL;
++        if (found_phy)
++            break;
++    }
++    closedir(phys);
++    if (!found_phy) {
++        wifi_hal_error_print("%s:%d: No hwsim phy identity found\n",
++            __func__, __LINE__);
++        return WIFI_HAL_ERROR;
++    }
++
++    memset(&request, 0, sizeof(request));
++    for (i = 0; i < 6; i++) {
++        request.link.source[i] = params->sta_mac[i];
++        request.link.destination[i] = (uint8_t)phy_octets[i];
++    }
++    request.link.source[0] |= 0x40;
++    request.link.destination[0] |= 0x40;
++    request.link.frequency_mhz = htonl(frequency_mhz);
++
++    fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
++    if (fd < 0)
++        goto error;
++    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0 ||
++        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0)
++        goto error;
++    memset(&address, 0, sizeof(address));
++    address.sun_family = AF_UNIX;
++    snprintf(address.sun_path, sizeof(address.sun_path),
++        "%s", "/wmediumd-metrics/control.sock");
++    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0)
++        goto error;
++
++    /* Require the capability-marked read-only endpoint.  This deliberately
++     * fails closed if a writable configurator socket is mounted by mistake. */
++    memset(&request.header, 0, sizeof(request.header));
++    request.header.magic = htonl(0x574d4443U);
++    request.header.version = htons(1);
++    request.header.opcode = htons(WMDC_OP_HELLO);
++    if (send(fd, &request.header, sizeof(request.header), 0) !=
++            (ssize_t)sizeof(request.header))
++        goto error;
++    length = recv(fd, response, sizeof(response), 0);
++    if (length != (int)(sizeof(*header) + sizeof(*info)) ||
++        ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
++        ntohs(header->opcode) != WMDC_OP_HELLO ||
++        ntohl(header->status) != WMDC_OK ||
++        ntohl(header->payload_len) != sizeof(*info))
++        goto error;
++    capabilities = ntohl(info->capabilities);
++    if ((capabilities & (WMDC_CAP_FREQUENCY_QUALIFIED_SNR |
++            WMDC_CAP_READ_ONLY)) !=
++            (WMDC_CAP_FREQUENCY_QUALIFIED_SNR | WMDC_CAP_READ_ONLY))
++        goto error;
++
++    request.header.opcode = htons(WMDC_OP_GET_FREQUENCY);
++    request.header.payload_len = htonl(sizeof(request.link));
++    if (send(fd, &request, sizeof(request), 0) != (ssize_t)sizeof(request))
++        goto error;
++    length = recv(fd, response, sizeof(response), 0);
++    if (length != (int)(sizeof(*header) + sizeof(*link)) ||
++        ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
++        ntohs(header->opcode) != WMDC_OP_GET_FREQUENCY ||
++        ntohl(header->status) != WMDC_OK ||
++        ntohl(header->payload_len) != sizeof(*link) ||
++        memcmp(link->source, request.link.source, sizeof(link->source)) != 0 ||
++        memcmp(link->destination, request.link.destination,
++            sizeof(link->destination)) != 0 ||
++        ntohl(link->frequency_mhz) != frequency_mhz)
++        goto error;
++
++    snr_db = (int16_t)ntohs((uint16_t)link->snr_db);
++    rcpi = 2 * (snr_db + 19); /* wmediumd noise floor is fixed at -91 dBm. */
++    if (rcpi < 0)
++        rcpi = 0;
++    else if (rcpi > 220)
++        rcpi = 220;
++    memcpy(sta_info->sta_mac, params->sta_mac, sizeof(sta_info->sta_mac));
++    sta_info->channel = params->channel;
++    sta_info->op_class = params->op_class;
++    sta_info->rcpi = (UINT)rcpi;
++    close(fd);
++    wifi_hal_dbg_print("%s:%d: candidate STA RCPI %u (SNR %d dB, %u MHz)\n",
++        __func__, __LINE__, sta_info->rcpi, snr_db, frequency_mhz);
++    return WIFI_HAL_SUCCESS;
++
++error:
++    wifi_hal_error_print("%s:%d: candidate metrics provider failed: %s\n",
++        __func__, __LINE__, strerror(errno));
++    if (file)
++        fclose(file);
++    if (fd >= 0)
++        close(fd);
++    return WIFI_HAL_ERROR;
+ #else
+     (void)apIndex;
+     (void)params;
