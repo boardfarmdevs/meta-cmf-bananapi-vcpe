@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000110 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 18:06:00 -0700
+Subject: [PATCH] agent: preserve WSC recovery past configuration renew
+
+A strict persistent reconstruction proved that the recovery ownership added
+for device initialization also applies to configuration renewal.  An Agent
+with retained identity enters the same per-radio WSC exchange under a
+cfg_renew command.  If the shared renewal command reaches its generic TTL
+while a radio is still in wsc_m2_pending or owconfig_pending, resetting that
+radio to unconfigured discards the bounded recovery transaction just as the
+device-init path did.
+
+Treat both onboarding commands alike.  Their shared orchestration lifetime is
+allowed to end, but an incomplete per-radio WSC transaction keeps its state
+until its own bounded retry completes.  All other command and state timeout
+behavior remains unchanged.
+
+Upstream-Status: Pending
+---
+ src/orch/em_orch_agent.cpp | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 2222222..3333333 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -64,20 +64,22 @@ void em_orch_agent_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+     if (stats->time > EM_MAX_CMD_GEN_TTL) {
+         em_printfout("Canceling cmd: %s because time limit exceeded\n", pcmd->get_cmd_name());
+         em_state_t state = em->get_state();
+         em_cmd_type_t cmd_type = pcmd->get_type();
+         cancel_command(cmd_type);
+-        if (cmd_type == em_cmd_type_dev_init &&
+-                (state == em_state_agent_wsc_m2_pending ||
++        if ((cmd_type == em_cmd_type_dev_init ||
++             cmd_type == em_cmd_type_cfg_renew) &&
++                (state == em_state_agent_wsc_m2_pending ||
+                  state == em_state_agent_owconfig_pending)) {
+             // WSC is a per-radio protocol transaction and its bounded retry
+-            // remains live after the shared device-init command is gone.
++            // remains live after the shared onboarding command is gone.
++            // The per-radio state is the ownership boundary, not the command.
+             // Do not erase that ownership state on the generic command TTL.
+-            em_printfout("Preserving %s after device-init timeout for radio %s",
++            em_printfout("Preserving %s after onboarding command timeout for radio %s",
+                 em_t::state_2_str(state),
+                 util::mac_to_string(em->get_radio_interface_mac()).c_str());
+         } else if (state < em_state_agent_topo_synchronized) {
+ 	    	em->set_state(em_state_agent_unconfigured);
+ 		} else {
+ 	    	em->set_state(em_state_agent_topo_synchronized);
+ 		}
+ 	}
+-- 
+2.43.0
