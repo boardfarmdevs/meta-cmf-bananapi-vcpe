@@ -12,22 +12,75 @@ patched hwsim module, multichannel wmediumd, LXD, Docker, Boardfarm, the
 controller, four extenders, twenty WLAN clients and the test checkout. A new user
 imports the box and starts it; they do not run the one-time installer.
 
-The accepted baseline package is `easymesh-lab-0824-a9689eb.box`, exactly
-`16,560,643,152` bytes, with SHA-256
-`7d546151bde3d9c2174c7e26046f616894c557e27c843dac4a88050ad4f8fdb1`.
-It was made only after independent fresh and persistent cold-reconstruction
-passes on rev120 and rev150. Always verify the adjacent checksum and inspect
-the box's recorded source revision and image hashes. Older dated boxes remain
-usable for their own acceptance but must not be used to claim the current
-results.
+The current package is `easymesh-lab-0826-6892fe1.box`, exactly
+`23,910,600,571` bytes, with SHA-256
+`6e9d84c58e1288bf89026c0889f0a3858409076d41550931baaa44d9df343daa`.
+It was created from source revision
+`6892fe1f3d6fb26c3fa982015a1b3a2e993e57c4` only after a clean deployment and
+two consecutive persistent reboot-reconstruction passes on rev120. Verify the
+adjacent checksum before importing it.
 
-That immutable `a9689eb` package predates the wmediumd Console and EasyMesh
-`0113` extender-signal freshness. The current Vagrantfile already reserves
-host port 18890 for the Console, but it becomes usable only in a package
-regenerated from the Phase 1/2 runtime. Verify the source revision inside a box
-instead of inferring features from its Vagrantfile.
+## 1. Check and remove an existing EasyMesh VM
 
-## 1. Understand the lab
+Start by inventorying VirtualBox and Vagrant. Do this before installing or
+importing the replacement:
+
+```sh
+VBoxManage list runningvms
+VBoxManage list vms
+vagrant global-status
+```
+
+If an existing EasyMesh VM is listed, note its exact name and Vagrant working
+directory. Preserve any captures or test results you still need. From that
+VM's own working directory, stop it cleanly and delete that VM and its mutable
+disk:
+
+```sh
+cd /exact/path/reported/by/vagrant
+vagrant halt
+vagrant destroy -f
+```
+
+Run the inventory commands again and confirm that the selected VM is gone. Do
+not delete an unrelated VM. If the Vagrant working directory no longer exists,
+inspect the exact VirtualBox name before removing the orphan directly:
+
+```sh
+old_vm='exact-easymesh-vm-name'
+VBoxManage showvminfo "$old_vm"
+VBoxManage showvminfo "$old_vm" --machinereadable | grep '^VMState='
+```
+
+If it is still running, request an ACPI shutdown and wait until the state is
+`poweroff`:
+
+```sh
+VBoxManage controlvm "$old_vm" acpipowerbutton
+VBoxManage showvminfo "$old_vm" --machinereadable | grep '^VMState='
+```
+
+Then remove only that inspected VM:
+
+```sh
+VBoxManage unregistervm "$old_vm" --delete
+```
+
+Wait for `VMState="poweroff"` before `unregistervm`. The `--delete` operation
+permanently removes that VM's disk, so use only the exact EasyMesh VM name you
+just inspected.
+
+Finally, check for an older registration under the name used by this guide:
+
+```sh
+vagrant box list
+vagrant box remove cmf/easymesh-lab-0824 --all
+```
+
+The last command removes only the local reusable box registration; omit it if
+that name is not listed. It does not remove the new `.box` file you received.
+
+## 2. Understand the lab
 
 ```text
 Ubuntu 22.04/24.04 workstation
@@ -43,8 +96,8 @@ Ubuntu 22.04/24.04 workstation
     |   `-- wlan-client ... wlan-client-019   twenty simulated stations
     |-- patched multichannel wmediumd         simulated RF medium
     |-- WebUI/API on guest port 8888
-    |        `-- Vagrant forwards it to host port 18888
-    `-- wmediumd Console on guest port 8890 (Phase 1/2 packages)
+    |        `-- Vagrant forwards it to host port 18889
+    `-- wmediumd Console on guest port 8890
              `-- Vagrant forwards it to host port 18890
 ```
 
@@ -70,7 +123,7 @@ The controller database shorthand `5/15/50/24` means five EasyMesh devices,
 four extender backhaul stations. The WebUI shows six mesh nodes because it
 renders the controller model separately from its colocated agent.
 
-## 2. Install VirtualBox and Vagrant on the workstation
+## 3. Install VirtualBox and Vagrant on the workstation
 
 The supported hosts are Ubuntu 22.04 and 24.04 on x86-64 hardware with VT-x or
 AMD-V enabled. The accepted default VM allocation is six virtual CPUs and
@@ -87,7 +140,7 @@ case "$VERSION_ID:$VERSION_CODENAME" in
 esac
 
 sudo apt update
-sudo apt install -y ca-certificates curl gpg
+sudo apt install -y ca-certificates curl gpg wget
 
 curl -fsSL https://www.virtualbox.org/download/oracle_vbox_2016.asc \
   | sudo gpg --dearmor --yes \
@@ -123,16 +176,48 @@ find "/lib/modules/$(uname -r)" -type f -name 'vbox*.ko*' -print
 
 Do not continue until `VBoxManage list hostinfo` succeeds.
 
-## 3. Verify and import the packaged box
+## 4. Download, verify and import the packaged box
 
-Create one working directory per VM. Copy the dated `.box`, its `.sha256` file
-and the supplied `Vagrantfile` into it:
+Create one working directory per VM:
 
 ```sh
-mkdir -p "$HOME/easymesh-lab/0824"
+mkdir -p "$HOME/easymesh-lab/0824/packages"
 cd "$HOME/easymesh-lab/0824"
-ls -lh
-sha256sum -c easymesh-lab-0824-a9689eb.box.sha256
+```
+
+Download the box and its checksum from the supplied Google Drive direct
+download links. The identifiers below are deliberately placeholders; replace
+them with the privately supplied values. Keep `--continue` on the large box so
+an interrupted transfer can resume:
+
+```sh
+wget --continue \
+  --output-document=packages/easymesh-lab-0826-6892fe1.box \
+  'https://drive.google.com/uc?export=download&confirm=t&id=<BOX_FILE_ID>'
+
+wget \
+  --output-document=packages/easymesh-lab-0826-6892fe1.box.sha256 \
+  'https://drive.google.com/uc?export=download&confirm=t&id=<CHECKSUM_FILE_ID>'
+```
+
+Download the matching guide and consumer Vagrantfile from the public project
+branch:
+
+```sh
+public_base='https://raw.githubusercontent.com/boardfarmdevs/meta-cmf-bananapi-vcpe/codex/0824-clean/gen/vm/packaged'
+download_nonce=$(date +%s)
+wget --output-document=README.md "$public_base/README.md?download=$download_nonce"
+wget --output-document=Vagrantfile "$public_base/Vagrantfile?download=$download_nonce"
+```
+
+Verify the resulting layout and checksum before importing anything:
+
+```sh
+ls -lh README.md Vagrantfile packages/
+(
+  cd packages
+  sha256sum -c easymesh-lab-0826-6892fe1.box.sha256
+)
 ```
 
 The exact filename and date may differ. A checksum failure means the transfer
@@ -141,7 +226,8 @@ is incomplete or the wrong checksum was supplied; do not import that file.
 Register the verified box once under a clear local name:
 
 ```sh
-vagrant box add --name cmf/easymesh-lab-0824 easymesh-lab-0824-a9689eb.box
+vagrant box add --name cmf/easymesh-lab-0824 \
+  packages/easymesh-lab-0826-6892fe1.box
 vagrant box list | grep '^cmf/easymesh-lab-0824 '
 ```
 
@@ -155,7 +241,7 @@ export EASYMESH_BOX_NAME=cmf/easymesh-lab-0824
 The import is a one-time operation. Later `vagrant up` commands use the local
 registered box and the VM's own virtual disk.
 
-## 4. Start the VM and the complete lab
+## 5. Start the VM and the complete lab
 
 From the directory containing the `Vagrantfile`:
 
@@ -193,7 +279,7 @@ sudo easymesh-labctl check
 `warm-start` is safe even if the boot service is already running: it waits for
 the same service chain instead of starting a competing deployment.
 
-## 5. Know when it is ready
+## 6. Know when it is ready
 
 The normal high-level commands are:
 
@@ -256,12 +342,12 @@ Boardfarm's 60 checks concern its Docker WAN/DHCP environment. They do not by
 themselves prove EasyMesh onboarding; the subsequent model, client, traffic
 and restart checks provide that proof.
 
-## 6. Open and use the WebUI
+## 7. Open and use the WebUI
 
 The default Vagrant forwarding is private to the workstation:
 
 ```text
-http://127.0.0.1:18888/
+http://127.0.0.1:18889/
 ```
 
 To reach it from another trusted machine on the same LAN, bind the forwarded
@@ -270,13 +356,13 @@ port to the workstation's network interfaces when starting the VM:
 ```sh
 EASYMESH_BOX_NAME=cmf/easymesh-lab-0824 \
 EASYMESH_WEBUI_HOST_IP=0.0.0.0 \
-EASYMESH_WEBUI_PORT=18888 \
+EASYMESH_WEBUI_PORT=18889 \
 vagrant up
 ```
 
-Then browse to `http://WORKSTATION-IP:18888/`. This engineering UI is not
+Then browse to `http://WORKSTATION-IP:18889/`. This engineering UI is not
 hardened for the public Internet; expose it only on a trusted lab network.
-If port 18888 is already occupied, choose another unused host port and keep
+If port 18889 is already occupied, choose another unused host port and keep
 guest port 8888 unchanged.
 
 The principal pages are:
@@ -308,7 +394,7 @@ The topology and client API are good automation interfaces for observing and
 verifying a test. `steer.sh` is the supported command-line adapter for an
 explicit steering action.
 
-For a Phase 1/2 package, open `http://127.0.0.1:18890/` to inspect the medium
+Open `http://127.0.0.1:18890/` to inspect the medium
 itself: active radio paths, frame/outcome counters, effective SNR, VIF
 ownership, queue/netlink health and the bounded event timeline. Verify it from
 inside the guest with:
@@ -323,7 +409,7 @@ The last response must say `enabled: false` during normal operation. The
 Console is experiment instrumentation, not an EasyMesh optimizer and not the
 source of controller signal measurements.
 
-## 7. Run the routine acceptance tests
+## 8. Run the routine acceptance tests
 
 Run these after every imported-box first boot or VM reboot:
 
@@ -351,7 +437,7 @@ Results are retained inside the VM:
 /home/vagrant/.local/state/easymesh-vagrant/reboot-acceptance/
 ```
 
-## 8. Run one manual steering command
+## 9. Run one manual steering command
 
 First discover the station MAC, its serving BSSID and current 5 GHz targets;
 do not copy BSSIDs from another deployment:
@@ -377,7 +463,7 @@ lxc exec bpibroadband -- /usr/bin/steer.sh "$sta" "$target"
 Verify the actual client link and the WebUI/API parent. A successful command
 response alone is not a complete steering pass.
 
-## 9. Run wmediumd RF experiments
+## 10. Run wmediumd RF experiments
 
 Run experiments from the installed repository:
 
@@ -459,7 +545,7 @@ generations. A normal run does not restart wmediumd. It captures the baseline,
 reads each generation back and restores all touched links on completion or a
 handled interrupt.
 
-## 10. Run developer and recovery tests
+## 11. Run developer and recovery tests
 
 Run the configurator unit suite without changing the live medium:
 
@@ -491,7 +577,7 @@ an abrupt container stop. Retain its evidence if it fails. For a clean baseline
 after arbitrary experimentation, use a full managed VM restart instead of a
 sequence of partial process restarts.
 
-## 11. Capture EasyMesh traffic for Wireshark
+## 12. Capture EasyMesh traffic for Wireshark
 
 The preferred diagnostic capture is decapsulated IEEE 1905/EasyMesh traffic on
 `brlan0` inside the controller network namespace. Run inside the VM:
@@ -518,7 +604,7 @@ Copy it from the workstation to another machine with `scp`, or use Vagrant's
 SSH configuration. Do not bring `hwsim0` up dynamically on an active lab; that
 raw 802.11 capture path can disrupt the managed wmediumd transport.
 
-## 12. Shut down, reboot and recover
+## 13. Shut down, reboot and recover
 
 Run Vagrant lifecycle commands on the workstation in the VM directory:
 
@@ -546,7 +632,7 @@ current journals first, then use `vagrant reload` and the two commands above.
 The boot service deliberately reconstructs the hwsim, wmediumd, container and
 client state in a known order.
 
-## 13. Run more than one copy
+## 14. Run more than one copy
 
 Each copy needs its own working directory, VirtualBox VM name and forwarded
 WebUI port:
@@ -565,7 +651,7 @@ vagrant up
 Do not copy another working directory's `.vagrant` directory. The registered
 box is the reusable template; every `vagrant up` creates an independent VM.
 
-## 14. Package an accepted VM again
+## 15. Package an accepted VM again
 
 First return the lab to a passing state, reboot-test it and shut it down:
 
@@ -591,7 +677,7 @@ box that another user imports with `vagrant box add`. Share the box, checksum
 and matching `Vagrantfile` together. A package contains the VM state at the
 clean shutdown; it does not contain the workstation's Vagrant registration.
 
-## 15. Remove a copy or uninstall the tools
+## 16. Remove a copy or uninstall the tools
 
 Destroy only the VM represented by the current working directory:
 
@@ -607,7 +693,7 @@ original `.box` file and other VMs are unaffected.
 To uninstall the workstation tools while retaining existing VM and Vagrant
 data, use the procedure in [`../thin/README.md`](../thin/README.md#uninstall-from-the-ubuntu-host).
 
-## 16. Where to read more
+## 17. Where to read more
 
 - [EasyMesh documentation](../../../doc/easymesh/README.md): reader paths and topic index
 - [current state](../../../doc/easymesh/current-state.md): supported topology and limitations
