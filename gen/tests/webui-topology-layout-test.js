@@ -181,6 +181,13 @@ assert.equal(staleSignal.available, false);
 assert.equal(staleSignal.stale, true);
 assert.equal(staleSignal.label, 'stale');
 const visualizationSource = controller.updateTopologyVisualization.toString();
+assert.match(controller.setupEventHandlers.toString(), /observeTopologyViewport/,
+  'topology pane resize observation is not installed');
+assert.match(controller.observeTopologyViewport.toString(), /ResizeObserver/,
+  'topology pane does not use element-level resize observation');
+assert.doesNotMatch(controller.resizeTopologyViewport.toString(),
+  /fitTopologyToView|updateTopologyVisualization|zoom\.transform/,
+  'resizing the pane would refit, redraw or replace the operator pan/zoom');
 assert.match(visualizationSource, /sta-signal-bars/,
   'topology does not render the signal-strength glyph');
 assert.match(visualizationSource, /sta-signal-arc/,
@@ -247,6 +254,43 @@ assert.deepEqual(controller.topologySimulationNodes(null), []);
 assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNodes\(simulation\)/,
   'Optimize Layout does not operate on the D3 render-node set');
 assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
+
+const originalGetElementById = document.getElementById;
+const resizeAttributes = {};
+const resizeCenter = { x: null, y: null };
+const centerForce = {
+  x(value) { resizeCenter.x = value; return this; },
+  y(value) { resizeCenter.y = value; return this; }
+};
+const preservedTransform = { x: 41, y: 23, k: 1.25 };
+let resizeRedraws = 0;
+document.getElementById = id => id === 'topology-visualization'
+  ? { clientWidth: 1600, clientHeight: 900 }
+  : null;
+controller.zoomTransformCache = preservedTransform;
+controller.topologyView = {
+  width: 900,
+  height: 600,
+  svg: {
+    attr(name, value) { resizeAttributes[name] = value; return this; }
+  }
+};
+controller.topologySimulation = {
+  force(name) { assert.equal(name, 'center'); return centerForce; }
+};
+controller.updateTopologyVisualization = () => { resizeRedraws += 1; };
+assert.equal(controller.resizeTopologyViewport(), true,
+  'a real topology pane resize was ignored');
+assert.deepEqual(resizeAttributes, { width: 1600, height: 900 });
+assert.deepEqual(resizeCenter, { x: 800, y: 450 });
+assert.equal(controller.topologyView.width, 1600);
+assert.equal(controller.topologyView.height, 900);
+assert.strictEqual(controller.zoomTransformCache, preservedTransform,
+  'topology resize replaced the current operator pan/zoom');
+assert.equal(resizeRedraws, 0, 'topology resize rebuilt the graph');
+assert.equal(controller.resizeTopologyViewport(), false,
+  'an unchanged pane size performed redundant SVG work');
+document.getElementById = originalGetElementById;
 
 let fitted = false;
 const layoutEvents = [];
