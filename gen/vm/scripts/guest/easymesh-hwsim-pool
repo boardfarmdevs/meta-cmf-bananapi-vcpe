@@ -65,7 +65,10 @@ for phy in /sys/devices/virtual/mac80211_hwsim/hwsim*/ieee80211/phy*; do
     ip link set "$netdev" up
 done
 
-host_phys=$(find /sys/devices/virtual/mac80211_hwsim -type d \
-    -path '*/ieee80211/phy*' | wc -l)
+# Count only the wiphy directory itself.  A path glob ending in `phy*` also
+# matches descendants such as phy0/power and phy0/rfkill0, which made a valid
+# 32-radio pool look like 128 radios on kernels that expose those directories.
+host_phys=$(find /sys/devices/virtual/mac80211_hwsim -mindepth 3 -maxdepth 3 \
+    -type d -path '*/ieee80211/phy[0-9]*' | wc -l)
 host_radios=$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)
 test "$host_radios" -eq "$host_phys"
