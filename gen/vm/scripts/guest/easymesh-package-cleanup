@@ -14,7 +14,10 @@ apt-get clean
 journalctl --rotate >/dev/null 2>&1 || true
 journalctl --vacuum-size=16M >/dev/null 2>&1 || true
 
-find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 1 -delete
+# Active services own non-empty systemd/snap private directories. Remove
+# ordinary top-level temporary files, but leave those live private trees for
+# shutdown instead of failing the terminal packaging step.
+find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 1 -delete 2>/dev/null || true
 find /var/log -type f \( -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) \
     -delete
 rm -rf /home/vagrant/easymesh-assets
