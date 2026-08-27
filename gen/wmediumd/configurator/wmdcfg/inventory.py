@@ -16,17 +16,28 @@ MESH_NAME = re.compile(r"^(bpibroadband|bpiap(?:-\d{3})?)$")
 CLIENT_NAME = re.compile(r"^wlan-client(?:-\d{3})?$")
 
 
-def _run(*args: str, attempts: int = 3) -> str:
+def _run(*args: str, attempts: int = 2, timeout_seconds: float = 4.0) -> str:
     """Run a read-only inventory probe with bounded LXC transport recovery."""
     if attempts < 1:
         raise ValueError("attempts must be positive")
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
     for attempt in range(1, attempts + 1):
         try:
-            result = subprocess.run(args, check=True, text=True, capture_output=True)
+            result = subprocess.run(
+                args,
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+            )
             return result.stdout.strip()
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             if attempt == attempts:
-                raise
+                command = " ".join(args)
+                raise ScenarioError(
+                    f"inventory probe failed after {attempts} attempts: {command}"
+                ) from error
             time.sleep(0.5 * attempt)
     raise AssertionError("unreachable")
 

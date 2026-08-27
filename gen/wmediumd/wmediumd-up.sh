@@ -89,6 +89,11 @@ stop_running_wmediumd() {
 case "${1:-up}" in
   up)
     [ -x "$WMD" ] || { echo "no wmediumd binary ($WMD); run build-wmediumd.sh" >&2; exit 1; }
+    # Validate the complete managed radio inventory before replacing a healthy
+    # daemon. Starting from only the BPI radios appears successful but cannot
+    # deliver frames for client radios that become active afterward.
+    echo ">> preflight radio inventory"
+    "$HERE/gen-config.sh" "${SNR:-40}" >/dev/null
     stop_running_wmediumd
     # Pool vifs are created administratively UP even while unused.  They are not
     # part of the active matrix and must not originate frames after REGISTER.

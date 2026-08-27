@@ -16,6 +16,21 @@ def test_inventory_probe_retries_a_lost_lxc_exec_transport():
     sleep.assert_called_once_with(0.5)
 
 
+def test_inventory_probe_retries_a_bounded_timeout():
+    failed = subprocess.TimeoutExpired(["lxc", "exec"], 0.25)
+    completed = subprocess.CompletedProcess(["lxc", "exec"], 0, "ready\n", "")
+    with patch("wmdcfg.inventory.subprocess.run", side_effect=[failed, completed]) as run, patch(
+        "wmdcfg.inventory.time.sleep"
+    ) as sleep:
+        assert _run(
+            "lxc", "exec", "mesh", attempts=2, timeout_seconds=0.25
+        ) == "ready"
+
+    assert run.call_count == 2
+    assert all(call.kwargs["timeout"] == 0.25 for call in run.call_args_list)
+    sleep.assert_called_once_with(0.5)
+
+
 def test_discover_ignores_stopped_matching_containers():
     listing = "\n".join(
         (

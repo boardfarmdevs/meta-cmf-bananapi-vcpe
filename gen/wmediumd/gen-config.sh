@@ -10,7 +10,11 @@ mapfile -t MESH < <(lxc list -c n --format csv 2>/dev/null \
   | grep -E '^(bpibroadband|bpiap|bpiap-[0-9]{3})$' | sort -V)
 mapfile -t CLIENTS < <(lxc list -c n --format csv 2>/dev/null \
   | grep -E '^(wlan-client|wlan-client-[0-9]{3})$' | sort -V)
-declare -A ADDR IDX; IDS=(); i=0
+case "${WMEDIUMD_ALLOW_INCOMPLETE_RADIOS:-0}" in
+  0|1) ;;
+  *) echo "gen-config: FATAL WMEDIUMD_ALLOW_INCOMPLETE_RADIOS must be 0 or 1" >&2; exit 2 ;;
+esac
+declare -A ADDR IDX; IDS=(); MISSING=(); i=0
 # wmediumd identifies a radio by the frame's HWSIM_ATTR_ADDR_TRANSMITTER, which
 # mac80211_hwsim derives as addresses[1] = perm_addr with byte0 |= 0x40 (see
 # mac80211_hwsim.c: data->addresses[1].addr[0] |= 0x40). /sys/.../macaddress is
@@ -24,7 +28,24 @@ addr(){ local a; a=$(lxc exec "$1" -- sh -c 'cat /sys/class/ieee80211/*/macaddre
 # radios (which have no channel context) causes a storm of rejected cloned
 # frames and, empirically, starves active data delivery.  wmediumd-up quiesces
 # the unused host-side virt-wlan interfaces so omitted radios cannot transmit.
-for c in "${MESH[@]}" "${CLIENTS[@]}"; do a=$(addr "$c"); [ -n "$a" ] && { ADDR[$c]=$a; IDX[$c]=$i; IDS+=("$a"); i=$((i+1)); }; done
+for c in "${MESH[@]}" "${CLIENTS[@]}"; do
+  a=$(addr "$c")
+  if [ -z "$a" ]; then
+    MISSING+=("$c")
+    continue
+  fi
+  ADDR[$c]=$a
+  IDX[$c]=$i
+  IDS+=("$a")
+  i=$((i+1))
+done
+if [ "${#MISSING[@]}" -gt 0 ] && [ "${WMEDIUMD_ALLOW_INCOMPLETE_RADIOS:-0}" != 1 ]; then
+  echo "gen-config: FATAL managed containers are missing active hwsim radios:" >&2
+  printf 'gen-config:   %s\n' "${MISSING[@]}" >&2
+  echo "gen-config: start every intended mesh/client container before wmediumd" >&2
+  echo "gen-config: or set WMEDIUMD_ALLOW_INCOMPLETE_RADIOS=1 for an intentional subset" >&2
+  exit 1
+fi
 [ "${#IDS[@]}" -gt 0 ] || { echo "gen-config: FATAL no active hwsim radios found" >&2; exit 1; }
 # Regression guard for the 02:->42: bug: every emitted radio id MUST be a hwsim
 # TX address (byte0 has 0x40 set). If addr() is ever rewritten from sysfs

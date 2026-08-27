@@ -70,6 +70,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 bias_tool=$repo/gen/tests/steering-rf-bias.py
 curl_connect_timeout=${EASYMESH_CURL_CONNECT_TIMEOUT:-2}
 curl_timeout=${EASYMESH_CURL_TIMEOUT:-8}
+bias_timeout=${EASYMESH_BIAS_TIMEOUT:-30}
 
 for command in curl jq lxc; do
     command -v "$command" >/dev/null || {
@@ -243,7 +244,10 @@ done < <(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' | sort
 bias_state=$(mktemp /tmp/easymesh-steer-bias.XXXXXX.json)
 bias_active=0
 restore_bias() {
-    if ((bias_active)); then
+    # The helper writes the exact pre-change state before sending its atomic
+    # update.  A timeout in that small window must therefore restore too, even
+    # though the helper did not live long enough to report success.
+    if ((bias_active)) || [[ -s $bias_state ]]; then
         if timeout 20 python3 "$bias_tool" restore --state "$bias_state"; then
             bias_active=0
         else
@@ -266,11 +270,24 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "steer.sh: deterministic lab mode; client=$client source=$source_bssid target=$target_bssid frequency=${target_frequency}MHz"
-timeout 30 python3 "$bias_tool" apply \
+echo "steer.sh: discovering live radios and applying the temporary RF bias"
+set +e
+timeout "$bias_timeout" python3 "$bias_tool" apply \
     --client "$client" --source-bssid "$source_bssid" \
     --target-bssid "$target_bssid" --state "$bias_state" \
     --frequency "$target_frequency" --source-snr 20 --target-snr 60 \
     --other-snr -20
+bias_rc=$?
+set -e
+if ((bias_rc != 0)); then
+    [[ -s $bias_state ]] && bias_active=1
+    if ((bias_rc == 124 || bias_rc == 137)); then
+        echo "steer.sh: RF-bias setup timed out after ${bias_timeout}s; no steering request was sent" >&2
+    else
+        echo "steer.sh: RF-bias setup failed (rc=$bias_rc); no steering request was sent" >&2
+    fi
+    exit "$bias_rc"
+fi
 bias_active=1
 
 scan_ok=0
