@@ -34,21 +34,22 @@ tree unless an explicit runtime directory is documented.
 ## Hard invariants
 
 - The official runtime is Linux 7.0.0-28.
-- Load 24 patched hwsim radios with `channels=3 regtest=5`.
+- Load 32 patched hwsim radios with `channels=3 regtest=5` for the current
+  five-node/20-client profile.
 - Attach exactly one hwsim wiphy to each BPI container.
 - Use `bpi.sh -F` for a new logical identity; preserve `/nvram` only when
   restarting the same device.
 - Create clients sequentially; `wlan-client.sh` gates association, DHCP and
   controller export.
 - Adding a radio requires a wmediumd registration-matrix refresh.
-- Boardfarm must provide `br-wan105` before controller deployment.
+- Boardfarm `ca-desk6` must provide `br-wan101` before controller deployment.
 
 ## Minimal component usage
 
 From `gen/` on a prepared runtime:
 
 ```sh
-./bpi.sh -F -b br-wan105 /path/to/controller.rootfs.lxc.tar.bz2
+./bpi.sh -F -b br-wan101 /path/to/controller.rootfs.lxc.tar.bz2
 ./bpi.sh -F /path/to/extender.rootfs.lxc.tar.bz2
 SNR=40 ./wmediumd/wmediumd-up.sh up
 ./wlan-client.sh up private_ssid test-fronthaul

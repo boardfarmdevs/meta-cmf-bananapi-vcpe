@@ -4,7 +4,7 @@ set -euo pipefail
 repo=/home/vagrant/boardfarm-open-0406/boardfarm-lab-staging
 
 test "$(git -C "$repo" rev-parse HEAD)" = \
-    510c65fc4a880471e344a88d824fd0bc07a342d8
+    eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
 
 systemctl enable --now docker
 
@@ -21,9 +21,11 @@ systemctl enable boardfarm-lab.service easymesh-lxd-docker-forward.service
 systemctl start boardfarm-lab.service
 systemctl start easymesh-lxd-docker-forward.service
 
-test "$(docker network inspect wan-cpe5 -f '{{index .Options "com.docker.network.bridge.name"}}')" = \
-    br-wan105
-ip link show br-wan105 >/dev/null
+test "$(docker network inspect wan-cpe1 -f '{{index .Options "com.docker.network.bridge.name"}}')" = \
+    br-wan101
+ip link show br-wan101 >/dev/null
+test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+    dhcp-cpe1,wan-cpe1
 
 printf '%s\n' 'boardfarm-wan-ready' \
     > /var/lib/easymesh-vagrant/boardfarm.status

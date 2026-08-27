@@ -61,7 +61,8 @@ Artifacts are built on rev140 under
   20-client profile;
 - patched `wmediumd.patched` from this repository;
 - the prebuilt WNM-capable WLAN-client image; and
-- Boardfarm `br-wan105` with DHCP/Internet for controller `erouter0`.
+- Boardfarm `ca-desk6` with `br-wan101`, DHCP and Internet for controller
+  `erouter0`.
 
 `gen/bpi.sh` automatically converts unified Yocto image archives to split LXD
 metadata/rootfs imports on LXD 6.9, whose unified-image instance creation can
@@ -77,7 +78,7 @@ Check the host before deployment:
 ```sh
 uname -r
 lxc version
-ip link show br-wan105
+ip link show br-wan101
 cat /sys/module/mac80211_hwsim/parameters/radios
 cat /sys/module/mac80211_hwsim/parameters/channels
 cat /sys/module/mac80211_hwsim/parameters/regtest
@@ -139,7 +140,7 @@ From `gen/` on a prepared runtime:
 
 ```sh
 # controller; -F creates one coherent new AL-MAC/RUID identity set
-./bpi.sh -F -b br-wan105 /path/to/controller.rootfs.lxc.tar.bz2
+./bpi.sh -F -b br-wan101 /path/to/controller.rootfs.lxc.tar.bz2
 
 # First wireless-only extender.
 ./bpi.sh -F /path/to/extender.rootfs.lxc.tar.bz2
@@ -205,19 +206,30 @@ does not reconstruct the lab merely by starting LXD. Preserve the existing BPI
 containers and `/nvram` identities, but recreate the host medium and clients in
 this order.
 
-From the rev130 host, reconstruct Boardfarm rather than merely starting its old
-containers. A hard reboot can leave a stale Kea DHCPv4 PID file in the writable
-container, making `dhcp-cpe5` look running while UDP/67 is not served:
+From the lab host, reconstruct the lean Boardfarm profile rather than merely
+starting its old containers. The only Boardfarm source checkout is
+`boardfarm-lab-staging`; `ca-desk6` creates one DHCP provider, one WAN gateway
+and no LAN or shared-service containers:
 
 ```sh
+mkdir -p /home/rev/git/boardfarm-open-0406
+cd /home/rev/git/boardfarm-open-0406
+uv venv --python 3.13 --prompt bf-venv .venv
+source .venv/bin/activate
+git clone git@github.com:robvogelaar/boardfarm-lab-staging.git
+uv pip install -e boardfarm-lab-staging
+
+export BF_LAB_CONFIG=ca-desk6.json
+export BF_INVENTORY=ca-desk6.json
 cd /home/rev/git/boardfarm-open-0406/boardfarm-lab-staging/lab
 ../../.venv/bin/bf-lab teardown,setup,status
 
-# All four checks are mandatory before starting bpibroadband.
-ip link show br-wan105
-docker exec dhcp-cpe5 ip -4 address show eth1 | grep '10.105.0.10/24'
-docker exec dhcp-cpe5 pgrep -x kea-dhcp4
-docker exec dhcp-cpe5 ss -lun | grep ':67 '
+# The lean profile must contain exactly these two containers.
+docker ps --format '{{.Names}}' | sort
+ip link show br-wan101
+docker exec dhcp-cpe1 ip -4 address show eth1 | grep '10.101.0.10/24'
+docker exec dhcp-cpe1 pgrep -x kea-dhcp4
+docker exec dhcp-cpe1 ss -lun | grep ':67 '
 
 cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen
 

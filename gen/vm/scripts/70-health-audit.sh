@@ -10,11 +10,13 @@ exec </dev/null
 
 echo BOARDFARM
 systemctl is-active boardfarm-lab.service
-BF_LAB_CONFIG=boardfarm-easymesh.json \
-    BF_INVENTORY=boardfarm-easymesh.json \
+BF_LAB_CONFIG=ca-desk6.json \
+    BF_INVENTORY=ca-desk6.json \
     timeout 180 /home/vagrant/boardfarm-open-0406/.venv/bin/bf-lab status
-test "$(docker network inspect wan-cpe5 \
-    -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan105
+test "$(docker network inspect wan-cpe1 \
+    -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan101
+test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+    dhcp-cpe1,wan-cpe1
 
 echo TOPOLOGY
 curl -fsS http://127.0.0.1:8888/api/v1/topology | jq -r '

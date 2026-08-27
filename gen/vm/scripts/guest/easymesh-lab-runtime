@@ -64,13 +64,13 @@ reclaim_hwsim_vifs() {
 wait_wan_provider() {
     local attempt
     for attempt in $(seq 1 60); do
-        if [ "$(docker inspect -f '{{.State.Running}}' dhcp-cpe5 2>/dev/null || true)" = true ] \
-            && [ "$(docker inspect -f '{{.State.Running}}' wan-cpe5 2>/dev/null || true)" = true ] \
-            && docker exec dhcp-cpe5 ip -4 address show eth1 2>/dev/null \
-                | grep -q '10\.105\.0\.10/24' \
-            && docker exec dhcp-cpe5 ss -lun 2>/dev/null | grep -q ':67 ' \
-            && docker exec wan-cpe5 ip -4 address show eth1 2>/dev/null \
-                | grep -q '10\.105\.0\.20/24'; then
+        if [ "$(docker inspect -f '{{.State.Running}}' dhcp-cpe1 2>/dev/null || true)" = true ] \
+            && [ "$(docker inspect -f '{{.State.Running}}' wan-cpe1 2>/dev/null || true)" = true ] \
+            && docker exec dhcp-cpe1 ip -4 address show eth1 2>/dev/null \
+                | grep -q '10\.101\.0\.10/24' \
+            && docker exec dhcp-cpe1 ss -lun 2>/dev/null | grep -q ':67 ' \
+            && docker exec wan-cpe1 ip -4 address show eth1 2>/dev/null \
+                | grep -q '10\.101\.0\.20/24'; then
             echo "WAN provider ready after ${attempt}s"
             return 0
         fi
@@ -393,13 +393,13 @@ start)
     trap 'capture_result "$result"' EXIT
     systemctl start docker.service snap.lxd.daemon.service
     for attempt in $(seq 1 30); do
-        ip link show br-wan105 >/dev/null 2>&1 \
-            && docker inspect dhcp-cpe5 wan-cpe5 >/dev/null 2>&1 \
+        ip link show br-wan101 >/dev/null 2>&1 \
+            && docker inspect dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 \
             && break
         sleep 1
     done
-    ip link show br-wan105 >/dev/null
-    docker start dhcp-cpe5 wan-cpe5 >/dev/null
+    ip link show br-wan101 >/dev/null
+    docker start dhcp-cpe1 wan-cpe1 >/dev/null
     wait_wan_provider
 
     # A pre-fix appliance may let LXD restore clients from its previous-power
@@ -452,7 +452,7 @@ stop)
 status)
     wmediumd_status=''
     systemctl is-active --quiet docker.service snap.lxd.daemon.service
-    docker inspect -f '{{.State.Running}}' dhcp-cpe5 wan-cpe5 | grep -vx true && exit 1 || true
+    docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 | grep -vx true && exit 1 || true
     for container in $mesh $clients; do
         [ "$(instance_state "$container")" = RUNNING ] || exit 1
     done

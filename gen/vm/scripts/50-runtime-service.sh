@@ -18,8 +18,10 @@ install -m 0755 /home/vagrant/easymesh-assets/easymesh-labctl \
     /usr/local/sbin/easymesh-labctl
 install -m 0755 /home/vagrant/easymesh-assets/easymesh-health-audit \
     /usr/local/sbin/easymesh-health-audit
+install -m 0755 /home/vagrant/easymesh-assets/easymesh-package-cleanup \
+    /usr/local/sbin/easymesh-package-cleanup
 
-# Boardfarm reconstructs its Docker lab and br-wan105 first. The EasyMesh
+# Boardfarm reconstructs its two-container WAN lab and br-wan101 first. The EasyMesh
 # runtime then starts LXD nodes in dependency order.
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003 \
     $(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V); do

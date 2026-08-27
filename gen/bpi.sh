@@ -64,7 +64,7 @@ Usage: ${script_name} [-b wan-bridge] [-l lan-bridge] [-i instance] [-F|--fresh]
   bpi* -b/-l are opt-in rather than overrides: the container connects to nothing
   unless asked, and always gets a single hwsim radio (FEATURE_SINGLE_PHY) unless
   HWSIM_RADIOS says otherwise.
-    ${script_name} <BPIBB image> -b br-wan105 -l br-lan205   controller: WAN + LAN       -> container "bpibroadband"
+    ${script_name} <BPIBB image> -b br-wan101 -l br-lan205   controller: WAN + LAN       -> container "bpibroadband"
     ${script_name} <BPIAP image>                             extender: no eth0, no eth1  -> container "bpiap"
 
 EOF

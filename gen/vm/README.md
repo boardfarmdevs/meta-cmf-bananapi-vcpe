@@ -10,8 +10,9 @@ recovery use.
 | [`thin/`](thin/) | Ubuntu 24.04, Linux 7.0 and sizing; installs the lab once from GitHub and an artifact server | Normal engineering handoff |
 | [`precooked/`](precooked/) | Complete installed lab; see the current exact size and checksum in `packaged/README.md` | Offline demonstration, recovery and appliance-builder acceptance |
 
-Shared Boardfarm configuration and lifecycle scripts live in `config/` and
-`scripts/`. `consumer/Vagrantfile` runs either packaged box.
+Boardfarm lifecycle scripts live in `scripts/`; the single
+`boardfarm-lab-staging` repository supplies the `ca-desk6` configuration and
+inventory. `consumer/Vagrantfile` runs either packaged box.
 
 The thin handoff is one dated Dropbox tarball such as
 `em-artifacts-0817.tar.bz2`. It contains the thin box, four runtime images,
@@ -95,7 +96,7 @@ an explicit in-guest opt-in; see `gen/wmediumd/observer/README.md`.
 
 Do not begin steering work until `sudo easymesh-labctl check` passes:
 
-- Boardfarm: 60/60 connectivity checks;
+- Boardfarm: 6/6 connectivity checks for the DHCP and WAN containers;
 - EasyMesh database: `5/15/50/24`;
 - WebUI: controller, colocated agent, four extenders, 10 private clients and
   10 IoT clients;

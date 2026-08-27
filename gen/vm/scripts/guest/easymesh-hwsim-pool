@@ -36,7 +36,7 @@ test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest
 # PHYs into container network namespaces. Only the interfaces still present in
 # the host namespace are visible below. Rename and validate that subset; the
 # module parameters above validate the size of the complete persistent pool.
-for phy in /sys/class/ieee80211/phy*; do
+for phy in /sys/devices/virtual/mac80211_hwsim/hwsim*/ieee80211/phy*; do
     netdevs=$(find "$phy/device/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
     netdev=$(printf '%s\n' "$netdevs" | grep -m1 '^virt-wlan[0-9]\+$' || true)
     if [ -z "$netdev" ]; then
@@ -65,6 +65,7 @@ for phy in /sys/class/ieee80211/phy*; do
     ip link set "$netdev" up
 done
 
-host_phys=$(find /sys/class/ieee80211 -mindepth 1 -maxdepth 1 -name 'phy*' | wc -l)
+host_phys=$(find /sys/devices/virtual/mac80211_hwsim -type d \
+    -path '*/ieee80211/phy*' | wc -l)
 host_radios=$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)
 test "$host_radios" -eq "$host_phys"

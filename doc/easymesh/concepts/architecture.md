@@ -79,9 +79,9 @@ flowchart TB
   end
 
   subgraph boardfarm["Boardfarm infrastructure"]
-    dhcp["dhcp-cpe5<br/>Kea DHCPv4 / DHCPv6"]
-    nat["wan-cpe5<br/>gateway, NAT, Internet"]
-    wanbridge["br-wan105"]
+    dhcp["dhcp-cpe1<br/>Kea DHCPv4 / DHCPv6"]
+    nat["wan-cpe1<br/>gateway, NAT, Internet"]
+    wanbridge["br-wan101"]
     dhcp --- wanbridge --- nat
   end
 

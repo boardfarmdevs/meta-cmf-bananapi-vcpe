@@ -94,10 +94,10 @@ sudo systemctl start easymesh-hwsim-pool.service
 # force an unnecessary or doomed WAN-lab reconstruction.
 sudo systemctl start boardfarm-lab.service easymesh-lxd-docker-forward.service
 for attempt in $(seq 1 60); do
-    ip link show br-wan105 >/dev/null 2>&1 && break
+    ip link show br-wan101 >/dev/null 2>&1 && break
     sleep 2
 done
-ip link show br-wan105 >/dev/null
+ip link show br-wan101 >/dev/null
 
 for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     if old_nvram=$(lxc profile device get "$profile" nvram source 2>/dev/null); then

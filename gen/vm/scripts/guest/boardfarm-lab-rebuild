@@ -2,8 +2,8 @@
 set -euo pipefail
 
 : "${BOARDFARM_WORKSPACE:=/home/vagrant/boardfarm-open-0406}"
-: "${BF_LAB_CONFIG:=boardfarm-easymesh.json}"
-: "${BF_INVENTORY:=boardfarm-easymesh.json}"
+: "${BF_LAB_CONFIG:=ca-desk6.json}"
+: "${BF_INVENTORY:=ca-desk6.json}"
 export BOARDFARM_WORKSPACE BF_LAB_CONFIG BF_INVENTORY
 
 lab_repo="$BOARDFARM_WORKSPACE/boardfarm-lab-staging"
@@ -13,25 +13,49 @@ test -x "$bf_lab"
 test -f "$lab_repo/lab/$BF_LAB_CONFIG"
 test -f "$lab_repo/inventories/$BF_INVENTORY"
 
-# A forced host power-off can leave LXD's volatile state marked RUNNING even
-# though boot.autostart is false. Release br-wan105 before bf-lab removes and
-# recreates that Docker bridge.
-for instance in $(lxc list -c n --format csv 2>/dev/null \
-        | grep -E '^wlan-client(-[0-9]{3})?$' | sort -Vr) \
-    bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
-    if [ "$(lxc info "$instance" 2>/dev/null | sed -n 's/^Status: //p')" = RUNNING ]; then
-        lxc stop "$instance" --force
-    fi
-done
+boardfarm_ready() {
+    test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+        dhcp-cpe1,wan-cpe1 \
+        && test "$(docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 \
+            | grep -c '^true$')" -eq 2 \
+        && test "$(docker network inspect wan-cpe1 \
+            -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan101 \
+        && ip link show br-wan101 >/dev/null 2>&1 \
+        && docker exec dhcp-cpe1 ip -4 address show eth1 \
+            | grep -q '10\.101\.0\.10/24' \
+        && docker exec wan-cpe1 ip -4 address show eth1 \
+            | grep -q '10\.101\.0\.20/24'
+}
 
-cd "$lab_repo/lab"
-"$bf_lab" teardown,setup,status
+if ! boardfarm_ready; then
+    # A forced host power-off can leave LXD's volatile state marked RUNNING
+    # even though boot.autostart is false. Release br-wan101 before bf-lab
+    # removes and recreates that Docker bridge.
+    for instance in $(lxc list -c n --format csv 2>/dev/null \
+            | grep -E '^wlan-client(-[0-9]{3})?$' | sort -Vr) \
+        bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
+        if [ "$(lxc info "$instance" 2>/dev/null | sed -n 's/^Status: //p')" = RUNNING ]; then
+            lxc stop "$instance" --force
+        fi
+    done
 
-test "$(docker network inspect wan-cpe5 -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan105
-ip link show br-wan105 >/dev/null
-docker inspect -f '{{.State.Running}}' dhcp-cpe5 wan-cpe5 | grep -vx true && exit 1 || true
-docker exec dhcp-cpe5 ip -4 address show eth1 | grep -q '10\.105\.0\.10/24'
-docker exec wan-cpe5 ip -4 address show eth1 | grep -q '10\.105\.0\.20/24'
+    cd "$lab_repo/lab"
+    "$bf_lab" teardown,setup,status
+fi
+
+# Keep an existing controller profile aligned with the selected WAN provider.
+# New cold deployments create this parent directly through bpi.sh.
+if lxc profile device get bpibroadband eth0 parent >/dev/null 2>&1; then
+    lxc profile device set bpibroadband eth0 parent br-wan101
+fi
+
+test "$(docker network inspect wan-cpe1 -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan101
+ip link show br-wan101 >/dev/null
+docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 | grep -vx true && exit 1 || true
+docker exec dhcp-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.10/24'
+docker exec wan-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.20/24'
+test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+    dhcp-cpe1,wan-cpe1
 
 install -d /var/lib/easymesh-vagrant
 date -Ins > /var/lib/easymesh-vagrant/boardfarm.completed-at

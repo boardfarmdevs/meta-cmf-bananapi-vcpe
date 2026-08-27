@@ -65,9 +65,6 @@ if [ ! -f "$assets/lxd_38768.snap" ]; then
     (cd "$assets" && snap download lxd --revision=38768 --basename=lxd_38768)
 fi
 
-install -m 0644 "$vm_dir/config/boardfarm-requirements.lock" "$assets/"
-install -m 0644 "$vm_dir/config/boardfarm-easymesh.json" "$assets/"
-install -m 0644 "$vm_dir/config/boardfarm-easymesh-inventory.json" "$assets/"
 for file in \
     boardfarm-lab-rebuild boardfarm-lab.service \
     easymesh-hwsim-pool easymesh-hwsim-pool.service \
@@ -119,16 +116,8 @@ fi
 as_lab_user git -C "$runtime_repo" checkout --detach "$runtime_commit"
 test "$(git -C "$runtime_repo" rev-parse HEAD)" = "$runtime_commit"
 
-clone_exact "${BOARDFARM_URL:-git@github.com:robvogelaar/boardfarm.git}" \
-    "$bf_workspace/boardfarm" 58501f4b86baf045a2a43d9aba7b69a717377f94
-clone_exact "${PYTEST_BOARDFARM_URL:-git@github.com:robvogelaar/pytest-boardfarm.git}" \
-    "$bf_workspace/pytest-boardfarm" 2eb81e271f1846b2255f31dfb724540fdfdb8316
-clone_exact "${BOARDFARM_DOCSIS_URL:-git@github.com:robvogelaar/boardfarm-docsis.git}" \
-    "$bf_workspace/boardfarm-docsis" 7235bc320bce2ac2f8da5f9f477a5f4749960229
-clone_exact "${BOARDFARM_CHARTER_URL:-git@github.com:robvogelaar/boardfarm-charter.git}" \
-    "$bf_workspace/boardfarm-charter" 92de47717f787701f14fefa9280525218ea69c84
 clone_exact "${BOARDFARM_LAB_URL:-git@github.com:robvogelaar/boardfarm-lab-staging.git}" \
-    "$bf_workspace/boardfarm-lab-staging" 510c65fc4a880471e344a88d824fd0bc07a342d8
+    "$bf_workspace/boardfarm-lab-staging" eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
 
 env EASYMESH_RUNTIME_COMMIT="$runtime_commit" \
     bash "$vm_dir/scripts/20-prepare-lab-host.sh"

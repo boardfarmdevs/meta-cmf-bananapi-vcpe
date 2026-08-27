@@ -18,15 +18,14 @@ VirtualBox Ubuntu 24.04 guest
 |   |-- bpibroadband (controller)
 |   |-- bpiap and bpiap-001 (baseline extenders)
 |   |-- bpiap-002 and bpiap-003 (scale-test extenders)
-|   `-- ten WLAN clients
+|   `-- twenty WLAN clients (ten private + ten IoT)
 `-- Boardfarm Docker services
-    |-- five DHCP providers
-    |-- five WAN gateways
-    `-- ten LAN clients
+    |-- dhcp-cpe1
+    `-- wan-cpe1
 ```
 
 The guest uses VirtualBox NAT for provisioning and Internet access. The RDK-B
-controller connects `erouter0` to the guest-local Boardfarm `br-wan105` bridge.
+controller connects `erouter0` to the guest-local Boardfarm `br-wan101` bridge.
 The EasyMesh WebUI is forwarded to `http://127.0.0.1:18888` on the host so it
 does not collide with rev150's native lab on port 8888.
 
@@ -76,8 +75,8 @@ prebuilt controller and extender images with recorded SHA-256 hashes.
 ## Bring-up and acceptance
 
 The default provisioner creates the complete controller, four-extender and
-ten-client topology. It gates every extender before starting the next one and
-gates the first five clients before applying the scale step.
+twenty-client topology. It gates every extender before starting the next one
+and then admits ten private and ten IoT clients.
 
 ```sh
 vagrant up
@@ -95,40 +94,35 @@ After provisioning, `easymesh-lab.service` owns boot order. It stops any state
 restored by LXD, reclaims OneWifi VAPs from host-returned hwsim wiphys, and then
 starts controller, extenders and clients in order. A PASS requires:
 
-- model `5/15/50/14` and WebUI API `10/10`;
-- all ten clients able to reach the WLAN gateway;
+- model `5/15/50/24` and WebUI API `20/20`;
+- all twenty clients able to reach the WLAN gateway;
 - zero OneWifi, agent, controller and CLI service restarts; and
 - a 120-second stable hold after final convergence.
 
 ## Boardfarm installation and boot ownership
 
-The guest installs Docker and a locally asserted, pinned `astral-uv` snap, creates
-`/home/vagrant/boardfarm-open-0406/.venv` with Python 3.13.15, and installs the
-locked `boardfarm`, `pytest-boardfarm`, `boardfarm-docsis`,
-`boardfarm-charter`, and `boardfarm-lab-staging` repositories as editable
-packages.
+The guest installs Docker and `astral-uv`, creates
+`/home/vagrant/boardfarm-open-0406/.venv` with Python 3.13, and installs only
+the pinned `boardfarm-lab-staging` repository as an editable package. That
+repository now contains the `bf-lab` command and the complete `ca-desk6`
+configuration.
 
-The builder uses Git bundles rather than forwarding an engineer's SSH key into
-the appliance. `assets.lock` records the source commits and
-`prepare-assets.sh` constructs those bundles and the combined SHA-256
-manifest. `config/boardfarm-requirements.lock` pins the accepted third-party
-Python environment; editable packages are then built without dependency
-re-resolution or isolated build-environment downloads.
+The builder uses a Git bundle rather than forwarding an engineer's SSH key into
+the appliance. `assets.lock` records the source commit and
+`prepare-assets.sh` constructs that bundle and the combined SHA-256 manifest.
 
-`BF_LAB_CONFIG` and `BF_INVENTORY` are not two names for one JSON file. In the
-current Boardfarm trees they resolve below different directories:
+`BF_LAB_CONFIG` and `BF_INVENTORY` select files below different directories:
 
 ```text
-BF_LAB_CONFIG=boardfarm-easymesh.json
-  -> boardfarm-lab-staging/lab/boardfarm-easymesh.json
-BF_INVENTORY=boardfarm-easymesh.json
-  -> boardfarm-lab-staging/inventories/boardfarm-easymesh.json
+BF_LAB_CONFIG=ca-desk6.json
+  -> boardfarm-lab-staging/lab/ca-desk6.json
+BF_INVENTORY=ca-desk6.json
+  -> boardfarm-lab-staging/inventories/ca-desk6.json
 ```
 
-The proposed `co/ca-desk/lab5.json` path does not exist in the pinned staging
-repository. The builder supplies distinct, VM-specific infrastructure and
-inventory documents. They have no physical switch or host VLAN interface and
-disable optional service containers.
+This profile provides only the DHCP/NAT functions needed by `bpibroadband`.
+It does not build or run Oktopus, telemetry, XConf, GenieACS, WebConfig, LAN
+clients, or unrelated Boardfarm services.
 
 On every boot, `boardfarm-lab.service` runs:
 
@@ -136,11 +130,10 @@ On every boot, `boardfarm-lab.service` runs:
 bf-lab teardown,setup,status
 ```
 
-This creates `br-wan101` through `br-wan105`, starts all 20 containers defined
-by the five-CPE configuration, and performs 60 container, direct-SSH and
-forwarded-port checks. The forwarding and EasyMesh services are ordered after
-it, so `bpibroadband` cannot attach `erouter0` until `br-wan105`, `dhcp-cpe5`,
-and `wan-cpe5` are ready.
+This creates `br-wan101`, starts only `dhcp-cpe1` and `wan-cpe1`, and performs
+the six `ca-desk6` health checks. The forwarding and EasyMesh services are
+ordered after it, so `bpibroadband` cannot attach `erouter0` until those two
+containers and `br-wan101` are ready.
 
 ## Build commands
 
@@ -160,6 +153,14 @@ reboot acceptance test, and packages the passing VM. `package` writes a
 timestamped, shareable Vagrant box and adjacent SHA-256 file below
 `gen/vm/precooked/artifacts/`; it does not publish or upload them. Set
 `EASYMESH_BOX_OUTPUT` when a particular output path is required.
+
+`package` is the terminal build phase. It stops the lab, removes copied
+provisioning archives, prunes unused Docker build layers and images, cleans
+package/log caches, zeroes and trims free space, and halts the VM before
+capture. The two Boardfarm images referenced by `dhcp-cpe1` and `wan-cpe1`
+remain in the appliance. These steps ensure the smaller `ca-desk6` installation
+also produces a smaller compressed `.box` instead of only showing more free
+space inside the guest.
 
 The receiving engineer needs only the box and `../consumer/Vagrantfile`:
 
@@ -186,40 +187,27 @@ pinned Bento base box into VirtualBox, VirtualBox clones its disk below
 clone. `vagrant package` then captures the provisioned VM as the distributable
 box; consumers do not copy the mutable working VMDK directly.
 
-## Review of the manual Boardfarm recipe
+## Manual Boardfarm installation
 
-The proposed five editable installs are valid for the pinned repositories, and
-all four `doc,dev,test` extra sets exist. For an interactive checkout, quote
-each extras expression so the shell cannot expand the brackets:
+For an online development installation, use the same single-repository layout
+as the appliance:
 
 ```sh
-uv pip install \
-  -e 'boardfarm[doc,dev,test]' \
-  -e 'pytest-boardfarm[doc,dev,test]' \
-  -e 'boardfarm-docsis[doc,dev,test]' \
-  -e 'boardfarm-charter[doc,dev,test]' \
-  -e boardfarm-lab-staging
+mkdir -p "$HOME/boardfarm-open-0406"
+cd "$HOME/boardfarm-open-0406"
+uv venv --python 3.13 --prompt bf-venv .venv
+. .venv/bin/activate
+git clone git@github.com:robvogelaar/boardfarm-lab-staging.git
+uv pip install -e boardfarm-lab-staging
+
+export BF_LAB_CONFIG=ca-desk6.json
+export BF_INVENTORY=ca-desk6.json
+cd boardfarm-lab-staging/lab
+bf-lab teardown,setup,status
 ```
 
-There are three important appliance-specific corrections. The builder pins the
-repository commits, Python patch release, uv snap revision, and all transitive
-Python packages instead of resolving current branches on every build. It uses
-local Git bundles rather than requiring GitHub credentials inside a shared VM.
-Finally, the lab configuration and device inventory are separate documents;
-the suggested `co/ca-desk/lab5.json` is not present in the pinned staging
-repository. The supplied `boardfarm-easymesh.json` pair replaces it.
-
-## Frozen 2026-08-17 status
-
-The accepted images are the `20260817135730` controller and `20260817140053`
-extender pair. Their
-scale-safe EasyMesh agent fixes the deterministic AP Metrics Response stack
-overflow exposed by the fourth extender and associated stations.
-
-That dated acceptance requires Boardfarm `60/60`, model `5/15/50/14`, six
-topology nodes, 50 BSSs, 10/10 clients, ten-client WLAN traffic and zero
-EasyMesh service restarts. The captured evidence and defects found during the
-accepted run are in `docs/acceptance-2026-08-17.md`.
+The appliance build uses a pinned bundle of this repository so that a shared
+box contains no GitHub key and does not change when its source branch moves.
 
 ## Uninstall
 

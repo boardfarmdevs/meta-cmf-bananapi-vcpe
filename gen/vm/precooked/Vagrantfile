@@ -61,10 +61,6 @@ Vagrant.configure("2") do |config|
     lxd_38768.assert
     lxd_38768.snap
     meta-cmf-bananapi-vcpe.bundle
-    boardfarm.bundle
-    pytest-boardfarm.bundle
-    boardfarm-docsis.bundle
-    boardfarm-charter.bundle
     boardfarm-lab-staging.bundle
     X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2
     X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2
@@ -77,18 +73,6 @@ Vagrant.configure("2") do |config|
                         destination: "/home/vagrant/easymesh-assets/#{asset}"
   end
 
-  config.vm.provision "boardfarm-config",
-                      type: "file",
-                      source: "../config/boardfarm-easymesh.json",
-                      destination: "/home/vagrant/easymesh-assets/boardfarm-easymesh.json"
-  config.vm.provision "boardfarm-inventory",
-                      type: "file",
-                      source: "../config/boardfarm-easymesh-inventory.json",
-                      destination: "/home/vagrant/easymesh-assets/boardfarm-easymesh-inventory.json"
-  config.vm.provision "boardfarm-python-lock",
-                      type: "file",
-                      source: "../config/boardfarm-requirements.lock",
-                      destination: "/home/vagrant/easymesh-assets/boardfarm-requirements.lock"
   config.vm.provision "forward-helper",
                       type: "file",
                       source: "../scripts/guest/easymesh-lxd-docker-forward",
@@ -149,6 +133,10 @@ Vagrant.configure("2") do |config|
                       type: "file",
                       source: "../scripts/guest/lxd-easymesh-ordering.conf",
                       destination: "/home/vagrant/easymesh-assets/lxd-easymesh-ordering.conf"
+  config.vm.provision "package-cleanup-helper",
+                      type: "file",
+                      source: "../scripts/guest/easymesh-package-cleanup",
+                      destination: "/home/vagrant/easymesh-assets/easymesh-package-cleanup"
 
   config.vm.provision "base-software",
                       type: "shell",

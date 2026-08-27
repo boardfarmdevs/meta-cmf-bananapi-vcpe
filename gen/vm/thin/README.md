@@ -77,11 +77,11 @@ The host hardware must provide:
 - at least 8 GiB allocatable memory for the VM; and
 - enough disk for a dynamically allocated 64 GB guest.
 
-Six vCPUs are used because this guest concurrently runs 20 Boardfarm Docker
-containers, five EasyMesh LXD devices, ten WLAN-client containers, wmediumd,
-hwsim and the WebUI/controller processes. Six is the accepted default, not a
-protocol requirement. Eight vCPUs was an earlier conservative builder value
-and is not required. On a larger host it can still be overridden explicitly:
+Six vCPUs are used because this guest concurrently runs two Boardfarm Docker
+containers, five EasyMesh LXD devices, twenty WLAN-client containers,
+wmediumd, hwsim and the WebUI/controller processes. Six is the accepted
+default, not a protocol requirement. On a larger host it can still be
+overridden explicitly:
 
 ```sh
 EASYMESH_VM_CPUS=8 vagrant up
@@ -116,9 +116,9 @@ https://www.dropbox.com/scl/fi/809w5sv2c6n8nnrn7p3bn/em-artifacts-0817.tar.bz2.s
 
 The archive supplies a `Vagrantfile` plus timestamped, clearly named files
 under `artifacts/`. It is a binary handoff and is not stored in Git. Register
-the box, then load the host's GitHub key into an SSH agent. The five private
-Boardfarm repositories use agent forwarding so no private key is copied into
-the VM.
+the box, then load the host's GitHub key into an SSH agent. The EasyMesh and
+single Boardfarm lab repositories use agent forwarding so no private key is
+copied into the VM.
 
 ```sh
 vagrant box add --name cmf/easymesh-thin \
@@ -169,9 +169,11 @@ sudo --preserve-env=SSH_AUTH_SOCK gen/vm/thin/install-lab.sh
 ```
 
 This phase installs Docker, pinned LXD and uv revisions, CPython 3.13.15, the
-locked Python environment, Boardfarm, LXD images, EasyMesh, hwsim and
-wmediumd. It creates four extenders, ten private clients and ten IoT clients,
-performs the complete
+single `boardfarm-lab-staging` package with its `ca-desk6` profile, LXD images,
+EasyMesh, hwsim and wmediumd. Boardfarm creates only `dhcp-cpe1`, `wan-cpe1`
+and `br-wan101`; it does not install the optional Oktopus, telemetry, XConf,
+GenieACS or WebConfig services. The installer creates four extenders, ten
+private clients and ten IoT clients, performs the complete
 acceptance audit, and leaves the accepted lab running. Re-running the installer
 reuses valid downloads and exact Git checkouts.
 
@@ -218,7 +220,7 @@ http://127.0.0.1:18888/
 
 With LAN binding enabled, use the VirtualBox host's address instead of
 `127.0.0.1`. The topology must show the controller, colocated agent, four
-extenders and ten live clients before testing.
+extenders and twenty live clients before testing.
 
 ## 7. Run steering tests
 

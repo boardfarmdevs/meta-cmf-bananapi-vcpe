@@ -275,8 +275,8 @@ sudo env \
   EASYMESH_ACCEPTANCE_STATE="$PWD/tmp/test-results/demo-reconstruction" \
   bash "$demo_runtime" stop
 
-# Optional: include the Boardfarm CPE-5 WAN and DHCP providers in the outage.
-docker stop dhcp-cpe5 wan-cpe5
+# Optional: include the two Boardfarm WAN/DHCP providers in the outage.
+docker stop dhcp-cpe1 wan-cpe1
 ```
 
 Check the stopped state:
@@ -284,7 +284,7 @@ Check the stopped state:
 ```sh
 lxc list -c ns --format table
 gen/wmediumd/wmediumd-up.sh status || true
-docker ps --format '{{.Names}}' | grep -E '^(dhcp|wan)-cpe5$' || true
+docker ps --format '{{.Names}}' | grep -E '^(dhcp|wan)-cpe1$' || true
 ```
 
 All managed LXD instances should be `STOPPED`, wmediumd should be down, and the

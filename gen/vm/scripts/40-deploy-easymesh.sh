@@ -119,7 +119,7 @@ while read -r container; do
 done < <(lxc list -c n --format csv \
     | grep -E '^(bpibroadband|bpiap(-[0-9]{3})?)$' | sort -Vr)
 
-./bpi.sh -F -b br-wan105 "$controller_image"
+./bpi.sh -F -b br-wan101 "$controller_image"
 
 # The stock em_cli unit is enabled, but on a container reboot it can be absent
 # from the boot transaction even though em_agent starts successfully. Make the

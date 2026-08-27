@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This is the terminal appliance-build step. It removes provisioning inputs
+# that a packaged VM no longer needs, stops mutable lab state, and makes freed
+# blocks compressible before vagrant package captures the disk.
+systemctl stop easymesh-lab.service 2>/dev/null || true
+systemctl stop wmediumd-console.service 2>/dev/null || true
+docker stop dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 || true
+
+docker builder prune -af >/dev/null 2>&1 || true
+docker image prune -af >/dev/null 2>&1 || true
+apt-get clean
+journalctl --rotate >/dev/null 2>&1 || true
+journalctl --vacuum-size=16M >/dev/null 2>&1 || true
+
+find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 1 -delete
+find /var/log -type f \( -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) \
+    -delete
+rm -rf /home/vagrant/easymesh-assets
+
+sync
+set +e
+dd if=/dev/zero of=/EMPTY bs=16M status=none
+set -e
+sync
+rm -f /EMPTY
+fstrim -av || true
+sync

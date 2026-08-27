@@ -46,50 +46,31 @@ clone_pinned_repo() {
         sudo -u vagrant git clone "$assets/$name.bundle" "$destination"
     fi
     sudo -u vagrant git -C "$destination" checkout -B "$branch" "$expected"
-    # Generated lab configuration is installed below these checkouts. Preserve
-    # tracked-source integrity without rejecting those intentional untracked
-    # runtime files when the thin installer is resumed.
     test -z "$(sudo -u vagrant git -C "$destination" \
         status --porcelain --untracked-files=no)"
     test "$(sudo -u vagrant git -C "$destination" rev-parse HEAD)" = "$expected"
 }
 
-clone_pinned_repo boardfarm master 58501f4b86baf045a2a43d9aba7b69a717377f94
-clone_pinned_repo pytest-boardfarm master 2eb81e271f1846b2255f31dfb724540fdfdb8316
-clone_pinned_repo boardfarm-docsis master 7235bc320bce2ac2f8da5f9f477a5f4749960229
-clone_pinned_repo boardfarm-charter master 92de47717f787701f14fefa9280525218ea69c84
-clone_pinned_repo boardfarm-lab-staging main 510c65fc4a880471e344a88d824fd0bc07a342d8
+clone_pinned_repo boardfarm-lab-staging main eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
 
 if [ ! -x "$boardfarm_workspace/.venv/bin/python" ]; then
     sudo -H -u vagrant /snap/bin/uv venv --python 3.13.15 \
         --prompt bf-venv "$boardfarm_workspace/.venv"
 fi
 sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
-    /snap/bin/uv pip install \
-        --requirement "$assets/boardfarm-requirements.lock"
-sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
-    /snap/bin/uv pip install --no-deps --no-build-isolation \
-        -e "$boardfarm_workspace/boardfarm[doc,dev,test]" \
-        -e "$boardfarm_workspace/pytest-boardfarm[doc,dev,test]" \
-        -e "$boardfarm_workspace/boardfarm-docsis[doc,dev,test]" \
-        -e "$boardfarm_workspace/boardfarm-charter[doc,dev,test]" \
-        -e "$boardfarm_workspace/boardfarm-lab-staging"
+    /snap/bin/uv pip install -e "$boardfarm_workspace/boardfarm-lab-staging"
 sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
     /snap/bin/uv pip check
 test "$($boardfarm_workspace/.venv/bin/python -c 'import platform; print(platform.python_version())')" = 3.13.15
 
-install -m 0644 "$assets/boardfarm-easymesh.json" \
-    "$boardfarm_workspace/boardfarm-lab-staging/lab/boardfarm-easymesh.json"
-install -m 0644 "$assets/boardfarm-easymesh-inventory.json" \
-    "$boardfarm_workspace/boardfarm-lab-staging/inventories/boardfarm-easymesh.json"
 cat > /etc/default/boardfarm-lab <<'EOF'
-BF_LAB_CONFIG=boardfarm-easymesh.json
-BF_INVENTORY=boardfarm-easymesh.json
+BF_LAB_CONFIG=ca-desk6.json
+BF_INVENTORY=ca-desk6.json
 BOARDFARM_WORKSPACE=/home/vagrant/boardfarm-open-0406
 EOF
 cat > /etc/profile.d/boardfarm-lab.sh <<'EOF'
-export BF_LAB_CONFIG=boardfarm-easymesh.json
-export BF_INVENTORY=boardfarm-easymesh.json
+export BF_LAB_CONFIG=ca-desk6.json
+export BF_INVENTORY=ca-desk6.json
 export PATH=/home/vagrant/boardfarm-open-0406/.venv/bin:$PATH
 EOF
 

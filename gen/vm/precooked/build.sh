@@ -26,6 +26,8 @@ reboot-test)
 package)
     mkdir -p artifacts
     box_output=${EASYMESH_BOX_OUTPUT:-artifacts/easymesh-lab-$(date -u +%Y%m%dT%H%M%SZ).box}
+    vagrant ssh -c 'sudo /usr/local/sbin/easymesh-package-cleanup'
+    vagrant halt
     vagrant package --output "$box_output"
     sha256sum "$box_output" | tee "$box_output.sha256"
     ;;

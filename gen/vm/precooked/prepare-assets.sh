@@ -35,10 +35,6 @@ bundle_repo() {
     git -C "$repo" update-ref -d "$export_ref"
 }
 
-bundle_repo boardfarm
-bundle_repo pytest-boardfarm
-bundle_repo boardfarm-docsis
-bundle_repo boardfarm-charter
 bundle_repo boardfarm-lab-staging
 
 meta_commit=$(locked_revision meta-cmf-bananapi-vcpe)
@@ -69,11 +65,10 @@ fi
     X86EMLTRBPIAP_rdk-next_20260817140053.rootfs.lxc.tar.bz2 \
     X86EMLTRBPIBB_rdk-next_20260817135730.rootfs.lxc.tar.bz2 \
     alpine-3.19-amd64-meta.tar.xz alpine-3.19-amd64-rootfs.tar.xz \
-    boardfarm-charter.bundle boardfarm-docsis.bundle \
-    boardfarm-lab-staging.bundle boardfarm.bundle \
+    boardfarm-lab-staging.bundle \
     linux-7.0.0-28-hwsim.tar.zst \
     astral-uv_1662.assert astral-uv_1662.snap \
     lxd_38768.assert lxd_38768.snap \
-    meta-cmf-bananapi-vcpe.bundle pytest-boardfarm.bundle > SHA256SUMS)
+    meta-cmf-bananapi-vcpe.bundle > SHA256SUMS)
 (cd "$assets" && sha256sum -c SHA256SUMS)
 echo "VM inputs are complete; assets/SHA256SUMS records this exact assembly"

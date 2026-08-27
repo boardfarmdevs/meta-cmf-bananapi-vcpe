@@ -87,9 +87,9 @@ Ubuntu 22.04/24.04 workstation
 `-- VirtualBox VM, managed by Vagrant
     |-- Ubuntu 24.04 + Linux 7.0 + patched mac80211_hwsim
     |-- Boardfarm/Docker
-    |   |-- br-wan105                         simulated WAN bridge
-    |   |-- dhcp-cpe5                         DHCP provider
-    |   `-- wan-cpe5                          routed Internet side
+    |   |-- br-wan101                         simulated WAN bridge
+    |   |-- dhcp-cpe1                         DHCP provider
+    |   `-- wan-cpe1                          routed Internet side
     |-- LXD
     |   |-- bpibroadband                      EasyMesh controller + agent
     |   |-- bpiap ... bpiap-003               four EasyMesh extenders
@@ -101,8 +101,9 @@ Ubuntu 22.04/24.04 workstation
              `-- Vagrant forwards it to host port 18890
 ```
 
-Boardfarm has a deliberately narrow infrastructure role in this lab. Its
-Docker containers create the `br-wan105` bridge and provide DHCP and WAN
+Boardfarm has a deliberately narrow infrastructure role in this lab. The
+`ca-desk6` profile creates only two Docker containers. They create the
+`br-wan101` bridge and provide DHCP and WAN
 connectivity. The `bpibroadband` container attaches `erouter0` to that bridge,
 receives IPv4 and IPv6 configuration and gets Internet access. Boardfarm does
 not implement Wi-Fi, EasyMesh, steering, RF simulation or optimization. Those
@@ -256,7 +257,7 @@ vagrant ssh
 On every VM boot, systemd reconstructs the lab in dependency order:
 
 ```text
-Boardfarm WAN/DHCP and br-wan105
+Boardfarm `ca-desk6` WAN/DHCP and br-wan101
   -> LXD-to-Docker forwarding
   -> hwsim radio pool
   -> controller
@@ -290,7 +291,7 @@ sudo easymesh-labctl check
 
 A fully ready result has all of these properties:
 
-- Boardfarm reports all 60 infrastructure checks passing;
+- Boardfarm reports all six infrastructure checks passing;
 - controller model is `5/15/50/24`;
 - topology contains the controller, five agents and twenty unique clients;
 - `/api/v1/clients` reports twenty active clients;
@@ -311,7 +312,7 @@ sudo journalctl -u boardfarm-lab.service -b --no-pager
 sudo journalctl -u easymesh-lab.service -b --no-pager
 
 docker ps --format 'table {{.Names}}\t{{.Status}}'
-ip link show br-wan105
+ip link show br-wan101
 lxc list
 pgrep -af wmediumd.patched
 
@@ -323,14 +324,14 @@ To run Boardfarm's infrastructure-only status report directly:
 
 ```sh
 cd /home/vagrant/boardfarm-open-0406/boardfarm-lab-staging/lab
-BF_LAB_CONFIG=boardfarm-easymesh.json \
-BF_INVENTORY=boardfarm-easymesh.json \
+BF_LAB_CONFIG=ca-desk6.json \
+BF_INVENTORY=ca-desk6.json \
   ../../.venv/bin/bf-lab status
 ```
 
 Do not use `bf-lab teardown,setup` during a Wi-Fi experiment. The managed boot
 service uses that operation before EasyMesh starts because replacing
-`br-wan105` while `bpibroadband` is attached would tear down its WAN path.
+`br-wan101` while `bpibroadband` is attached would tear down its WAN path.
 
 For live startup monitoring in another SSH terminal:
 
@@ -338,7 +339,7 @@ For live startup monitoring in another SSH terminal:
 sudo journalctl -fu boardfarm-lab.service -fu easymesh-lab.service
 ```
 
-Boardfarm's 60 checks concern its Docker WAN/DHCP environment. They do not by
+Boardfarm's six checks concern its two-container Docker WAN/DHCP environment. They do not by
 themselves prove EasyMesh onboarding; the subsequent model, client, traffic
 and restart checks provide that proof.
 
