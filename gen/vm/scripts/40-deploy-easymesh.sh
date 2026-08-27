@@ -141,6 +141,11 @@ wait_for_extender bpiap 2/6/20
 ./bpi.sh -F -i 1 "$extender_image"
 wait_for_extender bpiap-001 3/9/30
 
+# This is an intentional bootstrap subset: the accepted redeployer may still
+# have stopped definitions for the two extenders and clients that the scale
+# step creates immediately after this three-node gate.  Final runtime startup
+# does not set this override and therefore still requires every managed radio.
+export WMEDIUMD_ALLOW_INCOMPLETE_RADIOS=1
 SNR=40 ./wmediumd/wmediumd-up.sh up
 if ! lxc image info wlan-client-base >/dev/null 2>&1; then
     ./wlan-client.sh build-image
