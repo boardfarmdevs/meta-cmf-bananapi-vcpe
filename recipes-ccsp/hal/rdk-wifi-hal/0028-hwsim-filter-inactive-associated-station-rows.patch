@@ -1,0 +1,78 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: filter inactive associated station rows
+
+After a silent BTM roam mac80211_hwsim can retain an authorized station row
+on the old AP.  A station dump therefore reports the client on both the old
+and current AP even though the simulated STA has one serving BSSID.  The
+Banana Pi diagnostic provider exports every dumped row, OneWifi marks each
+one active, and EasyMesh receives contradictory Associated Clients TLVs.
+
+Use the standard NL80211_STA_INFO_INACTIVE_TIME observation while constructing
+the hwsim station snapshot.  Do not export a row which has received no frame
+for two minutes.  The deliberately conservative interval does not hide a
+legitimately idle simulated client from an authoritative EasyMesh snapshot,
+while retained old-AP rows still age out in bounded time.  This is compiled
+only for HWSIM_RADIO; physical targets retain their native station-table
+semantics and inactivity policy.
+
+The HAL does not delete the kernel row.  It corrects the provider contract:
+wifi_getApAssociatedDeviceDiagnosticResult3() returns currently associated
+devices, not historical hwsim station objects.
+
+Upstream-Status: Pending
+---
+ platform/banana-pi/platform.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+index 236ebc3..4980ae8 100644
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -48,5 +48,9 @@
+ #define INVALID_KEY  "12345678"
+ 
++#ifdef HWSIM_RADIO
++#define HWSIM_ASSOC_STALE_MSEC 120000U
++#endif
++
+ int wifi_nvram_defaultRead(char *in,char *out);
+ int _syscmd(char *cmd, char *retBuf, int retBufSize);
+ 
+@@ -686,6 +690,12 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+ {
+     struct nlattr *tb[NL80211_ATTR_MAX + 1];
+     struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
++#ifdef HWSIM_RADIO
++    struct nlattr *stats[NL80211_STA_INFO_MAX + 1];
++    static struct nla_policy stats_policy[NL80211_STA_INFO_MAX + 1] = {
++        [NL80211_STA_INFO_INACTIVE_TIME] = { .type = NLA_U32 },
++    };
++#endif
+     sta_entry_t *entries;
+     unsigned int i;
+     sta_list_t *sta_list = (sta_list_t *)arg;
+@@ -696,6 +706,22 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+         return NL_SKIP;
+     }
+ 
++#ifdef HWSIM_RADIO
++    /* A hwsim STA can leave an authorized station object behind when it
++     * silently reassociates to another virtual AP.  Such an object is useful
++     * kernel history, but it is not a current associated device. */
++    if (tb[NL80211_ATTR_STA_INFO] != NULL &&
++        nla_parse_nested(stats, NL80211_STA_INFO_MAX,
++            tb[NL80211_ATTR_STA_INFO], stats_policy) == 0 &&
++        stats[NL80211_STA_INFO_INACTIVE_TIME] != NULL &&
++        nla_get_u32(stats[NL80211_STA_INFO_INACTIVE_TIME]) >
++            HWSIM_ASSOC_STALE_MSEC) {
++        wifi_hal_stats_dbg_print("%s:%d Skip inactive hwsim station row\n",
++            __func__, __LINE__);
++        return NL_OK;
++    }
++#endif
++
+     if (tb[NL80211_ATTR_MAC]) {
+         for (i = 0; i < sta_list->num; i++) {
+             if (memcmp(sta_list->entries[i].mac, nla_data(tb[NL80211_ATTR_MAC]),
+-- 
+2.43.0

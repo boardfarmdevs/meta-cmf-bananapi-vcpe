@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000119 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Wed, 26 Aug 2026 23:50:00 -0700
+Subject: [PATCH] agent: reconcile authoritative station snapshots
+
+OneWifi sends both full associated-client snapshots and incremental add/remove
+notifications.  The EasyMesh agent treated both forms as merge operations.  If
+a client roamed and the previous AP's full snapshot omitted it, the old row
+remained in the agent's consolidated map and was repeatedly advertised to the
+controller.  The controller topology could therefore revert to the previous AP
+after initially showing the successful steer.
+
+Preserve whether the source notification is full or differential in the STA
+list command.  For a full notification, remove consolidated rows belonging to
+the reporting radio when their exact STA/BSSID/RUID key is absent.  Continue to
+apply differential notifications only as explicit adds and removals.  Schedule
+empty full snapshots as well, since an empty list is authoritative evidence
+that the radio owns no stations.
+
+The reconciliation is scoped to the reporting RUID and therefore cannot remove
+stations owned by another radio.
+
+Upstream-Status: Submitted [RDKB-EM lab validation]
+---
+ src/agent/dm_easy_mesh_agent.cpp |  6 +++--
+ src/orch/em_orch_agent.cpp       | 55 ++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 59 insertions(+), 2 deletions(-)
+
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 1111111..2222222 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -125,6 +125,8 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[])
+     bool is_tracked_sta_mld = false;
+     mac_addr_str_t radio_str;
+     mac_addr_str_t  sta_mac_str, bss_mac_str, radio_mac_str;
++    const bool full_snapshot = strstr(reinterpret_cast<char *>(evt->u.raw_buff),
++        "\"WiFiAssociatedClients\"") != NULL;
+ 
+     dm.init();
+ 
+@@ -165,9 +167,11 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[])
+ 
+ 
+     for ( i = 0; i < num_radios; i++) {
+-        evt->params.u.args.num_args = 1;
++        evt->params.u.args.num_args = 2;
+         dm_easy_mesh_t::macbytes_to_string(get_radio_by_ref(i).get_radio_interface_mac(), radio_str);
+         snprintf(evt->params.u.args.args[0], sizeof(evt->params.u.args.args[0]), "%s", radio_str);
++        snprintf(evt->params.u.args.args[1], sizeof(evt->params.u.args.args[1]), "%s",
++            full_snapshot ? "full" : "diff");
+ 
+         pcmd[num] = new em_cmd_sta_list_t(evt->params, dm);
+ 
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 3333333..4444444 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -242,6 +242,7 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+     em_long_string_t key;
+     mac_addr_str_t sta_mac_str, bss_mac_str, radio_mac_str;
+     em_freq_band_t band;
++    bool full_sta_snapshot;
+ 
+     ctx = pcmd->m_data_model.get_cmd_ctx();
+ 
+@@ -301,6 +302,19 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 dm = m_mgr->create_data_model(GLOBAL_NET_ID, intf);
+             }
+ 
++            /* A full OneWifi station-list notification is an authoritative
++             * snapshot for this radio.  The old code merged the rows that
++             * were present but never removed a row omitted from a later full
++             * snapshot.  After a roam, that let the previous AP repeatedly
++             * advertise ownership even after its HAL snapshot was clean.
++             *
++             * Keep diff notifications additive/removal-only.  Reconciliation
++             * below is deliberately scoped to the reporting RUID so an empty
++             * snapshot cannot erase stations owned by another radio. */
++            full_sta_snapshot =
++                pcmd->m_param.u.args.num_args > 1 &&
++                strcmp(pcmd->m_param.u.args.args[1], "full") == 0;
++
+             sta = static_cast<dm_sta_t *> (hash_map_get_first(pcmd->get_data_model()->m_sta_assoc_map));
+             while(sta != NULL) {
+                 dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
+@@ -351,6 +365,41 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 }
+                 sta = static_cast<dm_sta_t *>(hash_map_get_next(pcmd->get_data_model()->m_sta_dassoc_map, sta));
+             }
++
++            if (full_sta_snapshot) {
++                sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
++                while (sta != NULL) {
++                    dm_sta_t *next = static_cast<dm_sta_t *>(hash_map_get_next(dm->m_sta_map, sta));
++
++                    if (memcmp(sta->m_sta_info.radiomac, intf->mac,
++                        sizeof(mac_address_t)) == 0 &&
++                        pcmd->get_data_model()->get_sta_info(sta->m_sta_info.id,
++                            sta->m_sta_info.bssid, sta->m_sta_info.radiomac,
++                            em_target_sta_map_assoc) == NULL) {
++                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
++                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
++                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
++                        snprintf(key, sizeof(em_long_string_t), "%s@%s@%s",
++                            sta_mac_str, bss_mac_str, radio_mac_str);
++
++                        em_sta_info_t removed_info = sta->m_sta_info;
++                        removed_info.associated = false;
++                        em_sta_info_t *removed = dm->get_sta_info(removed_info.id,
++                            removed_info.bssid, removed_info.radiomac,
++                            em_target_sta_map_disassoc);
++                        if (removed != NULL) {
++                            memcpy(removed, &removed_info, sizeof(em_sta_info_t));
++                        } else {
++                            dm->put_sta_info(&removed_info, em_target_sta_map_disassoc);
++                        }
++
++                        em_printfout("Full STA snapshot removed absent consolidated row key=%s", key);
++                        dm_sta_t *old = static_cast<dm_sta_t *>(hash_map_remove(dm->m_sta_map, key));
++                        delete old;
++                    }
++                    sta = next;
++                }
++            }
+             break;
+         case dm_orch_type_sta_insert:
+         case dm_orch_type_sta_update:
+@@ -446,7 +495,12 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
+                 }
+ 
+                 printf("%s:%d pcmd radio mac=%s\n", __func__, __LINE__, pcmd->m_param.u.args.args[0]);
+-                if ((hash_map_count(pcmd->get_data_model()->m_sta_assoc_map) != 0) || (hash_map_count(pcmd->get_data_model()->m_sta_dassoc_map) != 0)) {
++                /* Empty full snapshots must still run sta_aggregate so they
++                 * can remove the last station formerly owned by this radio. */
++                if ((pcmd->m_param.u.args.num_args > 1 &&
++                        strcmp(pcmd->m_param.u.args.args[1], "full") == 0) ||
++                    (hash_map_count(pcmd->get_data_model()->m_sta_assoc_map) != 0) ||
++                    (hash_map_count(pcmd->get_data_model()->m_sta_dassoc_map) != 0)) {
+                     queue_push(pcmd->m_em_candidates, em);
+                     count++;
+                 }
+-- 
+2.43.0

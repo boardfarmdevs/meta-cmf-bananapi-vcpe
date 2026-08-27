@@ -1,0 +1,66 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: refresh frame registrations after AP restart
+
+OneWifi provisions a hwsim AP in stages.  The initial BSS setup registers
+nl80211 management sockets plus the EAPOL packet socket.
+Applying the EasyMesh-provided VAP configuration subsequently stops and starts
+the AP through restart_interface().  Those registrations belong to the old BSS
+lifecycle and must be released before start_bss() enters the normal HAL setup
+path.
+
+This produces a deceptive half-working VAP: beacons are transmitted and a
+monitor interface on the same target wiphy receives a client's Open System
+Authentication requests, while OneWifi's nl_recv_func never sees a readable
+management socket and embedded hostapd sends no authentication response.
+Restarting OneWifi recreates the registrations and immediately restores
+authentication, proving that neither wmediumd delivery nor the steering target
+is at fault.
+
+Release the management and EAPOL receive paths before the STOP_AP/START_AP
+transition.  start_bss() calls wifi_drv_set_operstate(), which creates exactly
+one fresh set of registrations for the restarted BSS.  Refreshing them after
+start_bss() is wrong: it destroys the new working socket, then collides with
+its still-live kernel registrations and leaves an AP that beacons but cannot
+answer authentication.  Limit the lifecycle correction to HWSIM_RADIO;
+physical drivers retain registrations across their native AP restart.
+
+Do not disturb the optional spurious-frame subscription.  It is not used for
+authentication or EAPOL, its existing subscription remains usable across the
+restart, and trying to replace it is rejected by mac80211_hwsim with EBUSY.
+That diagnostic subscription must never turn an otherwise successful VAP
+configuration into a failure.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211_utils.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/wifi_hal_nl80211_utils.c b/wifi_hal_nl80211_utils.c
+index 7e9f430..65f5e44 100644
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -6326,5 +6326,22 @@ int restart_interface(wifi_interface_info_t *interface)
+         // exactly the case that needs it. Stopping an interface with no AP
+         // running returns a harmless error which is logged and ignored.
++#ifdef HWSIM_RADIO
++        /* Registrations owned by the old hwsim BSS must be released before
++         * start_bss().  Its wifi_drv_set_operstate() callback creates the
++         * replacement registrations.  Replacing them after start_bss()
++         * destroys the newly working socket and collides with the live
++         * kernel registration, leaving a beaconing AP unable to authenticate
++         * clients. */
++        if (interface->mgmt_frames_registered) {
++            nl80211_unregister_mgmt_frames(interface);
++        }
++#ifndef EAPOL_OVER_NL
++        if (interface->data_frames_registered) {
++            unregister_data_frame_socket(interface);
++        }
++#endif /* EAPOL_OVER_NL */
++#endif /* HWSIM_RADIO */
++
+         if (nl80211_enable_ap(interface, false) < 0) {
+             wifi_hal_dbg_print("%s:%d: interface:%s stop AP before restart returned an "
+                 "error (expected when no AP was running)\n", __func__, __LINE__, interface_name);
+-- 
+2.43.0

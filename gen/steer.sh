@@ -10,10 +10,11 @@ usage: gen/steer.sh [--band 2.4|5|6] [--ssid SSID] [--dry-run] STA TARGET
 
 Examples:
   gen/steer.sh sta-03 extender-2
+  gen/steer.sh iot-14 agent-1
   gen/steer.sh sta-03 agent-1
   gen/steer.sh --band 6 sta-03 extender-2
 
-STA may be a WebUI label such as sta-03 or a station MAC. TARGET may be a
+STA may be a WebUI label such as sta-03/iot-14 or a station MAC. TARGET may be a
 live topology node name such as agent-1/extender-2 or a target BSSID. Without
 overrides, the target BSSID is selected on the STA's current SSID and band.
 EOF
@@ -70,13 +71,13 @@ jq -e '.nodes | type == "array"' >/dev/null <<<"$topology" || {
     exit 1
 }
 
-if [[ $sta_input =~ ^sta-([[:xdigit:]]{2})$ ]]; then
+if [[ $sta_input =~ ^(sta|iot)-([[:xdigit:]]{2})$ ]]; then
     # The WebUI uses the fifth octet for the stable hwsim STA label.
-    sta=$(printf '02:00:00:00:%s:00' "${BASH_REMATCH[1],,}")
+    sta=$(printf '02:00:00:00:%s:00' "${BASH_REMATCH[2],,}")
 elif [[ $sta_input =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
     sta=$sta_input
 else
-    echo "steer.sh: STA must be a WebUI name such as sta-03 or a MAC address" >&2
+    echo "steer.sh: STA must be a WebUI name such as sta-03/iot-14 or a MAC address" >&2
     exit 2
 fi
 
@@ -127,7 +128,6 @@ else
         --arg target "$target_input" --argjson band "$target_band" --arg ssid "$target_ssid" '
         [.nodes[] | select((.name // "" | ascii_downcase) == $target)
           | . as $node | .haulTypes[]? as $haul
-          | select(($haul.name // "" | ascii_downcase) == "fronthaul")
           | $haul.BSSList[]?
           | select(.Band == $band and (.ssid // $haul.ssid // "") == $ssid)
           | [$node.name, .BSSID, (.Band | tostring), (.ssid // $haul.ssid // "")] | @tsv]

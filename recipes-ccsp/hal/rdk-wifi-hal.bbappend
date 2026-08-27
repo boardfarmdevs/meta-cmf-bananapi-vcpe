@@ -29,6 +29,11 @@ SRC_URI += "file://0003-set_interface_properties-dont-match-phy_index-single-phy
 # exploratory START_AP workaround superseded by the malformed-ACL diagnosis.
 CFLAGS_append = " -DHWSIM_RADIO"
 
+# Embedded hostapd otherwise retains a departed hwsim AP peer for five minutes,
+# masking a future authorization edge when a steering test returns to that AP.
+# Use normal hostapd liveness probing with a bounded lab-only aging interval.
+SRC_URI += "file://0030-hwsim-bound-ap-station-inactivity-aging.patch"
+
 # THE actual root cause of "-95 Operation not supported" on VAP beacon-start
 # (0004/0005/0006 above and ccsp-one-wifi's 0004/0005 all turned out to be red
 # herrings, or genuinely-wrong-but-not-blocking defaults): nl80211_put_acl()
@@ -105,6 +110,10 @@ PLATFORM_CREATE_VAP_MLD_NULL_PATCH := "${THISDIR}/${BPN}/0005-platform_create_va
 # event delivery both work fine, the mismatch was purely the broadcast SSID itself.
 PLATFORM_BACKHAUL_SSID_PATCH := "${THISDIR}/${BPN}/0009-backhaul-ssid-passphrase-for-mesh-backhaul-ap.patch"
 PLATFORM_WDS_STA_METRICS_PATCH := "${THISDIR}/${BPN}/0026-include-wds-children-in-associated-station-stats.patch"
+# mac80211_hwsim can retain an AUTHORIZED AP station row after a client has
+# reassociated elsewhere.  Filter those inactive rows at the associated-device
+# provider boundary; physical builds retain their native liveness policy.
+PLATFORM_HWSIM_STA_LIVENESS_PATCH := "${THISDIR}/${BPN}/0028-hwsim-filter-inactive-associated-station-rows.patch"
 
 python do_patch_append() {
     import subprocess, os
@@ -122,6 +131,9 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: including WDS child interfaces in station stats")
     with open(d.getVar('PLATFORM_WDS_STA_METRICS_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
+    bb.note("meta-cmf-bananapi-vcpe: filtering inactive hwsim station rows")
+    with open(d.getVar('PLATFORM_HWSIM_STA_LIVENESS_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
 }
 # The *_PATCH variables hold absolute paths, so referencing them from do_patch put
 # this layer's checkout location into its basehash and no two trees could share
@@ -129,11 +141,12 @@ python do_patch_append() {
 # contents an input; the paths themselves are not one.
 do_patch[vardepsexclude] += "PLATFORM_CREATE_VAP_NULL_PATCH \
     PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH \
-    PLATFORM_WDS_STA_METRICS_PATCH"
+    PLATFORM_WDS_STA_METRICS_PATCH PLATFORM_HWSIM_STA_LIVENESS_PATCH"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_MLD_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_BACKHAUL_SSID_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_WDS_STA_METRICS_PATCH}:True"
+do_patch[file-checksums] += "${PLATFORM_HWSIM_STA_LIVENESS_PATCH}:True"
 
 # InterfaceMap_em.json (BananaPi R4's EasyMesh interface map) groups every radio's
 # primary VAP (wifi0/wifi1/wifi2 -> private_ssid_*) under "MldName": "mld0", a real
@@ -223,6 +236,16 @@ SRC_URI += "file://0017-fix-ap-eapol-rx-when-mlo-configured-but-not-established.
 # shared fronthaul ESS across both nodes and both bands. See patch header.
 SRC_URI += "file://0018-fix-vap-reconfiguration-stop-ap-and-clamp-mlo-link-id.patch"
 
+# mac80211_hwsim VAPs are configured in two stages: OneWifi first creates the
+# AP and then applies the EasyMesh-provisioned BSS.  The latter performs a
+# STOP_AP/START_AP cycle.  Release the old management-frame and EAPOL receive
+# paths before that restart; start_bss() then creates one fresh working set.
+# Doing a second refresh after start_bss() collides with its live registration
+# and leaves a beaconing AP unable to authenticate clients.  The independent
+# spurious-frame subscription remains untouched.  No host-side synchronization
+# service or post-start OneWifi restart is required.
+SRC_URI += "file://0029-hwsim-refresh-frame-registrations-after-ap-restart.patch"
+
 # wifi_hal_send_mgmt_frame() used a broadcast address as the BSSID of every
 # unicast management action frame.  cfg80211 rejects the resulting AP frame
 # with -EINVAL, so a steering request can reach the correct source VAP and
@@ -250,6 +273,12 @@ SRC_URI += "file://0022-single-phy-let-START_AP-set-each-radio-channel.patch"
 # pre-auth EAPOL M4 is not diverted to the WDS netdev -> reason 15). Driven from the HAL's
 # SET_STATION(authorized) path because a leftover WDS netdev suppresses UNEXPECTED_4ADDR.
 SRC_URI += "file://0023-create-wds-sta-on-authorization-not-association.patch"
+
+# An associated-device callback is an authoritative edge for OneWifi and
+# EasyMesh. Emit it only when hostapd actually enables AUTHORIZED, after the
+# kernel accepts that transition; later flag maintenance on a retained hwsim
+# station must not manufacture another association.
+SRC_URI += "file://0027-notify-association-only-on-authorization-edge.patch"
 
 # The standard non-associated STA query reaches wifi_getNASta(), but the
 # generic HAL has no provider.  For HWSIM_RADIO only, read frequency-qualified

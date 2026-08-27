@@ -43,9 +43,9 @@ if [ -z "$TGT_BAND" ]; then
 fi
 case "$TGT_BAND" in
     0) OPCLASS=${OPCLASS:-81};  CHAN=${CHAN:-6}  ;;
-    1) OPCLASS=${OPCLASS:-128}; CHAN=${CHAN:-36} ;;
+    1) OPCLASS=${OPCLASS:-115}; CHAN=${CHAN:-36} ;;
     3) OPCLASS=${OPCLASS:-131}; CHAN=${CHAN:-37} ;;
-    *) OPCLASS=${OPCLASS:-128}; CHAN=${CHAN:-36} ;;
+    *) OPCLASS=${OPCLASS:-115}; CHAN=${CHAN:-36} ;;
 esac
 
 # The source comes from the controller's model, which can lag reality (BTM-report

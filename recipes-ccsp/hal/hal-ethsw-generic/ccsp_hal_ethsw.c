@@ -951,13 +951,11 @@ Sample:
 						eth_count++;
 						break;
 					}
-					else if((strcmp(status,"STALE") == 0) || (strcmp(status,"DELAY")))
+					else if((strcmp(status,"STALE") == 0) || (strcmp(status,"DELAY") == 0))
 					{
 						sprintf(buf,"ping -q -c 1 -W 1  \"%s\"  > /dev/null 2>&1",ipAddr);
-						fprintf(stderr,"buf is %s and MACADRRESS %s\n",buf,macAddr);
 						if (WEXITSTATUS(system(buf)) == 0)
 						{
-							fprintf(stderr,"Inside STALE SUCCESS \n");
 							memset(buf,0,sizeof(buf));
 							sprintf(buf,"echo %s >> /tmp/ethernetmac.txt",macAddr);
 							system(buf);
@@ -971,8 +969,6 @@ Sample:
 						break;
 					}
 				}
-				else
-					fprintf(stderr,"MAcAddress is not valid \n");
 			}
 			fclose(fp1);
 		}

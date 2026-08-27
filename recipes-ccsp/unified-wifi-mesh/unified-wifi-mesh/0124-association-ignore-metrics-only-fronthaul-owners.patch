@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000124 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 27 Aug 2026 10:15:00 -0700
+Subject: [PATCH] association: reject metrics-only fronthaul owners
+
+Associated STA metrics describe an existing association; they do not create
+one.  The agent's cold-onboarding repair nevertheless inserted any metrics row
+which was absent from its association model.  A delayed OneWifi sample from a
+former fronthaul BSS could therefore recreate a withdrawn owner.  The agent
+then advertised the same STA under two bands and the controller/WebUI appeared
+to alternate bands although the physical STA never roamed.
+
+Limit metrics-based seeding to a mesh backhaul BSS.  That preserves the repair
+for a bSTA which connected before the EasyMesh agent started, while fronthaul
+ownership continues to come only from associated-client snapshots/events.
+
+Also compare duplicate claims within the reporting device model when parsing
+an Associated Clients TLV.  The existing association-age arbitration covered
+different agents but accidentally excluded two BSSs on one agent.  Treat both
+cases identically so a malformed or temporarily stale agent snapshot cannot
+replace the current owner on every periodic Topology Response.
+
+Upstream-Status: Submitted [RDKB-EM lab validation]
+---
+ src/em/config/em_configuration.cpp | 54 ++++++++++++++++++------------------
+ src/orch/em_orch_agent.cpp         | 29 +++++++++++++++----
+ 2 files changed, 49 insertions(+), 34 deletions(-)
+
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -426,13 +426,28 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 if (em_sta != NULL) {
+                     memcpy(em_sta, &sta->m_sta_info, sizeof(em_sta_info_t));
+                 } else {
+-                    /* A link-metrics event is also positive evidence that the
+-                     * AP currently owns this associated station.  The first
+-                     * association event can precede the EasyMesh agent during
+-                     * cold onboarding, especially for a backhaul STA already
+-                     * connected to the colocated gateway AP.  Seed the
+-                     * consolidated map so this and subsequent measurements
+-                     * are emitted in the AP Metrics Response. */
++                    dm_bss_t *metrics_bss = dm->get_bss(
++                        sta->m_sta_info.radiomac, sta->m_sta_info.bssid);
++
++                    /* Link metrics update an existing association; they are
++                     * not ownership evidence for a fronthaul STA.  OneWifi can
++                     * retain a metrics sample after a band roam, and seeding
++                     * that row recreates an owner which the authoritative
++                     * associated-client snapshot already withdrew.  Preserve
++                     * the cold-onboarding repair only for mesh backhaul BSSs,
++                     * where the bSTA can predate the EasyMesh agent. */
++                    if (metrics_bss == NULL ||
++                            metrics_bss->get_bss_info()->id.haul_type !=
++                                em_haul_type_backhaul) {
++                        em_printfout(
++                            "Ignoring metrics-only fronthaul STA ownership sta=%s bssid=%s",
++                            util::mac_to_string(sta->m_sta_info.id).c_str(),
++                            util::mac_to_string(sta->m_sta_info.bssid).c_str());
++                        sta = static_cast<dm_sta_t *>(hash_map_get_next(
++                            pcmd->get_data_model()->m_sta_map, sta));
++                        continue;
++                    }
++
+                     dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
+                     dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
+                     dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2374,8 +2374,9 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                          sta_mac_str, bssid_str, radio_mac_str);
+                 snapshot_keys.insert(snapshot_key);
+ 
+-                /* A Topology Response is an unordered snapshot.  If two
+-                 * device models claim the same STA on different BSSs, only a
++                /* A Topology Response is an unordered snapshot.  If two BSSs
++                 * claim the same STA, whether they belong to this reporting
++                 * device or different devices, only a
+                  * known, strictly younger Association Time can order them.
+                  * Unknown, equal and saturated ages remain ambiguous.  This
+                  * prevents an old snapshot from reversing an association
+@@ -2385,33 +2386,32 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                 bool incoming_is_newer = assoc_time != 0;
+                 dm_easy_mesh_t *claim_dm = get_mgr()->get_first_dm();
+                 while (claim_dm != NULL) {
+-                    if (claim_dm != dm) {
+-                        dm_sta_t *claim = claim_dm->get_first_sta(sta_info.id);
+-                        while (claim != NULL) {
+-                            if (claim->m_sta_info.associated &&
+-                                    memcmp(claim->m_sta_info.bssid,
+-                                           sta_info.bssid,
+-                                           sizeof(bssid_t)) != 0) {
+-                                conflicting_claim = true;
+-                                const unsigned int claim_time =
+-                                        claim->m_sta_info.last_conn_time;
+-                                if (claim_time == 0 || assoc_time == 65535 ||
+-                                        claim_time == 65535 ||
+-                                        assoc_time >= claim_time) {
+-                                    incoming_is_newer = false;
+-                                }
+-                                em_printfout(
+-                                        "Topology Response owner evidence sta=%s incoming_age=%u existing_age=%u newer=%d",
+-                                        util::mac_to_string(sta_info.id).c_str(),
+-                                        assoc_time, claim_time,
+-                                        incoming_is_newer ? 1 : 0);
+-                                /* Check every conflicting claim before
+-                                 * accepting the incoming association. */
+-                                claim = claim_dm->get_next_sta(sta_info.id, claim);
+-                                continue;
++                    dm_sta_t *claim = claim_dm->get_first_sta(sta_info.id);
++                    while (claim != NULL) {
++                        if (claim->m_sta_info.associated &&
++                                memcmp(claim->m_sta_info.bssid,
++                                       sta_info.bssid,
++                                       sizeof(bssid_t)) != 0) {
++                            conflicting_claim = true;
++                            const unsigned int claim_time =
++                                    claim->m_sta_info.last_conn_time;
++                            if (claim_time == 0 || assoc_time == 65535 ||
++                                    claim_time == 65535 ||
++                                    assoc_time >= claim_time) {
++                                incoming_is_newer = false;
+                             }
+-                            claim = claim_dm->get_next_sta(sta_info.id, claim);
++                            em_printfout(
++                                    "Topology Response owner evidence sta=%s incoming_age=%u existing_age=%u newer=%d",
++                                    util::mac_to_string(sta_info.id).c_str(),
++                                    assoc_time, claim_time,
++                                    incoming_is_newer ? 1 : 0);
++                            /* Check every conflicting claim before accepting
++                             * the incoming association, including another BSS
++                             * in this reporting device model. */
++                            claim = claim_dm->get_next_sta(sta_info.id, claim);
++                            continue;
+                         }
++                        claim = claim_dm->get_next_sta(sta_info.id, claim);
+                     }
+                     claim_dm = get_mgr()->get_next_dm(claim_dm);
+                 }
+-- 
+2.43.0

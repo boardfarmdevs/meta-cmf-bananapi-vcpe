@@ -28,31 +28,55 @@ WIFI_STA_BSSID_SET_PATCH := "${THISDIR}/${BPN}/0016-rbus-apply-mesh-sta-bssid.pa
 WIFI_STA_STATUS_PUBLISH_PATCH := "${THISDIR}/${BPN}/0017-publish-mesh-sta-on-connection-change.patch"
 WIFI_STA_PARENT_CACHE_PATCH := "${THISDIR}/${BPN}/0018-cache-confirmed-mesh-sta-parent.patch"
 WIFI_EM_EVENT_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0019-easymesh-release-encoded-event-data.patch"
+WIFI_EM_ASSOC_RECONCILE_PATCH := "${THISDIR}/${BPN}/0020-hwsim-reconcile-live-associated-client-snapshots.patch"
 python do_patch_append() {
     import os
     import subprocess
     s = d.getVar('S')
-    # -N: skip a patch that's already applied instead of erroring. Plain
-    # `patch -p1` (no -N) isn't idempotent across do_patch re-runs against a
-    # WORKDIR/git checkout that survived from an earlier build attempt (unlike
-    # bitbake's own SRC_URI patch machinery, this hand-rolled subprocess call
-    # has no applied-patch tracking) -- it hit exactly that
-    # "Reversed (or previously applied) patch detected!" on 2026-08-04.
+    def apply_layer_patch(stream):
+        patch_data = stream.read()
+        # --force also prevents GNU patch from silently ignoring an explicit
+        # --reverse dry-run after it recognizes an unreversed patch.
+        base = ['patch', '-p1', '--batch', '--force', '-d', s]
+        # Hand-applied patches are outside BitBake's normal patch tracking.
+        # A task signature change can therefore rerun do_patch against a
+        # surviving, already-patched source tree.  Treat a clean full reverse
+        # dry-run as "already applied".  Test reverse first: an insertion-only
+        # hunk can otherwise remain a valid forward match inside the text it
+        # inserted and be duplicated on every task rerun.
+        reverse = subprocess.run(base + ['--dry-run', '--reverse'],
+                                 input=patch_data, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+        if reverse.returncode == 0:
+            bb.note('meta-cmf-bananapi-vcpe: patch already applied; skipping')
+            return
+
+        forward = subprocess.run(base + ['--dry-run', '--forward'],
+                                 input=patch_data, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+        if forward.returncode == 0:
+            subprocess.run(base + ['--forward'], input=patch_data, check=True)
+            return
+
+        bb.fatal('meta-cmf-bananapi-vcpe: patch is neither cleanly applicable '
+                 'nor already applied:\n%s' %
+                 forward.stdout.decode('utf-8', errors='replace'))
+
     bb.note("meta-cmf-bananapi-vcpe: applying sign-compare fix to vap_svc.c")
     with open(d.getVar('VAP_SVC_SIGNCOMPARE_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # Only reachable at all once rdk-wifi-libhostap is a DEPENDS (EasyMesh/em_extender
     # builds), so this is a no-op patch attempt-wise for the non-EasyMesh (broadband)
     # build -- but harmless either way since the guard is additive (#ifndef) and the
     # macro is otherwise untouched.
     bb.note("meta-cmf-bananapi-vcpe: applying IEEE80211_HDRLEN redefinition guard to wifi_em.h")
     with open(d.getVar('WIFI_EM_HDRLEN_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # wifi_db.c's ONEWIFI_DB_SUPPORT-off branch (only compiled under EasyMesh) has
     # never been built before this pass -- see patch header for the two latent bugs.
     bb.note("meta-cmf-bananapi-vcpe: fixing wifi_db.c's ONEWIFI_DB_SUPPORT-off branch")
     with open(d.getVar('WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # init_radio_config_default() defaults to 802.11be/ax + 40MHz for the 2.4GHz radio
     # whenever _PLATFORM_BANANAPI_R4_ is defined -- true for this container too, but
     # mac80211_hwsim can't beacon HE/EHT (confirmed via wifiHal.txt: kernel error -95
@@ -60,7 +84,7 @@ python do_patch_append() {
     # HWSIM_RADIO macro (see CFLAGS_append below) so real BananaPi R4 hardware is unaffected.
     bb.note("meta-cmf-bananapi-vcpe: disabling 802.11ax/be radio defaults under hwsim")
     with open(d.getVar('WIFI_DB_HWSIM_STANDARDS_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # private_ssid_*'s default security.mode defaults to WPA3/SAE under
     # _PLATFORM_BANANAPI_R4_. Root-caused via a raw netlink capture (strace -x on the
     # exact NL80211_CMD_START_AP sendmsg, decoded byte-for-byte against nl80211.h):
@@ -70,7 +94,7 @@ python do_patch_append() {
     # header for the full trace.
     bb.note("meta-cmf-bananapi-vcpe: disabling WPA3/SAE security defaults under hwsim")
     with open(d.getVar('WIFI_DB_HWSIM_SAE_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # 6GHz cannot work under hwsim at all: the phy advertises the band but exposes no
     # HE capability, and 6GHz mandates HE. 2.4GHz and 5GHz both work, and both are
     # needed -- the EasyMesh controller maps the fronthaul haul onto its 2.4GHz radio,
@@ -80,7 +104,7 @@ python do_patch_append() {
     # does this); with channels=1 the second band fails with -16 (EBUSY) on "Set freq".
     bb.note("meta-cmf-bananapi-vcpe: disabling 6GHz under hwsim (no HE capability)")
     with open(d.getVar('WIFI_DB_HWSIM_NO_6GHZ_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # 0005 disabled the WPA3/SAE defaults for the AP-side VAPs but missed the STA-side
     # equivalent in the same file, leaving the backhaul STA on WPA3-SAE+MFP-required
     # while its peer AP had been moved to WPA2-PSK. That mismatch makes
@@ -89,78 +113,85 @@ python do_patch_append() {
     # not a single auth frame ever hit the air. See patch header for the full trace.
     bb.note("meta-cmf-bananapi-vcpe: disabling WPA3/SAE *STA* security defaults under hwsim")
     with open(d.getVar('WIFI_DB_HWSIM_SAE_STA_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # FEATURE_SINGLE_PHY: the 5GHz(80MHz)/6GHz(160MHz) radio-width defaults make the
     # 2nd/3rd concurrent AP channel context on the one hwsim phy fail START_AP with
     # -EINVAL on Linux 7.0 (20MHz concurrent works, 80/160 does not -- host-hwsim proven).
     # Clamp to 20MHz so tri-band comes up. Pairs with rdk-wifi-hal 0022.
     bb.note("meta-cmf-bananapi-vcpe: clamping channelWidth to 20MHz under hwsim (single-phy tri-band)")
     with open(d.getVar('WIFI_DB_HWSIM_20MHZ_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # A client returning to an AP can find a stale OneWifi map entry because
     # inter-AP reassociation does not guarantee a disassociation frame at the old
     # AP. Publish a refreshed association delta for an existing entry so EasyMesh
     # learns the new owner instead of leaving the controller/WebUI stale.
     bb.note("meta-cmf-bananapi-vcpe: publishing association delta for returning clients")
     with open(d.getVar('WIFI_ASSOC_RETURN_DELTA_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # The persistent association map can retain a station after a silent roam.
     # Make the failed live-monitor lookup explicit so full snapshots can exclude
     # retained history without deleting it.
     bb.note("meta-cmf-bananapi-vcpe: marking monitor-missing association history inactive")
     with open(d.getVar('WIFI_ASSOC_LIVE_SNAPSHOT_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # Linux bridges inherit a port MAC, so the extender AL MAC can appear on
     # both brlan0 and its wireless backhaul STA.  Make the Init_dml readiness
     # check select the known STA instead of depending on getifaddrs() order.
     bb.note("meta-cmf-bananapi-vcpe: resolving duplicate EasyMesh AL MAC to the backhaul STA")
     with open(d.getVar('WIFI_EM_DUPLICATE_AL_MAC_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # AP Metrics requests can enumerate RUIDs in a different order from the
     # platform radio array.  Keep the decoded radio config indexed by physical
     # radio_index, as required by the encoder, so per-VAP/per-STA metrics are
     # not silently omitted.
     bb.note("meta-cmf-bananapi-vcpe: fixing AP-metrics radio-config indexing")
     with open(d.getVar('WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # OneWifi already measures time associated; preserve it when translating
     # the association snapshot into the EasyMesh station data model.
     bb.note("meta-cmf-bananapi-vcpe: forwarding client association uptime to EasyMesh")
     with open(d.getVar('WIFI_EM_CLIENT_UPTIME_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # The NaSta encoder publishes a response on Device.WiFi.EM.NaStaResponse,
     # but labelled the document as the original request.  Consumers must be
     # able to distinguish the asynchronous result from the method input.
     bb.note("meta-cmf-bananapi-vcpe: labelling NaSta event payload as a response")
     with open(d.getVar('WIFI_NASTA_RESPONSE_NAME_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
     # Device.WiFi.STA.{i}.Bssid was registered writable but its setter ignored
     # the value.  Deliver validated writes to the existing mesh-extender BSSID
     # change state machine so a controller can select a wireless backhaul parent.
     if d.getVar('MACHINE') == 'qemux86bpiap':
         bb.note("meta-cmf-bananapi-vcpe: applying mesh-STA RBUS BSSID selection")
         with open(d.getVar('WIFI_STA_BSSID_SET_PATCH'), 'rb') as f:
-            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+            apply_layer_patch(f)
         # A confirmed mesh-STA connection updates the OneWifi cache.  Publish
         # that change as mesh_sta (not the generic dml document ignored by the
         # EasyMesh agent) so runtime reparenting updates the controller model.
         bb.note("meta-cmf-bananapi-vcpe: publishing mesh-STA connection changes")
         with open(d.getVar('WIFI_STA_STATUS_PUBLISH_PATCH'), 'rb') as f:
-            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+            apply_layer_patch(f)
         # The mesh-ext state machine previously refreshed its cached BSSID
         # only during initial connection establishment.  A live reparent is a
         # connected-to-connected transition, so cache every confirmed parent
         # before publishing the mesh_sta document above.
         bb.note("meta-cmf-bananapi-vcpe: caching confirmed live mesh-STA parents")
         with open(d.getVar('WIFI_STA_PARENT_CACHE_PATCH'), 'rb') as f:
-            subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+            apply_layer_patch(f)
     # webconfig_encode() returns a separately allocated encoded buffer.  The
     # periodic EasyMesh metrics publishers released only their wrapper, leaking
     # one report every interval.  Release encoded data through the webconfig
     # ownership API, including error and less-frequent report paths.
     bb.note("meta-cmf-bananapi-vcpe: releasing encoded EasyMesh event buffers")
     with open(d.getVar('WIFI_EM_EVENT_OWNERSHIP_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', s], stdin=f, check=True)
+        apply_layer_patch(f)
+    # The HAL's diagnostic snapshot filters hwsim station objects retained on
+    # an old AP after a roam.  Reconcile that live snapshot with OneWifi's
+    # event-backed association cache, including an authoritative empty result,
+    # and publish the resulting withdrawal to EasyMesh.
+    bb.note("meta-cmf-bananapi-vcpe: reconciling hwsim live association snapshots")
+    with open(d.getVar('WIFI_EM_ASSOC_RECONCILE_PATCH'), 'rb') as f:
+        apply_layer_patch(f)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -188,7 +219,8 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
     WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH \
     WIFI_STA_BSSID_SET_PATCH WIFI_STA_STATUS_PUBLISH_PATCH \
-    WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_EVENT_OWNERSHIP_PATCH"
+    WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_EVENT_OWNERSHIP_PATCH \
+    WIFI_EM_ASSOC_RECONCILE_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -207,6 +239,7 @@ do_patch[file-checksums] += "${WIFI_STA_BSSID_SET_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_STATUS_PUBLISH_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_PARENT_CACHE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_EVENT_OWNERSHIP_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_ASSOC_RECONCILE_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.

@@ -119,6 +119,13 @@ EASYMESH_CORE_PATCHES = " \
     file://0116-agent-release-command-data-model-objects.patch \
     file://0117-cli-resolve-wireless-parent-from-live-bss.patch \
     file://0118-cli-optimize-landscape-topology-layout.patch \
+    file://0119-agent-reconcile-authoritative-station-snapshots.patch \
+    file://0120-cli-bound-live-observability-query-load.patch \
+    file://0121-controller-bound-periodic-diagnostics.patch \
+    file://0122-controller-reconcile-authoritative-client-snapshots.patch \
+    file://0123-controller-resolve-steer-candidate-by-source-bss.patch \
+    file://0124-association-ignore-metrics-only-fronthaul-owners.patch \
+    file://0125-steering-report-from-topology-synchronized-state.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
