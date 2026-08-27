@@ -18,6 +18,16 @@ done
 case "$ssid" in private_ssid|iot_ssid) ;; *) echo "unsupported SSID: $ssid" >&2; exit 2;; esac
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
+steering_frequency=${STEERING_FREQUENCY:-5180}
+steering_source_snr=${STEERING_SOURCE_SNR:-20}
+steering_target_snr=${STEERING_TARGET_SNR:-60}
+steering_other_snr=${STEERING_OTHER_SNR:--20}
+[[ "$steering_frequency" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "STEERING_FREQUENCY must be a positive integer" >&2; exit 2; }
+for value in "$steering_source_snr" "$steering_target_snr" "$steering_other_snr"; do
+    [[ "$value" =~ ^-?[0-9]+$ ]] \
+        || { echo "steering SNR values must be integers" >&2; exit 2; }
+done
 mkdir -p "$(dirname "$results")"
 run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%S.%3NZ)-$$}
 events=${EVENTS_FILE:-${results%.csv}.events.log}
@@ -25,7 +35,9 @@ commands=${COMMANDS_FILE:-${results%.csv}.commands.log}
 : > "$events"
 : > "$commands"
 
-medium_restored=0
+# The test starts from the caller's current matrix and restores every temporary
+# bias exactly. A full all-strong restart is only the failure-path fallback.
+medium_restored=1
 restore_medium() {
     if [ "$medium_restored" -eq 1 ]; then
         return 0
@@ -79,17 +91,57 @@ client_bssid() {
     return 1
 }
 
+# The minimal lab supplicant keeps a deliberately small scan cache. A BTM
+# candidate that has not been observed recently can therefore be rejected even
+# though wmediumd already makes that BSS the strongest choice. Prime the exact
+# test frequency after applying the RF bias and require the requested target to
+# be visible. This models the candidate discovery a production station normally
+# performs and makes private/IoT steering deterministic for the same reason.
+prime_candidate_scan() {
+    local client=$1 target=$2 frequency=$3 scan
+    for _ in $(seq 1 5); do
+        scan=$(lxc exec "$client" -- iw dev wlan0 scan freq "$frequency" \
+            2>/dev/null || true)
+        if grep -Fqi "BSS $target(" <<<"$scan"; then
+            echo "candidate scan primed: $client target=$target frequency=${frequency}MHz"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "$client: target $target was absent from the ${frequency}MHz scan" >&2
+    return 1
+}
+
 mapfile -t clients < <(
     while read -r client; do
         [ -n "$client" ] || continue
         intent=$(lxc config get "$client" user.easymesh.ssid 2>/dev/null || true)
         [ -n "$intent" ] || intent=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
             | sed -n 's/^[[:space:]]*SSID: //p' | head -1)
-        [ "$intent" != "$ssid" ] || echo "$client"
+        [ "$intent" = "$ssid" ] || continue
+
+        # This matrix intentionally exercises the common 5 GHz steering
+        # targets selected below. The small topology also contains one
+        # deterministic 2.4 GHz client and one deterministic 6 GHz client;
+        # their supplicant freq_list excludes 5 GHz, so a 5 GHz BTM request
+        # cannot be a valid test for them. Keep those clients in the full
+        # topology, but do not count an intentionally prohibited band change
+        # as a steering failure.
+        configured_band=$(lxc config get "$client" user.easymesh.band 2>/dev/null || true)
+        case "$configured_band" in
+            2.4|6)
+                echo "skipping $client: configured band $configured_band excludes 5 GHz targets" >&2
+                ;;
+            *)
+                echo "$client"
+                ;;
+        esac
     done < <(lxc list -c n --format csv \
         | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 )
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
+expected_total_clients=$(jq -r \
+    '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")
 bsses=$(curl -fsS http://127.0.0.1:8888/api/v1/bsses)
 mapfile -t target_rows < <(jq -nr \
     --argjson topology "$topology" --argjson bsses "$bsses" --arg ssid "$ssid" '
@@ -121,6 +173,20 @@ for ((round=1; round <= rounds; round++)); do
         printf '%s transaction=%s event=start client=%s sta=%s source=%s target=%s\n' \
             "$started_at" "$transaction_id" "$client" "$sta" "$source" "$target" \
             | tee -a "$events"
+
+        bias_state=$(mktemp)
+        rm -f "$bias_state"
+        medium_restored=0
+        python3 "$repo/gen/tests/steering-rf-bias.py" apply \
+            --client "$client" --source-bssid "$source" \
+            --target-bssid "$target" --state "$bias_state" \
+            --frequency "$steering_frequency" \
+            --source-snr "$steering_source_snr" \
+            --target-snr "$steering_target_snr" \
+            --other-snr "$steering_other_snr" \
+            | tee -a "$commands"
+        prime_candidate_scan "$client" "$target" "$steering_frequency" \
+            | tee -a "$commands"
 
         ping_file=$(mktemp)
         lxc exec "$client" -- ping -q -i 0.1 -c 100 -W 2 10.0.0.1 \
@@ -167,6 +233,10 @@ for ((round=1; round <= rounds; round++)); do
             sleep 0.1
         done
 
+        python3 "$repo/gen/tests/steering-rf-bias.py" restore \
+            --state "$bias_state" | tee -a "$commands"
+        medium_restored=1
+
         wait "$ping_pid" || true
         loss=$(sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p' "$ping_file")
         rm -f "$ping_file"
@@ -195,7 +265,8 @@ done
 restore_medium
 
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
-[ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" -eq 10 ]
+[ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" \
+    -eq "$expected_total_clients" ]
 echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
 echo "results: $results"
 echo "events: $events"

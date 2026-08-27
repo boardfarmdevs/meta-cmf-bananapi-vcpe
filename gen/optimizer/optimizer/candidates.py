@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 from typing import Any, Callable, Iterable
@@ -162,8 +163,9 @@ class ControllerCandidateProvider:
                 (opclass, channel), set()
             ).add(candidate.sta_mac)
 
-        measured: list[CandidateObservation] = []
-        self.last_raw = []
+        jobs_by_agent: dict[
+            str, list[tuple[str, list[tuple[int, int, str]]]]
+        ] = {}
         for (agent, query_radio), groups in sorted(query_groups.items()):
             entries = [
                 (opclass, channel, station)
@@ -174,7 +176,26 @@ class ControllerCandidateProvider:
                 entries[offset:offset + MAX_UNASSOC_STAS_PER_QUERY]
                 for offset in range(0, len(entries), MAX_UNASSOC_STAS_PER_QUERY)
             ]
-            for batch in batches:
+            jobs_by_agent.setdefault(agent, []).extend(
+                (query_radio, batch) for batch in batches
+            )
+
+        # Each Agent owns an independent unassociated-STA response table and
+        # EasyMesh command path.  Keep batches for one Agent sequential so a
+        # later response cannot replace the previous eight-entry table before
+        # it is consumed, while querying different Agents concurrently.  A
+        # 20-client/five-Agent lab otherwise takes tens of seconds to observe
+        # and makes a 15-second freshness policy impossible to satisfy.
+        transactions_by_agent: dict[str, list[dict[str, Any]]] = {
+            agent: [] for agent in jobs_by_agent
+        }
+
+        def query_agent(
+            agent: str,
+            jobs: list[tuple[str, list[tuple[int, int, str]]]],
+        ) -> list[CandidateObservation]:
+            agent_measured: list[CandidateObservation] = []
+            for query_radio, batch in jobs:
                 by_opclass: dict[int, dict[int, list[str]]] = {}
                 for opclass, channel, station in batch:
                     by_opclass.setdefault(opclass, {}).setdefault(channel, []).append(
@@ -197,7 +218,7 @@ class ControllerCandidateProvider:
                     "request": payload,
                     "query_radio": query_radio,
                 }
-                self.last_raw.append(transaction)
+                transactions_by_agent[agent].append(transaction)
                 try:
                     response = self.requester(self.url, payload)
                 except CandidateMetricsError as error:
@@ -249,7 +270,7 @@ class ControllerCandidateProvider:
                     received.add(response_key)
                     mapped = targets.get(response_key, [])
                     for candidate in mapped:
-                        measured.append(
+                        agent_measured.append(
                             CandidateObservation(
                                 sta_mac=sta,
                                 bssid=candidate.bssid,
@@ -273,4 +294,37 @@ class ControllerCandidateProvider:
                         f"candidate response for agent {agent} radio {query_radio} "
                         f"omitted {missing_text}"
                     )
+            return agent_measured
+
+        measured_by_agent: dict[str, list[CandidateObservation]] = {}
+        failures: dict[str, CandidateMetricsError] = {}
+        if jobs_by_agent:
+            with ThreadPoolExecutor(
+                max_workers=min(8, len(jobs_by_agent)),
+                thread_name_prefix="candidate-agent",
+            ) as executor:
+                future_agents = {
+                    executor.submit(query_agent, agent, jobs): agent
+                    for agent, jobs in jobs_by_agent.items()
+                }
+                for future in as_completed(future_agents):
+                    agent = future_agents[future]
+                    try:
+                        measured_by_agent[agent] = future.result()
+                    except CandidateMetricsError as error:
+                        failures[agent] = error
+
+        self.last_raw = [
+            transaction
+            for agent in sorted(transactions_by_agent)
+            for transaction in transactions_by_agent[agent]
+        ]
+        if failures:
+            raise failures[sorted(failures)[0]]
+
+        measured = [
+            item
+            for agent in sorted(measured_by_agent)
+            for item in measured_by_agent[agent]
+        ]
         return measured

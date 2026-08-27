@@ -140,6 +140,37 @@ client_ready() {
     lxc exec "$name" -- ip -4 -o addr show wlan0 2>/dev/null | grep -q 'inet '
 }
 
+enable_metrics_reporting() {
+    local interval=${METRICS_REPORTING_INTERVAL:-5}
+    local response topology wireless fresh attempt
+    [[ "$interval" =~ ^[1-9][0-9]*$ ]] \
+        || { echo "METRICS_REPORTING_INTERVAL must be positive" >&2; return 1; }
+
+    response=$(curl -fsS --max-time 60 -X POST \
+        http://127.0.0.1:8888/api/v1/metricsreporting/enable \
+        -H 'Content-Type: application/json' \
+        -d "{\"interval\":$interval}")
+    jq -e '.success == true and .devices >= 1 and .radios >= 1' \
+        <<<"$response" >/dev/null
+    echo "metrics reporting enabled: interval=${interval}s devices=$(jq -r .devices <<<"$response") radios=$(jq -r .radios <<<"$response")"
+
+    for attempt in $(seq 1 12); do
+        topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null || true)
+        read -r wireless fresh < <(jq -r '
+            [.edges[]? | select(.mediaType == "Wireless LAN")] as $edges |
+            [$edges | length,
+             [$edges[] | select(.signal.status == "fresh")] | length] | @tsv
+        ' <<<"$topology" 2>/dev/null || printf '0\t0\n')
+        echo "backhaul signal gate $attempt/12: fresh=${fresh:-0}/${wireless:-0}"
+        if [[ "$wireless" =~ ^[1-9][0-9]*$ ]] && [ "$fresh" = "$wireless" ]; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "wireless backhaul signals did not become fresh" >&2
+    return 1
+}
+
 case "$ACTION" in
 plan)
     print_plan
@@ -271,6 +302,7 @@ up)
             && [ "$iot_live" = "$IOT_COUNT" ] \
             && [[ "$associated" =~ ^[0-9]+$ ]] \
             && [ "$associated" -ge "$expected_associated" ]; then
+            enable_metrics_reporting
             exit 0
         fi
         sleep 5

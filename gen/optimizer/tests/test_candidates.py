@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from threading import Barrier, Lock
 
 from optimizer.candidates import (
     CandidateMetricsError,
@@ -208,6 +209,55 @@ def test_queries_for_two_radios_are_not_combined():
     assert len(calls) == 2
     assert all(len(call["UnassocStaQueryList"]) == 1 for call in calls)
     assert {item.bssid for item in measured} == {BSSID, second_bssid}
+
+
+def test_different_agents_are_queried_concurrently_with_stable_results():
+    second_agent = "02:00:00:00:0a:20"
+    second_radio = "02:00:00:00:0a:00"
+    second_bssid = "02:00:00:cc:cc:01"
+    second_inventory = replace(
+        inventory(),
+        bssid=second_bssid,
+        device_id=second_agent,
+        device_name="Extender-2",
+    )
+    raw = bsses() + [{
+        "bssid": second_bssid,
+        "device_id": second_agent,
+        "radio_id": second_radio,
+        "band": 1,
+        "channel": 36,
+        "ssid": "private_ssid",
+        "haul_type": "Fronthaul",
+    }]
+    barrier = Barrier(2, timeout=2)
+    calls = []
+    calls_lock = Lock()
+
+    def request(_url, payload):
+        agent = payload["AlMac"]
+        with calls_lock:
+            calls.append(agent)
+        barrier.wait()
+        result = response()
+        result["metrics"][0].update({
+            "agent_al": agent,
+            "ruid": RADIO if agent == AGENT else second_radio,
+        })
+        return result
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=request, allow_simulated=True
+    )
+    measured = list(provider(
+        (client(),), (inventory(), second_inventory), raw,
+        "2026-08-21T20:00:01.000Z",
+    ))
+    assert set(calls) == {AGENT, second_agent}
+    assert [item.bssid for item in measured] == [BSSID, second_bssid]
+    assert [item["request"]["AlMac"] for item in provider.last_raw] == [
+        AGENT, second_agent,
+    ]
 
 
 def test_provider_splits_requests_at_controller_eight_sta_limit():

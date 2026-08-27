@@ -334,20 +334,83 @@ fi
 
 
 if [[ "$mv" == bpi* ]]; then
-    # bananapi ships a FULL LXD image (metadata.yaml + rootfs already inside the
-    # tarball) -> import it directly; no metadata synthesis. Do not delete and
-    # reimport an unchanged image on every redeploy: on a ZFS root pool that is
-    # expensive storage churn and can serialize the NVRAM operation that follows.
-    # A unified LXD archive's fingerprint is its archive SHA-256.
+    # bananapi ships a unified LXD image (metadata.yaml + rootfs in one tarball).
+    # LXD 6.9 can import that archive but then hang forever while materializing
+    # an instance from it. Import the exact same content as the standard split
+    # metadata/rootfs form on that release. Keep the source archive hash as an
+    # image property because a split image has a different LXD fingerprint.
+    #
+    # Do not delete and reimport an unchanged image on every redeploy: on a ZFS
+    # root pool that is expensive storage churn and can serialize the NVRAM
+    # operation that follows.
     staged_image="$M_ROOT/tmp/${mvrootfstarball}"
     archive_fingerprint=$(sha256sum "${staged_image}" | awk '{print $1}')
+    lxd_server_version=$(lxc version 2>/dev/null \
+        | sed -n 's/^Server version: *//p' | head -1)
+    split_import=""
+    case "${BPI_LXD_IMAGE_IMPORT:-auto}" in
+        auto)
+            [[ "${lxd_server_version}" == 6.9* ]] && split_import="1"
+            ;;
+        split)
+            split_import="1"
+            ;;
+        unified)
+            ;;
+        *)
+            echo "Error: BPI_LXD_IMAGE_IMPORT must be auto, split or unified" >&2
+            exit 1
+            ;;
+    esac
+
     installed_fingerprint=$(lxc image info "${imagename}" 2>/dev/null \
         | sed -n 's/^Fingerprint: *//p' | head -1)
-    if [ -n "${installed_fingerprint}" ] && [ "${installed_fingerprint}" = "${archive_fingerprint}" ]; then
+    installed_source_fingerprint=$(lxc image info "${imagename}" 2>/dev/null \
+        | sed -n 's/^    user.source_sha256: *//p' | head -1)
+    installed_import_format=$(lxc image info "${imagename}" 2>/dev/null \
+        | sed -n 's/^    user.import_format: *//p' | head -1)
+    image_matches=""
+    if [ -n "${split_import}" ]; then
+        [ "${installed_source_fingerprint}" = "${archive_fingerprint}" ] \
+            && [ "${installed_import_format}" = split ] \
+            && image_matches="1"
+    elif [ "${installed_fingerprint}" = "${archive_fingerprint}" ] \
+        || [ "${installed_source_fingerprint}" = "${archive_fingerprint}" ]; then
+        image_matches="1"
+    fi
+
+    if [ -n "${image_matches}" ]; then
         echo "Image ${imagename} already matches ${archive_fingerprint}; skipping import"
     else
         [ -z "${installed_fingerprint}" ] || lxc image delete "${imagename}" || exit 1
-        if lxc image info "${archive_fingerprint}" > /dev/null 2>&1; then
+        if [ -n "${split_import}" ]; then
+            command -v fakeroot > /dev/null 2>&1 || {
+                echo "Error: fakeroot is required for LXD ${lxd_server_version} split-image import" >&2
+                exit 1
+            }
+            split_dir=$(mktemp -d "$M_ROOT/tmp/${imagename}.split.XXXXXX") || exit 1
+            if ! fakeroot -- sh -eu -c '
+                mkdir -p "$1/unified"
+                tar -xjf "$2" -C "$1/unified"
+                test -f "$1/unified/metadata.yaml"
+                test -d "$1/unified/rootfs"
+                tar --numeric-owner -C "$1/unified" -czf "$1/metadata.tar.gz" metadata.yaml
+                tar --numeric-owner -C "$1/unified/rootfs" -czf "$1/rootfs.tar.gz" .
+            ' sh "${split_dir}" "${staged_image}"; then
+                rm -rf -- "${split_dir}"
+                echo "Error: failed to convert ${staged_image} to a split LXD image" >&2
+                exit 1
+            fi
+            if ! lxc image import "${split_dir}/metadata.tar.gz" \
+                    "${split_dir}/rootfs.tar.gz" --alias "${imagename}"; then
+                rm -rf -- "${split_dir}"
+                exit 1
+            fi
+            rm -rf -- "${split_dir}"
+            lxc image set-property "${imagename}" user.source_sha256 \
+                "${archive_fingerprint}" || exit 1
+            lxc image set-property "${imagename}" user.import_format split || exit 1
+        elif lxc image info "${archive_fingerprint}" > /dev/null 2>&1; then
             # The content is already installed under a different alias.
             lxc image alias create "${imagename}" "${archive_fingerprint}" || exit 1
         else

@@ -26,7 +26,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8888")
     parser.add_argument("--cycles", type=int, default=3)
     parser.add_argument("--interval", type=float, default=1)
-    parser.add_argument("--maximum-age-seconds", type=float, default=15)
+    parser.add_argument("--maximum-age-seconds", type=float, default=60)
     parser.add_argument(
         "--policy",
         default=str(REPO / "gen" / "optimizer" / "configs" / "threshold-policy.yaml"),

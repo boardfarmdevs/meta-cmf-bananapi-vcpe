@@ -35,6 +35,11 @@ grep -q '/usr/bin/steer.sh 02:00:00:00:03:00 02:00:00:aa:aa:01' <<<"$output"
 output=$(run iot-14 agent-1)
 grep -q 'STA=02:00:00:00:14:00 target_BSSID=02:00:00:aa:cc:01 SSID=iot_ssid band=1' <<<"$output"
 grep -q '/usr/bin/steer.sh 02:00:00:00:14:00 02:00:00:aa:cc:01' <<<"$output"
+grep -q 'deterministic lab mode' <<<"$output"
+
+output=$(run --request-only iot-14 agent-1)
+grep -q 'request-only mode' <<<"$output"
+grep -q '/usr/bin/steer.sh 02:00:00:00:14:00 02:00:00:aa:cc:01' <<<"$output"
 
 output=$(run --band 6 sta-03 extender-2)
 grep -q 'target_BSSID=02:00:00:bb:bb:03 SSID=private_ssid band=3' <<<"$output"

@@ -10,7 +10,7 @@ set -euo pipefail
 exec </dev/null
 
 topology_url=${TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
-result_root=${MULTIHOP_RESULT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)/tmp/test-results/multihop}
+result_root=${MULTIHOP_RESULT_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)/tmp/test-results/multihop}
 gateway=bpibroadband
 anchor=bpiap-003
 extenders=(bpiap-003 bpiap-002 bpiap-001 bpiap)
@@ -23,20 +23,29 @@ minimum_clients=${MULTIHOP_MIN_CLIENTS:-1}
 usage() {
     cat <<'EOF'
 Usage:
-  ./gen/multihop-backhaul.sh apply chain|branch
-  ./gen/multihop-backhaul.sh verify chain|branch
-  ./gen/multihop-backhaul.sh test chain|branch
-  ./gen/multihop-backhaul.sh cold-test chain|branch
-  ./gen/multihop-backhaul.sh restore
-  ./gen/multihop-backhaul.sh status
+  ./gen/tests/multihop-backhaul.sh apply star|branch|chain
+  ./gen/tests/multihop-backhaul.sh verify star|branch|chain
+  ./gen/tests/multihop-backhaul.sh test star|branch|chain
+  ./gen/tests/multihop-backhaul.sh cold-test star|branch|chain
+  ./gen/tests/multihop-backhaul.sh restore
+  ./gen/tests/multihop-backhaul.sh status
 
 Profiles:
+  star    Agent-1 -> {bpiap-003,bpiap-002,bpiap-001,bpiap}
   chain   Agent-1 -> bpiap-003 -> bpiap-002 -> bpiap-001 -> bpiap
   branch  Agent-1 -> bpiap-003 -> {bpiap-002,bpiap-001}; bpiap-002 -> bpiap
 
-One anchor extender must face Agent-1 so the tree remains connected.  Every
-other extender is associated with an extender's dynamically discovered 5 GHz
-mesh-backhaul BSSID.
+The script discovers each parent's live 5 GHz backhaul AP BSSID, enables a
+parent extender's lazy backhaul AP with AccessPoint.14.ForceApply, and writes
+the selected BSSID to the child's Device.WiFi.STA.2.Bssid through RBUS. OneWifi
+then performs the real wifi1.3 association; the EasyMesh agents publish it to
+the controller model and topology API. This is not a WebUI-only relationship
+and it does not use wmediumd attenuation to simulate a parent.
+
+"apply" changes the live associations. "verify" checks physical links,
+parent-side stations, forwarding, topology edges, signal telemetry, clients
+and the controller database. "test" applies and verifies. "cold-test" also
+controls extender/service startup order. "restore" returns to the star.
 EOF
 }
 
@@ -76,6 +85,14 @@ mesh_ap_bssid() {
     timeout 15 lxc exec "$container" -- sh -c \
         "iw dev wifi1.1 info 2>/dev/null | awk '/addr/{print \$2; exit}'" \
         | tr '[:upper:]' '[:lower:]'
+}
+
+mesh_ap_ready() {
+    local container=$1
+    timeout 15 lxc exec "$container" -- sh -c '
+        iw dev wifi1.1 info 2>/dev/null |
+            awk '\''/ssid mesh_backhaul/{ssid=1} END{exit !ssid}'\'' &&
+        ip link show wifi1.1 2>/dev/null | grep -q "UP"'
 }
 
 mesh_sta_bssid() {
@@ -140,14 +157,19 @@ wait_for_onboarding() {
 
 force_mesh_ap() {
     local container=$1 bssid="" attempt
+    if mesh_ap_ready "$container"; then
+        bssid=$(mesh_ap_bssid "$container")
+        echo "backhaul_ap_ready parent=$container bssid=$bssid already_active=true"
+        printf '%s\n' "$bssid"
+        return 0
+    fi
     echo "force_backhaul_ap parent=$container"
     timeout 20 lxc exec "$container" -- rbuscli setvalues \
         Device.WiFi.AccessPoint.14.ForceApply boolean true >/dev/null
     for attempt in $(seq 1 60); do
         bssid=$(mesh_ap_bssid "$container" || true)
         if [[ "$bssid" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]] \
-            && timeout 10 lxc exec "$container" -- sh -c \
-                "ip link show wifi1.1 | grep -q 'UP'"; then
+            && mesh_ap_ready "$container"; then
             echo "backhaul_ap_ready parent=$container bssid=$bssid elapsed_s=$attempt"
             printf '%s\n' "$bssid"
             return 0
@@ -158,13 +180,21 @@ force_mesh_ap() {
 }
 
 wait_for_link() {
-    local child=$1 target=$2 start now actual=""
+    local child=$1 parent=$2 target=$3 start now actual="" child_sta stable=0
+    child_sta=$(mesh_sta_mac "$child")
     start=$(date +%s)
     while :; do
         actual=$(mesh_sta_bssid "$child" || true)
-        if [ "$actual" = "$target" ]; then
-            echo "link_ready child=$child bssid=$actual elapsed_s=$(( $(date +%s) - start ))"
-            return 0
+        if [ "$actual" = "$target" ] &&
+                parent_has_child "$parent" "$child_sta" &&
+                timeout 10 lxc exec "$child" -- ping -q -c 1 -W 2 10.0.0.1 >/dev/null; then
+            stable=$((stable + 1))
+            if [ "$stable" -ge 3 ]; then
+                echo "link_ready child=$child parent=$parent bssid=$actual authenticated=true stable_checks=$stable elapsed_s=$(( $(date +%s) - start ))"
+                return 0
+            fi
+        else
+            stable=0
         fi
         now=$(date +%s)
         [ $((now - start)) -lt "$wait_link_seconds" ] \
@@ -179,8 +209,9 @@ set_parent() {
         target=$(mesh_ap_bssid "$gateway")
         [ -n "$target" ] || fail "gateway mesh-backhaul BSSID is unavailable"
     else
-        # Reapplying ForceApply is idempotent and makes the parent usable even
-        # after a cold start, where this VAP is intentionally lazy-created.
+        # ForceApply creates this intentionally lazy VAP.  Do not write it
+        # again when the AP is already active: that is a real VAP reload, not
+        # an idempotent read-modify operation, and disrupts existing children.
         force_mesh_ap "$parent" >/dev/null
         target=$(mesh_ap_bssid "$parent")
     fi
@@ -194,11 +225,19 @@ set_parent() {
         printf '%s\n' "$output" >&2
         fail "BSSID selection was not accepted for $child"
     }
-    wait_for_link "$child" "$target"
+    wait_for_link "$child" "$parent" "$target"
 }
 
 profile_pairs() {
     case "$1" in
+        star)
+            cat <<EOF
+$anchor $gateway
+bpiap-002 $gateway
+bpiap-001 $gateway
+bpiap $gateway
+EOF
+            ;;
         chain)
             cat <<EOF
 $anchor $gateway
@@ -521,12 +560,12 @@ cold_test() {
     trap unmask_all EXIT
     mapfile -t pairs < <(profile_pairs "$profile")
 
-    # Keep the anchor's normal boot path.  Mask the EasyMesh protocol services
-    # on downstream nodes so they cannot register through Agent-1 during boot;
-    # OneWifi remains available to establish the requested parent first.
+    # Keep the anchor's normal boot path. Mask the EasyMesh protocol services
+    # on every other node so onboarding is serialized. OneWifi remains
+    # available to establish the requested parent before its agent starts.
     for pair in "${pairs[@]}"; do
         read -r child parent <<< "$pair"
-        [ "$parent" = "$gateway" ] && continue
+        [ "$child" = "$anchor" ] && continue
         timeout 20 lxc exec "$child" -- systemctl mask --now em_agent ieee1905_em_agent \
             >/dev/null
     done
@@ -567,7 +606,7 @@ cold_test() {
 
     for pair in "${pairs[@]}"; do
         read -r child parent <<< "$pair"
-        [ "$parent" = "$gateway" ] && continue
+        [ "$child" = "$anchor" ] && continue
         lxc start "$child"
         for _ in $(seq 1 120); do
             timeout 10 lxc exec "$child" -- systemctl is-active --quiet onewifi 2>/dev/null \
