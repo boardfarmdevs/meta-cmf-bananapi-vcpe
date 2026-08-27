@@ -9,9 +9,9 @@ tooling, deployment automation, and tests remain separate host infrastructure.
 
 ## Scope
 
-The current source series contains EasyMesh patches through `0114`, IEEE1905
-patches through `0006`, libwebconfig patches through `0011`, OneWifi patches
-through `0018`, and Wi-Fi HAL patches through `0026`, plus the log4c
+The current source series contains EasyMesh patches through `0123`, IEEE1905
+patches through `0006`, libwebconfig patches through `0012`, OneWifi patches
+through `0020`, and Wi-Fi HAL patches through `0030`, plus the log4c
 category-factory serialization fix. Never infer image content from the host
 checkout; record the image filename, hash, and source revision used to build it.
 
@@ -53,6 +53,10 @@ These are not hwsim policy and are candidates for their owning upstreams:
   enrichment and repair missed multicast events from Associated Clients TLVs;
 - prevent stale Agent metrics or ambiguous old-AP snapshots from changing the
   current STA owner;
+- resolve a steering command's owning radio from its authoritative source BSS
+  while the transient per-radio STA map is being rebuilt;
+- reconcile full Associated Clients reports as authoritative snapshots instead
+  of retaining clients omitted by the reporting BSS;
 - service manager and per-radio protocol timers even while their event queues
   remain continuously busy;
   and
@@ -75,6 +79,14 @@ These must remain gated from a physical MediaTek build:
 - use concurrent 20 MHz 2.4/5/6 GHz contexts;
 - establish the Linux 7.0 strict 6 GHz regulatory environment;
 - avoid assuming an operational MLD when hwsim is non-MLO; and
+- filter retained, inactive hwsim AP station rows before they become
+  contradictory EasyMesh association claims; and
+- refresh management-frame and EAPOL receive registrations after an hwsim AP
+  restart while retaining its live optional spurious-frame subscription; and
+- reconcile each successful OneWifi associated-client diagnostic as an
+  authoritative VAP snapshot, including the empty withdrawal case;
+- age hwsim-only stale AP station objects through hostapd's liveness probe
+  quickly enough that they cannot hide the next authorization edge; and
 - register and isolate simultaneous frequencies with wmediumd.
 
 ### Container integration
@@ -97,7 +109,7 @@ copying a list from documentation:
 
 | Component | Ordering authority | Main responsibility |
 | --- | --- | --- |
-| Wi-Fi HAL | `recipes-ccsp/hal/rdk-wifi-hal.bbappend` | nl80211, VAP/interface mapping, WDS, management frames |
+| Wi-Fi HAL | `recipes-ccsp/hal/rdk-wifi-hal.bbappend` | nl80211, VAP/interface mapping, WDS, management-frame lifecycle, edge-correct association callbacks and hwsim station liveness |
 | hostap integration | `recipes-ccsp/rdk-wifi-libhostap/rdk-wifi-libhostap_2.11.bbappend` | embedded AP/STA state-machine safety |
 | OneWifi | `recipes-ccsp/ccsp/ccsp-one-wifi.bbappend` | hwsim defaults, tri-band configuration, association deltas, duplicate-AL-MAC interface resolution |
 | libwebconfig | `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig.bbappend` | EasyMesh/OneWifi translation and client snapshots |
@@ -186,10 +198,26 @@ authority. Its dependency order is:
 50. preserve IEEE1905 measurement age end to end and publish an explicit
     fresh/stale/unknown backhaul-signal contract to the WebUI; and
 51. join that exact current backhaul metric into the Mesh Devices endpoint and
-    refresh the visible device cards without rebuilding the topology layout.
+    refresh the visible device cards without rebuilding the topology layout;
+52. resize the topology viewport with the browser while preserving its active
+    layout and drag state;
+53. release agent command data-model objects at their owning lifecycle
+    boundary;
+54. resolve the displayed wireless parent from the live backhaul BSS rather
+    than assuming every extender is attached to Agent-1;
+55. optimize the topology into the available landscape viewport without a
+    delayed telemetry refresh moving it again;
+56. reconcile each agent Associated Clients report as an authoritative
+    per-BSS snapshot;
+57. bound and serialize live CLI observability queries;
+58. bound periodic controller diagnostics under sustained activity;
+59. reconcile authoritative controller client snapshots without retaining an
+    omitted old owner; and
+60. resolve a steering candidate from its authoritative source BSS while the
+    transient per-radio STA map is being rebuilt.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0114`; the
+component or image build. The current source series ends at `0123`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering

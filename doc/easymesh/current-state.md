@@ -13,9 +13,9 @@ link here instead of repeating versioned results.
 | Item | Accepted value |
 | --- | --- |
 | Source branch | `codex/0824-clean` |
-| Runtime image source checkpoint | `dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c` |
+| Runtime image source | `codex/0824-clean`; EasyMesh `0123`, OneWifi `0020`, Wi-Fi HAL `0030` |
 | Kernel | Linux `7.0.0-28-generic` |
-| Runtime | LXD containers on rev130; peer Vagrant VMs on rev120 and rev150 |
+| Runtime | primary LXD lab on rev130; accepted Vagrant VM on rev120 |
 | Medium | patched multichannel wmediumd |
 | Mesh | controller, colocated Agent-1, and four extenders |
 | Controller model | 5 devices / 15 radios / 50 BSS records / 24 associated STAs |
@@ -30,13 +30,14 @@ from its colocated radio agent.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2` | `27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2` | `5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260827131002.rootfs.lxc.tar.bz2` | `744febc0971f9c5968dfa180ec420312d319e411cd21874b8e176720f00d3357` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260827132121.rootfs.lxc.tar.bz2` | `b4d5631f83597caccef98eb7c5b8942bf8fc10ec6d6f223656ff5b1b0de208f8` |
 
-The controller contains the consolidated EasyMesh series through `0114`. The
-extender contains the applicable Agent series through `0112`. IEEE 1905 is at
-`0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c, journald, and SNMP
-fixes are described in [the patch reference](reference/patch-set.md).
+Both images derive from the consolidated EasyMesh source series through
+`0123`; their installed controller/Agent binaries remain role-specific.
+IEEE 1905 is at `0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c,
+journald, and SNMP fixes are described in
+[the patch reference](reference/patch-set.md).
 
 ## What works now
 
@@ -79,16 +80,24 @@ SNMP                     one systemd-owned subagent, no launcher leak
 The Console also passed every REST resource, Prometheus export, live packet
 telemetry, provenance reporting, and rejection of writes in read-only mode.
 
+The clean rev120 VM reconstruction independently reached `5/15/50/24`, 20/20
+matching physical/API client owners, 20/20 nonzero RCPI values, four fresh
+backhaul signals, 20/20 working WLAN data paths, and zero OneWifi/EasyMesh
+restarts. It then held the topology for 120 seconds. Its deployment and final
+health evidence are `/home/vagrant/0826-deploy.log` and
+`/home/vagrant/0826-final-health.log` inside the VM.
+
 ## Runtime access
 
 | Runtime | EasyMesh WebUI | wmediumd Console |
 | --- | --- | --- |
 | rev130 | `http://192.168.2.130:8888` | `http://192.168.2.130:8890` |
 | rev120 VM | `http://192.168.2.120:18889` | `http://192.168.2.120:18890` |
-| rev150 VM | `http://192.168.2.150:18889` | `http://192.168.2.150:18890` |
+| rev150 older VM | `http://192.168.2.150:18888` | `http://192.168.2.150:18890` |
 
-rev130 is the primary development and demonstration runtime. rev120 and rev150
-are portability and parity targets.
+rev130 is the primary development and demonstration runtime. rev120 is the
+accepted portability target. The running rev150 VM is an older compatibility
+image and is not a current parity claim.
 
 ## Important boundaries
 

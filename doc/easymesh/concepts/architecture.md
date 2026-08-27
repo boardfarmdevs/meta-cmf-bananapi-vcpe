@@ -18,34 +18,182 @@ board kernel                      shared Linux 7.0 VM/host kernel
 ```
 
 `bpibroadband` contains an EasyMesh controller and a colocated agent. Each
-`bpiap` is an agent-only extender. The accepted scale is four extenders and ten
-client stations.
+`bpiap` is an agent-only extender. The accepted scale is four extenders and
+twenty client stations: ten private and ten IoT.
 
-## Topology
+## Lab at a glance
 
-```text
-                             Linux 7.0 runtime
+This simplified view is the starting point for presentations and first-time
+readers. Every Wi-Fi relationship passes through wmediumd even though the
+backhaul and fronthaul associations are shown directly.
 
- Boardfarm WAN/DHCP                                             WebUI/API
- br-wan105                                                        :8888
-      | erouter0                                                     |
- +----+--------------------------------------------------------------+--+
- | bpibroadband                                                         |
- | controller -- MariaDB model -- em_cli                                |
- | colocated agent -- OneWifi -- HAL -- one hwsim wiphy                  |
- | brlan0: 2.4/5/6 GHz fronthaul + wireless backhaul AP                 |
- +-------------------------+---------------------------------------------+
-                           )) 5 GHz 4-address/WDS backhaul
- +-------------------------+---------------------------------------------+
- | bpiap[-NNN] extender: agent -- OneWifi -- HAL -- one hwsim wiphy      |
- | brlan0: backhaul STA + 2.4/5/6 GHz fronthaul                          |
- +-------------------------+---------------------------------------------+
-                           )) fronthaul
-                    wlan-client[-NNN]
+```mermaid
+flowchart TB
+  configurator["wmediumd configurator<br/>scenario language → timed RF changes"]
+  wmd["wmediumd<br/>simulated RF medium for every hwsim radio"]
+  controller["bpibroadband<br/>EasyMesh controller + colocated Agent-1"]
+  extenders["bpiap extenders<br/>EasyMesh agents with star or multihop backhaul"]
+  clients["WLAN clients<br/>private and IoT stations"]
+  optimizer["Reference optimizer<br/>telemetry → policy → steering action"]
 
- host/VM kernel: cfg80211 + mac80211 + patched mac80211_hwsim
- host/VM process: one patched wmediumd for every active hwsim radio
+  configurator -->|"RF scenarios"| wmd
+  wmd <-->|"all 802.11 frames"| controller
+  wmd <-->|"all 802.11 frames"| extenders
+  wmd <-->|"all 802.11 frames"| clients
+  optimizer <-->|"telemetry / steer API"| controller
+  controller <-.->|"EasyMesh backhaul"| extenders
+  controller <-.->|"colocated fronthaul"| clients
+  extenders <-.->|"extender fronthaul"| clients
+
+  classDef mesh fill:#e8f1ff,stroke:#2457a6,color:#111;
+  classDef tool fill:#e8f7ec,stroke:#26733a,color:#111;
+  classDef medium fill:#f4eaff,stroke:#6d3ca0,color:#111;
+  class controller,extenders,clients mesh;
+  class configurator,optimizer tool;
+  class wmd medium;
 ```
+
+[Open the static overview SVG](easymesh-lab-overview.svg).
+
+## Complete lab map
+
+The diagram is the project-level introduction. Solid arrows are API, local
+software or wired boundaries. Dashed arrows are wireless relationships carried
+as real 802.11 frames through hwsim and wmediumd. Blue nodes are the RDK-B and
+EasyMesh system under test, green nodes are experiment tooling, purple nodes
+are the simulated medium, and amber nodes provide WAN infrastructure.
+
+```mermaid
+flowchart TB
+  browser["Operator browser"]
+  shell["Operator / CI shell"]
+
+  subgraph tooling["Host-side experiment, policy and validation tooling"]
+    direction LR
+    tests["gen/tests<br/>health, steering, multihop,<br/>outage, recovery, soak"]
+    steer["gen/steer.sh<br/>name → STA/BSSID adapter"]
+    optimizer["Reference optimizer<br/>observe → evaluate policy<br/>→ propose / deploy action"]
+    scenario["Scenario language<br/>YAML: phases, paths, walls,<br/>outage, gradients, restore"]
+    configurator["wmediumd configurator<br/>validate, compile, schedule"]
+    console["wmediumd Console :8890<br/>graph, counters, events,<br/>REST / WebSocket / Prometheus"]
+  end
+
+  subgraph boardfarm["Boardfarm infrastructure"]
+    dhcp["dhcp-cpe5<br/>Kea DHCPv4 / DHCPv6"]
+    nat["wan-cpe5<br/>gateway, NAT, Internet"]
+    wanbridge["br-wan105"]
+    dhcp --- wanbridge --- nat
+  end
+
+  subgraph lxd["LXD EasyMesh and WLAN participants"]
+    direction TB
+
+    subgraph gateway["bpibroadband — router, controller and colocated Agent-1"]
+      direction LR
+      emcli["onewifi_em_cli<br/>WebUI + REST :8888<br/>topology, mesh devices, clients, policy"]
+      erouter["erouter0<br/>WAN interface"]
+      ctrl["onewifi_em_ctrl<br/>EasyMesh controller"]
+      db[("MariaDB<br/>OneWifiMesh model")]
+      c1905["controller ieee1905<br/>AL-SAP / CMDUs"]
+      agent1["onewifi_em_agent<br/>colocated Agent-1"]
+      a1905["agent ieee1905"]
+      ow1["OneWifi + embedded<br/>hostap / supplicant"]
+      hal1["RDK Wi-Fi HAL<br/>nl80211"]
+      gwaps["2.4 / 5 / 6 GHz fronthaul<br/>5 GHz backhaul AP<br/>brlan0 + WDS"]
+
+      emcli <-->|"libemcli TLS commands / JSON"| ctrl
+      ctrl <--> db
+      ctrl <--> c1905
+      agent1 <--> a1905
+      agent1 <-->|"RBus / WebConfig<br/>metrics + raw frames"| ow1
+      ow1 <--> hal1
+      hal1 <--> gwaps
+      gwaps <-->|"routing / firewall"| erouter
+    end
+
+    subgraph extenders["bpiap, bpiap-001..003 — EasyMesh extenders"]
+      direction LR
+      eagent["onewifi_em_agent"]
+      e1905["agent ieee1905"]
+      eow["OneWifi + embedded<br/>hostap / supplicant"]
+      ehal["RDK Wi-Fi HAL<br/>nl80211"]
+      eback["upstream bpiap backhaul STA + AP<br/>brlan0 + 4-address WDS"]
+      echild["child bpiap backhaul STA + AP<br/>branch / chain parent"]
+      efront["private_ssid + iot_ssid<br/>on 2.4 / 5 / 6 GHz"]
+
+      e1905 <--> eagent
+      eagent <-->|"RBus / WebConfig<br/>metrics + raw frames"| eow
+      eow <--> ehal
+      ehal <--> eback
+      ehal <--> echild
+      ehal <--> efront
+    end
+
+    subgraph clients["WNM-capable WLAN-client containers"]
+      private["sta-01..10<br/>private_ssid<br/>wpa_supplicant + wlan0"]
+      iot["iot-01..10<br/>iot_ssid<br/>wpa_supplicant + wlan0"]
+    end
+  end
+
+  subgraph rf["Linux 7 simulated RF plane"]
+    direction LR
+    hwsim["cfg80211 / mac80211<br/>patched mac80211_hwsim<br/>one wiphy per participant"]
+    wmd["patched multichannel wmediumd<br/>all registered frames<br/>channel + SNR/PER delivery"]
+    basecfg["Generated base configuration<br/>radio inventory + default matrix"]
+    control["Unix SOCK_SEQPACKET<br/>atomic pair/frequency controls"]
+    telemetry["Host-only telemetry socket<br/>links, VIFs, outcomes, counters,<br/>events + artifact provenance"]
+
+    hwsim <-->|"generic netlink<br/>TX/RX frame decisions"| wmd
+    basecfg --> wmd
+    control <--> wmd
+    telemetry <--> wmd
+  end
+
+  wanbridge -->|"DHCP + WAN"| erouter
+
+  browser -->|"HTTP / REST"| emcli
+  browser -->|"HTTP / WebSocket"| console
+  shell --> tests
+  shell --> steer
+  shell --> configurator
+
+  tests -->|"topology, clients, policy APIs"| emcli
+  tests -->|"lxc, iw, SQL, traffic"| lxd
+  tests -->|"bounded RF stimulus"| control
+  steer -->|"steering command"| ctrl
+  optimizer -->|"current + candidate RCPI,<br/>topology and client telemetry"| emcli
+  optimizer -->|"selected action"| steer
+  scenario --> configurator -->|"timed atomic updates"| control
+  telemetry -->|"read snapshots + events"| console
+  console -->|"explicit opt-in typed<br/>set / clear / undo"| control
+
+  c1905 <-.->|"IEEE 1905.1 / EasyMesh CMDUs<br/>over wireless backhaul"| e1905
+  gwaps -.->|"star parent"| eback
+  gwaps -.->|"star parent"| echild
+  eback -.->|"branch / chain multihop parent"| echild
+  private -.->|"private fronthaul"| gwaps
+  private -.->|"private fronthaul"| efront
+  iot -.->|"IoT fronthaul"| gwaps
+  iot -.->|"IoT fronthaul"| efront
+
+  gwaps --> hwsim
+  eback --> hwsim
+  echild --> hwsim
+  efront --> hwsim
+  private --> hwsim
+  iot --> hwsim
+
+  classDef product fill:#e8f1ff,stroke:#2457a6,color:#111;
+  classDef infra fill:#fff3d6,stroke:#a56700,color:#111;
+  classDef tool fill:#e8f7ec,stroke:#26733a,color:#111;
+  classDef medium fill:#f4eaff,stroke:#6d3ca0,color:#111;
+  class emcli,ctrl,db,c1905,agent1,a1905,ow1,hal1,gwaps,eagent,e1905,eow,ehal,eback,echild,efront,private,iot product;
+  class dhcp,nat,wanbridge infra;
+  class tests,steer,optimizer,scenario,configurator,console tool;
+  class hwsim,wmd,basecfg,control,telemetry medium;
+```
+
+[Open the static complete architecture SVG](easymesh-lab-architecture.svg).
 
 Only the controller has a wired WAN leg. Do not connect an extender to the
 controller LAN: wireless backhaul already joins their bridge domains and a
@@ -67,7 +215,7 @@ one hwsim wiphy
 This is a hard invariant. Three physical wiphys are not equivalent and break
 OneWifi's single-phy assumptions.
 
-The official lab uses Linux 7.0.0-28 with `radios=24 channels=3 regtest=5`.
+The official lab uses Linux 7.0.0-28 with `radios=32 channels=3 regtest=5`.
 `regtest=5` selects the 6 GHz-capable `custom_03` regulatory domain. 2.4, 5 and
 6 GHz have been validated together. Linux 6.8 is no longer an official runtime
 target because its 6 GHz regulatory and multi-context behavior differs.
@@ -130,8 +278,9 @@ Runtime ownership:
 ```
 
 The controller model gate is not interchangeable with service readiness. A
-healthy scaled lab must show five agents, fifteen radios, fifty BSSs and ten
-active clients.
+healthy scaled lab must show five EasyMesh devices, fifteen radios, fifty
+BSSs, four associated backhaul STAs and twenty associated WLAN clients. The
+database total is therefore `5/15/50/24`.
 
 ## Control and data planes
 
@@ -184,6 +333,8 @@ feature gate; namespace and persistent-volume lifecycle belongs in `gen/`.
   frequency-qualified SNR overrides on a shared hwsim radio. This supplies
   band-specific RF stimulus; autonomous band steering still requires fresh
   candidate-BSSID measurements and a policy decision.
-- No autonomous steering evaluator is currently proven. The planned decision
-  engine is completely external to the BPI containers; see
-  [optimizer](optimizer.md) and [steering policy](steering-policy.md).
+- The external reference optimizer observes current and candidate telemetry,
+  evaluates bounded policies and emits explainable proposals. Steering action
+  deployment remains an explicit opt-in through `gen/steer.sh`; no autonomous
+  policy engine runs inside the BPI containers. See [optimizer](optimizer.md)
+  and [steering policy](steering-policy.md).

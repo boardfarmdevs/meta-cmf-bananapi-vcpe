@@ -25,12 +25,11 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-runtime source            dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c
-image EasyMesh content    controller through 0114; extender through 0112
-controller image input    dee4dd4 (cross-built em_cli helper included)
+runtime source            codex/0824-clean
+image content             EasyMesh 0123; OneWifi 0020; Wi-Fi HAL 0030
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260827131002.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260827132121.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -40,8 +39,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-27c5716f7248c2ecbf2110d841bc504e80e727a5b5c1c55729f133d71fcab8e2  controller
-5203eea2d89785a0245e25f76a565655a4fabcdd585b5372158db66b5f9adf54  extender
+744febc0971f9c5968dfa180ec420312d319e411cd21874b8e176720f00d3357  controller
+b4d5631f83597caccef98eb7c5b8942bf8fc10ec6d6f223656ff5b1b0de208f8  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -63,6 +62,12 @@ Artifacts are built on rev140 under
 - patched `wmediumd.patched` from this repository;
 - the prebuilt WNM-capable WLAN-client image; and
 - Boardfarm `br-wan105` with DHCP/Internet for controller `erouter0`.
+
+`gen/bpi.sh` automatically converts unified Yocto image archives to split LXD
+metadata/rootfs imports on LXD 6.9, whose unified-image instance creation can
+stall. That compatibility path requires the host `fakeroot` package. The
+source-archive SHA is retained as an image property so an unchanged image is
+not converted or imported again.
 
 Each BPI container gets exactly one hwsim wiphy. Never deploy three physical
 wiphys to represent the three bands.
@@ -136,14 +141,24 @@ From `gen/` on a prepared runtime:
 # controller; -F creates one coherent new AL-MAC/RUID identity set
 ./bpi.sh -F -b br-wan105 /path/to/controller.rootfs.lxc.tar.bz2
 
-# four wireless-only extenders
+# First wireless-only extender.
 ./bpi.sh -F /path/to/extender.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 1 /path/to/extender.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 2 /path/to/extender.rootfs.lxc.tar.bz2
-./bpi.sh -F -i 3 /path/to/extender.rootfs.lxc.tar.bz2
 
-# start the medium after mesh radios exist
+# As soon as OneWifi is active, refresh wmediumd's fixed radio matrix. Then
+# require the physical backhaul, agent and 2/6/20 controller model gates.
+lxc exec bpiap -- systemctl is-active onewifi
 SNR=40 ./wmediumd/wmediumd-up.sh up
+lxc exec bpiap -- iw dev wifi1.3 link
+lxc exec bpiap -- systemctl is-active em_agent
+
+# Repeat that same gated sequence for -i 1, -i 2 and -i 3. Require model
+# 3/9/30, 4/12/40 and 5/15/50 respectively before adding the next extender.
+./bpi.sh -F -i 1 /path/to/extender.rootfs.lxc.tar.bz2
+# wait, refresh wmediumd, and pass 3/9/30
+./bpi.sh -F -i 2 /path/to/extender.rootfs.lxc.tar.bz2
+# wait, refresh wmediumd, and pass 4/12/40
+./bpi.sh -F -i 3 /path/to/extender.rootfs.lxc.tar.bz2
+# wait, refresh wmediumd, and pass 5/15/50
 
 # resumable 10-private + 10-IoT client profile
 ./wlan-client-pool.sh plan --profile small
@@ -190,13 +205,21 @@ does not reconstruct the lab merely by starting LXD. Preserve the existing BPI
 containers and `/nvram` identities, but recreate the host medium and clients in
 this order.
 
-From the rev130 host:
+From the rev130 host, reconstruct Boardfarm rather than merely starting its old
+containers. A hard reboot can leave a stale Kea DHCPv4 PID file in the writable
+container, making `dhcp-cpe5` look running while UDP/67 is not served:
 
 ```sh
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen
+cd /home/rev/git/boardfarm-open-0406/boardfarm-lab-staging/lab
+../../.venv/bin/bf-lab teardown,setup,status
 
-# Boardfarm CPE-5 supplies DHCP, IPv4/IPv6 and Internet on br-wan105.
-docker start wan-cpe5 dhcp-cpe5
+# All four checks are mandatory before starting bpibroadband.
+ip link show br-wan105
+docker exec dhcp-cpe5 ip -4 address show eth1 | grep '10.105.0.10/24'
+docker exec dhcp-cpe5 pgrep -x kea-dhcp4
+docker exec dhcp-cpe5 ss -lun | grep ':67 '
+
+cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen
 
 # Load the already-installed patched module. Kernel headers are needed to build
 # it, not to recover with the installed updates/mac80211_hwsim.ko.
@@ -402,8 +425,11 @@ Use `vagrant ssh` from the consumer directory rather than treating Vagrant's
 dynamically selected SSH port as a stable lab interface.
 
 On the Network Topology page, **Optimize Layout** only rearranges the rendered
-graph, caches the positions across topology refreshes and fits the result into
-the viewport. It does not issue an EasyMesh, steering, policy or wmediumd
+graph. It places the controller on the left, advances each backhaul generation
+from left to right, wraps dense generations into additional columns, and uses
+the full landscape viewport while accounting for SSID and client extents. It
+then caches the positions across topology refreshes and fits the complete graph
+into the pane. It does not issue an EasyMesh, steering, policy or wmediumd
 command. **Export** downloads the current topology as JSON data or the visible
 diagram as a portable SVG or PNG; SVG and PNG exports embed the displayed node
 icons.

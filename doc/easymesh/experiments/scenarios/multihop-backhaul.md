@@ -19,6 +19,15 @@ stale EasyMesh data model still draws the previous tree.
 `bpiap-003` is the anchor.  At least one extender must remain associated with
 Agent-1 or the downstream tree has no path to the controller.
 
+Star profile:
+
+```text
+             +-- bpiap-003
+             +-- bpiap-002
+Agent-1 -----+-- bpiap-001
+             +-- bpiap
+```
+
 Chain profile:
 
 ```text
@@ -53,24 +62,29 @@ labels from persistent AL identities; it does not use the container suffix.
 Run from the repository root on a lab host:
 
 ```sh
-./gen/multihop-backhaul.sh status
-MULTIHOP_MIN_CLIENTS=20 ./gen/multihop-backhaul.sh test chain
-MULTIHOP_MIN_CLIENTS=20 ./gen/multihop-backhaul.sh test branch
+./gen/tests/multihop-backhaul.sh status
+./gen/tests/multihop-backhaul-test.sh --help
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul-test.sh star
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul-test.sh branch
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul-test.sh chain
 ```
 
-`test` changes a running lab and verifies convergence.  `cold-test` stops the
+The test wrapper requires an explicit profile; no argument prints its complete
+operator help without changing the lab. `test` changes a running lab and
+verifies convergence. `cold-test` stops the
 extenders and controls their protocol-service start order, so downstream nodes
 cannot register directly through Agent-1 before their selected parent exists:
 
 ```sh
-MULTIHOP_MIN_CLIENTS=20 ./gen/multihop-backhaul.sh cold-test chain
-MULTIHOP_MIN_CLIENTS=20 ./gen/multihop-backhaul.sh cold-test branch
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul.sh cold-test star
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul.sh cold-test chain
+MULTIHOP_MIN_CLIENTS=20 ./gen/tests/multihop-backhaul.sh cold-test branch
 ```
 
 Return all extenders to direct gateway backhaul with:
 
 ```sh
-./gen/multihop-backhaul.sh restore
+./gen/tests/multihop-backhaul.sh restore
 ```
 
 The script discovers every current BSSID.  It does not embed generated hwsim
@@ -81,7 +95,7 @@ MULTIHOP_LINK_TIMEOUT=120 \
 MULTIHOP_PARENT_TIMEOUT=90 \
 MULTIHOP_MODEL_TIMEOUT=240 \
 MULTIHOP_MIN_CLIENTS=20 \
-  ./gen/multihop-backhaul.sh test chain
+  ./gen/tests/multihop-backhaul.sh test chain
 ```
 
 ## What the script changes
@@ -166,6 +180,15 @@ The dynamic `.staN` suffix may differ, so use `iw dev` rather than assuming
 
 ## WebUI interpretation
 
+The container lab has a shared L2 path for IEEE 1905 control traffic, so the
+Controller's transport hierarchy can remain a star while the Wi-Fi data plane
+is multi-hop. The topology API resolves each wireless edge from the child's
+current upstream BSSID to the unique AP-mode BSS owner in the live radio
+inventory. Backhaul STA-mode rows are excluded because they repeat the parent
+BSSID in each child. If the owner is missing or ambiguous, the API retains the
+Controller edge and the multihop acceptance test fails rather than inventing a
+parent.
+
 The blue wireless edge is the actual reported backhaul relationship.  Hover
 an extender or its incoming edge to see:
 
@@ -191,7 +214,8 @@ A profile passes only when:
 - the controller database converges exactly to five devices, fifteen radios
   and fifty BSS rows, with at least the requested clients plus four associated
   backhaul STAs; and
-- changing from chain to branch updates the model without restarting agents.
+- changing among star, branch and chain updates the model without restarting
+  agents.
 
 Timestamped command logs are written below
 `tmp/test-results/multihop/` by default.
