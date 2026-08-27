@@ -32,6 +32,10 @@ wait_for_extender() {
 }
 
 cd "$gen"
+# Scaling is intentionally incremental.  Permit the medium refresh after the
+# first new extender while later managed nodes are still stopped.  This export
+# is confined to this child script; the final runtime gate remains strict.
+export WMEDIUMD_ALLOW_INCOMPLETE_RADIOS=1
 for index in 2 3; do
     container=$(printf 'bpiap-%03d' "$index")
     devices=$((index + 2))
