@@ -84,6 +84,7 @@ boundary:
 - [Packet capture](reference/packet-capture.md)
 - [Memory footprint](reference/memory-footprint.md)
 - [Association ownership case study](reference/association-ownership-case-study.md)
+- [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
 
 ## Documentation rules
 
