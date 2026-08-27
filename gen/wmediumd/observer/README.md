@@ -14,9 +14,12 @@ The Console shows:
   generated inventory (the service never queries LXD itself);
 - lifetime and windowed frame/byte/type, EAPOL, unicast/multicast, retry,
   delivery, drop and netlink counters;
+- current client-to-infrastructure associations inferred from the freshest
+  observed non-multicast packet path, with band and channel;
 - radio/frequency activity and learned VIF-to-radio ownership;
-- active source/destination/frequency paths with signal, SNR, PER and outcome
-  counters;
+- raw active source/destination/frequency packet paths with signal, SNR, PER
+  and outcome counters, kept as a separate diagnostic view because multicast
+  receiver candidates are medium fan-out, not EasyMesh associations;
 - a bounded event timeline and explicit event-ring gap indication;
 - queue depth/delay and factual health warnings; and
 - startup-config and running-binary SHA-256 identities. The root launcher
@@ -83,14 +86,24 @@ Important flags:
 ## Identity inventory
 
 wmediumd identities are radio MAC addresses; it cannot infer that a radio is
-`agent-1`, belongs to `bpiap-1`, or represents `sta-03`. The normal
+`Agent-1`, belongs to `bpiap-1`, or represents `sta-03`. The normal
 `wmediumd-up.sh up` workflow runs `generate-identity-inventory.sh` after hwsim
 assignment and atomically creates the JSON handoff file. The Console only reads
 that file. It has no LXD socket access and runs no discovery commands.
 
+For mesh radios the generator correlates the hwsim transmitter identity with
+the EasyMesh topology node ID and uses the controller's current `Agent-1` or
+`Extender-N` label. This avoids assigning extender numbers from LXD enumeration
+order. If the controller topology is unavailable, stable container-order labels
+are used until the inventory is regenerated.
+
 Each `mac` must be the radio identity present in the generated wmediumd station
-matrix, not a BSS/VIF address. VIF addresses are learned independently from the
-telemetry protocol and displayed under their owning enriched radio.
+matrix, not a BSS/VIF address. A learned VIF is a virtual-interface MAC seen in
+an 802.11 frame header, such as an AP BSSID/VAP or client interface. wmediumd
+maps that VIF to the hwsim physical radio that owns it and its observed
+frequency so it can deliver addressed frames correctly. A radio can own several
+VIFs; these mappings are not association edges. They are displayed under their
+owning enriched radio as medium diagnostics.
 
 See [`identity-inventory.example.json`](identity-inventory.example.json). The
 schema is deliberately small:
@@ -102,7 +115,7 @@ schema is deliberately small:
   "stations": [
     {
       "mac": "42:00:00:00:01:00",
-      "label": "agent-1",
+      "label": "Agent-1",
       "role": "controller-agent",
       "owner": "bpibroadband",
       "interface": ""

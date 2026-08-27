@@ -4,14 +4,14 @@
   "stations": [
     {
       "mac": "42:00:00:00:01:00",
-      "label": "agent-1",
+      "label": "Agent-1",
       "role": "controller-agent",
       "owner": "bpibroadband",
       "interface": ""
     },
     {
       "mac": "42:00:00:00:02:00",
-      "label": "extender-1",
+      "label": "Extender-1",
       "role": "extender",
       "owner": "bpiap-1",
       "interface": ""

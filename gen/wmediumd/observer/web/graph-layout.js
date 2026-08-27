@@ -7,6 +7,59 @@
 }(typeof globalThis !== 'undefined' ? globalThis : window, () => {
   const clientRoles = new Set(['wlan-client', 'iot-client']);
 
+  function isClient(station) {
+    return clientRoles.has(station?.role);
+  }
+
+  function hasObservedTraffic(link) {
+    return Number(link?.frames || 0) > 0
+      || Number(link?.attempts || 0) > 0
+      || Number(link?.rx_injected || 0) > 0
+      || ['drops_offchannel', 'drops_cca', 'drops_interference', 'drops_per', 'drops_no_receiver']
+        .some((field) => Number(link?.[field] || 0) > 0);
+  }
+
+  function newerLink(candidate, current) {
+    if (!current) return true;
+    const candidateSeen = Number(candidate.last_seen_usec || 0);
+    const currentSeen = Number(current.last_seen_usec || 0);
+    if (candidateSeen !== currentSeen) return candidateSeen > currentSeen;
+    const candidateSequence = Number(candidate.last_update_sequence || 0);
+    const currentSequence = Number(current.last_update_sequence || 0);
+    if (candidateSequence !== currentSequence) return candidateSequence > currentSequence;
+    return Number(candidate.frames || 0) > Number(current.frames || 0);
+  }
+
+  // wmediumd sees raw 802.11 delivery paths, not an association table.  A
+  // client's freshest non-multicast exchange with an infrastructure radio is
+  // the useful current association observation.  Normalizing both uplink and
+  // downlink records prevents multicast receiver candidates from appearing as
+  // topology edges and makes the same edge visible from either endpoint.
+  function currentAssociations(snapshot) {
+    const stations = new Map((snapshot?.stations || []).map((station) => [station.mac, station]));
+    const newestByClient = new Map();
+    for (const link of snapshot?.active_links || []) {
+      if (link.multicast || !hasObservedTraffic(link)) continue;
+      const source = stations.get(link.source), destination = stations.get(link.destination);
+      let client, infrastructure;
+      if (isClient(source) && destination && !isClient(destination)) {
+        client = source; infrastructure = destination;
+      } else if (source && !isClient(source) && isClient(destination)) {
+        client = destination; infrastructure = source;
+      } else {
+        continue;
+      }
+      const normalized = { ...link, source: client.mac, destination: infrastructure.mac, association: true };
+      if (newerLink(normalized, newestByClient.get(client.mac))) newestByClient.set(client.mac, normalized);
+    }
+    return [...newestByClient.values()].sort((left, right) => left.source.localeCompare(right.source));
+  }
+
+  function associationsForSelected(snapshot, selected) {
+    return currentAssociations(snapshot)
+      .filter((link) => link.source === selected || link.destination === selected);
+  }
+
   function nodeRadius(station, selected) {
     const base = clientRoles.has(station?.role) ? 29 : 33;
     return base + (station?.mac === selected ? 4 : 0);
@@ -131,5 +184,15 @@
     return edgeRoute(positions, link, width, height)?.path || '';
   }
 
-  return { edgePath, edgeRoute, labelFontSize, layoutStations, nodeRadius, quadraticCollisionFree };
+  return {
+    associationsForSelected,
+    currentAssociations,
+    edgePath,
+    edgeRoute,
+    hasObservedTraffic,
+    labelFontSize,
+    layoutStations,
+    nodeRadius,
+    quadraticCollisionFree,
+  };
 }));

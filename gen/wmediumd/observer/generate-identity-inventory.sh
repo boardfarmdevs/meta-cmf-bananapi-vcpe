@@ -6,6 +6,8 @@ set -euo pipefail
 
 output=${WMEDIUMD_IDENTITY_INVENTORY:-/run/meta-cmf-wmediumd/identity-inventory.json}
 lxc_bin=${LXC:-lxc}
+topology_url=${WMEDIUMD_EASYMESH_TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
+topology_file=${WMEDIUMD_EASYMESH_TOPOLOGY_FILE:-}
 
 usage() {
     echo "usage: $0 [--output PATH]" >&2
@@ -23,8 +25,22 @@ command -v python3 >/dev/null 2>&1 || { echo "identity inventory: python3 is req
 
 work=$(mktemp -d)
 rows=$work/rows.tsv
+topology=$work/topology.json
 trap 'rm -rf "$work"' EXIT
 : > "$rows"
+: > "$topology"
+
+# EasyMesh numbers extenders in its current topology traversal, which is not
+# the same thing as the LXC container suffix.  Use the live topology when it is
+# available so both UIs display the same name; retain deterministic container
+# labels when the controller/WebUI is not ready yet.
+if [ -n "$topology_file" ] && [ -r "$topology_file" ]; then
+    cp "$topology_file" "$topology"
+elif command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 2 --max-filesize 1048576 "$topology_url" \
+        -o "$topology" 2>/dev/null || : > "$topology"
+fi
+[ "$(wc -c < "$topology")" -le 1048576 ] || : > "$topology"
 
 mapfile -t containers < <("$lxc_bin" list -c n --format csv 2>/dev/null \
     | grep -E '^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$' \
@@ -41,6 +57,12 @@ transmitter_mac() {
     printf '%s%s\n' "$first" "${permanent:2}"
 }
 
+easymesh_id_for_transmitter() {
+    local mac=$1 first
+    first=$(printf '%02x' $((16#${mac:0:2} & 0xbf)))
+    printf '%s%s20\n' "$first" "${mac:2:13}"
+}
+
 config_value() {
     "$lxc_bin" config get "$1" "$2" 2>/dev/null || true
 }
@@ -48,17 +70,20 @@ config_value() {
 for container in "${containers[@]}"; do
     mac=$(transmitter_mac "$container") || continue
     interface=
+    mesh_id=
     case "$container" in
         bpibroadband)
-            label=agent-1; role=controller-agent
+            label=Agent-1; role=controller-agent
             ;;
         bpiap)
-            label=extender-1; role=extender
+            label=Extender-1; role=extender
+            mesh_id=$(easymesh_id_for_transmitter "$mac")
             ;;
         bpiap-[0-9][0-9][0-9])
             suffix=${container#bpiap-}
-            label=$(printf 'extender-%d' "$((10#$suffix + 1))")
+            label=$(printf 'Extender-%d' "$((10#$suffix + 1))")
             role=extender
+            mesh_id=$(easymesh_id_for_transmitter "$mac")
             ;;
         wlan-client|wlan-client-[0-9][0-9][0-9])
             interface=wlan0
@@ -88,7 +113,7 @@ for container in "${containers[@]}"; do
             ;;
         *) continue ;;
     esac
-    printf '%s\t%s\t%s\t%s\t%s\n' "$mac" "$label" "$role" "$container" "$interface" >> "$rows"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$mac" "$label" "$role" "$container" "$interface" "$mesh_id" >> "$rows"
 done
 
 [ -s "$rows" ] || { echo "identity inventory: no active hwsim radios discovered" >&2; exit 1; }
@@ -98,16 +123,29 @@ directory=$(dirname -- "$output")
 [ -d "$directory" ] || { echo "identity inventory: output directory does not exist: $directory" >&2; exit 1; }
 staging=$(mktemp "$directory/.identity-inventory.XXXXXX")
 trap 'rm -rf "$work"; rm -f "$staging"' EXIT
-python3 - "$rows" "$staging" <<'PY'
+python3 - "$rows" "$topology" "$staging" <<'PY'
 import csv
 import datetime
 import json
 import sys
 
-rows_path, output_path = sys.argv[1:]
+rows_path, topology_path, output_path = sys.argv[1:]
+topology_names = {}
+try:
+    with open(topology_path, encoding="utf-8") as source:
+        topology = json.load(source)
+    for node in topology.get("nodes", [])[:512]:
+        device_id = str(node.get("id", "")).lower()
+        name = str(node.get("name", ""))
+        if device_id and name.startswith("Extender-") and name[9:].isdigit():
+            topology_names[device_id] = name
+except (OSError, ValueError, TypeError, AttributeError):
+    pass
+
 stations = []
 with open(rows_path, encoding="utf-8", newline="") as source:
-    for mac, label, role, owner, interface in csv.reader(source, delimiter="\t"):
+    for mac, label, role, owner, interface, mesh_id in csv.reader(source, delimiter="\t"):
+        label = topology_names.get(mesh_id.lower(), label)
         stations.append({
             "mac": mac,
             "label": label,

@@ -117,6 +117,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0114-cli-show-mesh-device-backhaul-signal.patch \
     file://0115-cli-resize-topology-viewport-with-browser.patch \
     file://0116-agent-release-command-data-model-objects.patch \
+    file://0117-cli-resolve-wireless-parent-from-live-bss.patch \
+    file://0118-cli-optimize-landscape-topology-layout.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

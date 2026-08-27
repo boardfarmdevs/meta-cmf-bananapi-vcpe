@@ -6,8 +6,8 @@
 #     build-qemux86bpibroadband/tmp/work/core2-32-rdk-linux/unified-wifi-mesh/1.0-r0
 #
 # Run unified-wifi-mesh through do_compile first. The script uses its target
-# sysroot and freshly linked libemcli, replaces only the helper in
-# em-cli.tar.gz, and emits deterministic archive metadata.
+# sysroot and freshly linked libemcli, refreshes the helper and its static
+# WebUI bundle in em-cli.tar.gz, and emits deterministic archive metadata.
 
 set -eu
 
@@ -27,6 +27,7 @@ artifact="$repo/recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh/em-cli.tar.gz"
 go_bin=${GO_BIN:-$(command -v go || true)}
 
 for required in "$source_dir/main.go" "$source_dir/backhaul_signal.go" \
+    "$source_dir/static/index.html" "$source_dir/static/script.js" \
     "$sysroot/usr/include/ccsp/wifi_webconfig.h" \
     "$native/usr/bin/i686-rdk-linux/i686-rdk-linux-gcc" "$libemcli" "$artifact"; do
     if [ ! -e "$required" ]; then
@@ -62,6 +63,9 @@ fi
 archive_dir=$(mktemp -d /tmp/em-cli-archive.XXXXXX)
 tar -xzf "$artifact" -C "$archive_dir"
 install -m 0755 "$binary" "$archive_dir/onewifi_em_cli"
+rm -rf "$archive_dir/static"
+install -d -m 0755 "$archive_dir/static"
+cp -a "$source_dir/static/." "$archive_dir/static/"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
     -czf "$artifact.new" -C "$archive_dir" .
 mv "$artifact.new" "$artifact"

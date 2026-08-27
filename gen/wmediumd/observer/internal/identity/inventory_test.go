@@ -20,8 +20,12 @@ func TestOperatorGeneratorUsesHWSIMTransmitterIdentityAndLXCIntent(t *testing.T)
 		t.Fatal(err)
 	}
 	output := filepath.Join(t.TempDir(), "identity-inventory.json")
+	topology := filepath.Join(t.TempDir(), "topology.json")
+	if err := os.WriteFile(topology, []byte(`{"nodes":[{"id":"02:00:00:00:02:20","name":"Extender-7"},{"id":"02:00:00:00:03:20","name":"Extender-2"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	command := exec.Command(generator, "--output", output)
-	command.Env = append(os.Environ(), "LXC="+fakeLXC)
+	command.Env = append(os.Environ(), "LXC="+fakeLXC, "WMEDIUMD_EASYMESH_TOPOLOGY_FILE="+topology)
 	if result, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("generator: %v\n%s", err, result)
 	}
@@ -33,9 +37,9 @@ func TestOperatorGeneratorUsesHWSIMTransmitterIdentityAndLXCIntent(t *testing.T)
 		t.Fatalf("generated %d stations, want 5", len(inventory.Stations))
 	}
 	want := map[string][3]string{
-		"42:00:00:00:01:00": {"agent-1", "controller-agent", ""},
-		"42:00:00:00:02:00": {"extender-1", "extender", ""},
-		"42:00:00:00:03:00": {"extender-2", "extender", ""},
+		"42:00:00:00:01:00": {"Agent-1", "controller-agent", ""},
+		"42:00:00:00:02:00": {"Extender-7", "extender", ""},
+		"42:00:00:00:03:00": {"Extender-2", "extender", ""},
 		"42:00:00:00:04:00": {"sta-04", "wlan-client", "wlan0"},
 		"42:00:00:00:05:00": {"iot-05", "iot-client", "wlan0"},
 	}

@@ -11,7 +11,7 @@ func TestEmbeddedConsoleContainsPhase2ViewsAndTypedControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"wmediumd Console", "Active link paths", "Radio / frequency counters", "VIF → radio mapping", "Event timeline", "Radio identities", "Set pair SNR", "Clear frequency override", "Undo last"} {
+	for _, want := range []string{"wmediumd Console", "Current associations", "Packet paths (debug)", "Radio / frequency counters", "VIF → hwsim radio mapping", "not association", "Event timeline", "Radio identities", "Set pair SNR", "Clear frequency override", "Undo last"} {
 		if !strings.Contains(string(html), want) {
 			t.Errorf("index.html missing %q", want)
 		}
@@ -20,7 +20,7 @@ func TestEmbeddedConsoleContainsPhase2ViewsAndTypedControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"/api/v1/controls/pairs/set", "/api/v1/controls/frequencies/set", "/api/v1/controls/frequencies/clear", "/api/v1/controls/undo", "X-Wmediumd-CSRF", "active_links", "radio_frequencies", "identity_inventory", "station.label", "WMediumdGraph.layoutStations", "WMediumdGraph.edgePath", "WMediumdGraph.labelFontSize"} {
+	for _, want := range []string{"/api/v1/controls/pairs/set", "/api/v1/controls/frequencies/set", "/api/v1/controls/frequencies/clear", "/api/v1/controls/undo", "X-Wmediumd-CSRF", "active_links", "radio_frequencies", "identity_inventory", "station.label", "WMediumdGraph.layoutStations", "WMediumdGraph.edgeRoute", "WMediumdGraph.associationsForSelected", "WMediumdGraph.labelFontSize"} {
 		if !strings.Contains(string(javascript), want) {
 			t.Errorf("app.js missing %q", want)
 		}

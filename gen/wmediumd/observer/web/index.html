@@ -49,11 +49,12 @@
 
     <section class="panel">
       <div class="panel-heading">
-        <div><p class="eyebrow">Observed paths and ownership</p><h2>Live medium graph</h2></div>
-        <div class="filters"><label>Mode<select id="graph-mode"><option value="active">Active paths</option><option value="configured">Configured pair state</option></select></label><label>Source radio<select id="source-select"></select></label></div>
+        <div><p class="eyebrow">Association, packet and RF views</p><h2>Live medium graph</h2></div>
+        <div class="filters"><label>Mode<select id="graph-mode"><option value="association">Current associations</option><option value="active">Packet paths (debug)</option><option value="configured">Configured pair state</option></select></label><label>Selected radio<select id="source-select"></select></label></div>
       </div>
       <svg id="graph" viewBox="0 0 1000 560" role="img" aria-label="Live wmediumd radio graph"></svg>
-      <div class="legend"><span class="snr strong"></span> strong ≥40 dB <span class="snr medium"></span> 20–39 dB <span class="snr weak"></span> &lt;20 dB <span class="snr multicast"></span> multicast <span class="snr override"></span> configured override</div>
+      <p id="graph-summary" class="table-summary">No radio selected.</p>
+      <div class="legend"><span class="snr association"></span> current client association <span class="snr strong"></span> strong ≥40 dB <span class="snr medium"></span> 20–39 dB <span class="snr weak"></span> &lt;20 dB <span class="snr multicast"></span> multicast packet fan-out <span class="snr override"></span> configured override</div>
     </section>
 
     <section class="two-column">
@@ -80,7 +81,8 @@
 
     <section class="two-column">
       <article class="panel">
-        <p class="eyebrow">Dynamically learned ownership</p><h2>VIF → radio mapping</h2>
+        <p class="eyebrow">Observed interface ownership, not association</p><h2>VIF → hwsim radio mapping</h2>
+        <p class="muted">A learned VIF is a frame-header MAC such as an AP BSSID, VAP or client interface that wmediumd has observed on a particular hwsim radio. It lets the medium route addressed frames to the owning radio; multiple VIFs may belong to one radio and these rows are not Wi-Fi connection edges.</p>
         <div class="table-wrap compact"><table><thead><tr><th>VIF</th><th>Radio</th><th>Band / channel</th></tr></thead><tbody id="vif-body"></tbody></table></div>
       </article>
       <article class="panel">

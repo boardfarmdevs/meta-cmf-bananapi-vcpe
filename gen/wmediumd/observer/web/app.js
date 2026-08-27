@@ -10,6 +10,14 @@ function shortMac(mac) {
 }
 function stationIdentity(mac) { return (state.snapshot?.stations || []).find((station) => station.mac === mac); }
 function displayName(mac) { return stationIdentity(mac)?.label || shortMac(mac); }
+function radioChannels(mac) {
+  const seen = new Set();
+  return (state.snapshot?.radio_frequencies || [])
+    .filter((radio) => radio.radio === mac && Number(radio.frames || 0) > 0)
+    .sort((left, right) => Number(left.frequency_mhz) - Number(right.frequency_mhz))
+    .filter((radio) => { const key = `${radio.band}:${radio.channel}`; if (seen.has(key)) return false; seen.add(key); return true; })
+    .map((radio) => `${radio.band} ch ${radio.channel}`);
+}
 
 function number(value) { return Number(value || 0).toLocaleString(); }
 function rate(value) { return Number(value || 0) < 10 ? Number(value || 0).toFixed(1) : Math.round(Number(value || 0)).toLocaleString(); }
@@ -34,7 +42,7 @@ function render(snapshot) {
   const rates = metrics.rates || {};
   $('frames-rate').textContent = metrics.available ? rate(rates.frames_per_second) : 'unavailable';
   $('bytes-rate').textContent = metrics.available ? bytes(rates.bytes_per_second) : 'unavailable';
-  $('active-count').textContent = metrics.available ? number(snapshot.active_links.length) : 'unavailable';
+  $('active-count').textContent = metrics.available ? number(snapshot.active_links.filter(WMediumdGraph.hasObservedTraffic).length) : 'unavailable';
   $('delivery-count').textContent = metrics.available ? `${number(summary.rx_injected)} / ${number(summary.tx_no_ack)}` : 'unavailable';
   $('retry-count').textContent = metrics.available ? `${number(summary.retries)} / ${number(totalDrops(summary))}` : 'unavailable';
   $('queue-count').textContent = metrics.available ? `${number(summary.queue_depth)} / ${number(summary.queue_depth_max)}` : 'unavailable';
@@ -129,11 +137,29 @@ function renderGraph() {
   const width = 1000, height = 560;
   const positions = WMediumdGraph.layoutStations(snapshot.stations, state.selected, width, height);
   const mode = $('graph-mode').value;
-  if (mode === 'active') {
-    for (const link of snapshot.active_links.filter((item) => item.source === state.selected)) drawEdge(svg, positions, link, link.multicast ? 'multicast' : snrClass(link.last_snr_db), `${link.band} ch ${link.channel} · ${link.frames} frames · SNR ${link.last_snr_db} dB · ${totalDrops(link)} drops`);
+  const selected = stationIdentity(state.selected);
+  if (mode === 'association') {
+    const associations = WMediumdGraph.associationsForSelected(snapshot, state.selected);
+    for (const link of associations) {
+      drawEdge(svg, positions, link, 'association', `${displayName(link.source)} ↔ ${displayName(link.destination)} · ${link.band} ch ${link.channel} · SNR ${link.last_snr_db} dB`, `${link.band} · ch ${link.channel}`);
+    }
+    if (associations.length === 0) {
+      $('graph-summary').textContent = `${displayName(state.selected)}: no current client association has been observed in non-multicast traffic.`;
+    } else if (selected && ['wlan-client', 'iot-client'].includes(selected.role)) {
+      const link = associations[0];
+      $('graph-summary').textContent = `${displayName(link.source)} ↔ ${displayName(link.destination)} · ${link.band} ch ${link.channel} · ${link.frequency_mhz} MHz · SNR ${link.last_snr_db} dB.`;
+    } else {
+      const channels = [...new Set(associations.map((link) => `${link.band} ch ${link.channel}`))].join(', ');
+      $('graph-summary').textContent = `${displayName(state.selected)}: ${associations.length} currently associated client(s) · ${channels}.`;
+    }
+  } else if (mode === 'active') {
+    const links = snapshot.active_links.filter((item) => item.source === state.selected && WMediumdGraph.hasObservedTraffic(item));
+    for (const link of links) drawEdge(svg, positions, link, link.multicast ? 'multicast' : snrClass(link.last_snr_db), `${link.band} ch ${link.channel} · ${link.frames} frames · SNR ${link.last_snr_db} dB · ${totalDrops(link)} drops`);
+    $('graph-summary').textContent = `${displayName(state.selected)}: ${links.length} raw packet path(s). Multicast fan-out is medium delivery telemetry, not Wi-Fi association.`;
   } else {
     for (const link of snapshot.pair_links.filter((item) => item.source === state.selected)) drawEdge(svg, positions, link, snrClass(link.snr_db), `${link.snr_db} dB configured pair state`);
     for (const link of snapshot.frequency_overrides.filter((item) => item.source === state.selected)) drawEdge(svg, positions, link, 'override', `${link.snr_db} dB override at ${link.frequency_mhz} MHz (${link.band} ch ${link.channel})`);
+    $('graph-summary').textContent = `${displayName(state.selected)}: configured potential RF paths, not current Wi-Fi associations.`;
   }
   const vifsByRadio = new Map();
   for (const vif of snapshot.vifs) { if (!vifsByRadio.has(vif.radio)) vifsByRadio.set(vif.radio, []); vifsByRadio.get(vif.radio).push(vif); }
@@ -141,19 +167,25 @@ function renderGraph() {
     const position = positions.get(station.mac); const group = document.createElementNS(svgNS, 'g'); group.setAttribute('class', `graph-node${station.mac === state.selected ? ' selected' : ''}`); group.setAttribute('transform', `translate(${position.x},${position.y})`);
     group.addEventListener('click', () => { state.selected = station.mac; $('source-select').value = station.mac; renderGraph(); renderTable(); });
     const circle = document.createElementNS(svgNS, 'circle'); circle.setAttribute('r', position.radius);
-    const title = document.createElementNS(svgNS, 'title'); const owned = vifsByRadio.get(station.mac) || []; title.textContent = `${station.label || shortMac(station.mac)}\n${station.mac}${station.role ? `\nrole: ${station.role}` : ''}${station.owner ? `\nowner: ${station.owner}` : ''}${station.interface ? `\ninterface: ${station.interface}` : ''}\n${owned.length} learned VIF(s)${owned.length ? `: ${owned.map((vif) => vif.mac).join(', ')}` : ''}`;
+    const title = document.createElementNS(svgNS, 'title'); const owned = vifsByRadio.get(station.mac) || []; const channels = radioChannels(station.mac); title.textContent = `${station.label || shortMac(station.mac)}\n${station.mac}${station.role ? `\nrole: ${station.role}` : ''}${station.owner ? `\nowner: ${station.owner}` : ''}${station.interface ? `\ninterface: ${station.interface}` : ''}${channels.length ? `\nband/channel: ${channels.join(', ')}` : ''}\n${owned.length} observed VIF mapping(s), not associations${owned.length ? `: ${owned.map((vif) => vif.mac).join(', ')}` : ''}`;
     const label = station.label || shortMac(station.mac); const text = document.createElementNS(svgNS, 'text'); text.setAttribute('y', '0'); text.setAttribute('dy', '.35em'); text.setAttribute('font-size', WMediumdGraph.labelFontSize(label, position.radius).toFixed(1)); text.textContent = label; group.append(circle, title, text); svg.appendChild(group);
   }
 }
 
-function drawEdge(svg, positions, link, edgeClass, description) {
-  const pathData = WMediumdGraph.edgePath(positions, link, 1000, 560); if (!pathData) return;
-  const path = document.createElementNS(svgNS, 'path'); path.setAttribute('d', pathData); path.setAttribute('class', `graph-edge ${edgeClass}`); path.setAttribute('stroke-width', '3');
+function drawEdge(svg, positions, link, edgeClass, description, visibleLabel = '') {
+  const route = WMediumdGraph.edgeRoute(positions, link, 1000, 560); if (!route) return;
+  const path = document.createElementNS(svgNS, 'path'); path.setAttribute('d', route.path); path.setAttribute('class', `graph-edge ${edgeClass}`); path.setAttribute('stroke-width', '3');
   const title = document.createElementNS(svgNS, 'title'); title.textContent = description; path.appendChild(title); svg.appendChild(path);
+  if (visibleLabel) {
+    const point = route.kind === 'curve'
+      ? { x: 0.25 * route.start.x + 0.5 * route.control.x + 0.25 * route.end.x, y: 0.25 * route.start.y + 0.5 * route.control.y + 0.25 * route.end.y }
+      : { x: (route.start.x + route.end.x) / 2, y: (route.start.y + route.end.y) / 2 };
+    const label = document.createElementNS(svgNS, 'text'); label.setAttribute('class', 'graph-edge-label'); label.setAttribute('x', point.x); label.setAttribute('y', point.y - 5); label.textContent = visibleLabel; svg.appendChild(label);
+  }
 }
 
 function renderActiveLinks() {
-  const body = $('active-body'); body.replaceChildren(); const links = state.snapshot?.active_links || []; const needle = $('active-filter').value.trim().toLowerCase(); let matched = 0, rendered = 0;
+  const body = $('active-body'); body.replaceChildren(); const links = (state.snapshot?.active_links || []).filter(WMediumdGraph.hasObservedTraffic); const needle = $('active-filter').value.trim().toLowerCase(); let matched = 0, rendered = 0;
   for (const link of links) {
     if (needle && !`${link.source} ${link.destination} ${link.frequency_mhz} ${link.band}`.toLowerCase().includes(needle)) continue;
     matched += 1; if (rendered >= 800) continue;

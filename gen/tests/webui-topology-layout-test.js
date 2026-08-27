@@ -4,6 +4,7 @@
 
 const assert = require('assert').strict;
 const path = require('path');
+const deepClone = value => JSON.parse(JSON.stringify(value));
 
 if (process.argv.length !== 3) {
   console.error(`Usage: ${path.basename(process.argv[1])} SCRIPT_JS`);
@@ -35,7 +36,7 @@ const topology = {
     upstreamBSSID: '02:00:00:00:00:11', mediaType: 'Wireless LAN'
   }]
 };
-const original = structuredClone(topology);
+const original = deepClone(topology);
 const before = controller.topologySignature(topology);
 const labels = topology.nodes[0].haulTypes[0].BSSList
   .map(bss => controller.topologyBssIEEELabel(bss));
@@ -111,6 +112,53 @@ assert.ok(controller.topologyNodeExtent({
   STAList: cohortStations
 }) > 240, 'expanded SSID groups did not increase D3 collision spacing');
 
+const landscapeNodes = [
+  { id: 'controller', name: 'Controller', haulTypes: [], STAList: [] },
+  { id: 'agent', name: 'Agent-1', haulTypes: cohortHauls, STAList: cohortStations },
+  ...[1, 2, 3, 4].map(index => ({
+    id: `extender-${index}`, name: `Extender-${index}`,
+    haulTypes: cohortHauls, STAList: cohortStations
+  }))
+];
+const landscapeStarEdges = [
+  { from: 'controller', to: 'agent' },
+  ...[1, 2, 3, 4].map(index => ({ from: 'agent', to: `extender-${index}` }))
+];
+const landscapeStar = controller.topologyLandscapeLayout(
+  landscapeNodes, landscapeStarEdges, 1600, 900
+);
+assert.equal(landscapeStar.size, landscapeNodes.length);
+assert.ok(landscapeStar.get('controller').x < landscapeStar.get('agent').x,
+  'landscape layout did not keep the Controller left of Agent-1');
+assert.ok([1, 2, 3, 4].every(index =>
+  landscapeStar.get('agent').x < landscapeStar.get(`extender-${index}`).x),
+'landscape layout placed an extender left of its parent');
+assert.equal(new Set([1, 2, 3, 4].map(index =>
+  landscapeStar.get(`extender-${index}`).x)).size, 2,
+'four same-depth extenders were not wrapped across the landscape');
+for (const x of new Set([1, 2, 3, 4].map(index =>
+  landscapeStar.get(`extender-${index}`).x))) {
+  const column = [1, 2, 3, 4].map(index => landscapeStar.get(`extender-${index}`))
+    .filter(position => position.x === x).sort((left, right) => left.y - right.y);
+  assert.ok(column.length <= 2, 'landscape column contains too many extenders');
+  if (column.length === 2) {
+    assert.ok(column[1].y - column[0].y > 2 * 240,
+      'extent-aware landscape rows overlap their SSID/client bubbles');
+  }
+}
+
+const landscapeChainEdges = landscapeNodes.slice(1).map((node, index) => ({
+  from: landscapeNodes[index].id, to: node.id
+}));
+const landscapeChain = controller.topologyLandscapeLayout(
+  landscapeNodes, landscapeChainEdges, 1600, 900
+);
+for (let index = 1; index < landscapeNodes.length; index += 1) {
+  assert.ok(landscapeChain.get(landscapeNodes[index - 1].id).x <
+    landscapeChain.get(landscapeNodes[index].id).x,
+  'multi-hop chain does not progress monotonically left to right');
+}
+
 const metricsUpdated = new Date().toISOString();
 controller.clients = [{
   mac: '02:00:00:00:09:00',
@@ -141,14 +189,14 @@ assert.match(controller.topologySignalArcPath({
 }, 4), /^M.*A.*0 0 1/,
   'signal glyph is not a semicircular SVG arc');
 
-const uptimeOnlyChange = structuredClone(controller.clients);
+const uptimeOnlyChange = deepClone(controller.clients);
 uptimeOnlyChange[0].client_metrics.association_uptime_seconds = 12;
 assert.equal(
   controller.topologyClientMetricsSignature(controller.clients),
   controller.topologyClientMetricsSignature(uptimeOnlyChange),
   'association uptime would redraw the topology every two seconds'
 );
-const signalChange = structuredClone(controller.clients);
+const signalChange = deepClone(controller.clients);
 signalChange[0].client_metrics.rssi_dbm = -72;
 assert.notEqual(
   controller.topologyClientMetricsSignature(controller.clients),
@@ -253,6 +301,8 @@ assert.strictEqual(controller.topologySimulationNodes(simulation), renderTopolog
 assert.deepEqual(controller.topologySimulationNodes(null), []);
 assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNodes\(simulation\)/,
   'Optimize Layout does not operate on the D3 render-node set');
+assert.match(controller.optimizeTopologyLayout.toString(), /topologyLandscapeLayout/,
+  'Optimize Layout does not use the deterministic landscape hierarchy');
 assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
 
 const originalGetElementById = document.getElementById;
@@ -295,8 +345,11 @@ document.getElementById = originalGetElementById;
 let fitted = false;
 const layoutEvents = [];
 let tickCount = 0;
-const layoutNodes = structuredClone(renderTopology.nodes);
-layoutNodes.forEach(node => { node.fx = node.x ?? 0; node.fy = node.y ?? 0; });
+const layoutNodes = deepClone(renderTopology.nodes);
+layoutNodes.forEach(node => {
+  node.fx = node.x === undefined || node.x === null ? 0 : node.x;
+  node.fy = node.y === undefined || node.y === null ? 0 : node.y;
+});
 const fakeSimulation = {
   nodes: () => layoutNodes,
   on(name) {
@@ -320,6 +373,7 @@ const fakeSimulation = {
   }
 };
 controller.topologySimulation = fakeSimulation;
+controller.topology = topology;
 controller.nodePositionCache = new Map();
 controller.staPositionCache.set('manual-client', {
   ownerId: 'agent-1', ssid: 'private_ssid', x: 100, y: 200
@@ -335,7 +389,7 @@ assert.equal(controller.staPositionCache.size, 0,
   'Optimize Layout did not reset manual client positions');
 assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
   'optimized render positions were not fixed and cached');
-assert.equal(tickCount, 180, 'Optimize Layout did not settle for a bounded tick count');
+assert.equal(tickCount, 0, 'Optimize Layout still ran the non-deterministic force solver');
 assert.equal(fitted, true, 'optimized graph was not fitted to the viewport');
 assert.deepEqual(layoutEvents, ['paint', 'fit'],
   'Optimize Layout did not paint and fit its final state exactly once');
@@ -344,7 +398,7 @@ assert.deepEqual(topology, original, 'Optimize Layout changed the API model');
 let redraws = 0;
 controller.topology = topology;
 controller.updateTopologyVisualization = () => { redraws += 1; };
-assert.equal(controller.applyTopologyRefresh(structuredClone(topology)), false);
+assert.equal(controller.applyTopologyRefresh(deepClone(topology)), false);
 assert.equal(redraws, 0, 'an unchanged two-second refresh redrew the graph');
 
 let signalVisualRefreshes = 0;
@@ -353,7 +407,7 @@ controller.clients = [{
   client_metrics: { rssi_dbm: -41, last_updated: metricsUpdated }
 }];
 controller.apiCall = async endpoint => endpoint === '/topology'
-  ? structuredClone(topology)
+  ? deepClone(topology)
   : { clients: [{
     mac: '02:00:00:00:09:00',
     client_metrics: { rssi_dbm: -72, last_updated: metricsUpdated }
