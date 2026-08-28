@@ -45,6 +45,68 @@ def write_state(path: Path, document: dict) -> None:
         raise
 
 
+def snapshot_frequency_links(
+    control: ControlClient,
+    pairs: list[tuple[str, str]],
+    frequency_mhz: int,
+):
+    """Read effective frequency links with bounded bulk control requests.
+
+    A frequency-qualified link inherits its value from the base radio-pair
+    matrix unless an explicit frequency override exists.  Reading every pair
+    with OP_GET_FREQUENCY serializes one control round trip per direction and
+    can exceed steer.sh's safety deadline while wmediumd is handling traffic.
+    The two dump operations provide the same information in fixed request
+    cardinality.  Matching generations make the composed snapshot coherent;
+    a concurrent writer is rejected rather than captured ambiguously.
+    """
+    status = control.status()
+    base_generation, base_links = control.dump_links()
+    frequency_generation, frequency_links = control.dump_frequency_links()
+    final_status = control.status()
+    generations = {
+        status.generation,
+        base_generation,
+        frequency_generation,
+        final_status.generation,
+    }
+    if len(generations) != 1:
+        raise RuntimeError("wmediumd generation changed during RF-bias snapshot")
+
+    base = {
+        (item["source"], item["destination"]): int(item["value"])
+        for item in base_links
+    }
+    overrides = {
+        (
+            item["source"],
+            item["destination"],
+            int(item["frequency_mhz"]),
+        ): (int(item["value"]), bool(item["override"]))
+        for item in frequency_links
+    }
+    prior = []
+    for source, destination in pairs:
+        frequency_key = (source, destination, frequency_mhz)
+        if frequency_key in overrides:
+            value, overridden = overrides[frequency_key]
+        else:
+            pair = (source, destination)
+            if pair not in base:
+                raise RuntimeError(
+                    f"wmediumd snapshot has no link {source} -> {destination}"
+                )
+            value, overridden = base[pair], False
+        prior.append({
+            "source": source,
+            "destination": destination,
+            "frequency_mhz": frequency_mhz,
+            "value": value,
+            "override": overridden,
+        })
+    return final_status, prior
+
+
 def apply(args: argparse.Namespace) -> int:
     inventory = discover({args.client})["radios"]
     stations = [
@@ -88,34 +150,27 @@ def apply(args: argparse.Namespace) -> int:
     source_radio = sources[0]["tx_mac"]
     target_radio = targets[0]["tx_mac"]
     updates = []
-    prior = []
+    pairs = []
+    values = {}
+    for item in sorted(mesh, key=lambda value: value["tx_mac"]):
+        radio = item["tx_mac"]
+        values[radio] = (
+            args.target_snr if radio == target_radio
+            else args.source_snr if radio == source_radio
+            else args.other_snr
+        )
+        pairs.extend(((station, radio), (radio, station)))
     with ControlClient(args.socket) as control:
-        status = control.status()
-        for item in sorted(mesh, key=lambda value: value["tx_mac"]):
-            radio = item["tx_mac"]
-            value = (
-                args.target_snr if radio == target_radio
-                else args.source_snr if radio == source_radio
-                else args.other_snr
-            )
-            for source, destination in ((station, radio), (radio, station)):
-                _generation, old_value, overridden = control.get_frequency_link(
-                    source, destination, args.frequency
-                )
-                prior.append({
-                    "source": source,
-                    "destination": destination,
-                    "frequency_mhz": args.frequency,
-                    "value": old_value,
-                    "override": overridden,
-                })
-                updates.append({
-                    "source": source,
-                    "destination": destination,
-                    "frequency_mhz": args.frequency,
-                    "value": value,
-                    "override": True,
-                })
+        status, prior = snapshot_frequency_links(control, pairs, args.frequency)
+        for source, destination in pairs:
+            radio = destination if source == station else source
+            updates.append({
+                "source": source,
+                "destination": destination,
+                "frequency_mhz": args.frequency,
+                "value": values[radio],
+                "override": True,
+            })
         state = {
             "schema": "easymesh.steering-rf-bias.v1",
             "instance_id": status.instance_id,
