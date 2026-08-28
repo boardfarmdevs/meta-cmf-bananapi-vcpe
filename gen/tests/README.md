@@ -485,7 +485,11 @@ and the host collector on the physical machine:
 ```
 
 For a VM, the first command runs in the guest and the second runs on the outer
-host. The runtime collector executes the normal health audit after capturing
+host. In a nested-LXD VM, run the first command with `sudo`; snap-LXD cannot be
+invoked by the unprivileged guest user when that user session itself was
+created through the outer host's `lxc exec`. The collector handles the source
+checkout ownership difference without changing persistent Git configuration.
+The runtime collector executes the normal health audit after capturing
 topology, model, service, process, LXD, API-latency, wmediumd, memory, storage,
 and module evidence. The host collector separates QEMU/VirtualBox resource use
 from guest measurements. Use the same sample length and idle/traffic phase on

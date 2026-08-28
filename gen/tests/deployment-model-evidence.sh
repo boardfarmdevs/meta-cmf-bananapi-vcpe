@@ -18,6 +18,12 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 run="$output/$label/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$run"
 
+# The nested-LXD VM needs this collector to run through sudo because snap
+# applications cannot be launched by the unprivileged user from an outer
+# `lxc exec` session.  Keep source provenance usable in that mode without
+# changing either the user's or root's persistent Git configuration.
+git_repo=(git -c "safe.directory=$root" -C "$root")
+
 capture() {
     local file=$1
     shift
@@ -36,8 +42,8 @@ capture_shell() {
     printf 'kernel=%s\n' "$(uname -r)"
     . /etc/os-release
     printf 'os=%s\n' "$PRETTY_NAME"
-    printf 'source_commit=%s\n' "$(git -C "$root" rev-parse HEAD)"
-    if [ -n "$(git -C "$root" status --porcelain)" ]; then
+    printf 'source_commit=%s\n' "$("${git_repo[@]}" rev-parse HEAD)"
+    if [ -n "$("${git_repo[@]}" status --porcelain)" ]; then
         printf 'source_clean=false\n'
     else
         printf 'source_clean=true\n'
