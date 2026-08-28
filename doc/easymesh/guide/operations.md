@@ -28,8 +28,8 @@ fully rebuilt pair is:
 runtime source            codex/0824-clean
 image content             EasyMesh 0123; OneWifi 0020; Wi-Fi HAL 0030
 kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260827131002.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260827132121.rootfs.lxc.tar.bz2
+controller image          X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260828161337.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -39,8 +39,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-744febc0971f9c5968dfa180ec420312d319e411cd21874b8e176720f00d3357  controller
-b4d5631f83597caccef98eb7c5b8942bf8fc10ec6d6f223656ff5b1b0de208f8  extender
+9a4c432c857dbbf80a68c5b7835d7d0ba39327919dc53becc3c5a9eeb78d51cd  controller
+8e8ffbfe4b2404dfc9ae19ab27b0eab6243d3bc55d443ceca0d269d36b3e5d18  extender
 ```
 
 For any current pair, verify and retain its hashes before use:

@@ -30,8 +30,8 @@ from its colocated radio agent.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260827131002.rootfs.lxc.tar.bz2` | `744febc0971f9c5968dfa180ec420312d319e411cd21874b8e176720f00d3357` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260827132121.rootfs.lxc.tar.bz2` | `b4d5631f83597caccef98eb7c5b8942bf8fc10ec6d6f223656ff5b1b0de208f8` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2` | `9a4c432c857dbbf80a68c5b7835d7d0ba39327919dc53becc3c5a9eeb78d51cd` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260828161337.rootfs.lxc.tar.bz2` | `8e8ffbfe4b2404dfc9ae19ab27b0eab6243d3bc55d443ceca0d269d36b3e5d18` |
 
 Both images derive from the consolidated EasyMesh source series through
 `0123`; their installed controller/Agent binaries remain role-specific.
@@ -82,12 +82,12 @@ SNMP                     one systemd-owned subagent, no launcher leak
 The Console also passed every REST resource, Prometheus export, live packet
 telemetry, provenance reporting, and rejection of writes in read-only mode.
 
-The clean rev120 VM reconstruction independently reached `5/15/50/24`, 20/20
-matching physical/API client owners, 20/20 nonzero RCPI values, four fresh
-backhaul signals, 20/20 working WLAN data paths, and zero OneWifi/EasyMesh
-restarts. It then held the topology for 120 seconds. Its deployment and final
-health evidence are `/home/vagrant/0826-deploy.log` and
-`/home/vagrant/0826-final-health.log` inside the VM.
+The clean rev120 VM deployment and subsequent real reboot reconstruction both
+reached `5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero
+RCPI values, four fresh backhaul signals, 20/20 working WLAN data paths, and
+zero OneWifi/EasyMesh restarts. The rebooted lab then held the topology for 120
+seconds before the accepted disk was packaged as
+`easymesh-lab-0828-cf6b5e8.box`.
 
 ## Runtime access
 

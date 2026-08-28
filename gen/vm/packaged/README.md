@@ -12,12 +12,13 @@ patched hwsim module, multichannel wmediumd, LXD, Docker, Boardfarm, the
 controller, four extenders, twenty WLAN clients and the test checkout. A new user
 imports the box and starts it; they do not run the one-time installer.
 
-The bundled box is `easymesh-lab-0827-c461c59.box`, exactly
-`3,882,758,736` bytes, with SHA-256
-`0c3a4edb10c2bce1152116ad39d42fd53a5f55bf91b1f4cf64b533b532ef9821`.
+The bundled box is `easymesh-lab-0828-cf6b5e8.box`, exactly
+`4,106,818,874` bytes, with SHA-256
+`335206682b3d0b7798e5fd5e56fe6ccf7a55090d165a10b0c00bf41bca170ecc`.
 It was created from source revision
-`c461c591afe8afef47d1b215fbcfbb09eb5abcb3` after a clean deployment,
-complete health acceptance, and focused round-trip steering on rev120.
+`cf6b5e8923b2d75781759deee8fa7f1ae00e2175` after a clean deployment,
+complete health acceptance, an actual VM reboot, and automatic cold-boot
+reconstruction on rev120.
 
 The release archive is location-independent. Extract it into any new empty
 directory and perform all host-side commands from that directory:
@@ -25,7 +26,7 @@ directory and perform all host-side commands from that directory:
 ```sh
 mkdir easymesh-lab
 cd easymesh-lab
-tar -xf /path/to/easymesh-lab-0827-c461c59-bundle.tar
+tar -xf /path/to/easymesh-lab-0828-cf6b5e8-bundle.tar
 less README.md
 ```
 
@@ -34,7 +35,7 @@ The extracted directory contains exactly the operator-facing inputs:
 ```text
 README.md
 Vagrantfile
-easymesh-lab-0827-c461c59.box
+easymesh-lab-0828-cf6b5e8.box
 SHA256SUMS
 ```
 
