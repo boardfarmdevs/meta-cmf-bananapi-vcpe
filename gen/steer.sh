@@ -87,6 +87,13 @@ announce_steering() {
         "$steering_url" >/dev/null 2>&1 || true
 }
 
+lxc_exec_bounded() {
+    local limit=$1
+    shift
+    timeout --signal=TERM --kill-after=2 "$limit" \
+        lxc exec -T -n "$@"
+}
+
 for command in curl jq lxc; do
     command -v "$command" >/dev/null || {
         echo "steer.sh: required host command is missing: $command" >&2
@@ -190,22 +197,28 @@ if ((dry_run)); then
     else
         printf 'steer.sh: dry run; deterministic lab mode (temporary RF bias, candidate scan, verified move)\n'
     fi
-    printf 'steer.sh: dry run; would execute: lxc exec %q -- /usr/bin/steer.sh %q %q\n' \
+    printf 'steer.sh: dry run; would execute: lxc exec -T -n %q -- /usr/bin/steer.sh %q %q\n' \
         "$controller" "$sta" "$target_bssid"
     exit 0
 fi
 
-lxc info "$controller" >/dev/null 2>&1 || {
+timeout --signal=TERM --kill-after=2 5 lxc info "$controller" >/dev/null 2>&1 || {
     echo "steer.sh: controller container '$controller' is not available" >&2
     exit 1
 }
+if ! lxc_exec_bounded 5 "$controller" -- true >/dev/null 2>&1; then
+    echo "steer.sh: nested LXD cannot execute commands in '$controller'; no steering request was sent" >&2
+    exit 1
+fi
 
 if ((request_only)); then
     echo "steer.sh: request-only mode; client acceptance and reassociation are not forced"
     announce_steering planned
     sleep "$preview_seconds"
     announce_steering moving
-    exec lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
+    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
+        /usr/bin/steer.sh "$sta" "$target_bssid"
+    exit $?
 fi
 
 [[ $source_bssid =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
@@ -294,10 +307,14 @@ if ((${#mesh_radios[@]} < 2)); then
 fi
 source_radio=${source_radios[0]}
 target_radio=${target_radios[0]}
-lxc info "$client" >/dev/null 2>&1 || {
+timeout --signal=TERM --kill-after=2 5 lxc info "$client" >/dev/null 2>&1 || {
     echo "steer.sh: client container '$client' is not available" >&2
     exit 1
 }
+if ! lxc_exec_bounded 5 "$client" -- true >/dev/null 2>&1; then
+    echo "steer.sh: nested LXD cannot execute commands in '$client'; no RF bias was applied" >&2
+    exit 1
+fi
 
 bias_state=$(mktemp /tmp/easymesh-steer-bias.XXXXXX.json)
 bias_active=0
@@ -307,7 +324,8 @@ restore_bias() {
     # update.  A timeout in that small window must therefore restore too, even
     # though the helper did not live long enough to report success.
     if ((bias_active)) || [[ -s $bias_state ]]; then
-        if timeout 20 python3 "$bias_tool" restore --state "$bias_state"; then
+        if timeout --signal=TERM --kill-after=2 20 \
+                python3 "$bias_tool" restore --state "$bias_state"; then
             bias_active=0
         else
             echo "steer.sh: WARNING: exact wmediumd RF restore failed; state retained at $bias_state" >&2
@@ -346,7 +364,8 @@ for radio in "${mesh_radios[@]}"; do
     bias_args+=(--mesh-radio "$radio")
 done
 set +e
-timeout "$bias_timeout" python3 "$bias_tool" "${bias_args[@]}"
+timeout --signal=TERM --kill-after=2 "$bias_timeout" \
+    python3 "$bias_tool" "${bias_args[@]}"
 bias_rc=$?
 set -e
 if ((bias_rc != 0)); then
@@ -360,24 +379,26 @@ if ((bias_rc != 0)); then
 fi
 bias_active=1
 
-scan_ok=0
-for _ in 1 2 3; do
-    request=$(timeout 10 lxc exec "$client" -- wpa_cli -i wlan0 scan \
-        "freq=$target_frequency" 2>/dev/null || true)
-    sleep 1
-    scan=$(timeout 10 lxc exec "$client" -- wpa_cli -i wlan0 scan_results \
-        2>/dev/null || true)
-    if [[ $request == OK ]] && grep -Fqi "$target_bssid" <<<"$scan"; then
-        scan_ok=1
-        break
-    fi
-    sleep 1
-done
-((scan_ok)) || {
+if ! lxc_exec_bounded 12 "$client" -- sh -c '
+    frequency=$1
+    target=$2
+    attempt=0
+    while [ "$attempt" -lt 3 ]; do
+        request=$(wpa_cli -i wlan0 scan "freq=$frequency" 2>/dev/null || true)
+        sleep 1
+        scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+        if [ "$request" = OK ] && printf "%s\n" "$scan" | grep -Fqi "$target"; then
+            exit 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    exit 1
+' sh "$target_frequency" "$target_bssid" >/dev/null 2>&1; then
     echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan" >&2
     exit 1
-}
-link=$(timeout 4 lxc exec "$client" -- iw dev wlan0 link 2>/dev/null || true)
+fi
+link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
 physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
     echo "steer.sh: station reassociated during deterministic RF preparation; no BTM request is required"
@@ -389,7 +410,7 @@ else
     # a steer queued behind a live WebUI query is not killed while still valid.
     # Do not retry an ambiguous timeout: the controller may already have sent
     # the BTM request even if delivery of its command result was delayed.
-    timeout "$controller_steer_timeout" lxc exec "$controller" -- \
+    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
         /usr/bin/steer.sh "$sta" "$target_bssid"
     command_rc=$?
     set -e
@@ -399,12 +420,24 @@ else
     }
 fi
 
-for _ in $(seq 1 50); do
-    link=$(timeout 4 lxc exec "$client" -- iw dev wlan0 link 2>/dev/null || true)
-    physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
-    [[ ${physical_bssid,,} == "$target_bssid" ]] && break
-    sleep 0.2
-done
+link=$(lxc_exec_bounded 15 "$client" -- sh -c '
+    target=$1
+    attempt=0
+    link=
+    while [ "$attempt" -lt 50 ]; do
+        link=$(iw dev wlan0 link 2>/dev/null || true)
+        bssid=$(printf "%s\n" "$link" | awk '\''/Connected to/{value=$3} END{print value}'\'')
+        if [ "$bssid" = "$target" ]; then
+            printf "%s\n" "$link"
+            exit 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.2
+    done
+    printf "%s\n" "$link"
+    exit 1
+' sh "$target_bssid" 2>/dev/null || true)
+physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 [[ ${physical_bssid,,} == "$target_bssid" ]] || {
     echo "steer.sh: station did not accept/reassociate to $target_bssid" >&2
     exit 1
