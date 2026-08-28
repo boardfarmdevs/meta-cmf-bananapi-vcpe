@@ -73,6 +73,7 @@ identity_inventory=${EASYMESH_IDENTITY_INVENTORY:-/run/meta-cmf-wmediumd/identit
 curl_connect_timeout=${EASYMESH_CURL_CONNECT_TIMEOUT:-2}
 curl_timeout=${EASYMESH_CURL_TIMEOUT:-8}
 bias_timeout=${EASYMESH_BIAS_TIMEOUT:-30}
+controller_steer_timeout=${EASYMESH_CONTROLLER_STEER_TIMEOUT:-45}
 preview_seconds=${EASYMESH_STEERING_PREVIEW_SECONDS:-3}
 
 announce_steering() {
@@ -383,7 +384,13 @@ if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
 else
     echo "steer.sh: target candidate is visible; submitting the EasyMesh BTM request"
     set +e
-    timeout 15 lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
+    # The native command transport has a 30-second I/O bound and controller
+    # commands are serialized.  Keep the outer deadline above that contract so
+    # a steer queued behind a live WebUI query is not killed while still valid.
+    # Do not retry an ambiguous timeout: the controller may already have sent
+    # the BTM request even if delivery of its command result was delayed.
+    timeout "$controller_steer_timeout" lxc exec "$controller" -- \
+        /usr/bin/steer.sh "$sta" "$target_bssid"
     command_rc=$?
     set -e
     ((command_rc == 0)) || {
