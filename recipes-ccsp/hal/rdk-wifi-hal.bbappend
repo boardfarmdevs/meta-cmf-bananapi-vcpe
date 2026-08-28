@@ -246,6 +246,17 @@ SRC_URI += "file://0018-fix-vap-reconfiguration-stop-ap-and-clamp-mlo-link-id.pa
 # service or post-start OneWifi restart is required.
 SRC_URI += "file://0029-hwsim-refresh-frame-registrations-after-ap-restart.patch"
 
+# Radio/WIPHY reconfiguration has a separate AP stop/start path which bypasses
+# restart_interface().  Refresh the hwsim management and EAPOL receive sockets
+# there as well; otherwise a radio update can leave a BSS beaconing while Open
+# System Authentication requests never reach embedded hostapd.
+SRC_URI += "file://0031-hwsim-refresh-frame-registrations-during-wiphy-reconfigure.patch"
+
+# Releasing the stale sockets must also clear the HAL's vap_configured guard.
+# Otherwise start_bss() calls set_operstate(1), which returns early without
+# rebuilding either receive path.  Cover both AP restart implementations.
+SRC_URI += "file://0032-hwsim-rearm-operstate-after-frame-refresh.patch"
+
 # wifi_hal_send_mgmt_frame() used a broadcast address as the BSSID of every
 # unicast management action frame.  cfg80211 rejects the resulting AP frame
 # with -EINVAL, so a steering request can reach the correct source VAP and

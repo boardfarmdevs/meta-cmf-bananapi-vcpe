@@ -239,6 +239,12 @@ up)
             exit 2
             ;;
     esac
+    # Keep candidate scans and BTM/reassociation requests inside the
+    # supplicant state machine.  External `iw scan` calls can leave an
+    # unassociated hwsim station in mac80211's idle state just as an AP sends
+    # its authentication response, so wmediumd delivery is rejected even
+    # though the candidate is visible.
+    NET="ctrl_interface=/run/wpa_supplicant\n\n$NET"
     [ -n "$COHORT" ] || COHORT=$([ "$SSID" = iot_ssid ] && echo iot || echo private)
     LAB_POOL=$(ensure_lxd_lab_pool) || exit 1
     # ensure the self-contained image (build once, or on --build-image)

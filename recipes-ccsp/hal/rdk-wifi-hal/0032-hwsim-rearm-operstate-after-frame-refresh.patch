@@ -1,0 +1,54 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: rearm operstate after frame registration refresh
+
+The hwsim AP restart paths release stale management and EAPOL receive sockets
+before start_bss(), but wifi_drv_set_operstate() treats vap_configured as a
+guard.  Because the flag remains true, its state=1 callback returns early and
+does not create replacement sockets.  The AP therefore continues beaconing
+without delivering authentication frames to embedded hostapd.
+
+Mark the hwsim VAP unconfigured whenever those receive registrations are
+released.  The normal start_bss() callback can then rebuild exactly one fresh
+registration set and restore the configured flag.  Cover both the individual
+VAP restart and the radio-wide wiphy reconfiguration paths.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211.c       | 5 +++++
+ wifi_hal_nl80211_utils.c | 5 +++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+index 6fe5149..cf5d68b 100644
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -8361,6 +8361,11 @@ int nl80211_update_wiphy(wifi_radio_info_t *radio)
+                     unregister_data_frame_socket(interface);
+                 }
+ #endif /* EAPOL_OVER_NL */
++                /* Let start_bss() rebuild the receive paths through the
++                 * normal set_operstate(1) callback.  Otherwise its configured
++                 * guard returns before registering replacement sockets. */
++                interface->vap_configured = false;
++
+ #endif /* HWSIM_RADIO */
+ 
+                 nl80211_enable_ap(interface, false);
+diff --git a/wifi_hal_nl80211_utils.c b/wifi_hal_nl80211_utils.c
+index 65f5e44..7c3aa0a 100644
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -6352,6 +6352,11 @@ int restart_interface(wifi_interface_info_t *interface)
+             unregister_data_frame_socket(interface);
+         }
+ #endif /* EAPOL_OVER_NL */
++        /* Let start_bss() rebuild the receive paths through the normal
++         * set_operstate(1) callback.  Otherwise its configured guard returns
++         * before registering replacement sockets. */
++        interface->vap_configured = false;
++
+ #endif /* HWSIM_RADIO */
+ 
+         if (nl80211_enable_ap(interface, false) < 0) {
+-- 
+2.43.0

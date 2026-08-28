@@ -1,0 +1,44 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] monitor: omit inactive clients from cached association stats
+
+The associated-device monitor correctly marks a cached station inactive when
+the HAL no longer reports it on that VAP.  Its cached-provider copy path then
+ignored cli_Active and exported every historical row anyway.  EasyMesh used
+that provider path, so an intra-agent band roam could leave the client on the
+old BSSID indefinitely even though the station was present only on the new
+BSSID in the kernel.
+
+Only copy active rows and report the number actually copied.  The allocation
+may remain sized to the cache as a harmless upper bound.  This makes the
+cached provider honor the same live-associated-device contract as the direct
+collector path.
+
+Upstream-Status: Pending
+---
+ source/stats/wifi_stats_assoc_client.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/source/stats/wifi_stats_assoc_client.c b/source/stats/wifi_stats_assoc_client.c
+--- a/source/stats/wifi_stats_assoc_client.c
++++ b/source/stats/wifi_stats_assoc_client.c
+@@ -695,13 +695,15 @@ int copy_assoc_client_stats_from_cache(wifi_mon_provider_element_t *p_elem, void
+         to_sta_key(temp_sta->sta_mac, sta_key);
+         wifi_util_dbg_print(WIFI_MON, "%s:%d vap_index %d count : %d sta_key : %s\n",
+                 __func__, __LINE__, args->vap_index, count, sta_key);
+-        memcpy(&sta[count], temp_sta, sizeof(sta_data_t));
+-        count++;
++        if (temp_sta->dev_stats.cli_Active == true) {
++            memcpy(&sta[count], temp_sta, sizeof(sta_data_t));
++            count++;
++        }
+         temp_sta = hash_map_get_next(sta_map, temp_sta);
+     }
+ 
+     *stats = sta;
+-    *stat_array_size = sta_count;
++    *stat_array_size = count;
+     pthread_mutex_unlock(&mon_cache->data_lock);
+     return RETURN_OK;
+ }
+-- 
+2.43.0

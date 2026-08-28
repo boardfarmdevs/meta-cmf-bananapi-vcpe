@@ -292,9 +292,12 @@ bias_active=1
 
 scan_ok=0
 for _ in 1 2 3; do
-    scan=$(timeout 10 lxc exec "$client" -- iw dev wlan0 scan \
-        freq "$target_frequency" 2>/dev/null || true)
-    if grep -Fqi "BSS $target_bssid(" <<<"$scan"; then
+    request=$(timeout 10 lxc exec "$client" -- wpa_cli -i wlan0 scan \
+        "freq=$target_frequency" 2>/dev/null || true)
+    sleep 1
+    scan=$(timeout 10 lxc exec "$client" -- wpa_cli -i wlan0 scan_results \
+        2>/dev/null || true)
+    if [[ $request == OK ]] && grep -Fqi "$target_bssid" <<<"$scan"; then
         scan_ok=1
         break
     fi

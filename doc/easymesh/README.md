@@ -79,12 +79,15 @@ boundary:
 - [Metrics reporting and APIs](reference/metrics.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)
 - [wmediumd internals](reference/wmediumd-internals.md)
+- [wmediumd convergence assessment](reference/wmediumd-convergence-assessment.md)
 - [wmediumd configurator](reference/wmediumd-configurator.md)
 - [wmediumd Console and telemetry protocol](reference/wmediumd-console.md)
 - [Packet capture](reference/packet-capture.md)
 - [Memory footprint](reference/memory-footprint.md)
 - [Association ownership case study](reference/association-ownership-case-study.md)
 - [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
+- [Lab appliance refactor plan](reference/lab-appliance-refactor-plan.md)
+- [prplMesh virtual-radio evaluation plan](reference/prplmesh-virtual-radio-evaluation-plan.md)
 
 ## Documentation rules
 

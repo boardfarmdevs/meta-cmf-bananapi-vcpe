@@ -57,6 +57,8 @@ journald, and SNMP fixes are described in
 | wmediumd dynamic pair/frequency control | Accepted |
 | wmediumd Console Phase 1/2 visibility | Accepted |
 | External optimizer unit and replay framework | Accepted |
+| Independent start/stop/restart of every provisioned node without medium regeneration, unrelated-node restart, identity repair, database correction, or manual recovery | Not yet accepted |
+| Direct-host reboot remains stopped while packaged VM boot starts the lab | Not yet accepted as a unified installation policy |
 | Autonomous production steering policy | Not implemented |
 | Completed 12-hour 20-client churn soak | Not yet claimed |
 | Validated 50/100-client runtime | Not yet claimed |
@@ -112,6 +114,11 @@ image and is not a current parity claim.
   does not prove that an autonomous optimizing policy is running.
 - Immediate reconstruction and functional acceptance do not replace the
   separately defined long-duration soak.
+- The packaged VM currently performs a complete ordered runtime reconstruction
+  after boot. That is a temporary recovery mechanism, not the accepted target
+  for independent node lifecycle. A direct bare-metal host should not
+  auto-start the lab; only an explicitly started EasyMesh VM should auto-start
+  its internal lab.
 
 ## Evidence and reproducibility
 

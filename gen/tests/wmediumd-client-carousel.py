@@ -95,6 +95,31 @@ def client_bssid(container: str) -> str | None:
     return None
 
 
+def client_frequency(container: str) -> int:
+    """Return the client's configured band frequency for directed scans."""
+    config = lxc(container, "cat /etc/wpa.conf 2>/dev/null")
+    match = re.search(
+        r"^\s*(?:scan_freq|freq_list)\s*=\s*(\d+)", config, re.MULTILINE
+    )
+    if match:
+        return int(match.group(1))
+    link = lxc(container, "iw dev wlan0 link 2>/dev/null")
+    match = re.search(r"^\s*freq:\s*(\d+)", link, re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"{container}: cannot determine WLAN frequency")
+    return int(match.group(1))
+
+
+def frequency_band(frequency: int) -> str:
+    if 2400 <= frequency < 2500:
+        return "2.4"
+    if 5000 <= frequency < 5955:
+        return "5"
+    if 5955 <= frequency <= 7115:
+        return "6"
+    raise ValueError(f"unsupported Wi-Fi frequency {frequency} MHz")
+
+
 def fetch_topology(url: str) -> dict | None:
     try:
         document = json.loads(run("curl", "-fsS", url))
@@ -107,14 +132,20 @@ def fetch_topology(url: str) -> dict | None:
     return document
 
 
-def topology_owner(document: dict, mac: str) -> str | None:
+def topology_station(document: dict, mac: str) -> tuple[str, str | None] | None:
     for node in document.get("nodes", []):
-        if any(
-            item.get("staMAC", "").lower() == mac
-            for item in (node.get("STAList") or [])
-        ):
-            return str(node.get("id", "")).lower() or None
+        for item in node.get("STAList") or []:
+            if item.get("staMAC", "").lower() != mac:
+                continue
+            owner = str(node.get("id", "")).lower()
+            bssid = str(item.get("bssid") or item.get("BSSID") or "").lower()
+            return owner, bssid or None
     return None
+
+
+def topology_owner(document: dict, mac: str) -> str | None:
+    station = topology_station(document, mac)
+    return station[0] if station else None
 
 
 def cohort_bssids(radio: dict, ssid: str) -> set[str]:
@@ -122,6 +153,16 @@ def cohort_bssids(radio: dict, ssid: str) -> set[str]:
         item["mac"].lower()
         for item in radio.get("interfaces", [])
         if item.get("ssid") == ssid and item.get("mac")
+    }
+
+
+def cohort_bsses(radio: dict, ssid: str) -> dict[str, int]:
+    return {
+        item["mac"].lower(): int(item["frequency_mhz"])
+        for item in radio.get("interfaces", [])
+        if item.get("ssid") == ssid
+        and item.get("mac")
+        and item.get("frequency_mhz")
     }
 
 
@@ -184,7 +225,9 @@ def observe(
     stations = []
     for client in clients:
         bssid = client_bssid(client["container"])
-        owner = topology_owner(document, client["mac"]) if document else None
+        station = topology_station(document, client["mac"]) if document else None
+        owner = station[0] if station else None
+        topology_bssid = station[1] if station else None
         stations.append(
             {
                 "client": client["container"],
@@ -193,6 +236,7 @@ def observe(
                 "actual_ap": bssid_to_ap.get(bssid) if bssid else None,
                 "topology_owner": owner,
                 "topology_ap": node_to_ap.get(owner) if owner else None,
+                "topology_bssid": topology_bssid,
             }
         )
     return {"valid_topology": document is not None, "stations": stations}
@@ -202,6 +246,7 @@ def assignment_reached(observation: dict, targets: dict[str, str]) -> bool:
     return bool(observation["valid_topology"]) and all(
         item["actual_ap"] == targets[item["client"]]
         and item["topology_ap"] == targets[item["client"]]
+        and item["bssid"] == item["topology_bssid"]
         for item in observation["stations"]
     )
 
@@ -219,6 +264,7 @@ def assignment_mismatches(observation: dict, targets: dict[str, str]) -> set[str
         for item in observation["stations"]
         if item["actual_ap"] != targets[item["client"]]
         or item["topology_ap"] != targets[item["client"]]
+        or item["bssid"] != item["topology_bssid"]
     }
 
 
@@ -247,6 +293,76 @@ def set_client_link(clients: list[dict], state: str) -> None:
                     output=result.stdout, stderr=result.stderr,
                 )
             time.sleep(0.5 * attempt)
+
+
+def prime_candidate_scans(
+    clients: list[dict], aps_by_container: dict[str, dict],
+    targets: dict[str, str], attempts: int = 3,
+) -> None:
+    """Put each selected target BSS into the pinned-band client's scan cache."""
+    for client in clients:
+        target_name = targets[client["container"]]
+        target = aps_by_container[target_name]
+        candidates = {
+            bssid: frequency
+            for bssid, frequency in target["bsses"].items()
+            if frequency_band(frequency) == client["band"]
+        }
+        if not candidates:
+            raise RuntimeError(
+                f"{client['container']}: {target_name} has no {client['band']} GHz "
+                "BSS for the selected SSID"
+            )
+        frequencies = sorted(set(candidates.values()))
+        last_error = "target BSS absent"
+        for attempt in range(1, attempts + 1):
+            outputs = []
+            errors = []
+            for frequency in frequencies:
+                request = subprocess.run(
+                    (
+                        "lxc", "exec", client["container"], "--", "wpa_cli",
+                        "-i", "wlan0", "scan", f"freq={frequency}",
+                    ),
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                )
+                if request.returncode or request.stdout.strip() != "OK":
+                    errors.append(
+                        request.stderr.strip() or request.stdout.strip()
+                        or f"wpa_cli scan failed for {frequency}MHz"
+                    )
+                    continue
+                time.sleep(0.5)
+                result = subprocess.run(
+                    (
+                        "lxc", "exec", client["container"], "--", "wpa_cli",
+                        "-i", "wlan0", "scan_results",
+                    ),
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                )
+                outputs.append(result.stdout.lower())
+                if result.returncode:
+                    errors.append(result.stderr.strip())
+            output = "\n".join(outputs)
+            if any(bssid in output for bssid in candidates):
+                break
+            last_error = (
+                "; ".join(error for error in errors if error)
+                or "target BSS absent at "
+                + ",".join(str(value) for value in frequencies)
+                + "MHz via wpa_supplicant"
+            )
+            if attempt < attempts:
+                time.sleep(float(attempt))
+        else:
+            raise RuntimeError(
+                f"{client['container']}: cannot prime {target_name} candidate: "
+                f"{last_error}"
+            )
 
 
 def relevant_log_lines(text: str, identities: set[str]) -> str:
@@ -455,14 +571,16 @@ class Carousel:
         aps = []
         for item in mesh:
             bssids = cohort_bssids(item, args.ssid)
+            bsses = cohort_bsses(item, args.ssid)
             identity = topology_ap_identity(document, bssids)
-            if not bssids or not identity:
+            if not bssids or bssids != set(bsses) or not identity:
                 raise RuntimeError(
-                    f"{item['container']}: no live {args.ssid} BSS topology identity"
+                    f"{item['container']}: incomplete live {args.ssid} BSS inventory"
                 )
             node_id, node_name = identity
             aps.append(
-                {**item, "bssids": bssids, "node_id": node_id, "node_name": node_name}
+                {**item, "bssids": bssids, "bsses": bsses,
+                 "node_id": node_id, "node_name": node_name}
             )
         aps.sort(key=ap_order)
 
@@ -470,12 +588,21 @@ class Carousel:
         for item in sorted(stations, key=lambda entry: natural_key(entry["container"])):
             mac = client_mac(item["container"])
             prefix = "IOT" if args.ssid == "iot_ssid" else "STA"
-            clients.append({**item, "mac": mac, "label": sta_label(mac, prefix)})
+            clients.append(
+                {
+                    **item,
+                    "mac": mac,
+                    "label": sta_label(mac, prefix),
+                    "frequency": (frequency := client_frequency(item["container"])),
+                    "band": frequency_band(frequency),
+                }
+            )
 
         bssid_to_ap = {
             bssid: ap["container"] for ap in aps for bssid in ap["bssids"]
         }
         node_to_ap = {ap["node_id"]: ap["container"] for ap in aps}
+        aps_by_container = {ap["container"]: ap for ap in aps}
         original_targets = {}
         for client in clients:
             bssid = client_bssid(client["container"])
@@ -488,7 +615,9 @@ class Carousel:
 
         preflight = observe(clients, bssid_to_ap, node_to_ap, args.topology_url)
         if not preflight["valid_topology"] or any(
-            item["topology_ap"] is None for item in preflight["stations"]
+            item["topology_ap"] is None
+            or item["topology_bssid"] != item["bssid"]
+            for item in preflight["stations"]
         ):
             raise RuntimeError(f"client/API association is incomplete at preflight: {preflight}")
 
@@ -579,6 +708,7 @@ class Carousel:
                         matrix_updates(group, aps, targets,
                                        args.strong_snr, args.outage_snr),
                     )
+                    prime_candidate_scans(group, aps_by_container, targets)
                     self.recorder.write(
                         "formation_group_applied", generation=generation,
                         group=group_index + 1, targets=targets,
@@ -676,6 +806,7 @@ class Carousel:
                                            args.strong_snr, args.outage_snr),
                         )
                         set_client_link(group, "up")
+                        prime_candidate_scans(group, aps_by_container, targets)
                         self.recorder.write(
                             "arrival_applied", generation=generation, round=round_index,
                             group=group_index + 1, clients=labels,
@@ -735,6 +866,7 @@ class Carousel:
                             matrix_updates(group, aps, targets,
                                            args.strong_snr, args.outage_snr),
                         )
+                        prime_candidate_scans(group, aps_by_container, targets)
                         elapsed, returned = self.wait_for(
                             args.return_timeout,
                             lambda group=group, targets=targets: (
@@ -810,6 +942,9 @@ class Carousel:
                                 ),
                             )
                             set_client_link(repair, "up")
+                            prime_candidate_scans(
+                                repair, aps_by_container, alternate_targets
+                            )
                             self.wait_for(
                                 repair_timeout,
                                 lambda: (
@@ -837,6 +972,9 @@ class Carousel:
                                 ),
                             )
                             set_client_link(repair, "up")
+                            prime_candidate_scans(
+                                repair, aps_by_container, repair_targets
+                            )
                             self.wait_for(
                                 repair_timeout,
                                 lambda: (

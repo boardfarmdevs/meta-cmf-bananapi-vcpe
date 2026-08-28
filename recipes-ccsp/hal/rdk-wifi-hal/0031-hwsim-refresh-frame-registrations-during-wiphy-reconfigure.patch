@@ -1,0 +1,53 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: refresh frame registrations during wiphy reconfigure
+
+nl80211_update_wiphy() has a second AP stop/start lifecycle which does not use
+restart_interface().  It stops every active BSS, deinitializes embedded
+hostapd, and later calls start_bss(), but it leaves the management-frame and
+EAPOL receive sockets associated with the stopped hwsim BSS.
+
+The result is a band-specific half-working AP after a radio update: the kernel
+continues to beacon and the station can scan the BSS, but Open System
+Authentication requests never reach embedded hostapd and the station times
+out.  Restarting OneWifi restores the sockets and makes the same station and
+RF matrix associate immediately.
+
+Release the old receive paths before STOP_AP in this reconfiguration path.
+start_bss() then creates one fresh set through wifi_drv_set_operstate(), just
+as it does in the restart_interface() lifecycle fixed separately.  Keep this
+hwsim-only so physical drivers retain their native registration behavior.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+index 6d5cf2f..6fe5149 100644
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -8343,6 +8343,22 @@ int nl80211_update_wiphy(wifi_radio_info_t *radio)
+     while (interface != NULL) {
+         if (interface->bss_started) {
+                 reconfigure = true;
++#ifdef HWSIM_RADIO
++                /* nl80211_update_wiphy() owns an AP stop/start path which
++                 * bypasses restart_interface().  Registrations attached to
++                 * the stopped hwsim BSS must be released before start_bss()
++                 * creates their replacements.  Retaining them leaves a BSS
++                 * that beacons but never receives authentication frames. */
++                if (interface->mgmt_frames_registered) {
++                    nl80211_unregister_mgmt_frames(interface);
++                }
++#ifndef EAPOL_OVER_NL
++                if (interface->data_frames_registered) {
++                    unregister_data_frame_socket(interface);
++                }
++#endif /* EAPOL_OVER_NL */
++#endif /* HWSIM_RADIO */
++
+                 nl80211_enable_ap(interface, false);
+                 pthread_mutex_lock(&g_wifi_hal.hapd_lock);
+                 deinit_bss(&interface->u.ap.hapd);
+-- 
+2.43.0

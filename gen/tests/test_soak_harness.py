@@ -15,7 +15,7 @@ HERE = Path(__file__).resolve().parent
 
 def load_script(name: str):
     path = HERE / name
-    spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), path)
+    spec = importlib.util.spec_from_file_location(path.stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -216,11 +216,123 @@ def test_carousel_selects_only_matching_cohort_bssids():
     }
 
 
+def test_carousel_keeps_frequency_with_each_matching_bssid():
+    carousel = load_script("wmediumd-client-carousel.py")
+    radio = {
+        "interfaces": [
+            {"ssid": "private_ssid", "mac": "02:00:00:00:01:00",
+             "frequency_mhz": 5955},
+            {"ssid": "iot_ssid", "mac": "02:00:00:00:02:00",
+             "frequency_mhz": 6135},
+        ]
+    }
+
+    assert carousel.cohort_bsses(radio, "iot_ssid") == {
+        "02:00:00:00:02:00": 6135
+    }
+
+
 def test_carousel_client_label_uses_the_selected_cohort_prefix():
     carousel = load_script("wmediumd-client-carousel.py")
 
     assert carousel.sta_label("02:00:00:00:13:00") == "STA-13"
     assert carousel.sta_label("02:00:00:00:13:00", "IOT") == "IOT-13"
+
+
+def test_carousel_reads_pinned_or_current_client_frequency():
+    carousel = load_script("wmediumd-client-carousel.py")
+
+    with patch.object(
+        carousel, "lxc", return_value="network={\n scan_freq=2437\n}"
+    ) as probe:
+        assert carousel.client_frequency("wlan-client-008") == 2437
+        probe.assert_called_once()
+
+    with patch.object(
+        carousel, "lxc",
+        side_effect=["network={\n ssid=private_ssid\n}", "freq: 5180\n"],
+    ):
+        assert carousel.client_frequency("wlan-client") == 5180
+
+
+def test_carousel_primes_the_selected_ap_on_the_client_band():
+    carousel = load_script("wmediumd-client-carousel.py")
+    client = {"container": "wlan-client-008", "frequency": 2437, "band": "2.4"}
+    aps = {
+        "bpiap-002": {
+            "bsses": {
+                "02:00:00:e4:c3:c8": 2437,
+                "02:00:00:7f:f9:ae": 5180,
+            }
+        }
+    }
+    requested = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0, "OK\n", "",
+    )
+    completed = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0,
+        "bssid / frequency / signal level / flags / ssid\n"
+        "02:00:00:e4:c3:c8\t2437\t-41\t[ESS]\tprivate_ssid\n", "",
+    )
+
+    with patch.object(
+        carousel.subprocess, "run", side_effect=[requested, completed]
+    ) as scan:
+        carousel.prime_candidate_scans(
+            [client], aps, {"wlan-client-008": "bpiap-002"}
+        )
+
+    assert scan.call_args_list[0].args[0][-1] == "freq=2437"
+    assert scan.call_args_list[1].args[0][-1] == "scan_results"
+
+
+def test_carousel_scans_the_target_aps_actual_same_band_frequency():
+    carousel = load_script("wmediumd-client-carousel.py")
+    client = {"container": "wlan-client-009", "frequency": 5955, "band": "6"}
+    aps = {
+        "bpiap": {
+            "bsses": {
+                "02:00:00:a5:b9:eb": 6135,
+                "02:00:00:0f:e2:94": 5180,
+            }
+        }
+    }
+    requested = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0, "OK\n", "",
+    )
+    completed = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0,
+        "bssid / frequency / signal level / flags / ssid\n"
+        "02:00:00:a5:b9:eb\t6135\t-43\t[ESS]\tprivate_ssid\n", "",
+    )
+
+    with patch.object(
+        carousel.subprocess, "run", side_effect=[requested, completed]
+    ) as scan:
+        carousel.prime_candidate_scans(
+            [client], aps, {"wlan-client-009": "bpiap"}
+        )
+
+    assert scan.call_args_list[0].args[0][-1] == "freq=6135"
+    assert scan.call_args_list[1].args[0][-1] == "scan_results"
+
+
+def test_carousel_requires_exact_controller_bssid_agreement():
+    carousel = load_script("wmediumd-client-carousel.py")
+    observation = {
+        "valid_topology": True,
+        "stations": [{
+            "client": "wlan-client-009",
+            "actual_ap": "bpiap",
+            "topology_ap": "bpiap",
+            "bssid": "02:00:00:a5:b9:eb",
+            "topology_bssid": "02:00:00:0f:e2:94",
+        }],
+    }
+
+    assert not carousel.assignment_reached(
+        observation, {"wlan-client-009": "bpiap"}
+    )
 
 
 @pytest.mark.parametrize("transport_status", [-15, 143])

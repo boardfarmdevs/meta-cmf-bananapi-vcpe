@@ -12,13 +12,31 @@ patched hwsim module, multichannel wmediumd, LXD, Docker, Boardfarm, the
 controller, four extenders, twenty WLAN clients and the test checkout. A new user
 imports the box and starts it; they do not run the one-time installer.
 
-The current package is `easymesh-lab-0826-6892fe1.box`, exactly
-`23,910,600,571` bytes, with SHA-256
-`6e9d84c58e1288bf89026c0889f0a3858409076d41550931baaa44d9df343daa`.
+The bundled box is `easymesh-lab-0827-c461c59.box`, exactly
+`3,882,758,736` bytes, with SHA-256
+`0c3a4edb10c2bce1152116ad39d42fd53a5f55bf91b1f4cf64b533b532ef9821`.
 It was created from source revision
-`6892fe1f3d6fb26c3fa982015a1b3a2e993e57c4` only after a clean deployment and
-two consecutive persistent reboot-reconstruction passes on rev120. Verify the
-adjacent checksum before importing it.
+`c461c591afe8afef47d1b215fbcfbb09eb5abcb3` after a clean deployment,
+complete health acceptance, and focused round-trip steering on rev120.
+
+The release archive is location-independent. Extract it into any new empty
+directory and perform all host-side commands from that directory:
+
+```sh
+mkdir easymesh-lab
+cd easymesh-lab
+tar -xf /path/to/easymesh-lab-0827-c461c59-bundle.tar
+less README.md
+```
+
+The extracted directory contains exactly the operator-facing inputs:
+
+```text
+README.md
+Vagrantfile
+easymesh-lab-0827-c461c59.box
+SHA256SUMS
+```
 
 ## 1. Check and remove an existing EasyMesh VM
 
@@ -74,7 +92,7 @@ Finally, check for an older registration under the name used by this guide:
 
 ```sh
 vagrant box list
-vagrant box remove cmf/easymesh-lab-0824 --all
+vagrant box remove cmf/easymesh-lab --all
 ```
 
 The last command removes only the local reusable box registration; omit it if
@@ -177,78 +195,43 @@ find "/lib/modules/$(uname -r)" -type f -name 'vbox*.ko*' -print
 
 Do not continue until `VBoxManage list hostinfo` succeeds.
 
-## 4. Download, verify and import the packaged box
+## 4. Verify and import the packaged box
 
-Create one working directory per VM:
+Run these commands from the new directory containing this README. The archive
+guarantees exactly one `.box`; do not add unrelated box files to this
+directory before importing it:
 
 ```sh
-mkdir -p "$HOME/easymesh-lab/0824/packages"
-cd "$HOME/easymesh-lab/0824"
+pwd
+ls -lh README.md Vagrantfile ./*.box SHA256SUMS
+sha256sum -c SHA256SUMS
+set -- ./*.box
+test "$#" -eq 1
+box_file=$1
 ```
 
-Download the box and its checksum from the supplied Google Drive direct
-download links. The identifiers below are deliberately placeholders; replace
-them with the privately supplied values. Keep `--continue` on the large box so
-an interrupted transfer can resume:
+A checksum failure means the transfer or extraction is incomplete. Do not
+import that file.
+
+Register the verified box once under the stable logical name used by the
+supplied Vagrantfile:
 
 ```sh
-wget --continue \
-  --output-document=packages/easymesh-lab-0826-6892fe1.box \
-  'https://drive.google.com/uc?export=download&confirm=t&id=<BOX_FILE_ID>'
-
-wget \
-  --output-document=packages/easymesh-lab-0826-6892fe1.box.sha256 \
-  'https://drive.google.com/uc?export=download&confirm=t&id=<CHECKSUM_FILE_ID>'
-```
-
-Download the matching guide and consumer Vagrantfile from the public project
-branch:
-
-```sh
-public_base='https://raw.githubusercontent.com/boardfarmdevs/meta-cmf-bananapi-vcpe/codex/0824-clean/gen/vm/packaged'
-download_nonce=$(date +%s)
-wget --output-document=README.md "$public_base/README.md?download=$download_nonce"
-wget --output-document=Vagrantfile "$public_base/Vagrantfile?download=$download_nonce"
-```
-
-Verify the resulting layout and checksum before importing anything:
-
-```sh
-ls -lh README.md Vagrantfile packages/
-(
-  cd packages
-  sha256sum -c easymesh-lab-0826-6892fe1.box.sha256
-)
-```
-
-The exact filename and date may differ. A checksum failure means the transfer
-is incomplete or the wrong checksum was supplied; do not import that file.
-
-Register the verified box once under a clear local name:
-
-```sh
-vagrant box add --name cmf/easymesh-lab-0824 \
-  packages/easymesh-lab-0826-6892fe1.box
-vagrant box list | grep '^cmf/easymesh-lab-0824 '
-```
-
-Make sure the `Vagrantfile` selects the same name. The supplied consumer file
-can also be selected with an environment variable:
-
-```sh
-export EASYMESH_BOX_NAME=cmf/easymesh-lab-0824
+vagrant box add --name cmf/easymesh-lab "$box_file"
+vagrant box list | grep '^cmf/easymesh-lab '
 ```
 
 The import is a one-time operation. Later `vagrant up` commands use the local
-registered box and the VM's own virtual disk.
+registered box and the VM's own mutable disk. A future release can use the
+same working procedure without embedding its dated artifact name in the
+Vagrantfile.
 
 ## 5. Start the VM and the complete lab
 
 From the directory containing the `Vagrantfile`:
 
 ```sh
-cd "$HOME/easymesh-lab/0824"
-export EASYMESH_BOX_NAME=cmf/easymesh-lab-0824
+pwd                         # the extracted release directory
 vagrant up
 vagrant status
 vagrant ssh
@@ -355,7 +338,7 @@ To reach it from another trusted machine on the same LAN, bind the forwarded
 port to the workstation's network interfaces when starting the VM:
 
 ```sh
-EASYMESH_BOX_NAME=cmf/easymesh-lab-0824 \
+EASYMESH_BOX_NAME=cmf/easymesh-lab \
 EASYMESH_WEBUI_HOST_IP=0.0.0.0 \
 EASYMESH_WEBUI_PORT=18889 \
 vagrant up
@@ -643,7 +626,7 @@ mkdir -p "$HOME/easymesh-lab/copy-2"
 cd "$HOME/easymesh-lab/copy-2"
 cp /path/to/Vagrantfile .
 
-EASYMESH_BOX_NAME=cmf/easymesh-lab-0824 \
+EASYMESH_BOX_NAME=cmf/easymesh-lab \
 EASYMESH_VM_NAME=easymesh-lab-copy-2 \
 EASYMESH_WEBUI_PORT=18889 \
 vagrant up
@@ -683,22 +666,50 @@ clean shutdown; it does not contain the workstation's Vagrant registration.
 Destroy only the VM represented by the current working directory:
 
 ```sh
-cd "$HOME/easymesh-lab/0824"
+cd /path/to/the/extracted-release-directory
 vagrant destroy
-vagrant box remove cmf/easymesh-lab-0824
+vagrant box remove cmf/easymesh-lab
 ```
 
 `vagrant destroy` permanently deletes that VM and its mutable disk. The
 original `.box` file and other VMs are unaffected.
 
-To uninstall the workstation tools while retaining existing VM and Vagrant
-data, use the procedure in [`../thin/README.md`](../thin/README.md#uninstall-from-the-ubuntu-host).
+To uninstall the workstation packages while retaining the VirtualBox and
+Vagrant data directories for possible later recovery:
+
+```sh
+sudo apt remove -y virtualbox-7.2 vagrant
+sudo apt autoremove -y
+```
+
+Optionally remove only the package repositories and keys installed in section
+3:
+
+```sh
+sudo rm -f /etc/apt/sources.list.d/virtualbox.list
+sudo rm -f /etc/apt/sources.list.d/hashicorp.list
+sudo rm -f /usr/share/keyrings/oracle-virtualbox-2016.gpg
+sudo rm -f /usr/share/keyrings/hashicorp-archive-keyring.gpg
+sudo apt update
+```
+
+These commands deliberately retain `~/VirtualBox VMs`, `~/.vagrant.d`, and
+the current release directory. Remove a particular VM and registered box with
+the inspected `vagrant destroy` and `vagrant box remove` commands above before
+deleting those data yourself.
 
 ## 17. Where to read more
 
-- [EasyMesh documentation](../../../doc/easymesh/README.md): reader paths and topic index
-- [current state](../../../doc/easymesh/current-state.md): supported topology and limitations
-- [operations](../../../doc/easymesh/guide/operations.md): direct-host deployment and acceptance gates
-- [steering policy](../../../doc/easymesh/concepts/steering-policy.md): steering mechanisms and policy boundaries
-- [wmediumd internals](../../../doc/easymesh/reference/wmediumd-internals.md): medium behavior and control interface
-- [experiments](../../../doc/easymesh/experiments/README.md): scenario and optimizer workflows
+The complete current documentation is already installed inside the guest:
+
+```sh
+vagrant ssh
+cd /home/vagrant/git/meta-cmf-bananapi-vcpe/doc/easymesh
+less README.md
+```
+
+The index routes readers to current state, architecture, operations, steering
+policy, wmediumd internals, the configurator, the Console, optimizer
+development, and experiment procedures. Keeping the documentation inside the
+packaged guest makes these instructions independent of the host directory and
+of access to an external Git service.

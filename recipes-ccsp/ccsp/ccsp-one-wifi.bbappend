@@ -29,6 +29,7 @@ WIFI_STA_STATUS_PUBLISH_PATCH := "${THISDIR}/${BPN}/0017-publish-mesh-sta-on-con
 WIFI_STA_PARENT_CACHE_PATCH := "${THISDIR}/${BPN}/0018-cache-confirmed-mesh-sta-parent.patch"
 WIFI_EM_EVENT_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0019-easymesh-release-encoded-event-data.patch"
 WIFI_EM_ASSOC_RECONCILE_PATCH := "${THISDIR}/${BPN}/0020-hwsim-reconcile-live-associated-client-snapshots.patch"
+WIFI_ASSOC_ACTIVE_PROVIDER_PATCH := "${THISDIR}/${BPN}/0021-assoc-provider-omit-inactive-cache-rows.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -192,6 +193,13 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: reconciling hwsim live association snapshots")
     with open(d.getVar('WIFI_EM_ASSOC_RECONCILE_PATCH'), 'rb') as f:
         apply_layer_patch(f)
+    # The cached monitor-provider path exported inactive historical rows even
+    # though the direct associated-device collector filtered them.  Keep the
+    # provider contract live-only so an intra-agent band roam withdraws its old
+    # BSSID from EasyMesh.
+    bb.note("meta-cmf-bananapi-vcpe: filtering inactive cached association rows")
+    with open(d.getVar('WIFI_ASSOC_ACTIVE_PROVIDER_PATCH'), 'rb') as f:
+        apply_layer_patch(f)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -202,6 +210,17 @@ python do_patch_append() {
     if (wifi_em_source.count('webconfig_data_free(data);') < 7 or
             wifi_em_source.count('webconfig_data_free(wb_data);') < 3):
         bb.fatal('meta-cmf-bananapi-vcpe: EasyMesh encoded-event ownership patch is incomplete; clean ccsp-one-wifi and retry')
+    assoc_stats = os.path.join(s, 'source/stats/wifi_stats_assoc_client.c')
+    with open(assoc_stats, 'r', encoding='utf-8') as f:
+        assoc_stats_source = f.read()
+    provider_start = assoc_stats_source.find(
+        'int copy_assoc_client_stats_from_cache(')
+    if provider_start < 0:
+        bb.fatal('meta-cmf-bananapi-vcpe: associated-client cached provider is missing')
+    provider_source = assoc_stats_source[provider_start:]
+    if ('*stat_array_size = count;' not in provider_source or
+            '*stat_array_size = sta_count;' in provider_source):
+        bb.fatal('meta-cmf-bananapi-vcpe: inactive associated-client provider patch is incomplete; clean ccsp-one-wifi and retry')
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -220,7 +239,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH \
     WIFI_STA_BSSID_SET_PATCH WIFI_STA_STATUS_PUBLISH_PATCH \
     WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_EVENT_OWNERSHIP_PATCH \
-    WIFI_EM_ASSOC_RECONCILE_PATCH"
+    WIFI_EM_ASSOC_RECONCILE_PATCH WIFI_ASSOC_ACTIVE_PROVIDER_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -240,6 +259,7 @@ do_patch[file-checksums] += "${WIFI_STA_STATUS_PUBLISH_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_PARENT_CACHE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_EVENT_OWNERSHIP_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_ASSOC_RECONCILE_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_ASSOC_ACTIVE_PROVIDER_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.
