@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo=/home/vagrant/boardfarm-open-0406/boardfarm-lab-staging
 
-test "$(git -C "$repo" rev-parse HEAD)" = \
+test "$(sudo -u vagrant git -C "$repo" rev-parse HEAD)" = \
     eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
 
 systemctl enable --now docker

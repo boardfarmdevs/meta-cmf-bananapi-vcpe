@@ -2,6 +2,9 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
+    | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
+default_host_address=${default_host_address:-127.0.0.1}
 name=${EASYMESH_LXD_NAME:-easymesh-lab-0828}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-6}
@@ -10,7 +13,7 @@ disk=${EASYMESH_LXD_DISK:-64GiB}
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
 guest_ipv4=${EASYMESH_LXD_IPV4:-}
-webui_address=${EASYMESH_WEBUI_HOST_IP:-127.0.0.1}
+webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
@@ -211,15 +214,11 @@ run_root() {
         EASYMESH_RUNTIME_BRANCH=codex/0828-clean "$@"
 }
 
-run_vagrant() {
-    lxc exec "$name" -- sudo -H -u vagrant env EASYMESH_KERNEL="$kernel" \
-        EASYMESH_RUNTIME_BRANCH=codex/0828-clean "$@"
-}
-
 build_vm() {
-    local stage meta_commit controller_name extender_name appliance_ipv4
+    local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address
     require_command git
     require_command lxc
+    require_command curl
     require_command sha256sum
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
@@ -236,6 +235,10 @@ build_vm() {
 
     lxc init "$image" "$name" --vm \
         --config limits.cpu="$cpus" --config limits.memory="$memory"
+    # The appliance builds the narrowly-scoped multichannel hwsim module from
+    # the exact Ubuntu source package. Disable guest Secure Boot before first
+    # boot so that this locally-built module can load after installation.
+    lxc config set "$name" security.secureboot false
     lxc config device override "$name" root size="$disk"
     appliance_ipv4=$(select_guest_ipv4)
     lxc config device override "$name" eth0 network="$network" \
@@ -256,21 +259,38 @@ build_vm() {
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
         bash /home/vagrant/easymesh-provision/20-prepare-lab-host.sh
     run_root bash /home/vagrant/easymesh-provision/30-boardfarm-wan.sh
-    run_vagrant env \
+    # Nested LXD is a snap. A non-login `sudo -u` process launched through the
+    # outer VM agent cannot be tracked by snapd, so appliance lifecycle runs as
+    # root. Source checkout operations remain explicitly scoped to vagrant.
+    run_root env HOME=/home/vagrant \
         CONTROLLER_IMAGE="/home/vagrant/easymesh-assets/$controller_name" \
         EXTENDER_IMAGE="/home/vagrant/easymesh-assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
         bash /home/vagrant/easymesh-provision/40-deploy-easymesh.sh
-    run_vagrant env EXTENDER_IMAGE="/home/vagrant/easymesh-assets/$extender_name" \
+    run_root env HOME=/home/vagrant \
+        EXTENDER_IMAGE="/home/vagrant/easymesh-assets/$extender_name" \
         bash /home/vagrant/easymesh-provision/55-scale-topology.sh
     run_root bash /home/vagrant/easymesh-provision/50-runtime-service.sh
     run_root bash /home/vagrant/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/install.sh --start
+    # A VM NAT proxy connects to the guest NIC, not to guest loopback. Keep the
+    # Console's normal package default private, but bind its appliance instance
+    # to the isolated guest interface so the host-side proxy can reach it.
+    run_root sed -i \
+        's/^WMEDIUMD_CONSOLE_LISTEN=.*/WMEDIUMD_CONSOLE_LISTEN=0.0.0.0:8890/' \
+        /etc/default/wmediumd-console
+    run_root systemctl restart wmediumd-console.service
     run_root systemctl enable easymesh-lab.service wmediumd-console.service
 
     lxc restart "$name" --timeout 300
     wait_agent
     run_root systemctl start easymesh-lab.service
     run_root /usr/local/sbin/easymesh-labctl check
+    proxy_check_address=$webui_address
+    [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
+    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
+        "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
+    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
+        "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
     lxc snapshot "$name" accepted
     lxc config show "$name" --expanded
     trap - EXIT

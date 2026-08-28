@@ -102,9 +102,30 @@ if ! lxc image info alpine >/dev/null 2>&1; then
 fi
 lxc image info alpine >/dev/null
 
-# The module archive contains the same patched binary accepted on rev130.
-# Start a tri-band pool only after confirming that no copied runtime state is
-# present in this clean guest.
+# Stock Linux 7 deliberately rejects HWSIM_CMD_REGISTER when channels > 1.
+# Build the repository's narrowly-scoped registration patch against the exact
+# installed Ubuntu source package. Keep source repositories supplemental so
+# the normal binary repository configuration remains owned by cloud-init.
+if [ ! -f /etc/apt/sources.list.d/easymesh-ubuntu-src.sources ]; then
+    sed 's/^Types: deb$/Types: deb-src/' \
+        /etc/apt/sources.list.d/ubuntu.sources \
+        > /etc/apt/sources.list.d/easymesh-ubuntu-src.sources
+fi
+apt-get update
+REFETCH=1 "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build-hwsim.sh" \
+    --6ghz --install
+hwsim_module=$(modinfo -k "$expected_kernel" -F filename mac80211_hwsim)
+case "$hwsim_module" in
+    "/lib/modules/$expected_kernel/updates/mac80211_hwsim.ko") ;;
+    *) echo "patched hwsim module is not selected: $hwsim_module" >&2; exit 1 ;;
+esac
+grep -aq 'EXPERIMENTAL wmediumd' "$hwsim_module"
+sha256sum "$hwsim_module" \
+    > /var/lib/easymesh-vagrant/mac80211_hwsim.sha256
+rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build"
+
+# Start a tri-band pool only after installing the multichannel registration
+# patch and confirming that no copied runtime state is present in this guest.
 hwsim_radios=${HWSIM_RADIOS:-32}
 case "$hwsim_radios" in
     ''|*[!0-9]*|0) echo "HWSIM_RADIOS must be a positive integer" >&2; exit 2 ;;

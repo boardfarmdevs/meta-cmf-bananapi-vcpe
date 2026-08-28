@@ -405,7 +405,12 @@ start)
     # A pre-fix appliance may let LXD restore clients from its previous-power
     # state. Quiesce every managed node so this service still establishes the
     # same controller -> extenders -> clients order on its first corrected boot.
-    sudo -H -u "$lab_user" "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    # LXD is installed as a snap in the appliance. A non-login `sudo -u`
+    # process started by systemd cannot be tracked by snapd, so its `lxc`
+    # discovery calls return no containers even when the user is in the lxd
+    # group. Keep lifecycle ownership in this root service; wmediumd-up still
+    # applies its narrow socket permissions for operator access.
+    "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     for container in $(printf '%s\n' $clients | sort -Vr) \
         bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
@@ -426,7 +431,7 @@ start)
         wait_client_live "$client"
     done
 
-    sudo -H -u "$lab_user" env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
+    env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
     wait_clients
     wait_mesh_model
     # Policy state in the agents is volatile.  The first application starts
@@ -443,7 +448,7 @@ start)
     echo "EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
     ;;
 stop)
-    sudo -H -u "$lab_user" "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     for container in $(printf '%s\n' $clients | sort -Vr) \
         bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
@@ -456,7 +461,7 @@ status)
     for container in $mesh $clients; do
         [ "$(instance_state "$container")" = RUNNING ] || exit 1
     done
-    wmediumd_status=$(sudo -H -u "$lab_user" "$gen/wmediumd/wmediumd-up.sh" status)
+    wmediumd_status=$("$gen/wmediumd/wmediumd-up.sh" status)
     [[ "$wmediumd_status" == *'wmediumd running'* ]]
     [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
         'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \

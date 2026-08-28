@@ -18,7 +18,9 @@ expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-f8fb9d668c8bfc1964728f8db62
 
 mkdir -p "$state"
 test -f "$boardfarm_status"
-test "$(git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
+test "$(systemctl is-active boardfarm-lab.service 2>/dev/null)" = active
+ip link show br-wan101 >/dev/null
+test "$(sudo -u vagrant git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
 test "$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 

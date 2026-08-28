@@ -66,16 +66,20 @@ present; an Internet build otherwise imports the maintained
 ./build.sh restart
 ```
 
-By default, host loopback ports are:
+By default, the builder detects the source address of the host's IPv4 default
+route and binds both ports to that one address. For example, on rev140:
 
 ```text
-http://127.0.0.1:18889/  EasyMesh WebUI
-http://127.0.0.1:18890/  wmediumd Console
+http://192.168.2.140:18889/  EasyMesh WebUI
+http://192.168.2.140:18890/  wmediumd Console
 ```
 
-Set `EASYMESH_WEBUI_HOST_IP=0.0.0.0` and
-`WMEDIUMD_CONSOLE_HOST_IP=0.0.0.0` only on a trusted lab network. Change the
-port variables when another lab already owns the defaults.
+The detected address is intentionally not hardcoded in the appliance. Override
+it with `EASYMESH_WEBUI_HOST_IP` when the host has several uplinks;
+`WMEDIUMD_CONSOLE_HOST_IP` defaults to the same value. Binding either service
+to `0.0.0.0` is suitable only on a trusted lab network. Change the port
+variables when another lab already owns the defaults. The build is not
+accepted until both host-side URLs respond through their LXD NAT proxies.
 
 ## Portable image
 

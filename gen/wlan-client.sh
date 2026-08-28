@@ -336,6 +336,11 @@ up)
     if [ -n "$EXPECTED_FREQS" ]; then
         actual_freq=$(lxc exec "$CT" -- iw dev wlan0 link 2>/dev/null \
             | awk '/freq:/ {print $2; exit}')
+        # Newer iw releases render MHz as a decimal (for example 2437.0),
+        # while the AP-derived allow-list contains integer MHz values. Both
+        # identify the same channel; normalize before the exact membership
+        # check so a valid band-directed association is not rejected.
+        actual_freq=${actual_freq%%.*}
         case " $EXPECTED_FREQS " in
             *" $actual_freq "*) ;;
             *)

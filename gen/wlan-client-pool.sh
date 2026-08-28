@@ -130,6 +130,7 @@ client_ready() {
         || return 1
     lxc exec "$name" -- iw dev wlan0 link 2>/dev/null | grep -Fq "SSID: $ssid" || return 1
     freq=$(lxc exec "$name" -- iw dev wlan0 link 2>/dev/null | awk '/freq:/ {print $2; exit}')
+    freq=${freq%%.*}
     case "$band" in
         auto) ;;
         2.4) [ "$freq" -ge 2400 ] 2>/dev/null && [ "$freq" -lt 2500 ] || return 1 ;;

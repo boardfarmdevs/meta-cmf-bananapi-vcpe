@@ -19,6 +19,7 @@ apt-get install -y --no-install-recommends \
     curl \
     docker-compose-v2 \
     docker.io \
+    fakeroot \
     git \
     iw \
     jq \
