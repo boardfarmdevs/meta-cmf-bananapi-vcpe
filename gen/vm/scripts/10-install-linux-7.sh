@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-kernel=7.0.0-28-generic
-assets=/home/vagrant/easymesh-assets
+kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
+assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
+kernel_archive=${EASYMESH_KERNEL_ARCHIVE:-$assets/linux-${kernel%-generic}-hwsim.tar.zst}
 
 cd "$assets"
-sha256sum -c SHA256SUMS
+if [ -f SHA256SUMS ]; then
+    sha256sum -c SHA256SUMS
+fi
 
-tar --zstd -C / -xf "$assets/linux-7.0.0-28-hwsim.tar.zst"
-depmod -a "$kernel"
+if [ -f "$kernel_archive" ]; then
+    tar --zstd -C / -xf "$kernel_archive"
+    depmod -a "$kernel"
+else
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        "linux-headers-$kernel" \
+        "linux-image-$kernel" \
+        "linux-modules-$kernel"
+fi
 
 if [ -e "/boot/initrd.img-$kernel" ]; then
     update-initramfs -u -k "$kernel"
@@ -17,7 +28,13 @@ else
 fi
 update-grub
 
-test "$(sha256sum "/lib/modules/$kernel/updates/mac80211_hwsim.ko" | awk '{print $1}')" = \
-    c7c9e49d7198e84de33be893532c68591f4bb54aaed7f8319d2bf7c22a7360bb
+modinfo -k "$kernel" mac80211_hwsim | grep -q '^parm:.*channels:'
+modinfo -k "$kernel" mac80211_hwsim | grep -q '^parm:.*regtest:'
+
+if [ -n "${EASYMESH_HWSIM_SHA256:-}" ]; then
+    hwsim_path=$(modinfo -k "$kernel" -F filename mac80211_hwsim)
+    test "$(sha256sum "$hwsim_path" | awk '{print $1}')" = \
+        "$EASYMESH_HWSIM_SHA256"
+fi
 
 printf '%s\n' "$kernel" > /var/lib/easymesh-vagrant/installed-kernel

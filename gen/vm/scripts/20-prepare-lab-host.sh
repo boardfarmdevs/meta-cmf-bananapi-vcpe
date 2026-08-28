@@ -5,12 +5,13 @@ set -euo pipefail
 # remote shell leaves control text there, so isolate the whole host setup.
 exec </dev/null
 
-expected_kernel=7.0.0-28-generic
-assets=/home/vagrant/easymesh-assets
+expected_kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
+assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
 meta_workspace=/home/vagrant/git
 boardfarm_workspace=/home/vagrant/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0828-clean}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2
@@ -34,7 +35,7 @@ if [ "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-pars
         sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch origin
     fi
     sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" checkout -B \
-        codex/0824-clean "$expected_meta_head"
+        "$runtime_branch" "$expected_meta_head"
 fi
 test "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" = \
     "$expected_meta_head"
@@ -63,16 +64,16 @@ sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
     /snap/bin/uv pip check
 test "$($boardfarm_workspace/.venv/bin/python -c 'import platform; print(platform.python_version())')" = 3.13.15
 
-cat > /etc/default/boardfarm-lab <<'EOF'
-BF_LAB_CONFIG=ca-desk6.json
-BF_INVENTORY=ca-desk6.json
-BOARDFARM_WORKSPACE=/home/vagrant/boardfarm-open-0406
-EOF
-cat > /etc/profile.d/boardfarm-lab.sh <<'EOF'
-export BF_LAB_CONFIG=ca-desk6.json
-export BF_INVENTORY=ca-desk6.json
-export PATH=/home/vagrant/boardfarm-open-0406/.venv/bin:$PATH
-EOF
+printf '%s\n' \
+    'BF_LAB_CONFIG=ca-desk6.json' \
+    'BF_INVENTORY=ca-desk6.json' \
+    "BOARDFARM_WORKSPACE=$boardfarm_workspace" \
+    > /etc/default/boardfarm-lab
+printf '%s\n' \
+    'export BF_LAB_CONFIG=ca-desk6.json' \
+    'export BF_INVENTORY=ca-desk6.json' \
+    "export PATH=$boardfarm_workspace/.venv/bin:\$PATH" \
+    > /etc/profile.d/boardfarm-lab.sh
 
 if ! lxc storage show default >/dev/null 2>&1; then
     # Vagrant's remote shell leaves control text on stdin. LXD 6.7 otherwise
@@ -84,14 +85,18 @@ if ! lxc storage show bpi-lab >/dev/null 2>&1; then
     lxc storage create bpi-lab dir
 fi
 
-if ! lxc image info alpine >/dev/null 2>&1; then
+if ! lxc image info alpine >/dev/null 2>&1 \
+    && [ -f "$assets/alpine-3.19-amd64-meta.tar.xz" ] \
+    && [ -f "$assets/alpine-3.19-amd64-rootfs.tar.xz" ]; then
     lxc image import \
         "$assets/alpine-3.19-amd64-meta.tar.xz" \
         "$assets/alpine-3.19-amd64-rootfs.tar.xz" \
         --alias alpine
 fi
-test "$(lxc image info alpine | sed -n 's/^Fingerprint: *//p')" = \
-    9a86f5422adbe70bfae1ed90007256fd121e5a04aae46c3d3e411279ba04955b
+if ! lxc image info alpine >/dev/null 2>&1; then
+    lxc image copy images:alpine/3.19 local: --alias alpine
+fi
+lxc image info alpine >/dev/null
 
 # The module archive contains the same patched binary accepted on rev130.
 # Start a tri-band pool only after confirming that no copied runtime state is

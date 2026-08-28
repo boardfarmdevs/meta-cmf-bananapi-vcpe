@@ -1,11 +1,12 @@
 # EasyMesh VM distributions and operator flow
 
-The EasyMesh steering lab is documented in three forms. New engineers should
-normally use the thin form; the precooked form is retained for offline and
-recovery use.
+The EasyMesh steering lab has a native LXD appliance and VirtualBox-compatible
+distributions. New host work should use the native LXD VM after its parity gate
+passes; the packaged VirtualBox release remains the accepted portable baseline.
 
 | Distribution | Contents | Use case |
 | --- | --- | --- |
+| [`lxd/`](lxd/) | Native Ubuntu 24/Linux 7 LXD VM containing the complete nested-container lab | Canonical host integration and portable LXD image work |
 | [`packaged/`](packaged/) | New-user manual for an already-installed, shareable Vagrant box | Import, operate, test, monitor, recover and repackage the complete lab |
 | [`thin/`](thin/) | Ubuntu 24.04, Linux 7.0 and sizing; installs the lab once from GitHub and an artifact server | Normal engineering handoff |
 | [`precooked/`](precooked/) | Complete installed lab; see the current exact size and checksum in `packaged/README.md` | Offline demonstration, recovery and appliance-builder acceptance |
