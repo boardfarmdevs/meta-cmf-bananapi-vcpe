@@ -69,6 +69,7 @@ steering_url=${EASYMESH_STEERING_UI_URL:-${topology_url%/topology}/steering-even
 controller=${EASYMESH_CONTROLLER:-bpibroadband}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 bias_tool=$repo/gen/tests/steering-rf-bias.py
+identity_inventory=${EASYMESH_IDENTITY_INVENTORY:-/run/meta-cmf-wmediumd/identity-inventory.json}
 curl_connect_timeout=${EASYMESH_CURL_CONNECT_TIMEOUT:-2}
 curl_timeout=${EASYMESH_CURL_TIMEOUT:-8}
 bias_timeout=${EASYMESH_BIAS_TIMEOUT:-30}
@@ -243,17 +244,57 @@ if [[ $reported_channel =~ ^[1-9][0-9]*$ ]]; then
     esac
 fi
 
-client=
-while IFS= read -r candidate; do
-    candidate_mac=$(lxc config get "$candidate" \
-        volatile.wlan0.last_state.hwaddr </dev/null 2>/dev/null || true)
-    if [[ ${candidate_mac,,} == "$sta" ]]; then
-        client=$candidate
-        break
-    fi
-done < <(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
-[[ -n $client ]] || {
-    echo "steer.sh: cannot map $sta to a live WLAN client container" >&2
+[[ -r $identity_inventory ]] || {
+    echo "steer.sh: wmediumd identity inventory is unavailable: $identity_inventory" >&2
+    exit 1
+}
+mapfile -t client_identity < <(jq -r --arg input "$sta_input" --arg sta "$sta" '
+    [.stations[]?
+      | select(.role == "wlan-client" or .role == "iot-client")
+      | select(
+          ((.label // "" | ascii_downcase) == $input)
+          or ((.mac // "" | ascii_downcase | sub("^[^:]+:"; ""))
+              == ($sta | sub("^[^:]+:"; ""))))
+      | [.owner, (.mac | ascii_downcase)] | @tsv]
+    | unique[]' "$identity_inventory")
+if ((${#client_identity[@]} != 1)); then
+    echo "steer.sh: $sta_input has ${#client_identity[@]} wmediumd identity matches (expected 1)" >&2
+    exit 1
+fi
+IFS=$'\t' read -r client station_radio <<<"${client_identity[0]}"
+
+radio_for_node() {
+    local node=$1
+    jq -r --arg node "$node" '
+        [.stations[]?
+          | select(.role == "extender" or .role == "controller-agent")
+          | select((.label // "" | ascii_downcase) == ($node | ascii_downcase))
+          | (.mac | ascii_downcase)]
+        | unique[]' "$identity_inventory"
+}
+mapfile -t source_radios < <(radio_for_node "$source_name")
+mapfile -t target_radios < <(radio_for_node "$target_name")
+mapfile -t mesh_radios < <(jq -r '
+    [.stations[]?
+      | select(.role == "extender" or .role == "controller-agent")
+      | (.mac | ascii_downcase)]
+    | unique | sort[]' "$identity_inventory")
+if ((${#source_radios[@]} != 1)); then
+    echo "steer.sh: $source_name has ${#source_radios[@]} wmediumd radio identities (expected 1)" >&2
+    exit 1
+fi
+if ((${#target_radios[@]} != 1)); then
+    echo "steer.sh: $target_name has ${#target_radios[@]} wmediumd radio identities (expected 1)" >&2
+    exit 1
+fi
+if ((${#mesh_radios[@]} < 2)); then
+    echo "steer.sh: wmediumd identity inventory has fewer than two mesh radios" >&2
+    exit 1
+fi
+source_radio=${source_radios[0]}
+target_radio=${target_radios[0]}
+lxc info "$client" >/dev/null 2>&1 || {
+    echo "steer.sh: client container '$client' is not available" >&2
     exit 1
 }
 
@@ -288,13 +329,23 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "steer.sh: deterministic lab mode; client=$client source=$source_bssid target=$target_bssid frequency=${target_frequency}MHz"
-echo "steer.sh: discovering live radios and applying the temporary RF bias"
+announce_steering planned
+steering_announced=1
+sleep "$preview_seconds"
+announce_steering moving
+echo "steer.sh: applying the temporary RF bias from stable radio identities"
+bias_args=(
+    apply --client "$client" --source-bssid "$source_bssid"
+    --target-bssid "$target_bssid" --state "$bias_state"
+    --frequency "$target_frequency" --source-snr 20 --target-snr 60
+    --other-snr -20 --station-radio "$station_radio"
+    --source-radio "$source_radio" --target-radio "$target_radio"
+)
+for radio in "${mesh_radios[@]}"; do
+    bias_args+=(--mesh-radio "$radio")
+done
 set +e
-timeout "$bias_timeout" python3 "$bias_tool" apply \
-    --client "$client" --source-bssid "$source_bssid" \
-    --target-bssid "$target_bssid" --state "$bias_state" \
-    --frequency "$target_frequency" --source-snr 20 --target-snr 60 \
-    --other-snr -20
+timeout "$bias_timeout" python3 "$bias_tool" "${bias_args[@]}"
 bias_rc=$?
 set -e
 if ((bias_rc != 0)); then
@@ -325,22 +376,22 @@ done
     echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan" >&2
     exit 1
 }
-echo "steer.sh: target candidate is visible; submitting the EasyMesh BTM request"
-announce_steering planned
-steering_announced=1
-sleep "$preview_seconds"
-announce_steering moving
+link=$(timeout 4 lxc exec "$client" -- iw dev wlan0 link 2>/dev/null || true)
+physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
+if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
+    echo "steer.sh: station reassociated during deterministic RF preparation; no BTM request is required"
+else
+    echo "steer.sh: target candidate is visible; submitting the EasyMesh BTM request"
+    set +e
+    timeout 15 lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
+    command_rc=$?
+    set -e
+    ((command_rc == 0)) || {
+        echo "steer.sh: controller steering command failed (rc=$command_rc)" >&2
+        exit "$command_rc"
+    }
+fi
 
-set +e
-timeout 15 lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
-command_rc=$?
-set -e
-((command_rc == 0)) || {
-    echo "steer.sh: controller steering command failed (rc=$command_rc)" >&2
-    exit "$command_rc"
-}
-
-physical_bssid=
 for _ in $(seq 1 50); do
     link=$(timeout 4 lxc exec "$client" -- iw dev wlan0 link 2>/dev/null || true)
     physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")

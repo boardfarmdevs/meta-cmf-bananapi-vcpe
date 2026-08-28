@@ -108,52 +108,73 @@ def snapshot_frequency_links(
 
 
 def apply(args: argparse.Namespace) -> int:
-    inventory = discover({args.client})["radios"]
-    stations = [
-        item for item in inventory
-        if item["kind"] == "station" and item["container"] == args.client
-    ]
-    if len(stations) != 1:
-        raise RuntimeError(f"{args.client}: expected one station radio, found {len(stations)}")
-    station = stations[0]["tx_mac"]
     source_bssid = normalize_mac(args.source_bssid)
     target_bssid = normalize_mac(args.target_bssid)
     if source_bssid == target_bssid:
         raise RuntimeError("source and target BSSIDs are identical")
-    mesh = [item for item in inventory if item["kind"] == "mesh"]
-    sources = [
-        item for item in mesh
-        if any(
-            normalize_mac(interface.get("mac", "")) == source_bssid
-            and int(interface.get("frequency_mhz") or 0) == args.frequency
-            for interface in item.get("interfaces", [])
-        )
-    ]
-    targets = [
-        item for item in mesh
-        if any(
-            normalize_mac(interface.get("mac", "")) == target_bssid
-            and int(interface.get("frequency_mhz") or 0) == args.frequency
-            for interface in item.get("interfaces", [])
-        )
-    ]
-    if len(sources) != 1:
-        raise RuntimeError(
-            f"{source_bssid}: expected one {args.frequency} MHz source radio, "
-            f"found {len(sources)}"
-        )
-    if len(targets) != 1:
-        raise RuntimeError(
-            f"{target_bssid}: expected one {args.frequency} MHz target radio, "
-            f"found {len(targets)}"
-        )
-    source_radio = sources[0]["tx_mac"]
-    target_radio = targets[0]["tx_mac"]
+    explicit = (
+        args.station_radio,
+        args.source_radio,
+        args.target_radio,
+        args.mesh_radio,
+    )
+    if any(explicit):
+        if not all((args.station_radio, args.source_radio, args.target_radio)) \
+                or not args.mesh_radio:
+            raise RuntimeError(
+                "explicit radio identities require station, source, target and mesh radios"
+            )
+        station = normalize_mac(args.station_radio)
+        source_radio = normalize_mac(args.source_radio)
+        target_radio = normalize_mac(args.target_radio)
+        mesh_radios = sorted(set(normalize_mac(value) for value in args.mesh_radio))
+        if source_radio not in mesh_radios or target_radio not in mesh_radios:
+            raise RuntimeError("source and target must be members of the mesh radio roster")
+    else:
+        inventory = discover({args.client})["radios"]
+        stations = [
+            item for item in inventory
+            if item["kind"] == "station" and item["container"] == args.client
+        ]
+        if len(stations) != 1:
+            raise RuntimeError(
+                f"{args.client}: expected one station radio, found {len(stations)}"
+            )
+        station = stations[0]["tx_mac"]
+        mesh = [item for item in inventory if item["kind"] == "mesh"]
+        sources = [
+            item for item in mesh
+            if any(
+                normalize_mac(interface.get("mac", "")) == source_bssid
+                and int(interface.get("frequency_mhz") or 0) == args.frequency
+                for interface in item.get("interfaces", [])
+            )
+        ]
+        targets = [
+            item for item in mesh
+            if any(
+                normalize_mac(interface.get("mac", "")) == target_bssid
+                and int(interface.get("frequency_mhz") or 0) == args.frequency
+                for interface in item.get("interfaces", [])
+            )
+        ]
+        if len(sources) != 1:
+            raise RuntimeError(
+                f"{source_bssid}: expected one {args.frequency} MHz source radio, "
+                f"found {len(sources)}"
+            )
+        if len(targets) != 1:
+            raise RuntimeError(
+                f"{target_bssid}: expected one {args.frequency} MHz target radio, "
+                f"found {len(targets)}"
+            )
+        source_radio = sources[0]["tx_mac"]
+        target_radio = targets[0]["tx_mac"]
+        mesh_radios = sorted(item["tx_mac"] for item in mesh)
     updates = []
     pairs = []
     values = {}
-    for item in sorted(mesh, key=lambda value: value["tx_mac"]):
-        radio = item["tx_mac"]
+    for radio in mesh_radios:
         values[radio] = (
             args.target_snr if radio == target_radio
             else args.source_snr if radio == source_radio
@@ -219,6 +240,10 @@ def main() -> int:
     apply_parser.add_argument("--source-snr", type=int, default=40)
     apply_parser.add_argument("--target-snr", type=int, default=60)
     apply_parser.add_argument("--other-snr", type=int, default=-20)
+    apply_parser.add_argument("--station-radio")
+    apply_parser.add_argument("--source-radio")
+    apply_parser.add_argument("--target-radio")
+    apply_parser.add_argument("--mesh-radio", action="append", default=[])
     apply_parser.set_defaults(handler=apply)
 
     restore_parser = commands.add_parser("restore")
