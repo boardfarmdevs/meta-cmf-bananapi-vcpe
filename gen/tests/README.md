@@ -122,6 +122,8 @@ Docker/Boardfarm reconstruction.
 | `p0-churn-soak.py` | Repeated live RF acceptance | Temporary RF changes |
 | `p0-cold-reconstruction.sh` | Repeated full reconstruction | Yes, highly disruptive |
 | `bpibroadband-memory-profile.py` | Live measurement | No |
+| `deployment-model-evidence.sh` | Runtime/guest comparison evidence | Health audit only |
+| `deployment-host-evidence.sh` | Physical-host/hypervisor comparison evidence | No |
 | `steer-by-name-test.sh` | Isolated shell unit test | No |
 | `test_client_pool.py` | Isolated pytest unit test | No |
 | `test_soak_harness.py` | Isolated pytest unit test | No |
@@ -470,6 +472,25 @@ before/after topology, client-consistency snapshots, events and `summary.json`.
 exceptions, not normal acceptance settings.
 
 ## Stability, reconstruction and memory tests
+
+### Deployment-model evidence
+
+Use the paired collectors when comparing bare metal, VirtualBox, and LXD VM.
+Run the runtime collector inside the operating-system boundary that owns hwsim
+and the host collector on the physical machine:
+
+```sh
+./gen/tests/deployment-model-evidence.sh rev120-bare /path/to/evidence 30
+./gen/tests/deployment-host-evidence.sh rev120-bare /path/to/evidence 30
+```
+
+For a VM, the first command runs in the guest and the second runs on the outer
+host. The runtime collector executes the normal health audit after capturing
+topology, model, service, process, LXD, API-latency, wmediumd, memory, storage,
+and module evidence. The host collector separates QEMU/VirtualBox resource use
+from guest measurements. Use the same sample length and idle/traffic phase on
+every target. The complete comparison method and result table are in
+[`deployment-models.md`](../../doc/easymesh/reference/deployment-models.md).
 
 ### `p0-churn-soak.py`
 

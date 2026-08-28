@@ -5,3 +5,6 @@ examples/*/out/
 
 # build-wmediumd.sh clones its pinned upstream source here.
 /gen/wmediumd/src/
+
+# build-hwsim.sh extracts kernel source and builds the host-specific module here.
+/gen/hwsim/build/

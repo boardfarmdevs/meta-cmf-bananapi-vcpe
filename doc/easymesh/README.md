@@ -85,6 +85,7 @@ boundary:
 - [Packet capture](reference/packet-capture.md)
 - [Memory footprint](reference/memory-footprint.md)
 - [Association ownership case study](reference/association-ownership-case-study.md)
+- [Bare-metal, VirtualBox, and LXD VM deployment models](reference/deployment-models.md)
 - [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
 - [Lab appliance refactor plan](reference/lab-appliance-refactor-plan.md)
 - [prplMesh virtual-radio evaluation plan](reference/prplmesh-virtual-radio-evaluation-plan.md)
