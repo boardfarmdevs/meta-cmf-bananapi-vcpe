@@ -51,7 +51,10 @@ snapshot:
 
 Source and Boardfarm are transferred as commit-bounded Git bundles. The BPI
 images and bundles are checksum-verified inside the VM. Git credentials are
-not copied into the appliance.
+not copied into the appliance. A bundled Alpine 3.19 client image is used when
+present; an Internet build otherwise imports the maintained
+`images:alpine/3.22/amd64` image. Override that fallback with
+`EASYMESH_ALPINE_REMOTE` when a different pinned remote image is required.
 
 ## Operation
 

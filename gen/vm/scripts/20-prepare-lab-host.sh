@@ -12,6 +12,7 @@ boardfarm_workspace=/home/vagrant/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0828-clean}
+alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2
@@ -94,7 +95,10 @@ if ! lxc image info alpine >/dev/null 2>&1 \
         --alias alpine
 fi
 if ! lxc image info alpine >/dev/null 2>&1; then
-    lxc image copy images:alpine/3.19 local: --alias alpine
+    # Alpine 3.19 is retained for reproducible offline bundles, but its public
+    # image-server alias has expired. Use a maintained, architecture-qualified
+    # image when the build has no bundled client image.
+    lxc image copy "$alpine_remote" local: --alias alpine
 fi
 lxc image info alpine >/dev/null
 
