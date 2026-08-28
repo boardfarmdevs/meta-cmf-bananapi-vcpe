@@ -34,10 +34,14 @@ The extracted directory contains exactly the operator-facing inputs:
 
 ```text
 README.md
+RELEASE_NOTES.md
 Vagrantfile
 easymesh-lab-0828-cf6b5e8.box
 SHA256SUMS
 ```
+
+Read `RELEASE_NOTES.md` for the exact source range and behavioral differences
+from the preceding 0827 package.
 
 ## 1. Check and remove an existing EasyMesh VM
 
