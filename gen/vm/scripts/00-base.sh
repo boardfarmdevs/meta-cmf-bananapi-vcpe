@@ -81,7 +81,6 @@ if [ -f "$assets/lxd_38768.assert" ] \
     # LXD's privileged interfaces from auto-connecting during activation.
     snap ack "$assets/lxd_38768.assert"
     snap install "$assets/lxd_38768.snap"
-fi
 elif ! snap list lxd >/dev/null 2>&1; then
     snap install lxd --channel="$lxd_channel"
 fi
