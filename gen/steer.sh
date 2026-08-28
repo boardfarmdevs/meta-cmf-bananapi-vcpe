@@ -65,12 +65,25 @@ done
 sta_input=${1,,}
 target_input=${2,,}
 topology_url=${EASYMESH_TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
+steering_url=${EASYMESH_STEERING_UI_URL:-${topology_url%/topology}/steering-event}
 controller=${EASYMESH_CONTROLLER:-bpibroadband}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 bias_tool=$repo/gen/tests/steering-rf-bias.py
 curl_connect_timeout=${EASYMESH_CURL_CONNECT_TIMEOUT:-2}
 curl_timeout=${EASYMESH_CURL_TIMEOUT:-8}
 bias_timeout=${EASYMESH_BIAS_TIMEOUT:-30}
+preview_seconds=${EASYMESH_STEERING_PREVIEW_SECONDS:-3}
+
+announce_steering() {
+    local phase=$1
+    local payload
+    payload=$(jq -nc --arg sta "$sta" --arg client "$sta_input" \
+        --arg target "$target_name" --arg phase "$phase" \
+        '{sta_mac:$sta,client_name:$client,target_name:$target,phase:$phase}')
+    curl --connect-timeout "$curl_connect_timeout" --max-time 2 -fsS \
+        -X POST -H 'Content-Type: application/json' --data "$payload" \
+        "$steering_url" >/dev/null 2>&1 || true
+}
 
 for command in curl jq lxc; do
     command -v "$command" >/dev/null || {
@@ -187,6 +200,9 @@ lxc info "$controller" >/dev/null 2>&1 || {
 
 if ((request_only)); then
     echo "steer.sh: request-only mode; client acceptance and reassociation are not forced"
+    announce_steering planned
+    sleep "$preview_seconds"
+    announce_steering moving
     exec lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
 fi
 
@@ -243,6 +259,7 @@ done < <(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' | sort
 
 bias_state=$(mktemp /tmp/easymesh-steer-bias.XXXXXX.json)
 bias_active=0
+steering_announced=0
 restore_bias() {
     # The helper writes the exact pre-change state before sending its atomic
     # update.  A timeout in that small window must therefore restore too, even
@@ -262,6 +279,7 @@ cleanup() {
     rc=$?
     trap - EXIT INT TERM
     set +e
+    if ((rc != 0 && steering_announced)); then announce_steering failed; fi
     restore_bias
     restore_rc=$?
     if ((rc == 0 && restore_rc != 0)); then rc=$restore_rc; fi
@@ -308,6 +326,10 @@ done
     exit 1
 }
 echo "steer.sh: target candidate is visible; submitting the EasyMesh BTM request"
+announce_steering planned
+steering_announced=1
+sleep "$preview_seconds"
+announce_steering moving
 
 set +e
 timeout 15 lxc exec "$controller" -- /usr/bin/steer.sh "$sta" "$target_bssid"
@@ -349,5 +371,7 @@ done
     exit 1
 }
 
+announce_steering completed
+steering_announced=0
 restore_bias
 echo "steer.sh: PASS $sta_input is physically and visibly associated with $target_name ($target_bssid)"

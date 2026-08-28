@@ -1,0 +1,691 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <robvogelaar@users.noreply.github.com>
+Date: Fri, 28 Aug 2026 12:00:00 -0700
+Subject: [PATCH] cli: stage steering cues and shape topology layouts
+
+Keep the topology viewport bounded when the browser changes size, choose
+deterministic layouts suited to star and full-chain topologies, and retain
+solid backhaul links when signal telemetry is temporarily unavailable.
+
+Expose a short-lived steering-intent endpoint so the host steering adapter can
+identify a client before BTM, animate its move, and highlight its arrival.
+The event is presentation-only and does not alter the EasyMesh model or issue
+the steering request.
+---
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index ebf777861514789c823339dac5d4c40cffc12115..07427600b9fbe3e39e5d48da39a6dac74ef3b4e0 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -122,6 +122,11 @@ var topologyRadioChannelCache = struct {
+ 	channels map[int]int
+ }{channels: make(map[int]int)}
+ 
++var steeringEventState = struct {
++	sync.Mutex
++	event *SteeringEvent
++}{}
++
+ // ===== SIMPLIFIED DATA MODELS =====
+ 
+ type RemoteIPConfig struct {
+@@ -129,6 +134,18 @@ type RemoteIPConfig struct {
+     Port string `json:"port"`
+ }
+ 
++// SteeringEvent is a short-lived operator-intent hint for the topology UI.
++// It does not alter the EasyMesh model or perform the steering operation.
++type SteeringEvent struct {
++	ID         string    `json:"id"`
++	STAMAC     string    `json:"sta_mac"`
++	ClientName string    `json:"client_name"`
++	TargetName string    `json:"target_name"`
++	Phase      string    `json:"phase"`
++	ReceivedAt time.Time `json:"received_at"`
++	ExpiresAt  time.Time `json:"expires_at"`
++}
++
+ // classChannelMap struct to store channel capability
+ type classChannelMap struct {
+ 	class       int
+@@ -3108,6 +3125,7 @@ func main() {
+ 	// Existing routes continue...
+ 	api.HandleFunc("/topology", getTopologyHandler).Methods("GET")
+ 	api.HandleFunc("/topology/optimize", optimizeTopologyHandler).Methods("POST")
++	api.HandleFunc("/steering-event", steeringEventHandler).Methods("GET", "POST", "DELETE")
+  
+ 	// Metrics and Monitoring
+ 	api.HandleFunc("/metrics/devices", getDeviceMetricsHandler).Methods("GET")
+@@ -4840,6 +4858,113 @@ func applyResetConfig(resetTree *C.em_network_node_t) bool {
+     return true
+ }
+ 
++func currentSteeringEvent(now time.Time) *SteeringEvent {
++	steeringEventState.Lock()
++	defer steeringEventState.Unlock()
++	if steeringEventState.event == nil {
++		return nil
++	}
++	if !now.Before(steeringEventState.event.ExpiresAt) {
++		steeringEventState.event = nil
++		return nil
++	}
++	copy := *steeringEventState.event
++	return &copy
++}
++
++func writeSteeringJSON(w http.ResponseWriter, status int, value interface{}) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	if value != nil {
++		_ = json.NewEncoder(w).Encode(value)
++	}
++}
++
++func steeringEventHandler(w http.ResponseWriter, r *http.Request) {
++	now := time.Now().UTC()
++	switch r.Method {
++	case http.MethodGet:
++		writeSteeringJSON(w, http.StatusOK, map[string]interface{}{
++			"event": currentSteeringEvent(now),
++		})
++		return
++	case http.MethodDelete:
++		steeringEventState.Lock()
++		steeringEventState.event = nil
++		steeringEventState.Unlock()
++		w.WriteHeader(http.StatusNoContent)
++		return
++	case http.MethodPost:
++	default:
++		writeSteeringJSON(w, http.StatusMethodNotAllowed,
++			map[string]string{"error": "method not allowed"})
++		return
++	}
++
++	var request struct {
++		STAMAC     string `json:"sta_mac"`
++		ClientName string `json:"client_name"`
++		TargetName string `json:"target_name"`
++		Phase      string `json:"phase"`
++	}
++	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&request); err != nil {
++		writeSteeringJSON(w, http.StatusBadRequest,
++			map[string]string{"error": "invalid steering event: " + err.Error()})
++		return
++	}
++	request.STAMAC = strings.ToLower(strings.TrimSpace(request.STAMAC))
++	request.ClientName = strings.TrimSpace(request.ClientName)
++	request.TargetName = strings.TrimSpace(request.TargetName)
++	request.Phase = strings.ToLower(strings.TrimSpace(request.Phase))
++	if request.STAMAC == "" || request.ClientName == "" || request.TargetName == "" {
++		writeSteeringJSON(w, http.StatusBadRequest,
++			map[string]string{"error": "sta_mac, client_name and target_name are required"})
++		return
++	}
++
++	ttl := 45 * time.Second
++	switch request.Phase {
++	case "planned":
++		ttl = 15 * time.Second
++	case "moving":
++	case "completed", "failed":
++		ttl = 8 * time.Second
++	default:
++		writeSteeringJSON(w, http.StatusBadRequest,
++			map[string]string{"error": "phase must be planned, moving, completed or failed"})
++		return
++	}
++	event := &SteeringEvent{
++		ID: now.Format("20060102T150405.000000000Z07:00"),
++		STAMAC: request.STAMAC, ClientName: request.ClientName,
++		TargetName: request.TargetName, Phase: request.Phase,
++		ReceivedAt: now, ExpiresAt: now.Add(ttl),
++	}
++	steeringEventState.Lock()
++	steeringEventState.event = event
++	steeringEventState.Unlock()
++	writeSteeringJSON(w, http.StatusAccepted, event)
++}
++
++func topologyPayloadWithSteering(payload []byte) []byte {
++	event := currentSteeringEvent(time.Now().UTC())
++	if event == nil {
++		return payload
++	}
++	var topology map[string]interface{}
++	if err := json.Unmarshal(payload, &topology); err != nil {
++		return payload
++	}
++	topology["steeringEvent"] = event
++	updated, err := json.Marshal(topology)
++	if err != nil {
++		return payload
++	}
++	return updated
++}
++
+ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+ 	topologyResponseMutex.RLock()
+ 	if len(topologyResponse) != 0 &&
+@@ -4847,7 +4972,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+ 		cached := append([]byte(nil), topologyResponse...)
+ 		topologyResponseMutex.RUnlock()
+ 		w.Header().Set("Content-Type", "application/json")
+-		_, _ = w.Write(cached)
++		_, _ = w.Write(topologyPayloadWithSteering(cached))
+ 		return
+ 	}
+ 	topologyResponseMutex.RUnlock()
+@@ -5072,7 +5197,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+     topologyResponseMutex.Unlock()
+ 
+     w.Header().Set("Content-Type", "application/json")
+-    _, _ = w.Write(payload)
++	_, _ = w.Write(topologyPayloadWithSteering(payload))
+ }
+ 
+ func loadTopologyFromStaticJSON(w http.ResponseWriter) {
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 3afbd30bfba5bed704608cf1a6e2bf9d89822c7b..d96e7730ba19c8bd0b1bd33f0a409fe50d52df90 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -27,7 +27,7 @@
+     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+     <meta http-equiv="Pragma" content="no-cache">
+     <meta http-equiv="Expires" content="0">
+-    <link rel="stylesheet" href="static/style.css?v=topology-tools-2">
++    <link rel="stylesheet" href="static/style.css?v=topology-shape-roam-3">
+     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+     <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+     <!-- Added Chart.js library -->
+@@ -2038,7 +2038,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-landscape-layout-2"></script>
++    <script src="static/script.js?v=topology-shape-roam-3"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b39c1d3d4d 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2456,6 +2456,7 @@ async handleWebSocketMessage(data) {
+     const byId = new Map(rendered.map(node => [String(node.id), node]));
+     const children = new Map(rendered.map(node => [String(node.id), new Set()]));
+     const indegree = new Map(rendered.map(node => [String(node.id), 0]));
++    let edgeCount = 0;
+     const endpointId = endpoint => String(
+       endpoint && typeof endpoint === 'object' ? endpoint.id : endpoint
+     );
+@@ -2466,6 +2467,7 @@ async handleWebSocketMessage(data) {
+       if (!byId.has(from) || !byId.has(to) || from === to || children.get(from).has(to)) continue;
+       children.get(from).add(to);
+       indegree.set(to, (indegree.get(to) || 0) + 1);
++      edgeCount += 1;
+     }
+ 
+     const nodeOrder = (left, right) => {
+@@ -2480,6 +2482,63 @@ async handleWebSocketMessage(data) {
+       roots.push([...rendered].sort(nodeOrder)[0]);
+     }
+ 
++    const extentFor = node => Math.max(80,
++      Number(this.topologyNodeExtent?.(node)) || 80);
++    const controller = rendered.find(node => /^controller$/i.test(String(node?.name || '')))
++      || roots[0];
++    const controllerId = String(controller?.id || '');
++    const directChildren = children.get(controllerId)?.size || 0;
++    const starThreshold = Math.max(2, Math.ceil(Math.max(0, rendered.length - 1) * 0.6));
++
++    // A star is easiest to read with its semantic center at the visual center.
++    // Include mostly-star graphs so one non-direct extender does not push the
++    // gateway back to an otherwise mostly empty left edge.
++    if (controller && rendered.length >= 3 && directChildren >= starThreshold) {
++      const positions = new Map([[controllerId, { x: 0, y: 0 }]]);
++      const satellites = rendered.filter(node => String(node.id) !== controllerId)
++        .sort(nodeOrder);
++      const centerExtent = extentFor(controller);
++      const satelliteExtent = Math.max(...satellites.map(extentFor));
++      const aspect = Math.max(1, Number(width) || 1) / Math.max(1, Number(height) || 1);
++      const radiusX = (centerExtent + satelliteExtent + 100) * Math.min(1.55, 1.05 + aspect * 0.2);
++      const radiusY = centerExtent + satelliteExtent + 85;
++      satellites.forEach((node, index) => {
++        const angle = -Math.PI / 2 + (2 * Math.PI * index / satellites.length);
++        positions.set(String(node.id), {
++          x: Math.cos(angle) * radiusX,
++          y: Math.sin(angle) * radiusY
++        });
++      });
++      return positions;
++    }
++
++    const isFullChain = rendered.length >= 3 && roots.length === 1 &&
++      edgeCount === rendered.length - 1 &&
++      rendered.every(node => (children.get(String(node.id))?.size || 0) <= 1 &&
++        (indegree.get(String(node.id)) || 0) <= 1);
++    if (isFullChain) {
++      const ordered = [];
++      let id = String(roots[0].id);
++      while (id && ordered.length < rendered.length) {
++        ordered.push(byId.get(id));
++        id = [...(children.get(id) || [])][0] || '';
++      }
++      const extent = Math.max(...ordered.map(extentFor));
++      const columns = Math.ceil(ordered.length / 2);
++      const horizontalGap = 2 * extent + 105;
++      const rowOffset = extent + 70;
++      const positions = new Map();
++      ordered.forEach((node, index) => {
++        const upper = index < columns;
++        const column = upper ? index : (columns - 1 - (index - columns));
++        positions.set(String(node.id), {
++          x: column * horizontalGap,
++          y: upper ? -rowOffset : rowOffset
++        });
++      });
++      return positions;
++    }
++
+     const depth = new Map();
+     const queue = [];
+     for (const root of roots) {
+@@ -2518,8 +2577,6 @@ async handleWebSocketMessage(data) {
+       }
+     }
+ 
+-    const extentFor = node => Math.max(80,
+-      Number(this.topologyNodeExtent?.(node)) || 80);
+     const horizontalGap = 100;
+     const verticalGap = 70;
+     const positions = new Map();
+@@ -2981,8 +3038,7 @@ async handleWebSocketMessage(data) {
+       updateDatum(edge);
+       const signal = self.topologyBackhaulSignal(edge);
+       d3.select(this)
+-        .attr('stroke-dasharray', !self.topologyIsWirelessBackhaul(edge) ||
+-          signal.available ? null : '5 4')
++        .attr('stroke-dasharray', null)
+         .attr('opacity', !self.topologyIsWirelessBackhaul(edge) ? 1 :
+           (signal.stale ? 0.7 : (signal.available ? 1 : 0.5)));
+     });
+@@ -3025,9 +3081,27 @@ async handleWebSocketMessage(data) {
+     return associations;
+   }
+ 
++  topologyRenderedSTAPositions() {
++    const positions = new Map();
++    const stationNodes = this.topologyView?.group?.selectAll?.('.sta-node');
++    if (!stationNodes || stationNodes.empty()) return positions;
++    const self = this;
++    stationNodes.each(function(data) {
++      const mac = self.normalizeMac(data?.sta?.staMAC);
++      if (!mac) return;
++      positions.set(mac, {
++        x: (data.nodeRef?.fx ?? data.nodeRef?.x ?? 0) + (data.to?.x ?? 0),
++        y: (data.nodeRef?.fy ?? data.nodeRef?.y ?? 0) + (data.to?.y ?? 0)
++      });
++    });
++    return positions;
++  }
++
+   recordTopologyAssociationChanges(previousTopology, nextTopology) {
+     const previous = this.topologySTAAssociations(previousTopology);
+     const next = this.topologySTAAssociations(nextTopology);
++    const renderedPositions = this.topologyRenderedSTAPositions();
++    const announced = nextTopology?.steeringEvent || this.topology?.steeringEvent;
+     const now = Date.now();
+     for (const [mac, after] of next) {
+       const before = previous.get(mac);
+@@ -3038,7 +3112,12 @@ async handleWebSocketMessage(data) {
+         toOwnerId: after.ownerId,
+         toOwnerName: after.ownerName,
+         ssid: after.ssid,
+-        changedAt: now
++        changedAt: now,
++        fromX: renderedPositions.get(mac)?.x,
++        fromY: renderedPositions.get(mac)?.y,
++        clientName: this.normalizeMac(announced?.sta_mac) === mac
++          ? String(announced?.client_name || '') : '',
++        rendered: false
+       });
+     }
+     for (const [mac, effect] of this.staMoveEffects) {
+@@ -3052,10 +3131,22 @@ async handleWebSocketMessage(data) {
+     const effect = this.staMoveEffects.get(this.normalizeMac(sta?.staMAC));
+     if (!effect || effect.toOwnerId !== String(nodeId || '')) return null;
+     const ageMs = Math.max(0, Date.now() - effect.changedAt);
+-    if (ageMs > 6000) return null;
++    if (ageMs > 6000 || effect.rendered) return null;
++    effect.rendered = true;
+     return { ...effect, ageMs, remainingMs: Math.max(1, 6000 - ageMs) };
+   }
+ 
++  topologySteeringIntentForSTA(sta, nodeId, nodes) {
++    const event = this.topology?.steeringEvent;
++    if (!event || !['planned', 'moving'].includes(String(event.phase || '').toLowerCase()) ||
++        this.normalizeMac(event.sta_mac) !== this.normalizeMac(sta?.staMAC)) return null;
++    const targetName = String(event.target_name || '');
++    const targetNode = (nodes || []).find(node =>
++      String(node?.name || '').toLowerCase() === targetName.toLowerCase());
++    if (!targetNode || String(targetNode.id) === String(nodeId || '')) return null;
++    return { ...event, targetName: String(targetNode.name || targetName), targetNode };
++  }
++
+   topologyBandLabel(band) {
+     if (Number(band) === 0) return '2.4G';
+     if (Number(band) === 1) return '5G';
+@@ -3302,6 +3393,16 @@ async handleWebSocketMessage(data) {
+       .attr('d', 'M0,-5L10,0L0,5')
+       .attr('fill', '#7c3aed');
+ 
++    defs.append('marker')
++      .attr('id', 'sta-steering-intent-arrowhead')
++      .attr('viewBox', '0 -5 10 10')
++      .attr('refX', 9).attr('refY', 0)
++      .attr('markerWidth', 7).attr('markerHeight', 7)
++      .attr('orient', 'auto')
++      .append('path')
++      .attr('d', 'M0,-5L10,0L0,5')
++      .attr('fill', '#f59e0b');
++
+     defs.append('marker')
+       .attr('id', 'backhaul-uplink-arrowhead')
+       .attr('viewBox', '0 -5 10 10')
+@@ -3535,6 +3636,7 @@ async handleWebSocketMessage(data) {
+ 
+           const data = staElement.datum();
+           const moveEffect = self.topologyMoveEffectForSTA(sta, d.id);
++          const steeringIntent = self.topologySteeringIntentForSTA(sta, d.id, renderTopology.nodes);
+ 
+           const from = data.from;
+           const to = data.to;
+@@ -3559,6 +3661,7 @@ async handleWebSocketMessage(data) {
+ 
+           const signalGlyph = staElement.append('g')
+             .attr('class', 'sta-signal-bars')
++            .attr('opacity', moveEffect ? 0 : 1)
+             .style('pointer-events', 'none');
+           signalGlyph.selectAll('path.sta-signal-arc')
+             .data([0, 1, 2, 3, 4])
+@@ -3569,6 +3672,49 @@ async handleWebSocketMessage(data) {
+             .attr('stroke-linecap', 'round');
+           self.updateTopologySignalArcs(staElement, data);
+ 
++          if (steeringIntent) {
++            const phaseLabel = steeringIntent.phase === 'moving' ? 'MOVING' : 'NEXT';
++            const halo = staElement.append('circle')
++              .attr('class', 'sta-steer-intent-halo')
++              .attr('cx', to.x).attr('cy', to.y)
++              .attr('r', data.iconSize / 2 + 8)
++              .attr('fill', '#fef3c7')
++              .attr('fill-opacity', 0.72)
++              .attr('stroke', '#f59e0b')
++              .attr('stroke-width', 5)
++              .style('pointer-events', 'none');
++            halo.append('animate')
++              .attr('attributeName', 'stroke-width')
++              .attr('values', '5;9;5').attr('dur', '0.8s').attr('repeatCount', 'indefinite');
++            halo.append('animate')
++              .attr('attributeName', 'opacity')
++              .attr('values', '1;0.45;1').attr('dur', '0.8s').attr('repeatCount', 'indefinite');
++
++            const badge = staElement.append('g')
++              .attr('class', 'sta-steer-intent-badge')
++              .attr('transform', `translate(${to.x},${to.y - data.iconSize / 2 - 22})`)
++              .style('pointer-events', 'none');
++            const displayIdentity = steeringIntent.client_name || staIdentity;
++            const badgeText = `${phaseLabel}: ${displayIdentity} → ${steeringIntent.targetName}`;
++            const badgeWidth = Math.max(190, badgeText.length * 10.5 + 28);
++            badge.append('rect')
++              .attr('x', -badgeWidth / 2).attr('y', -17)
++              .attr('width', badgeWidth).attr('height', 34).attr('rx', 17)
++              .attr('fill', '#fff7ed').attr('stroke', '#f59e0b').attr('stroke-width', 4);
++            badge.append('text')
++              .attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
++              .attr('font-size', '18px').attr('font-weight', '800').attr('fill', '#9a3412')
++              .text(badgeText);
++
++            steeringEffectGroup.append('path')
++              .datum({ sourceNode: d, targetNode: steeringIntent.targetNode, staData: data })
++              .attr('class', 'sta-steering-intent-path')
++              .attr('fill', 'none').attr('stroke', '#f59e0b').attr('stroke-width', 5)
++              .attr('stroke-dasharray', '12 8')
++              .attr('marker-end', 'url(#sta-steering-intent-arrowhead)')
++              .attr('opacity', 0.9).style('pointer-events', 'none');
++          }
++
+           if (moveEffect) {
+             const pulse = staElement.append('circle')
+               .attr('class', 'sta-steer-pulse')
+@@ -3581,10 +3727,11 @@ async handleWebSocketMessage(data) {
+             pulse.append('animate')
+               .attr('attributeName', 'r')
+               .attr('values', `${data.iconSize / 2 + 7};${data.iconSize / 2 + 20}`)
+-              .attr('dur', '0.9s').attr('repeatCount', '4');
++              .attr('begin', '1.25s').attr('dur', '0.9s').attr('repeatCount', '4');
+             pulse.append('animate')
+               .attr('attributeName', 'opacity')
+-              .attr('values', '1;0').attr('dur', '0.9s').attr('repeatCount', '4');
++              .attr('values', '1;0').attr('begin', '1.25s')
++              .attr('dur', '0.9s').attr('repeatCount', '4');
+ 
+             const sourceNode = renderTopology.nodes.find(nodeItem =>
+               String(nodeItem.id) === moveEffect.fromOwnerId);
+@@ -3605,6 +3752,41 @@ async handleWebSocketMessage(data) {
+                 .attr('to', 0)
+                 .attr('dur', `${moveEffect.remainingMs}ms`)
+                 .attr('fill', 'freeze');
++
++              const startX = Number.isFinite(moveEffect.fromX)
++                ? moveEffect.fromX : (sourceNode.fx ?? sourceNode.x ?? 0);
++              const startY = Number.isFinite(moveEffect.fromY)
++                ? moveEffect.fromY : (sourceNode.fy ?? sourceNode.y ?? 0);
++              const targetX = (d.fx ?? d.x ?? 0) + to.x;
++              const targetY = (d.fy ?? d.y ?? 0) + to.y;
++              const midX = (startX + targetX) / 2;
++              const midY = (startY + targetY) / 2 - 35;
++              const motionPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
++              motionPath.setAttribute('d', `M${startX},${startY} Q${midX},${midY} ${targetX},${targetY}`);
++              const motionLength = motionPath.getTotalLength();
++              const movingClient = steeringEffectGroup.append('g')
++                .attr('class', 'sta-moving-client')
++                .attr('transform', `translate(${startX},${startY})`)
++                .style('pointer-events', 'none');
++              movingClient.append('circle')
++                .attr('r', data.iconSize / 2 + 7).attr('fill', '#ede9fe')
++                .attr('stroke', '#7c3aed').attr('stroke-width', 4);
++              movingClient.append('image')
++                .attr('xlink:href', iconUrl)
++                .attr('x', -data.iconSize / 2).attr('y', -data.iconSize / 2)
++                .attr('width', data.iconSize).attr('height', data.iconSize);
++              movingClient.append('text')
++                .attr('y', data.iconSize / 2 + 13).attr('text-anchor', 'middle')
++                .attr('font-size', '11px').attr('font-weight', '800')
++                .attr('fill', '#5b21b6').attr('stroke', '#fff').attr('stroke-width', 3)
++                .attr('paint-order', 'stroke')
++                .text(`${moveEffect.clientName || staIdentity} moving`);
++              movingClient.transition().duration(1400).ease(d3.easeCubicInOut)
++                .attrTween('transform', () => t => {
++                  const point = motionPath.getPointAtLength(t * motionLength);
++                  return `translate(${point.x},${point.y})`;
++                })
++                .on('end', () => movingClient.remove());
+             }
+           }
+ 
+@@ -3615,6 +3797,7 @@ async handleWebSocketMessage(data) {
+            .attr('y', to.y - data.iconSize / 2)
+            .attr('width', data.iconSize)
+            .attr('height', data.iconSize)
++           .attr('opacity', moveEffect ? 0 : 1)
+            .on('mouseover', function(event) {
+               let mldInfo = '';
+               if (sta.MLDAddr && sta.MLDAddr !== '') {
+@@ -3652,6 +3835,7 @@ async handleWebSocketMessage(data) {
+             .attr('stroke-width', 3)
+             .attr('paint-order', 'stroke')
+             .style('pointer-events', 'none')
++            .attr('opacity', moveEffect ? 0 : 1)
+             .text(staIdentity);
+ 
+           staElement.append('text')
+@@ -3666,9 +3850,15 @@ async handleWebSocketMessage(data) {
+             .attr('stroke-width', 3)
+             .attr('paint-order', 'stroke')
+             .style('pointer-events', 'none')
++            .attr('opacity', moveEffect ? 0 : 1)
+             .text(Number(sta.channel) > 0
+               ? `${self.topologyBandLabel(sta.band)} ch ${sta.channel}` : '');
+ 
++          if (moveEffect) {
++            staElement.selectAll('.sta-icon,.sta-identity-label,.sta-channel-label,.sta-signal-bars')
++              .transition().delay(1250).duration(250).attr('opacity', 1);
++          }
++
+         });
+ 
+       }
+@@ -3733,8 +3923,7 @@ async handleWebSocketMessage(data) {
+     .attr('fill', 'none')
+     .attr('stroke-width', 2)
+     .attr('stroke', d => bandColors[d.band] || '#000')
+-    .attr('stroke-dasharray', d => !self.topologyIsWirelessBackhaul(d) ||
+-      self.topologyBackhaulSignal(d).available ? null : '5 4')
++    .attr('stroke-dasharray', null)
+     .attr('opacity', d => {
+       if (!self.topologyIsWirelessBackhaul(d)) return 1;
+       const signal = self.topologyBackhaulSignal(d);
+@@ -3837,6 +4026,17 @@ async handleWebSocketMessage(data) {
+           const midY = (sourceY + targetY) / 2 - 35;
+           return `M${sourceX},${sourceY} Q${midX},${midY} ${targetX},${targetY}`;
+         });
++
++      steeringEffectGroup.selectAll('.sta-steering-intent-path')
++        .attr('d', effect => {
++          const sourceX = (effect.sourceNode.fx ?? effect.sourceNode.x) + effect.staData.to.x;
++          const sourceY = (effect.sourceNode.fy ?? effect.sourceNode.y) + effect.staData.to.y;
++          const targetX = effect.targetNode.fx ?? effect.targetNode.x;
++          const targetY = effect.targetNode.fy ?? effect.targetNode.y;
++          const midX = (sourceX + targetX) / 2;
++          const midY = (sourceY + targetY) / 2 - 30;
++          return `M${sourceX},${sourceY} Q${midX},${midY} ${targetX},${targetY}`;
++        });
+     });
+ 
+     function dragstarted(event, d) {
+@@ -4118,6 +4318,8 @@ async handleWebSocketMessage(data) {
+    * reported. Lab client MACs encode their number in the fifth octet.
+    */
+   getSTAIdentity(sta) {
++    const reportedName = String(sta?.name || '').trim();
++    if (reportedName) return reportedName;
+     const mac = String(sta?.staMAC || '').trim().toUpperCase();
+     const octets = mac.split(':');
+     const validMac = octets.length === 6 && octets.every(octet => /^[0-9A-F]{2}$/.test(octet));
+diff --git a/src/rdkb-cli/static/style.css b/src/rdkb-cli/static/style.css
+index 11e8be9c76f765e120bda9a1d66ec1ec061767a3..9c8948959c90d45cecea5505e173e73b49a08a26 100644
+--- a/src/rdkb-cli/static/style.css
++++ b/src/rdkb-cli/static/style.css
+@@ -112,11 +112,18 @@ body {
+     -moz-osx-font-smoothing: grayscale;
+ }
+ 
++html,
++body {
++    height: 100%;
++    overflow: hidden;
++}
++
+ /* ===== LAYOUT COMPONENTS ===== */
+ 
+ .app-container {
+     display: flex;
+     flex-direction: column;
++    height: 100vh;
+     min-height: 100vh;
+     overflow: hidden;
+ }
+@@ -124,7 +131,8 @@ body {
+ .app-body {
+     display: flex;
+     flex: 1;
+-    height: calc(100vh - 64px);
++    min-height: 0;
++    height: auto;
+ }
+ 
+ /* Header Styles */
+@@ -381,6 +389,7 @@ body {
+     background: var(--bg-card);
+     border-right: 1px solid var(--border-light);
+     height: 100%;
++    min-height: 0;
+     overflow-y: auto;
+     flex-shrink: 0;
+     display: flex;
+@@ -483,7 +492,8 @@ body {
+ /* Main Content Area */
+ .main-content {
+     flex: 1;
+-    height: 100%;
++    height: auto;
++    min-height: 0;
+     overflow-y: auto;
+     padding: var(--spacing-xl);
+     display: flex;
+@@ -500,6 +510,11 @@ body {
+ .tab-content.active {
+     display: flex;
+     flex-direction: column;
++    min-height: 0;
++}
++
++#topology.tab-content.active {
++    overflow: hidden;
+ }
+ 
+ @keyframes fadeIn {
+@@ -924,7 +939,9 @@ body {
+ 
+ .topology-container {
+     display: flex;
+-    height: 100vh;
++    flex: 1;
++    min-height: 0;
++    height: auto;
+     background: var(--bg-card);
+     border-radius: var(--radius-lg);
+     box-shadow: var(--shadow-sm);
+@@ -934,7 +951,10 @@ body {
+ .topology-main {
+     flex: 1;
+     min-width: 0;
++    min-height: 0;
++    height: 100%;
+     position: relative;
++    overflow: hidden;
+ }
+ 
+ .legend-item {
+@@ -947,10 +967,11 @@ body {
+ }
+ 
+ #topology-visualization {
+-    width: 100%;
+-    height: 100vh;
++    position: absolute;
++    inset: 0;
++    width: auto;
++    height: auto;
+     background: #ffffff;
+-    position: relative;
+     overflow: hidden;
+ }
+ 
+-- 
+2.43.0
+

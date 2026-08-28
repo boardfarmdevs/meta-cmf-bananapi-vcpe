@@ -153,11 +153,30 @@ const landscapeChainEdges = landscapeNodes.slice(1).map((node, index) => ({
 const landscapeChain = controller.topologyLandscapeLayout(
   landscapeNodes, landscapeChainEdges, 1600, 900
 );
-for (let index = 1; index < landscapeNodes.length; index += 1) {
-  assert.ok(landscapeChain.get(landscapeNodes[index - 1].id).x <
-    landscapeChain.get(landscapeNodes[index].id).x,
-  'multi-hop chain does not progress monotonically left to right');
-}
+const chainPositions = landscapeNodes.map(node => landscapeChain.get(node.id));
+assert.equal(new Set(chainPositions.map(position => position.y)).size, 2,
+  'multi-hop chain was not folded into two landscape rows');
+assert.equal(new Set(chainPositions.map(position => position.x)).size,
+  Math.ceil(landscapeNodes.length / 2),
+  'multi-hop chain does not use the expected landscape columns');
+assert.ok(chainPositions[0].x < chainPositions[1].x &&
+  chainPositions[1].x < chainPositions[2].x &&
+  chainPositions[3].x > chainPositions[4].x &&
+  chainPositions[4].x > chainPositions[5].x,
+  'multi-hop chain does not follow the two-row serpentine path');
+
+const directStarEdges = landscapeNodes.slice(1).map(node => ({
+  from: 'controller', to: node.id
+}));
+const centeredStar = controller.topologyLandscapeLayout(
+  landscapeNodes, directStarEdges, 1600, 900
+);
+assert.deepEqual(centeredStar.get('controller'), { x: 0, y: 0 },
+  'star controller is not centered');
+assert.ok(landscapeNodes.slice(1).every(node => {
+  const position = centeredStar.get(node.id);
+  return position && (position.x !== 0 || position.y !== 0);
+}), 'star satellites were not distributed around the controller');
 
 const metricsUpdated = new Date().toISOString();
 controller.clients = [{
@@ -272,6 +291,30 @@ assert.match(visualizationSource, /sta-steer-pulse/,
   'topology does not render the post-steer client pulse');
 assert.match(visualizationSource, /sta-steering-trail/,
   'topology does not render the fading steering trail');
+assert.match(visualizationSource, /sta-steering-intent-path/,
+  'topology does not render the pre-steer intent path');
+assert.match(visualizationSource, /sta-moving-client/,
+  'topology does not animate the client between APs');
+assert.doesNotMatch(visualizationSource,
+  /signal\.available \? null : '5 4'/,
+  'unknown backhaul signal still changes a physical link to dotted');
+
+controller.topology = {
+  nodes: [
+    { id: 'agent-1', name: 'Agent-1' },
+    { id: 'agent-2', name: 'Extender-1' }
+  ],
+  steeringEvent: {
+    sta_mac: '02:00:00:00:09:00', client_name: 'sta-09',
+    target_name: 'Extender-1', phase: 'planned'
+  }
+};
+const intent = controller.topologySteeringIntentForSTA(
+  { staMAC: '02:00:00:00:09:00', ssid: 'private_ssid' },
+  'agent-1', controller.topology.nodes
+);
+assert.equal(intent.targetNode.id, 'agent-2');
+assert.equal(intent.targetName, 'Extender-1');
 
 const associationSTA = {
   staMAC: '02:00:00:00:09:00', ssid: 'private_ssid'
