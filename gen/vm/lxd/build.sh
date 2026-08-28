@@ -8,6 +8,8 @@ cpus=${EASYMESH_LXD_CPUS:-6}
 memory=${EASYMESH_LXD_MEMORY:-6GiB}
 disk=${EASYMESH_LXD_DISK:-64GiB}
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
+network=${EASYMESH_LXD_NETWORK:-lxdbr0}
+guest_ipv4=${EASYMESH_LXD_IPV4:-}
 webui_address=${EASYMESH_WEBUI_HOST_IP:-127.0.0.1}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
@@ -41,6 +43,8 @@ Common overrides:
   EASYMESH_LXD_NAME=$name
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
+  EASYMESH_LXD_NETWORK=$network
+  EASYMESH_LXD_IPV4=<automatic static address>
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
   WMEDIUMD_CONSOLE_PORT=$console_port
@@ -74,13 +78,35 @@ wait_agent() {
     return 1
 }
 
+select_guest_ipv4() {
+    local cidr
+    if [ -n "$guest_ipv4" ]; then
+        printf '%s\n' "$guest_ipv4"
+        return
+    fi
+    cidr=$(lxc network get "$network" ipv4.address)
+    python3 - "$cidr" <<'PY'
+import ipaddress
+import sys
+
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+if network.num_addresses < 16:
+    raise SystemExit(f"managed bridge is too small for an appliance address: {network}")
+print(network.broadcast_address - 5)
+PY
+}
+
 add_proxy() {
-    local device=$1 address=$2 host_port=$3 guest_port=$4
+    local device=$1 address=$2 host_port=$3 guest_port=$4 guest_address=$5
     if lxc config device get "$name" "$device" listen >/dev/null 2>&1; then
         lxc config device remove "$name" "$device"
     fi
-    lxc config device add "$name" "$device" proxy \
-        listen="tcp:$address:$host_port" connect="tcp:127.0.0.1:$guest_port"
+    # LXD VMs support proxy devices only in NAT mode. The static NIC address
+    # lets LXD install direct host-to-guest forwarding rules without a helper
+    # process or dependency on the VM agent after boot.
+    lxc config device add "$name" "$device" proxy nat=true \
+        listen="tcp:$address:$host_port" \
+        connect="tcp:$guest_address:$guest_port"
 }
 
 make_bundle() {
@@ -191,7 +217,7 @@ run_vagrant() {
 }
 
 build_vm() {
-    local stage meta_commit controller_name extender_name
+    local stage meta_commit controller_name extender_name appliance_ipv4
     require_command git
     require_command lxc
     require_command sha256sum
@@ -211,9 +237,12 @@ build_vm() {
     lxc init "$image" "$name" --vm \
         --config limits.cpu="$cpus" --config limits.memory="$memory"
     lxc config device override "$name" root size="$disk"
+    appliance_ipv4=$(select_guest_ipv4)
+    lxc config device override "$name" eth0 network="$network" \
+        ipv4.address="$appliance_ipv4"
     lxc config set "$name" boot.autostart true
-    add_proxy easymesh-webui "$webui_address" "$webui_port" 8888
-    add_proxy wmediumd-console "$console_address" "$console_port" 8890
+    add_proxy easymesh-webui "$webui_address" "$webui_port" 8888 "$appliance_ipv4"
+    add_proxy wmediumd-console "$console_address" "$console_port" 8890 "$appliance_ipv4"
     lxc start "$name"
     wait_agent
     push_inputs "$stage"
