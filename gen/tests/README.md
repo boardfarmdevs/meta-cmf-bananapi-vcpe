@@ -418,10 +418,12 @@ The default 60-second freshness gate covers the measured collection interval
 of the 20-client lab. Candidate batches and Agents are queried sequentially by
 default because the native WebUI command path serializes `libemcli` access.
 Launching concurrent HTTP handlers only makes them contend on that same path
-and previously caused repeatable 504/client timeouts across bare metal and both
-VM models. Tighten the gate or raise Agent concurrency only after the complete
-observation interval has been measured through a command adapter that actually
-supports concurrent transactions.
+and has caused client-side timeouts in live deployments. A server-side 504 may
+also be a correct fail-closed result when controller association ownership is
+stale and a required candidate response is incomplete. Tighten the freshness
+gate or raise Agent concurrency only after the complete observation interval
+has been measured through a command adapter that actually supports concurrent
+transactions.
 
 Run this with the VM's supported Python environment; the optimizer package
 uses modern Python type syntax.

@@ -290,12 +290,12 @@ host acceptance target.
 | --- | --- | --- | --- | ---: | ---: | --- |
 | rev120 | Bare metal | Intel NUC10i7FNH / NUC10i7FNB | Core i7-10710U, 6 cores / 12 threads | 12 | 62 GiB | Ubuntu 24.04.4, Linux 7.0.0-30 |
 | rev130 | Bare metal | Intel NUC6CAYH / NUC6CAYB | Celeron J3455, 4 cores / 4 threads | 4 | 7 GiB | Ubuntu 22.04.4, Linux 7.0.0-28 |
-| rev140 | LXD VM | Intel NUC12WSKi7 / NUC12WSBi7 | Core i7-1260P, 12 cores / 16 threads | 16 | 62 GiB | host Ubuntu 20.04; guest Ubuntu 24.04/Linux 7.0.0-30 |
-| rev150 | VirtualBox/Vagrant | x86-64 host | Ryzen 7 8745HS, 8 cores / 16 threads | 16 | 25 GiB | host Ubuntu 22.04; guest Ubuntu 24.04/Linux 7.0.0-30 |
+| rev140 | LXD VM | Intel NUC12WSKi7 / NUC12WSBi7 | Core i7-1260P, 12 cores / 16 threads | 16 | 62 GiB | guest Ubuntu 24.04.4/Linux 7.0.0-30 |
+| rev150 | VirtualBox/Vagrant | x86-64 host | Ryzen 7 8745HS, 8 cores / 16 threads | 16 | 25 GiB | host Ubuntu 22.04.5; guest Ubuntu 24.04.3/Linux 7.0.0-28 |
 
-The rev140 host OS is not part of the radio experiment: Linux 7 and hwsim run
-inside the LXD VM. It remains relevant to outer LXD/QEMU resource and lifecycle
-behavior. The same distinction applies to rev150 and its VirtualBox guest.
+The rev140 outer host is an existing LXD/QEMU execution platform rather than a
+supported installation reference. Linux 7 and hwsim run inside the LXD VM.
+The same host-versus-guest distinction applies to rev150 and VirtualBox.
 
 ### Pinned inputs
 
@@ -304,14 +304,29 @@ Every result row must name, rather than imply, these inputs:
 | Input | Required 0828 value |
 | --- | --- |
 | Source branch | `codex/0828-clean` |
-| Source commit | Record the exact 40-character commit for the campaign |
+| Source commit | `0b4e745df937e55e2c0d6ddb3a4635a77dd423c8` |
 | Controller image | `X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2` |
 | Controller SHA-256 | `9a4c432c857dbbf80a68c5b7835d7d0ba39327919dc53becc3c5a9eeb78d51cd` |
 | Extender image | `X86EMLTRBPIAP_rdk-next_20260828161337.rootfs.lxc.tar.bz2` |
 | Extender SHA-256 | `8e8ffbfe4b2404dfc9ae19ab27b0eab6243d3bc55d443ceca0d269d36b3e5d18` |
 | Boardfarm | single `boardfarm-lab-staging` repository, `ca-desk6.json` |
 | hwsim | 32 radios, three channels, `regtest=5`, patched module hash recorded per kernel |
+| wmediumd | `f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f` on every target |
 | Topology | controller plus colocated agent, four extenders, 10 private clients, 10 IoT clients |
+
+The recorded hwsim hashes are:
+
+| Target | Guest/host kernel that owns hwsim | Module SHA-256 |
+| --- | --- | --- |
+| rev120 | 7.0.0-30 | `f56577903d6ec8475b4f281106e0c6733449b7ed065bb6e4d69579fc1c6955f6` |
+| rev130 | 7.0.0-28 | `c7c9e49d7198e84de33be893532c68591f4bb54aaed7f8319d2bf7c22a7360bb` |
+| rev140 | 7.0.0-30 | `c5dbfed56c7d6314b2e37f03d3cc6d12b1bb244690eb5ef482920abf514df86c` |
+| rev150 | 7.0.0-28 | `c7c9e49d7198e84de33be893532c68591f4bb54aaed7f8319d2bf7c22a7360bb` |
+
+The rev120 and rev140 Linux 7.0.0-30 modules have the same kernel `srcversion`
+(`68A1C6E52DF91F241531BBD`) and vermagic but different build IDs, so their file
+hashes differ. The functional patch source is the same; the exact binary hash
+is retained so the build-environment difference is not hidden.
 
 If a fix changes the source commit during the campaign, update every target to
 that commit and rerun the affected gates. Do not combine results from a dirty
@@ -342,48 +357,125 @@ Each target is measured in the same order:
    process counts, PSS, database counts, journals, packet loss, and command
    responsiveness.
 
-### Results table
+### Qualification results
 
-The table is completed only from retained command output and machine-readable
-evidence. `PASS` means every functional gate passed; it does not mean the host
-had the lowest resource use.
+The results below were retained as machine-readable evidence on each target.
+The campaign completed clean startup, ready-state measurement, 20-client
+connectivity, named steering, delayed ownership checks, optimizer collection,
+and star/branch/chain backhaul. It did not run a long soak, a complete steering
+matrix, every individual-node lifecycle case, or an export/import cycle.
+Consequently, this is a deployment-model qualification snapshot, not final
+appliance acceptance.
+
+Evidence is retained under:
+
+- `/home/rev/easymesh-evidence/deployment-models/rev120-bare` on rev120;
+- `/home/rev/easymesh-evidence/deployment-models/rev130-bare` on rev130;
+- `/home/vagrant/easymesh-evidence/deployment-models/rev140-lxd-vm` inside the
+  rev140 VM and `rev140-lxd-vm-isolated` under the outer host evidence root;
+  and
+- `/home/vagrant/easymesh-evidence/deployment-models/rev150-virtualbox` inside
+  the rev150 VM and the same label under the outer host evidence root.
 
 | Result | rev120 bare metal | rev130 bare metal | rev140 LXD VM | rev150 VirtualBox |
 | --- | --- | --- | --- | --- |
-| Exact source/image/module provenance | Measurement in progress | Measurement in progress | Measurement in progress | Measurement in progress |
-| Clean/cold start | Measurement in progress | Measurement in progress | Measurement in progress | Measurement in progress |
-| Startup time to complete health | — | — | — | — |
-| Model and live clients | — | — | — | — |
-| 20/20 gateway traffic | — | — | — | — |
-| Named steer and matrix | — | — | — | — |
-| Star/branch/chain multihop | — | — | — | — |
-| Optimizer smoke tests | — | — | — | — |
-| Ready-idle host CPU | — | — | — | — |
-| Ready-idle lab CPU | — | — | — | — |
-| Host/guest memory delta | — | — | — | — |
-| BPI EasyMesh process PSS | — | — | — | — |
-| Disk/artifact footprint | — | — | — | — |
-| Complete restart/reconstruction | — | — | — | — |
-| Executor/lifecycle errors | — | — | — | — |
-| Soak result | — | — | — | — |
-| Overall 0828 result | In progress | In progress | In progress | In progress |
+| Exact source/image/module provenance | PASS | PASS | PASS | PASS |
+| Clean start to complete health | PASS, 15m 13s; Boardfarm already active | PASS, 37m 52s; Boardfarm already active | PASS, 22m 22s automatic guest reconstruction | PASS, 19m 50s automatic guest reconstruction |
+| Model and live clients | PASS: 5 devices, 15 radios, 50 BSS, 24 associated rows, 20 clients | PASS: same | PASS: same | PASS: same |
+| Gateway connectivity | PASS: 20/20, 0% ping loss | PASS: 20/20, 0% ping loss | PASS: 20/20, 0% ping loss | PASS: 20/20, 0% ping loss |
+| Named steering | Immediate physical/API convergence PASS | Immediate physical/API convergence PASS | Immediate physical/API convergence PASS | PASS; six moves remained coherent for 30s each |
+| Delayed association ownership | FAIL: API reverted after 10s while the physical link remained correct | FAIL: API reverted after 7s while the physical link remained correct | FAIL: API reverted after 4s while the physical link remained correct | PASS in the six-move focused sample |
+| Star/branch/chain multihop | Topologies PASS; initial chain/star traffic gates were transiently 17/20 and 15/20, repeat star 20/20 | PASS: all profiles, 20/20 | PASS: all profiles, 20/20 | PASS: all profiles, 20/20 |
+| Optimizer live smoke | BLOCKED after ownership drift: candidate request correctly failed closed | PASS: 3 cycles, 20 clients and 80 same-band candidates/cycle | BLOCKED after ownership drift | PASS: 3 cycles, 20 clients and 80 same-band candidates/cycle |
+| Complete runtime reconstruction | Explicit full redeploy PASS | Explicit full redeploy PASS | Automatic cold reconstruction PASS | Automatic cold reconstruction PASS |
+| Final daemon restart counts | Zero | Zero | Zero | Zero |
+| Long soak | Not run | Not run | Not run | Not run |
+| Overall measured result | CONDITIONAL FAIL: RDK ownership convergence | CONDITIONAL FAIL: RDK ownership convergence | LXD transport/runtime PASS; RDK ownership convergence FAIL | PASS for measured gates; remaining lifecycle/soak gates open |
 
-Report CPU both as consumed logical CPUs and as a percentage of total host
-capacity. Report memory both in GiB and as a percentage of host RAM. VM rows
-must separate the outer QEMU/VirtualBox process from measurements inside the
-guest. These normalizations prevent the rev130 hardware limit from being
-misreported as a bare-metal architectural cost.
+The optimizer failure on rev120 and rev140 is not an independent optimizer
+defect. Once the controller advertises an old serving BSSID, it asks the
+physical serving AP for that STA as though it were an unassociated candidate.
+That AP correctly omits its associated station from the response, and the
+optimizer adapter correctly rejects the incomplete result instead of making a
+decision from contradictory state.
 
-### Follow-on prplMesh control
+The rev150 ownership pass must not be interpreted as a VirtualBox fix. The
+same RDK binaries and virtual-radio design were used on all four targets, and
+the failure is a delayed old-owner overwrite. VirtualBox scheduling happened
+not to expose the race in six transitions. Repeated runs are required before a
+deployment-model-specific difference can be claimed.
 
-After the RDK campaign is complete, run the same LXD-VM, radio, topology,
-traffic, lifecycle, and resource method against prplMesh. Keep those results in
-a separate stack-comparison report. If prplMesh is stable under the same
-LXD-VM, nested-LXD, hwsim, and wmediumd boundaries while RDK is not, the shared
-virtualization boundary is less likely to be the root cause. The remaining
-differences must then be isolated across OneWifi, the RDK Wi-Fi HAL adapters,
-the EasyMesh controller/agent implementations, their database/model paths,
-and the volume and pattern of management commands.
+### Ready-state loading
+
+The CPU samples are 19 one-second observations after the cumulative `vmstat`
+row, except the rev150 outer-host sample, which contains 14 observations.
+Consumed-core equivalents are average busy percentage multiplied by the
+number of logical CPUs in that measurement boundary.
+
+| Measurement | rev120 bare metal | rev130 bare metal | rev140 LXD VM | rev150 VirtualBox |
+| --- | ---: | ---: | ---: | ---: |
+| Host/guest CPU busy | 3.11% of 12 = 0.37 cores | 23.84% of 4 = 0.95 cores | guest 9.74% of 6 = 0.58 vCPU | guest 5.68% of 6 = 0.34 vCPU |
+| Isolated outer-host CPU busy | same boundary | same boundary | 5.00% of 16 = 0.80 cores | 9.57% of 16 = 1.53 cores, including other host work |
+| Hypervisor process RSS | n/a | n/a | 6.05 GiB QEMU, mostly guest shared-memory mapping | 5.62 GiB VBoxHeadless, mostly mapped guest file pages |
+| Ready memory used / total | 4.25 / 62.51 GiB | 2.67 / 7.60 GiB | guest 2.44 / 5.76 GiB | guest 2.34 / 5.78 GiB |
+| Sum of lab LXD cgroup usage | 0.89 GiB | 0.84 GiB | 1.43 GiB | 1.34 GiB |
+| `bpibroadband` total process PSS | 310.9 MiB | 297.2 MiB | 309.8 MiB | 304.5 MiB |
+| Topology API average / maximum | 70 / 75 ms | 244 / 265 ms | 53 / 60 ms | 56 / 64 ms |
+| Clients API average / maximum | 43 / 44 ms | 159 / 210 ms | 42 / 118 ms | 35 / 40 ms |
+| Devices API average / maximum | 27 / 28 ms | 95 / 103 ms | 22 / 25 ms | 23 / 24 ms |
+| Guest root used | n/a; host contains build artifacts | n/a; host contains build artifacts | 12.42 GiB | 12.01 GiB |
+| Outer mutable VM storage | n/a | n/a | 7.55 GiB reported by LXD storage | 11.85 GiB VMDK |
+
+The VM RSS is close to the configured 6 GiB even though the guests use about
+2.4 GiB. It is reserved/mapped guest memory, not evidence that EasyMesh
+processes consume 6 GiB. PSS inside `bpibroadband` is much more comparable and
+varies by less than 14 MiB across all four targets.
+
+rev130 is the only materially CPU-constrained target. It uses almost one of
+four logical CPUs at ready state, takes 2.5 to 4.5 times longer for WebUI API
+calls, and needs 37m 52s for a complete lab start. It nevertheless passes
+onboarding, all three multihop profiles, 20-client traffic, and the serialized
+optimizer observation cycle. This is performance degradation, not a different
+functional architecture.
+
+The VM cold-start totals include Boardfarm work that should be removed from a
+release artifact: rev140 spent about 7m 04s in Boardfarm and 15m 18s in the lab
+runtime; rev150 spent about 5m 32s and 14m 19s respectively. Both guests rebuilt
+Boardfarm Docker material on that first boot. A packaged appliance should carry
+the prepared lean image or make this explicit one-time provisioning rather
+than presenting it as normal warm-start behavior.
+
+### prplMesh as the secondary control
+
+The existing prplMesh LXD-VM experiment is already a useful control even
+before this complete four-target method is repeated against it. In the same
+kind of Linux 7, hwsim, wmediumd, LXD-VM and nested-container boundary it has
+demonstrated a controller/colocated Agent, four external tri-band Agents, 20
+clients, two SSIDs, star/branch/four-hop chain backhaul, associated RCPI,
+outage/rejoin, and repeated BTM steering. It required five focused native
+NL80211 corrections rather than the component-spanning RDK series.
+
+That result strongly weakens the hypothesis that LXD VM, nested LXD, hwsim, or
+wmediumd is intrinsically responsible for the RDK convergence defects. The
+most important architectural differences are:
+
+- prplMesh has a native Linux NL80211 path directly through hostapd,
+  wpa_supplicant and its BWL backend; hwsim exposes the API that path expects;
+- its controller model and NBAPI have a shorter ownership path;
+- RDK crosses Wi-Fi HAL, OneWifi, libwebconfig/RBUS, the EasyMesh Agent,
+  IEEE1905, the controller model, MariaDB and em_cli, each with separate
+  identity, snapshot/delta, allocation, callback and timeout rules; and
+- RDK also carries embedded-platform and physical-radio assumptions that must
+  be replaced or emulated in a container lab.
+
+The conclusion is not that prplMesh is already proven at every RDK acceptance
+gate. RDK has broader candidate-link telemetry, policy deployment, scenario
+replay, optimizer integration, traffic tooling, packaging and soak history.
+The next prplMesh comparison should therefore start with the same 6-vCPU/6-GiB
+LXD-VM profile, exact 20-client/two-SSID topology, golden wmediumd scenarios,
+traffic profiles, API-latency and PSS collectors, steering ownership hold, node
+recovery and bounded soak. Bare-metal and VirtualBox prplMesh runs can follow
+if the LXD control exposes a deployment-specific difference.
 
 ## Recommended operating policy
 
