@@ -353,9 +353,32 @@ snippet = (
 marker = "#Obtain the wifi mac address\n"
 assert content.count(marker) == 1, content.count(marker)
 content = content.replace(marker, snippet + marker)
+
+# The upstream extender pre-start updates AL_MAC_ADDR by first extracting the
+# old value and using it as an unescaped sed pattern.  A genuinely fresh image
+# ships an empty value, so that becomes `sed s//$new_mac/`; BusyBox sed rejects
+# it with "no previous regular expression".  OneWifi then asks the HAL to
+# resolve an empty/undefined AL MAC and remains in its initialization loop.  A
+# warm NVRAM happened to hide the defect because it already contained a MAC.
+# Replace the complete JSON member instead.  This is idempotent, accepts both
+# an empty and a populated first-boot value, and never treats a MAC as a sed
+# regular expression.
+old_al_update = (
+    "al_mac_addr=`cat /nvram/EasymeshCfg.json | grep AL_MAC_ADDR  | cut -d '\"' -f4`\n"
+    "al_mac=`iw dev wifi1.3 info | grep addr | cut -d ' ' -f2`\n"
+    "sed -i \"s/$al_mac_addr/$al_mac/g\" /nvram/EasymeshCfg.json\n"
+)
+new_al_update = (
+    "al_mac=$(iw dev wifi1.3 info | awk '/addr/ { print $2; exit }')\n"
+    "if [ -n \"$al_mac\" ]; then\n"
+    "    sed -i \"s@\\\"AL_MAC_ADDR\\\"[[:space:]]*:[[:space:]]*\\\"[^\\\"]*\\\"@\\\"AL_MAC_ADDR\\\": \\\"$al_mac\\\"@\" /nvram/EasymeshCfg.json\n"
+    "fi\n"
+)
+assert content.count(old_al_update) == 1, content.count(old_al_update)
+content = content.replace(old_al_update, new_al_update)
 with open(path, "w") as fh:
     fh.write(content)
 PYEOF
-        bbnote "meta-cmf-bananapi-vcpe: added missing mac_addresses.txt generation to $fn"
+        bbnote "meta-cmf-bananapi-vcpe: added persistent VAP MAC generation and first-boot-safe EasyMesh AL-MAC update to $fn"
     done
 }
