@@ -81,3 +81,19 @@ generation obtains all client BSSID/RCPI observations with one controller query,
 so observation cost does not distort a multi-client RF timeline. Run artifacts
 contain the frozen plan, every applied generation and observation, health
 snapshots, verified restore, and a machine-readable summary.
+
+## Optional kernel data path
+
+Userspace wmediumd remains the default. When the experimental hwsim kernel
+medium was explicitly selected during an isolated cold start, the same compiled
+event plan can use its atomic double-buffered matrix:
+
+```sh
+sudo python3 -m wmdcfg.cli status --backend kernel
+sudo python3 -m wmdcfg.cli run /tmp/two-ap-crossover.plan.json --backend kernel
+```
+
+The adapter retains SNR units, generation checks, readback, and restoration.
+The kernel backend implements fewer RF effects; consult
+[the capability boundary](../../../doc/easymesh/reference/hwsim-kernel-medium.md)
+before using it for optimizer conclusions.

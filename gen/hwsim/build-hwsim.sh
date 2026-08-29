@@ -1,6 +1,7 @@
 #!/bin/bash
 # build-hwsim.sh -- build a mac80211_hwsim.ko that lets wmediumd register at
-# channels > 1 (patch 0001), optionally with 6 GHz support.
+# channels > 1 (patch 0001), optionally with 6 GHz support and an opt-in
+# impaired in-kernel medium (patch 0003). Userspace wmediumd remains default.
 #
 #   ./build-hwsim.sh            # build patched module -> ./build/mac80211_hwsim.ko
 #   ./build-hwsim.sh --6ghz     # also enable 6 GHz (kernel-generation dependent)
@@ -88,6 +89,8 @@ if [ "$WITH_6GHZ" = 1 ]; then
         echo "   (6 GHz IR-capable; see doc/easymesh/Linux-7.0-hwsim-6GHz-VLP-AP-results.md)."
     fi
 fi
+apply "$HERE/patches/0003-mac80211_hwsim-optional-kernel-medium.patch"
+apply "$HERE/patches/0004-mac80211_hwsim-kernel-medium-link-matrix.patch"
 grep -q 'EXPERIMENTAL wmediumd' "$SRCDIR/mac80211_hwsim.c" \
     || { echo "patch 0001 did not apply -- check source version" >&2; exit 1; }
 
@@ -119,9 +122,13 @@ if [ "$DO_LOAD" = 1 ]; then
     if [ "$WITH_6GHZ" = 1 ] && [ "$GEN" != 6.8 ]; then
         REG="regtest=${HWSIM_REGTEST:-5}"
     fi
-    echo ">> reloading pool: radios=$R channels=$C $REG"
+    KMEDIUM=""
+    if [ "${HWSIM_KERNEL_MEDIUM:-0}" = 1 ]; then
+        KMEDIUM="kernel_medium=1 kernel_medium_cutoff=${HWSIM_KERNEL_MEDIUM_CUTOFF:--95} kernel_medium_loss_pct=${HWSIM_KERNEL_MEDIUM_LOSS_PCT:-0}"
+    fi
+    echo ">> reloading pool: radios=$R channels=$C $REG $KMEDIUM"
     sudo modprobe -r mac80211_hwsim || true
     # shellcheck disable=SC2086
-    sudo modprobe mac80211_hwsim radios="$R" channels="$C" $REG
+    sudo modprobe mac80211_hwsim radios="$R" channels="$C" $REG $KMEDIUM
     dmesg | tail -3 | grep -i hwsim || true
 fi

@@ -8,3 +8,7 @@ examples/*/out/
 
 # build-hwsim.sh extracts kernel source and builds the host-specific module here.
 /gen/hwsim/build/
+
+# Python validation and test bytecode.
+__pycache__/
+*.py[cod]
