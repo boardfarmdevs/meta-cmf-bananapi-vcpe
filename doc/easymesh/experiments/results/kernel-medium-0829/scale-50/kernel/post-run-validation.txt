@@ -1,0 +1,37 @@
+Read-only audit after the strict systemd-owned kernel cold reconstruction reached active/exited.
+
+address_rows=50
+unique_addresses=50
+multi_address_clients=none
+
+strict_health_audit:
+result=PASS
+model=5/15/50/54
+live_clients=50
+fresh_backhaul_signals=4/4
+physical_api_ownership=50/50
+unique_ipv4_ownership=50/50
+gateway_traffic=50/50
+monitored_restarts=0
+
+lab_service:
+Result=success
+MemoryPeak=398336000
+CPUUsageNSec=84892678000
+ActiveState=active
+SubState=exited
+
+kernel_metrics_proxy:
+MainPID=3509578
+Result=success
+MemoryPeak=9183232
+CPUUsageNSec=103887000
+ActiveState=active
+SubState=running
+sampled_cpu_percent=0.0
+sampled_rss_kib=19296
+
+memory:
+               total        used        free      shared  buff/cache   available
+Mem:           7.7Gi       3.3Gi       948Mi       139Mi       3.9Gi       4.4Gi
+Swap:             0B          0B          0B

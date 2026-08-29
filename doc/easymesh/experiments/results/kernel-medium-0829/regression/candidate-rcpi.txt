@@ -1,0 +1,33 @@
+{
+  "agent_al": "02:00:00:00:02:20",
+  "client": "wlan-client-007",
+  "expected_rcpi": 88,
+  "frequency_mhz": 5180,
+  "http_status": 200,
+  "medium_backend": "kernel",
+  "outcome": "passed",
+  "response": {
+    "message": "Unassociated STA metrics response received",
+    "metrics": [
+      {
+        "agent_al": "02:00:00:00:02:20",
+        "channel": 36,
+        "message_id": 1332,
+        "opclass": 115,
+        "rcpi": 88,
+        "received_at_ms": 1788036119344,
+        "ruid": "02:00:00:92:a4:77",
+        "sta": "02:00:00:00:0c:00",
+        "time_delta": 0
+      }
+    ],
+    "provider": "hwsim-wmediumd-read-only",
+    "simulated": true,
+    "success": true
+  },
+  "snr_db": 25,
+  "source_radio": "42:00:00:00:0c:00",
+  "sta": "02:00:00:00:0c:00",
+  "target": "bpiap-001",
+  "target_radio": "42:00:00:00:02:00"
+}

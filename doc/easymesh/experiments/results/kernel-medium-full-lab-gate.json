@@ -21,5 +21,6 @@
     "readiness_error": "bpiap did not receive its complete tri-band configuration",
     "repeated_hal_error": "No interface found for al_mac address"
   },
-  "assessment": "The cloned fixture failed in the stock built-in-medium state before either experimental backend could run. Phase 3 therefore remains unaccepted; this result does not invalidate the isolated Phase 1/2 functional and performance results."
+  "assessment": "This records the first cloned-fixture failure before medium selection. The extender identity defect was subsequently fixed and Phase 3 passed; use kernel-medium-0829/full-lab for the current result.",
+  "superseded_by": "kernel-medium-0829/full-lab/result.txt"
 }

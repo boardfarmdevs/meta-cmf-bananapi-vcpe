@@ -1,0 +1,66 @@
+{
+  "schema": "easymesh-medium-profile-comparison.v1",
+  "date": "2026-08-29",
+  "environment": {
+    "host": "rev140",
+    "fixture": "hwsim-kernel-dev-0829",
+    "virtualization": "LXD virtual machine backed by QEMU/KVM",
+    "guest_memory_mib": 7885,
+    "kernel": "7.0.0-30-generic",
+    "hwsim_pool_radios": 64,
+    "mesh_nodes": 5,
+    "private_clients": 25,
+    "iot_clients": 25
+  },
+  "userspace": {
+    "backend": "wmediumd",
+    "result": "PASS",
+    "started_at": "2026-08-29T22:13:01Z",
+    "result_at": "2026-08-29T22:38:13Z",
+    "active_at": "2026-08-29T22:40:02Z",
+    "model": {
+      "devices": 5,
+      "radios": 15,
+      "bsses": 50,
+      "associated_stas": 54
+    },
+    "live_clients": 50,
+    "clients_with_rcpi": 50,
+    "unique_ipv4_addresses": 50,
+    "monitored_restarts": 0,
+    "gateway_traffic_clients": 50,
+    "steady_sample": {
+      "vm_used_mib": 3482,
+      "vm_available_mib": 4506,
+      "wmediumd_threads": 1,
+      "wmediumd_cpu_percent": 16.7,
+      "wmediumd_rss_kib": 3736
+    }
+  },
+  "kernel": {
+    "backend": "mac80211_hwsim kernel medium",
+    "result": "PASS",
+    "started_at": "2026-08-29T23:13:47Z",
+    "result_at": "2026-08-29T23:38:00Z",
+    "active_at": "2026-08-29T23:40:16Z",
+    "model": {
+      "devices": 5,
+      "radios": 15,
+      "bsses": 50,
+      "associated_stas": 54
+    },
+    "live_clients": 50,
+    "clients_with_rcpi": 50,
+    "unique_ipv4_addresses": 50,
+    "monitored_restarts": 0,
+    "gateway_traffic_clients": 50,
+    "kernel_medium_generation": 0,
+    "steady_sample": {
+      "vm_used_mib": 3379,
+      "vm_available_mib": 4506,
+      "metrics_proxy_cpu_percent": 0.0,
+      "metrics_proxy_rss_kib": 19296
+    }
+  },
+  "qualification": "This accepts bounded cold reconstruction for the 50-client profile. It is not a duration soak, a high-rate traffic benchmark, or acceptance of the 100-client full lab."
+}

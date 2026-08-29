@@ -1,0 +1,12 @@
+steer.sh: sta-0c -> Extender-2; STA=02:00:00:00:0c:00 target_BSSID=02:00:00:e4:15:22 SSID=private_ssid band=1
+steer.sh: deterministic lab mode; client=wlan-client-007 source=02:00:00:48:53:92 target=02:00:00:e4:15:22 frequency=5180MHz
+steer.sh: applying the temporary RF bias from stable radio identities
+RF bias applied: wlan-client-007 source=02:00:00:48:53:92 target=02:00:00:e4:15:22 source_snr=20 target_snr=60 other_snr=-20
+steer.sh: target candidate is visible; submitting the EasyMesh BTM request
+steer.sh: 02:00:00:00:0c:00  02:00:00:48:53:92 (dev 00:60:2f:da:68:e4) -> 02:00:00:e4:15:22  [band 1 opclass 115 ch 36]
+
+
+
+
+RF bias restored: wlan-client-007
+steer.sh: PASS sta-0c is physically and visibly associated with Extender-2 (02:00:00:e4:15:22)

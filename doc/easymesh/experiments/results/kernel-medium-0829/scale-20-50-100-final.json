@@ -1,0 +1,276 @@
+{
+  "duration_seconds": 5,
+  "kernel": "7.0.0-30-generic",
+  "measurements": [
+    {
+      "active_radios": 25,
+      "backend": "userspace",
+      "client_equivalent": 20,
+      "elapsed_seconds": 5.002,
+      "guest_cpu": {
+        "capacity_percent": 2.3,
+        "equivalent_core_percent": 13.801,
+        "softirq_percent": 0.365,
+        "steal_percent": 0.056,
+        "system_percent": 1.262
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6944352,
+        "SReclaimable": 264948,
+        "SUnreclaim": 221944,
+        "Slab": 486892
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6959552,
+        "SReclaimable": 264948,
+        "SUnreclaim": 211160,
+        "Slab": 476108
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -15200,
+        "SReclaimable": 0,
+        "SUnreclaim": 10784,
+        "Slab": 10784
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2606,
+      "profile": "small",
+      "submitted_mbps": 5.002,
+      "transmitter": {
+        "tx_bytes": 3284894,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2621
+      },
+      "wmediumd_core_percent": 7.664,
+      "wmediumd_rss_kib": 2956
+    },
+    {
+      "active_radios": 25,
+      "backend": "kernel",
+      "client_equivalent": 20,
+      "elapsed_seconds": 5.002,
+      "guest_cpu": {
+        "capacity_percent": 1.485,
+        "equivalent_core_percent": 8.908,
+        "softirq_percent": 0.448,
+        "steal_percent": 0.084,
+        "system_percent": 0.756
+      },
+      "kernel_counters": {
+        "considered": 66145,
+        "delivered": 66145,
+        "dropped": 0
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6942872,
+        "SReclaimable": 265028,
+        "SUnreclaim": 221912,
+        "Slab": 486940
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6956336,
+        "SReclaimable": 265028,
+        "SUnreclaim": 211192,
+        "Slab": 476220
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -13464,
+        "SReclaimable": 0,
+        "SUnreclaim": 10720,
+        "Slab": 10720
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2606,
+      "profile": "small",
+      "submitted_mbps": 5.002,
+      "transmitter": {
+        "tx_bytes": 3284834,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2620
+      }
+    },
+    {
+      "active_radios": 55,
+      "backend": "userspace",
+      "client_equivalent": 50,
+      "elapsed_seconds": 5.002,
+      "guest_cpu": {
+        "capacity_percent": 2.164,
+        "equivalent_core_percent": 12.981,
+        "softirq_percent": 0.309,
+        "steal_percent": 0.056,
+        "system_percent": 1.096
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6932020,
+        "SReclaimable": 266116,
+        "SUnreclaim": 235108,
+        "Slab": 501224
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6959836,
+        "SReclaimable": 264884,
+        "SUnreclaim": 211092,
+        "Slab": 475976
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -27816,
+        "SReclaimable": 1232,
+        "SUnreclaim": 24016,
+        "Slab": 25248
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2606,
+      "profile": "medium",
+      "submitted_mbps": 5.002,
+      "transmitter": {
+        "tx_bytes": 3284894,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2621
+      },
+      "wmediumd_core_percent": 7.664,
+      "wmediumd_rss_kib": 2800
+    },
+    {
+      "active_radios": 55,
+      "backend": "kernel",
+      "client_equivalent": 50,
+      "elapsed_seconds": 5.0,
+      "guest_cpu": {
+        "capacity_percent": 2.075,
+        "equivalent_core_percent": 12.451,
+        "softirq_percent": 0.785,
+        "steal_percent": 0.028,
+        "system_percent": 1.01
+      },
+      "kernel_counters": {
+        "considered": 148859,
+        "delivered": 148859,
+        "dropped": 0
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6928480,
+        "SReclaimable": 265940,
+        "SUnreclaim": 234988,
+        "Slab": 500928
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6956120,
+        "SReclaimable": 265236,
+        "SUnreclaim": 211124,
+        "Slab": 476360
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -27640,
+        "SReclaimable": 704,
+        "SUnreclaim": 23864,
+        "Slab": 24568
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2605,
+      "profile": "medium",
+      "submitted_mbps": 5.001,
+      "transmitter": {
+        "tx_bytes": 3283574,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2619
+      }
+    },
+    {
+      "active_radios": 105,
+      "backend": "userspace",
+      "client_equivalent": 100,
+      "elapsed_seconds": 5.002,
+      "guest_cpu": {
+        "capacity_percent": 2.328,
+        "equivalent_core_percent": 13.969,
+        "softirq_percent": 0.365,
+        "steal_percent": 0.056,
+        "system_percent": 1.262
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6909260,
+        "SReclaimable": 268164,
+        "SUnreclaim": 256860,
+        "Slab": 525024
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6957868,
+        "SReclaimable": 265300,
+        "SUnreclaim": 211092,
+        "Slab": 476392
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -48608,
+        "SReclaimable": 2864,
+        "SUnreclaim": 45768,
+        "Slab": 48632
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2606,
+      "profile": "stress",
+      "submitted_mbps": 5.002,
+      "transmitter": {
+        "tx_bytes": 3284834,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2620
+      },
+      "wmediumd_core_percent": 7.831,
+      "wmediumd_rss_kib": 3060
+    },
+    {
+      "active_radios": 105,
+      "backend": "kernel",
+      "client_equivalent": 100,
+      "elapsed_seconds": 5.001,
+      "guest_cpu": {
+        "capacity_percent": 2.718,
+        "equivalent_core_percent": 16.307,
+        "softirq_percent": 1.177,
+        "steal_percent": 0.028,
+        "system_percent": 1.289
+      },
+      "kernel_counters": {
+        "considered": 286648,
+        "delivered": 286648,
+        "dropped": 0
+      },
+      "memory_after_module_kib": {
+        "MemAvailable": 6900932,
+        "SReclaimable": 267956,
+        "SUnreclaim": 256768,
+        "Slab": 524724
+      },
+      "memory_before_kib": {
+        "MemAvailable": 6954528,
+        "SReclaimable": 265316,
+        "SUnreclaim": 211208,
+        "Slab": 476524
+      },
+      "module_memory_delta_kib": {
+        "MemAvailable": -53596,
+        "SReclaimable": 2640,
+        "SUnreclaim": 45560,
+        "Slab": 48200
+      },
+      "offered_mbps": 5.0,
+      "packets_sent": 2605,
+      "profile": "stress",
+      "submitted_mbps": 5.001,
+      "transmitter": {
+        "tx_bytes": 3283574,
+        "tx_dropped": 0,
+        "tx_errors": 0,
+        "tx_packets": 2619
+      }
+    }
+  ],
+  "offered_mbps": 5.0,
+  "schema": "hwsim-medium-scale.v1",
+  "vcpus": 6
+}

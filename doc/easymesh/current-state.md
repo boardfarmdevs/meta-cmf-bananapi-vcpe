@@ -61,7 +61,7 @@ journald, and SNMP fixes are described in
 | Direct-host reboot remains stopped while packaged VM boot starts the lab | Not yet accepted as a unified installation policy |
 | Autonomous production steering policy | Not implemented |
 | Completed 12-hour 20-client churn soak | Not yet claimed |
-| Validated 50/100-client runtime | Not yet claimed |
+| Validated 50/100-client runtime | 50-client bounded cold reconstruction passed in the isolated `0829` experiment; duration acceptance and the 100-client full lab are not claimed |
 
 ## Acceptance
 
@@ -114,6 +114,10 @@ image and is not a current parity claim.
   does not prove that an autonomous optimizing policy is running.
 - Immediate reconstruction and functional acceptance do not replace the
   separately defined long-duration soak.
+- Userspace wmediumd remains the accepted and default medium. The optional
+  `0829` kernel medium is a reduced-physics comparison backend, not a baseline
+  replacement. Its implementation and bounded 50-client results are in the
+  [kernel-medium reference](reference/hwsim-kernel-medium.md).
 - The packaged VM currently performs a complete ordered runtime reconstruction
   after boot. That is a temporary recovery mechanism, not the accepted target
   for independent node lifecycle. A direct bare-metal host should not

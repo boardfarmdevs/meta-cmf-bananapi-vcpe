@@ -9,12 +9,13 @@ separate inputs:
 | Profile | Private clients | IoT clients | Total | State |
 | --- | ---: | ---: | ---: | --- |
 | `small` | 10 | 10 | 20 | current rev130 acceptance profile |
-| `medium` | 25 | 25 | 50 | next capacity profile; provisioner is ready, acceptance is not complete |
-| `stress` | 50 | 50 | 100 | target profile; blocked on a pool larger than the static hwsim limit |
+| `medium` | 25 | 25 | 50 | bounded cold reconstruction accepted in the isolated Linux 7 evaluation VM |
+| `stress` | 50 | 50 | 100 | provisioner and optional 128-radio hwsim bound are ready; full lab acceptance is not complete |
 
-Twenty clients are enough for current policy development. Fifty and one
-hundred are capacity milestones, not claims that those profiles are already
-stable.
+Twenty clients remain the routine policy-development profile. Fifty clients
+now pass bounded cold reconstruction with userspace wmediumd and the optional
+kernel backend. That is not a duration soak. One hundred clients remain a
+capacity milestone, not a claim of full-lab stability.
 
 The profiles use the same deterministic global indexes:
 
@@ -84,6 +85,11 @@ trap restores wmediumd after a failed or interrupted provisioning attempt.
 Creating a single client with `wlan-client.sh` still refreshes wmediumd by
 itself.
 
+The client startup hook treats DHCP as a replacement transaction. It flushes
+an old global WLAN address before invoking BusyBox `udhcpc`, preventing a
+recovery retry from retaining the prior lease as a secondary address. The hook
+is refreshed even when an older `wlan-client-base` image alias is reused.
+
 To remove the selected profile's clients:
 
 ```sh
@@ -114,7 +120,7 @@ Five mesh nodes consume five hwsim radios. The current requirements are:
 | --- | ---: | ---: |
 | small | 25 | 32 |
 | medium | 55 | 64 |
-| stress | 105 | not yet accepted |
+| stress | 105 | 128 with the optional lab patch; full profile not yet accepted |
 
 wmediumd materializes directed pair state for the active radios even though the
 generated configuration writes only non-default links. That state grows as
@@ -130,19 +136,20 @@ The pool must be selected while every hwsim-owning container is stopped; never
 reload `mac80211_hwsim` underneath a running BPI or WLAN client. An already
 loaded 32- or 64-radio pool is treated as authoritative by the helpers.
 
-The current static hwsim load path is bounded to 100 radios, so five mesh nodes
-plus 100 clients cannot be represented by `radios=` alone. Before accepting
-the stress profile, choose and test one solution: validated dynamic radio
-creation through hwsim's management interface, or a narrowly reviewed increase
-to the module's static bound. Stable naming, LXD ownership, wmediumd
-registration, teardown and cold reconstruction are all part of that gate.
+The optional lab patch now raises the static hwsim load bound to the existing
+128-radio kernel-medium identity limit. A controlled 105-radio fan-out test
+passed with both userspace wmediumd and the kernel backend at a paced 5 Mbit/s
+broadcast load. That result proves radio creation and medium fan-out, not a
+fully provisioned 100-client EasyMesh topology. Stable naming, LXD ownership,
+onboarding, controller-model size, traffic, teardown and cold reconstruction
+remain part of the full stress-profile gate.
 
 ## Acceptance gates
 
 A profile passes only when all of the following agree:
 
 1. every requested client container is running, associated to its intended
-   SSID and has DHCP;
+   SSID and owns exactly one global IPv4 address that no other client owns;
 2. `/api/v1/topology` contains the exact unique private and IoT counts;
 3. the controller `STAList` contains `clients + 4` associated records, where
    four are extender backhauls;
@@ -155,8 +162,10 @@ A profile passes only when all of the following agree:
    ownership, coredumps, OOM events or restoration failure.
 
 The accepted small-profile result is defined in
-[current state](../../current-state.md). Duration and RF-churn acceptance is a
-separate gate in [soak acceptance](soak-acceptance.md).
+[current state](../../current-state.md). The bounded medium-profile evidence is
+under [`kernel-medium-0829`](../results/kernel-medium-0829/scale-50/). Duration
+and RF-churn acceptance remains a separate gate in
+[soak acceptance](soak-acceptance.md).
 
 ## wmediumd capacity and overload
 
@@ -168,10 +177,12 @@ pair table for every movement, but frame delivery still has to consider the
 eligible simulated receivers. Client count and offered WLAN traffic therefore
 both matter.
 
-The accepted 20-client profile produces 25 station identities and 600 directed
-links. This does not establish capacity for 50 or 100 clients. The soak sampler
-records peak RSS, lifetime CPU, thread count and the matching netlink socket
-drop counter so overload becomes a test failure instead of a visual impression.
+The accepted 50-client profile produces 55 station identities and 2,970
+directed links. Its bounded cold run does not establish sustained packet-rate
+or duration capacity, and it does not establish capacity for 100 full client
+containers. The soak sampler records peak RSS, lifetime CPU, thread count and
+the matching netlink socket drop counter so overload becomes a test failure
+instead of a visual impression.
 
 If a larger profile approaches one full CPU, accumulates netlink drops or
 misses scenario deadlines, apply remedies in this order:
@@ -193,15 +204,12 @@ share one hwsim radio set; that would require an explicit isolation design.
 
 ## Progression
 
-The next capacity step is not “start 50 and see.” It is:
+The 64-radio, five-node, 50-client cold gate is complete. The next scale work
+is to run declared private and IoT traffic with RF churn for a bounded duration,
+record scenario lateness and netlink drops, and decide whether the medium
+profile has enough margin for routine optimizer use.
 
-1. load a 64-radio idle pool and cold-build the five-node mesh;
-2. provision the `medium` profile with the same resumable command;
-3. measure marginal container, controller, WebUI and wmediumd cost during
-   onboarding and steady state;
-4. run private and IoT RF churn separately, then together with declared traffic
-   profiles; and
-5. publish the 50-client envelope before enabling the profile in routine demos.
-
-Only after that should the 105-radio mechanism and 100-client stress profile be
-implemented and accepted.
+Only then should a host with substantially more than 8 GiB available to the
+lab attempt the complete 100-client profile. The 105-radio mechanism is
+available and has passed a synthetic 5 Mbit/s fan-out test, but it must not be
+confused with end-to-end client, controller-model or long-duration acceptance.

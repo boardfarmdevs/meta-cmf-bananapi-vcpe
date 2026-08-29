@@ -2,262 +2,326 @@
 
 ## Decision
 
-Userspace wmediumd remains the lab default and reference RF implementation.
-The kernel medium is an optional experimental data path for scale and
-performance research. Installing the patched module does not enable it:
+Userspace wmediumd remains the default and reference RF implementation. The
+kernel medium is an optional experimental data path for performance and scale
+research. Installing the patched `mac80211_hwsim.ko` does not enable it:
 `kernel_medium=0` is the default, and a registered userspace wmediumd always
-takes precedence even when `kernel_medium=1`.
-
-The implementation extends mac80211_hwsim's existing same-channel in-kernel
-frame-copy path. It does not introduce a second wireless driver or move the
-configurator, optimizer, or Web interfaces into the kernel.
+takes precedence.
 
 ```text
 default
 
-  hwsim TX -> generic netlink -> userspace wmediumd -> cloned RX/TX status
+  hwsim TX -> generic netlink -> userspace wmediumd -> hwsim RX/TX status
 
-optional, only when no userspace wmediumd is registered
+optional, only while no userspace wmediumd is registered
 
-  hwsim TX -> active kernel matrix -> cutoff/loss decision -> cloned RX/TX status
+  hwsim TX -> active kernel matrix -> signal/PER/delay -> hwsim RX/TX status
                        ^
                        |
               wmdcfg kernel adapter
-              stages bank N, commits once
+              stage bank N, commit once
 ```
 
-## Implemented phases
+The configurator, scenario language, optimizer, EasyMesh processes, WebUI and
+wmediumd Console remain in userspace. This work changes only the optional
+frame-delivery path inside hwsim.
+
+## Capabilities by phase
 
 ### Phase 0: controlled baseline
 
-The evaluation uses the same Linux 7.0 module, two hwsim radios, channel,
-namespace split, traffic generator, VM, and measurement code for every data
-path. The accepted userspace wmediumd binary and normal netlink transport are
-included as a configuration rather than compared with unrelated tooling.
+The evaluator holds the VM, Linux 7.0 kernel, hwsim radios, channel, namespace
+split, traffic generator and measurement code constant. Stock hwsim,
+userspace wmediumd and the optional kernel path are configurations of the same
+test, not unrelated benchmarks.
 
-### Phase 1: opt-in impaired kernel path
+### Phase 1: opt-in impaired delivery
 
-Patch `0003-mac80211_hwsim-optional-kernel-medium.patch` adds:
+Patch `0003-mac80211_hwsim-optional-kernel-medium.patch` adds a disabled-by-
+default kernel path with signal cutoff, global deterministic loss and
+per-receiver considered/delivered/dropped counters.
 
-- `kernel_medium`, disabled by default;
-- a configurable signal cutoff;
-- deterministic global packet-loss percentage;
-- receiver signal from the existing per-radio `rx_rssi` control;
-- per-radio considered, delivered, and dropped counters.
-
-The Linux 7.0 QEMU smoke test passed 20/20 packets at zero loss, dropped 10/10
-at 100 percent loss, and passed 5/5 immediately after restoration.
-
-### Phase 2: atomic link matrices
+### Phase 2: atomic directed link matrices
 
 Patch `0004-mac80211_hwsim-kernel-medium-link-matrix.patch` adds two complete
-matrix banks. An entry is directed and qualified by source radio, receiver
-radio, and band. Each entry supplies signal dBm and deterministic loss percent.
-The configurator fills the inactive bank, then one `kernel_medium_bank` write
-switches the whole RF scene. The module increments
-`kernel_medium_generation` once for that commit.
+matrix banks. Entries are directed and keyed by permanent source-radio
+identity, receiver radio and band. A writer fills the inactive bank and one
+module-parameter write publishes the scene. `kernel_medium_generation`
+increments once per commit.
 
-The matrix is addressed by permanent hwsim transmitter identities, such as
-`42:00:00:00:01:00`; it does not depend on changing `phyN`, `virt-wlanN`, VAP,
-or BSSID names. Capacity is currently 128 provisioned radios and the 2.4, 5,
-and 6 GHz bands.
+The permanent identities, such as `42:00:00:00:01:00`, do not depend on
+changing `phyN`, `virt-wlanN`, VAP or BSSID names. The matrix covers 2.4, 5 and
+6 GHz and is bounded to 128 provisioned radios.
 
-Each receiver has this experimental debugfs interface:
+Each receiver exposes the experimental debugfs interface:
 
 ```text
 /sys/kernel/debug/ieee80211/phyN/hwsim/kernel_medium_links
 ```
 
-Read it to obtain receiver identity, active bank, defaults, staged entries, and
-counters. Its write operations are:
+Writes use these operations:
 
 ```text
 clear-bank BANK
 set BANK SOURCE_MAC BAND SIGNAL_DBM LOSS_PERCENT
 ```
 
-The `wmdcfg` adapter hides that ABI and preserves existing scenario units.
-Scenario values are SNR dB; the adapter converts with an explicit default noise
-floor of -91 dBm. Existing compiled plans can select the backend at execution:
+The `wmdcfg` kernel adapter owns this ABI. It serializes writers, validates
+module identity and generation, stages a complete inactive bank, commits once,
+reads the result back, and restores the captured baseline after a scenario.
+Existing scenario plans select a backend only at execution:
 
 ```sh
 cd gen/wmediumd/configurator
 
-# Normal and still the default.
-python3 -m wmdcfg.cli status
+# Reference path and default.
 python3 -m wmdcfg.cli run /tmp/scenario.plan.json
 
-# Optional kernel data path.
-sudo python3 -m wmdcfg.cli status --backend kernel
+# Experimental path.
 sudo python3 -m wmdcfg.cli run /tmp/scenario.plan.json --backend kernel
 ```
 
-`--noise-floor-dbm` changes the conversion when required. The adapter
-serializes writers, checks module identity and generation, stages a complete
-inactive bank, commits once, reads every update back, and restores the captured
-baseline through the existing runner. Kernel control is deliberately root-only;
-the userspace control socket retains its existing delegated group permissions.
+Scenario values remain SNR dB. The adapter uses an explicit noise floor,
+defaulting to -91 dBm, to derive the signal placed in the matrix.
 
-## Build and selection
+### Phase 3: complete 20-client lab path
 
-The build always applies the optional code, but ordinary behavior is unchanged:
+The runtime can select the backend atomically at cold start. Kernel mode:
+
+- prevents a userspace wmediumd registration;
+- publishes the same permanent-radio inventory used by steering and the
+  Console;
+- starts a read-only, systemd-owned metrics proxy so the existing controller
+  telemetry provider consumes the kernel matrix;
+- exposes backend and generation through the normal tooling; and
+- restores every scenario through the same configurator runner.
+
+The five-mesh-node, 20-client cold reconstruction passed on Linux
+`7.0.0-30-generic` with model `5/15/50`, 20 unique clients, 24 associated STA
+records including four backhauls, all 20 client metrics, all 20 gateway paths,
+and zero OneWifi/EasyMesh restarts.
+
+The supported userspace backend was then selected from `/etc/default/easymesh-lab`
+and run through the same systemd-owned cold reconstruction. It produced the
+same `5/15/50`, `20/20`, `24` and zero-restart result. This is the regression
+control that matters: installing the patched module and runtime does not move
+the lab away from userspace wmediumd unless `EASYMESH_MEDIUM_BACKEND=kernel`
+is explicitly selected.
+
+Additional kernel-mode acceptance passed:
+
+- health audit: 5 devices, 15 radios, 50 BSS records and 20/20 clients;
+- candidate link query: requested SNR 25 dB produced RCPI 88;
+- deterministic steer: `sta-0c` moved to Extender-2 and converged physically
+  and in the controller model;
+- full four-hop chain: passed backhaul, signal, forwarding, database and all
+  20 client checks; and
+- return to star: the first immediate traffic gate observed one transient
+  client miss, while the repeat passed 20/20 and the affected client passed
+  direct probes between runs.
+
+The raw artifacts are under
+[`kernel-medium-0829`](../experiments/results/kernel-medium-0829/).
+
+One post-steer optimizer run also exposed an existing hwsim/RDK lifecycle
+limit: the old AP retained the roamed STA as an authorized kernel station. Its
+unassociated-STA query consequently omitted that STA and the strict optimizer
+snapshot failed closed. This is not a kernel-medium matrix failure—the direct
+candidate query, steer and topology all passed—but it remains a lab cleanup
+issue for repeated immediate optimization cycles.
+
+### Phase 4: rate-aware packet errors
+
+Patch `0005-mac80211_hwsim-kernel-medium-rate-per.patch` adds an independently
+opt-in deterministic approximation:
+
+```text
+kernel_medium_rate_per=0       # default
+kernel_medium_noise_floor=-91
+```
+
+It maps legacy/HT/VHT rate metadata to a required SNR and applies a small loss
+curve near that threshold. Matrix loss and rate loss are independent and are
+combined as `a + b - a*b/100`. This is deliberately not presented as an
+RF-accurate PHY model.
+
+In the controlled 11 Mbit/s legacy case, SNR 7 dB against an 8 dB requirement
+selected 30 percent rate loss. The receiver recorded 827 drops from 2,758
+decisions and UDP observed 29.416 percent loss. The decision, rate encoding,
+required SNR and combined loss are visible in debugfs.
+
+### Phase 5: delay, jitter and occupancy observations
+
+Patch `0006-mac80211_hwsim-kernel-medium-timing-observability.patch` adds a
+per-receiver high-resolution timer queue with a hard limit and teardown drain:
+
+```text
+kernel_medium_delay_us=0
+kernel_medium_jitter_us=0
+kernel_medium_delay_queue_limit=4096
+```
+
+All defaults are neutral. With 2,000 microseconds delay and deterministic
+plus/minus 500 microseconds jitter, the controlled 5 Mbit/s run delivered with
+zero loss, 3.878 ms mean RTT and 0.0337 ms UDP jitter. Queue high-water,
+overflow, delayed delivery, approximate airtime and per-band temporal overlap
+are reported in debugfs.
+
+The overlap counter is observational only. It does not yet cause collision
+loss. Delay schedules receive delivery; it does not defer the sender's
+synthetic ACK decision.
+
+### Phase 6: bounded 20/50/100 medium scale and 50-client lab
+
+Patch `0007-mac80211_hwsim-allow-128-static-radios.patch` raises the static
+module-load bound from 100 to the already checked 128-radio matrix bound. The
+default radio count remains unchanged. This allows five mesh radios plus 100
+client radios to be represented without dynamic radio creation.
+
+`evaluate-medium-scale.py` uses 25, 55 and 105 active same-channel radios. One
+IBSS transmitter submits paced 5 Mbit/s broadcast traffic; another radio is an
+IBSS peer and the remainder are active monitors. Broadcast deliberately makes
+both backends process the complete receiver roster.
+
+| Client equivalent | Radios | Backend | Submitted Mbit/s | Guest CPU, equivalent core | Medium process CPU | Module SUnreclaim delta |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 20 | 25 | userspace | 5.002 | 13.801% | 7.664% | 10.5 MiB |
+| 20 | 25 | kernel | 5.002 | 8.908% | n/a | 10.5 MiB |
+| 50 | 55 | userspace | 5.002 | 12.981% | 7.664% | 23.5 MiB |
+| 50 | 55 | kernel | 5.001 | 12.451% | n/a | 23.3 MiB |
+| 100 | 105 | userspace | 5.002 | 13.969% | 7.831% | 44.7 MiB |
+| 100 | 105 | kernel | 5.001 | 16.307% | n/a | 44.5 MiB |
+
+Neither backend saturated at this fixed offered load. The kernel path shifts
+work into system/softirq processing and its receiver cloning cost grows with
+the roster. The userspace daemon remained near eight percent of one core in
+this particular paced broadcast test. These results are a medium fan-out
+benchmark, not acceptance of 100 simultaneous EasyMesh client containers or
+100 independent traffic flows.
+
+The complete five-node lab was then expanded to 25 private and 25 IoT clients
+over a 64-radio pool. Both cold-reconstruction runs included ordered teardown,
+controller and extender onboarding, all 50 client starts, medium selection,
+controller-model convergence, RCPI reporting, a two-minute stable topology
+window, service restart checks and gateway traffic:
+
+| Backend | Result | Model | Client/API/RCPI | IPv4 ownership | Monitored restarts | Time to PASS | Time to `active/exited` |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| userspace wmediumd | PASS | `5/15/50/54` | `50/50/50` | 50 unique, one per client | 0 | 25m12s | 27m01s |
+| kernel medium | PASS | `5/15/50/54` | `50/50/50` | 50 unique, one per client | 0 | 24m13s | 26m29s |
+
+The userspace run used about 3.4 GiB of the 7.7 GiB VM. A steady-state sample
+showed the single-thread wmediumd at 16.7 percent of one CPU and 3.7 MiB RSS.
+The kernel run used about 3.3 GiB; its compatibility metrics proxy sampled at
+0.0 percent CPU and 19 MiB RSS. These are point observations, not peak packet-
+rate benchmarks. The synthetic fan-out table above remains the controlled
+backend comparison.
+
+The first kernel run revealed a client with two global IPv4 addresses after a
+WLAN recovery retry. BusyBox `udhcpc` had added the new lease without deleting
+the old one. That run was rejected even though the older gates passed. The
+client startup transaction now flushes the prior global lease, the runtime and
+health audit require exactly one unique IPv4 address per client, and the full
+kernel cold reconstruction was repeated successfully with the stricter gate.
+Client shutdown is also batched, reducing the 50-client stop phase to about
+100 seconds and keeping it below the service's 240-second stop budget.
+
+This accepts the 50-client medium profile for bounded cold reconstruction in
+the isolated evaluation VM. It is not a duration soak or acceptance of the
+100-client stress profile. A full 100-client container run was deliberately
+not attempted in the 8 GiB VM; the 105-radio synthetic result establishes the
+medium mechanism, not enough memory or lifecycle margin for that topology.
+
+## Build and backend selection
+
+Fresh Yocto TMPDIR builds also passed for `rdk-generic-broadband-image` and
+`rdk-generic-ap-extender-image` at the experimental layer revision. Artifact
+names, sizes, checksums, task counts and the one build-time assertion corrected
+during this gate are recorded in
+[`yocto-builds.json`](../experiments/results/kernel-medium-0829/yocto-builds.json).
+
+Build and install without changing the default path:
 
 ```sh
 gen/hwsim/build-hwsim.sh --6ghz --install
 ```
 
-The normal lab loads the module without a kernel-medium option and starts
-userspace wmediumd. An isolated kernel test can load it explicitly:
+Load an isolated kernel test pool only while all hwsim-owning containers are
+stopped:
 
 ```sh
+HWSIM_RADIOS=32 \
 HWSIM_KERNEL_MEDIUM=1 \
-HWSIM_KERNEL_MEDIUM_CUTOFF=-95 \
-HWSIM_KERNEL_MEDIUM_LOSS_PCT=0 \
+HWSIM_KERNEL_MEDIUM_RATE_PER=0 \
+HWSIM_KERNEL_MEDIUM_DELAY_US=0 \
   gen/hwsim/build-hwsim.sh --6ghz --load
 ```
 
-Do not reload hwsim beneath running BPI or WLAN-client containers. Select the
-backend as part of an isolated cold start. If userspace wmediumd subsequently
-registers, it owns frame delivery and the kernel counters stop.
+Never reload hwsim beneath a BPI or WLAN-client container. Backend selection
+belongs to a cold lifecycle transaction, not a live toggle.
 
-## QEMU evaluation
-
-The repeatable evaluator is:
+Run the two-radio functional evaluator only in an isolated VM with the lab
+stopped:
 
 ```sh
 sudo gen/hwsim/tests/evaluate-medium-backends.py \
+  --module gen/hwsim/build/mac80211_hwsim.ko \
+  --wmediumd gen/wmediumd/wmediumd.patched \
   --duration 10 --rate 20M \
-  --output /tmp/kernel-medium-eval-20m.json
+  --output /tmp/kernel-medium.json
 ```
 
-It destructively owns its temporary two-radio pool and namespace, so it must
-run only in an isolated VM with the lab stopped. It evaluates:
+Run the destructive fan-out benchmark in the same conditions:
 
-1. stock hwsim perfect medium;
-2. default userspace wmediumd;
-3. kernel medium with receiver defaults;
-4. kernel medium with active per-band matrix entries;
-5. kernel medium enabled while userspace wmediumd is registered.
-
-Tests ran in `hwsim-kernel-dev-0829`, an LXD virtual machine backed by
-QEMU/KVM, with Ubuntu 24.04, Linux `7.0.0-30-generic`, six vCPUs, two radios,
-one 2.4 GHz IBSS, and 1200-byte UDP datagrams. CPU is aggregate guest CPU for
-both iperf endpoints and the medium; equivalent-core percentage converts that
-aggregate to one-core units. QEMU steal time is excluded and reported
-separately.
-
-### Sustained 20 Mbit/s
-
-| Configuration | Received Mbit/s | Loss | Mean RTT ms | Jitter ms | Guest CPU, cores | wmediumd core CPU |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Stock built-in | 19.998 | 0% | 0.107 | 0.0347 | 1.025 | n/a |
-| Userspace wmediumd | 19.998 | 0% | 0.824 | 0.2745 | 1.378 | 9.887% |
-| Kernel default | 19.998 | 0% | 0.114 | 0.0050 | 1.022 | n/a |
-| Kernel matrix | 19.998 | 0% | 0.111 | 0.0059 | 1.022 | n/a |
-| Kernel enabled, userspace registered | 19.998 | 0% | 0.819 | 0.3235 | 1.387 | 9.188% |
-
-At this load the kernel matrix overhead is below run-to-run resolution.
-Userspace adds about 0.36 equivalent cores to the end-to-end workload and
-raises mean RTT by roughly seven times.
-
-### Requested 50 Mbit/s
-
-| Configuration | Received Mbit/s | Request delivered | Loss reported | Mean RTT ms | Jitter ms | Guest CPU, cores | wmediumd core CPU |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Stock built-in | 49.994 | 100.0% | 0% | 0.114 | 0.0048 | 1.055 | n/a |
-| Userspace wmediumd | 21.492 | 43.0% | 0% | 0.814 | 0.3920 | 0.220 | 11.942% |
-| Kernel default | 49.995 | 100.0% | 0% | 0.097 | 0.0040 | 1.023 | n/a |
-| Kernel matrix | 49.994 | 100.0% | 0% | 0.117 | 0.0043 | 1.019 | n/a |
-| Kernel enabled, userspace registered | 21.552 | 43.1% | 0% | 0.881 | 0.0434 | 0.239 | 11.565% |
-
-The userspace cases are sender-backpressure limited: only about 21.5 Mbit/s
-enters and exits the radio path, so iperf reports no receiver loss. Their lower
-CPU at this point is not greater efficiency; it reflects throttled offered
-load. Both kernel modes sustain the requested rate. In the precedence case,
-all kernel counters remained zero, directly proving userspace owned the frames.
-
-Machine-readable results are in
-[the 20 Mbit/s result](../experiments/results/kernel-medium-eval-20m-final.json)
-and [the 50 Mbit/s result](../experiments/results/kernel-medium-eval-50m-final.json).
-
-These are point results from a two-radio VM benchmark, not a claim about a
-physical AP's forwarding rate or a completed 100-client EasyMesh profile.
-
-### Full-lab gate
-
-The five-mesh-node/twenty-client reconstruction gate did not reach medium
-selection. Two bounded cold-start attempts in the cloned QEMU fixture failed
-while starting the first extender, before any WLAN client or wmediumd process
-was started. During both failures:
-
-- `kernel_medium` remained `N`;
-- no wmediumd process was registered;
-- `bpiap` created no `private_ssid` or `iot_ssid` VAPs and its 5 GHz
-  backhaul reported `Not connected`;
-- the extender HAL repeatedly reported `No interface found for al_mac address`
-  for its persisted identity;
-- the appliance readiness gate ended with `bpiap did not receive its complete
-  tri-band configuration`.
-
-This is a cloned-fixture identity/startup failure in the unmodified built-in
-medium state, not evidence for or against the optional kernel data path. The
-Phase 1/2 functional tests and five-configuration measurements above are
-accepted; Phase 3 full-lab acceptance remains open until the fixture passes
-the same cold-start gate with the normal userspace backend first. No production
-or accepted lab was changed during this evaluation. The outcome is preserved
-in the [machine-readable gate result](../experiments/results/kernel-medium-full-lab-gate.json).
+```sh
+sudo gen/hwsim/tests/evaluate-medium-scale.py \
+  --module gen/hwsim/build/mac80211_hwsim.ko \
+  --wmediumd gen/wmediumd/wmediumd.patched \
+  --output /tmp/kernel-medium-scale.json
+```
 
 ## Capability boundary
 
-The kernel option currently provides:
+The optional kernel path now provides:
 
-- same-channel delivery across concurrent 2.4, 5, and 6 GHz contexts;
-- atomic directed link signal and loss matrices;
-- dynamic scenes without module or container restart;
-- signal delivery into mac80211 telemetry;
-- deterministic loss, cutoff, generation, readback, and receiver counters;
-- reuse of the existing scenario compiler and runner.
+- concurrent same-channel delivery in 2.4, 5 and 6 GHz contexts;
+- atomic directed signal/loss matrices and dynamic scene restore;
+- permanent-radio addressing and generation-checked readback;
+- signal telemetry, deterministic configured loss and optional rate-aware PER;
+- optional bounded receive delay and deterministic jitter;
+- approximate airtime, overlap, queue and delivery counters;
+- reuse of configurator scenarios, steering helpers and controller candidate
+  telemetry; and
+- a statically bounded 128-radio experimental pool.
 
-It does **not** yet reproduce all wmediumd behavior:
+It does not provide complete wmediumd or physical-medium fidelity:
 
-- no rate/MCS-dependent PER table;
-- no airtime, CCA, contention, collision, hidden-node, or interference model;
-- no propagation delay, jitter, duplication, or reordering;
-- frequency-qualified plans currently collapse to one entry per band;
-- no per-link packet counters or wmediumd Console data source;
-- debugfs is a root-only experimental lab ABI, not an upstream API.
+- no CCA, contention, collision enforcement or hidden-node behavior;
+- no exact PHY preamble/aggregation/retry/airtime model;
+- occupancy is grouped by band rather than exact channel;
+- no packet duplication or reordering model;
+- delayed receive does not change synthetic ACK timing;
+- frequency-qualified scenarios currently collapse to one matrix value per
+  band; and
+- debugfs is a root-only lab ABI, not an upstream control interface.
 
-For optimizer research that depends on those effects, userspace wmediumd is
-still authoritative.
+## Conclusion
 
-## Next phases and release gates
+Phases 0 through 6 are complete within their stated experimental boundaries:
+the module and Yocto images build from clean sources; signal/loss matrices,
+rate loss, timing, telemetry, scenario restore, steering and multihop work;
+25/55/105-radio fan-out is measured; and the five-node, 50-client lab passes
+the same cold-reconstruction gates on both backends. The remaining work is no
+longer implementation of these phases. It is deciding whether a particular
+future experiment needs this reduced-physics data path, then running its own
+duration and packet-rate acceptance.
 
-### Phase 3: accepted full-lab backend
+The kernel path is now useful as an explicit high-scale comparison backend and
+for experiments whose required physics are signal, deterministic loss,
+rate-threshold loss, bounded delay and observable fan-out. It is not a
+replacement for userspace wmediumd when policy research depends on
+contention, collisions or richer channel behavior.
 
-- establish a clean cloned fixture that passes its userspace-wmediumd baseline
-  cold start before comparing backends;
-- cold-start five mesh nodes and twenty clients without userspace wmediumd;
-- run inventory, crossover, RCPI, steering, multihop, outage, and restore
-  acceptance with `--backend kernel`;
-- expose backend and generation in the Console;
-- prove ordinary userspace-wmediumd cold start remains unchanged.
-
-### Phase 4: richer kernel model
-
-- use frame rate/MCS plus SNR to select a versioned PER curve;
-- add bounded delay queues and deterministic jitter;
-- add channel occupancy and collision accounting before hidden-node behavior;
-- use strict capability negotiation so scenarios cannot silently run with
-  missing physics.
-
-### Phase 5: scale and maintainability decision
-
-- evaluate 20, 50, and 100-client profiles with identical offered load;
-- use perf/ftrace to separate clone, mac80211 RX/TX, lock, and control costs;
-- replace the global radio-list cloning lock only if measurements justify it;
-- decide whether this remains a lab patch or needs an upstream-quality
-  generic-netlink interface.
-
-The kernel path must not become the default until Phase 3 correctness passes
-and Phase 4 implements the physics needed by a specific test. Throughput alone
-is insufficient: an optimizer lab needs controlled, interpretable physics.
+Keep userspace wmediumd as the release default. Promote individual kernel
+capabilities only when a scenario declares them and the capability check can
+reject unsupported physics instead of silently approximating them.

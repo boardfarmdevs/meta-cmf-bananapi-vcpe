@@ -47,7 +47,9 @@ Every retained run should identify:
 
 ## Capability progression
 
-Use the accepted 20-client profile first. The intended progression is:
+Use the accepted 20-client profile first. The 50-client profile has passed a
+bounded cold-reconstruction gate, but its duration gate remains separate. The
+intended progression is:
 
 ```text
 functional baseline
@@ -58,7 +60,8 @@ functional baseline
   -> live recommend
   -> one bounded action
   -> duration soak
-  -> 50-client profile
+  -> bounded 50-client cold reconstruction (complete)
+  -> 50-client duration acceptance
   -> 100-client stress profile
 ```
 

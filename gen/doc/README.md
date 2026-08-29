@@ -17,6 +17,7 @@ Do not duplicate host setup or acceptance procedures here.
 | `gen-util.sh` | shared LXD, hwsim-pool, identity and image helpers |
 | `bpi.sh` | deploy a controller or extender from an LXC image |
 | `wlan-client.sh` | deploy a WNM/802.11v-capable station |
+| `wlan-client/wlan.start` | idempotent in-client association and DHCP replacement hook |
 | `steer.sh` | resolve WebUI names such as `sta-03` and `extender-2`, then issue a directed EasyMesh steer |
 | `hwsim/build-hwsim.sh` | build/load the validated multichannel hwsim module |
 | `wmediumd/build-wmediumd.sh` | apply the pinned wmediumd patch series and build |

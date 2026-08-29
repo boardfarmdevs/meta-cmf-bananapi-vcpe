@@ -1,0 +1,12 @@
+bpibroadband onewifi=0
+bpibroadband em_agent=0
+bpibroadband em_ctrl=0
+bpibroadband em_cli=0
+bpiap onewifi=0
+bpiap em_agent=0
+bpiap-001 onewifi=0
+bpiap-001 em_agent=0
+bpiap-002 onewifi=0
+bpiap-002 em_agent=0
+bpiap-003 onewifi=0
+bpiap-003 em_agent=0

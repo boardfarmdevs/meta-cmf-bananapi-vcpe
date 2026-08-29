@@ -1,0 +1,52 @@
+{
+  "schema": "easymesh-yocto-build-evidence.v1",
+  "date": "2026-08-29",
+  "host": "rev140",
+  "layer_revision": "f6a7a166de18e789ee365965f84daf45f57aa457",
+  "layer_branch": "codex/0829-kernel-medium",
+  "source_worktree": "/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0829-kernel-medium/meta-cmf-bananapi-vcpe",
+  "shared_inputs": {
+    "downloads": "/home/rev/oe/downloads",
+    "sstate_cache": "/home/rev/oe/sstate-cache",
+    "tmpdirs": "fresh and separate from the accepted build directories"
+  },
+  "controller": {
+    "machine": "qemux86bpibroadband",
+    "target": "rdk-generic-broadband-image",
+    "build_directory": "/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0824-clean/build-qemux86bpibroadband-0829-kernel-medium",
+    "result": "PASS",
+    "tasks_attempted": 5792,
+    "tasks_reused": 5765,
+    "warnings": 55,
+    "artifact": "X86EMLTRBPIBB_rdk-next_20260829212327.rootfs.lxc.tar.bz2",
+    "size_bytes": 78229309,
+    "sha256": "53891c2bfe8347b54c34f9cd4254ff7e159ca2ab147366d110496fca51d1a82b",
+    "first_attempt": {
+      "result": "FAIL",
+      "failure": "the layer asserted that an extender-only AL-MAC shell snippet existed in the controller pre-start script",
+      "resolution": "f6a7a16 scopes that exact rewrite and assertion to onewifi_pre_start_em_ext.sh; the controller correctly requires zero occurrences"
+    }
+  },
+  "extender": {
+    "machine": "qemux86bpiap",
+    "target": "rdk-generic-ap-extender-image",
+    "build_directory": "/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0824-clean/build-qemux86bpiap-0829-kernel-medium",
+    "result": "PASS",
+    "tasks_attempted": 4988,
+    "tasks_reused": 4963,
+    "warnings": 54,
+    "artifact": "X86EMLTRBPIAP_rdk-next_20260829213144.rootfs.lxc.tar.bz2",
+    "size_bytes": 53469746,
+    "sha256": "d1fff8c55544e27da1256234ea321c23c830890fb53ce850eb6aa84b8009c289"
+  },
+  "kernel_module": {
+    "kernel": "7.0.0-30-generic",
+    "source_package": "linux-hwe-7.0 7.0.0-30.30~24.04.1",
+    "result": "PASS",
+    "source_refresh": true,
+    "patches": "0001 and 0003 through 0007 applied without fuzz or rejects; 0002 is intentionally not used on Linux 7.0",
+    "artifact": "mac80211_hwsim.ko",
+    "sha256": "8cccd3abf113a54cf14775378985caeddab1a4216bd77b3570e420189c8e752e"
+  },
+  "assessment": "Both image targets were rebuilt in fresh TMPDIRs at the same experimental layer revision. Existing layer warning output remains technical debt; neither successful build reported an error."
+}

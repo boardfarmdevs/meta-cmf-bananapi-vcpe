@@ -267,8 +267,9 @@ throughput claim until representative widths, traffic and a verifier exist.
    stationary, border and fast-transit cases.
 5. **One bounded action complete:** repeat it under cooldown, rejection and
    longer-soak conditions before increasing `--max-actions`.
-6. Complete 5/20 churn acceptance, then accept the 50-client medium profile and
-   implement the 105-radio prerequisite for the 100-client stress profile.
+6. **Bounded 50-client cold reconstruction and 105-radio fan-out complete:**
+   complete the 5/20 churn and 50-client duration gates before routine medium-
+   profile use or a full 100-client stress attempt.
 7. **Frequency-qualified RF complete:** keep its apply/readback/restore
    regression mandatory; cross-band measurements still gate a band-steering
    policy claim.

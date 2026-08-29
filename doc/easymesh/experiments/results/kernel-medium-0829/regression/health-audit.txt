@@ -1,0 +1,71 @@
+TOPOLOGY
+Controller	00:60:2f:da:68:d4	0	0
+Agent-1	00:60:2f:da:68:e4	10	6
+Extender-1	02:00:00:00:09:20	10	4
+Extender-2	02:00:00:00:08:20	10	3
+Extender-3	02:00:00:00:02:20	10	2
+Extender-4	02:00:00:00:01:20	10	5
+MODEL
+5	15	50	24
+LIVE_CLIENTS
+20
+BACKHAUL_SIGNALS
+fresh=4/4
+ASSOCIATION_OWNERSHIP
+wlan-client 02:00:00:00:03:00 02:00:00:fa:21:d8 OK
+wlan-client-001 02:00:00:00:04:00 02:00:00:48:53:92 OK
+wlan-client-002 02:00:00:00:05:00 02:00:00:48:53:92 OK
+wlan-client-003 02:00:00:00:06:00 02:00:00:ab:0d:75 OK
+wlan-client-004 02:00:00:00:07:00 02:00:00:fa:21:d8 OK
+wlan-client-005 02:00:00:00:0a:00 02:00:00:e4:15:22 OK
+wlan-client-006 02:00:00:00:0b:00 02:00:00:e4:15:22 OK
+wlan-client-007 02:00:00:00:0c:00 02:00:00:48:53:92 OK
+wlan-client-008 02:00:00:00:0d:00 02:00:00:5a:d1:73 OK
+wlan-client-009 02:00:00:00:0e:00 02:00:00:be:ed:fe OK
+wlan-client-010 02:00:00:00:0f:00 02:00:00:fd:91:50 OK
+wlan-client-011 02:00:00:00:10:00 02:00:00:9b:6f:4a OK
+wlan-client-012 02:00:00:00:11:00 02:00:00:50:7f:8d OK
+wlan-client-013 02:00:00:00:12:00 02:00:00:fd:91:50 OK
+wlan-client-014 02:00:00:00:13:00 02:00:00:fd:f5:d1 OK
+wlan-client-015 02:00:00:00:14:00 02:00:00:1c:5b:35 OK
+wlan-client-016 02:00:00:00:15:00 02:00:00:1c:5b:35 OK
+wlan-client-017 02:00:00:00:16:00 02:00:00:1c:5b:35 OK
+wlan-client-018 02:00:00:00:17:00 02:00:00:fd:f5:d1 OK
+wlan-client-019 02:00:00:00:18:00 02:00:00:9b:6f:4a OK
+RESTARTS
+bpibroadband onewifi=0
+bpibroadband em_agent=0
+bpiap onewifi=0
+bpiap em_agent=0
+bpiap-001 onewifi=0
+bpiap-001 em_agent=0
+bpiap-002 onewifi=0
+bpiap-002 em_agent=0
+bpiap-003 onewifi=0
+bpiap-003 em_agent=0
+bpibroadband em_ctrl=0
+bpibroadband em_cli=0
+CONNECTIVITY
+wlan-client-003 0%
+wlan-client 0%
+wlan-client-002 0%
+wlan-client-018 0%
+wlan-client-015 0%
+wlan-client-008 0%
+wlan-client-004 0%
+wlan-client-010 0%
+wlan-client-006 0%
+wlan-client-017 0%
+wlan-client-005 0%
+wlan-client-014 0%
+wlan-client-019 0%
+wlan-client-011 0%
+wlan-client-012 0%
+wlan-client-007 0%
+wlan-client-001 0%
+wlan-client-016 0%
+wlan-client-009 0%
+wlan-client-013 0%
+MEMORY
+               total        used        free      shared  buff/cache   available
+Mem:           7.7Gi       2.4Gi       662Mi       136Mi       5.1Gi       5.3Gi
