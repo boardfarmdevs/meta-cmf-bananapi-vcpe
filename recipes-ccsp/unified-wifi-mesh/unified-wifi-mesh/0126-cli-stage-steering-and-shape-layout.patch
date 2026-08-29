@@ -229,7 +229,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      }
  
      const nodeOrder = (left, right) => {
-@@ -2480,6 +2482,63 @@ async handleWebSocketMessage(data) {
+@@ -2480,6 +2482,82 @@ async handleWebSocketMessage(data) {
        roots.push([...rendered].sort(nodeOrder)[0]);
      }
  
@@ -238,13 +238,32 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
 +    const controller = rendered.find(node => /^controller$/i.test(String(node?.name || '')))
 +      || roots[0];
 +    const controllerId = String(controller?.id || '');
-+    const directChildren = children.get(controllerId)?.size || 0;
++    const directChildren = children.get(controllerId) || new Set();
 +    const starThreshold = Math.max(2, Math.ceil(Math.max(0, rendered.length - 1) * 0.6));
++    let starDetected = directChildren.size >= starThreshold;
++
++    // The controller and its colocated Agent are separate EasyMesh model
++    // nodes. In the common star, the rendered graph is consequently
++    // Controller -> Agent-1 -> every extender even though the gateway is the
++    // semantic center. Collapse that single colocated hop for layout
++    // classification only; the API model and the rendered links stay exact.
++    if (!starDetected && directChildren.size === 1) {
++      const colocatedId = [...directChildren][0];
++      const colocatedChildren = children.get(colocatedId) || new Set();
++      const covered = new Set([colocatedId, ...colocatedChildren]);
++      const requiredExtenders = Math.max(2,
++        Math.ceil(Math.max(0, rendered.length - 2) * 0.6));
++      const coversMesh = rendered.every(node =>
++        String(node.id) === controllerId || covered.has(String(node.id)));
++      const leavesOnly = [...colocatedChildren].every(id =>
++        (children.get(id)?.size || 0) === 0);
++      starDetected = colocatedChildren.size >= requiredExtenders && coversMesh && leavesOnly;
++    }
 +
 +    // A star is easiest to read with its semantic center at the visual center.
 +    // Include mostly-star graphs so one non-direct extender does not push the
 +    // gateway back to an otherwise mostly empty left edge.
-+    if (controller && rendered.length >= 3 && directChildren >= starThreshold) {
++    if (controller && rendered.length >= 3 && starDetected) {
 +      const positions = new Map([[controllerId, { x: 0, y: 0 }]]);
 +      const satellites = rendered.filter(node => String(node.id) !== controllerId)
 +        .sort(nodeOrder);
@@ -293,7 +312,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      const depth = new Map();
      const queue = [];
      for (const root of roots) {
-@@ -2518,8 +2577,6 @@ async handleWebSocketMessage(data) {
+@@ -2518,8 +2596,6 @@ async handleWebSocketMessage(data) {
        }
      }
  
@@ -302,7 +321,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      const horizontalGap = 100;
      const verticalGap = 70;
      const positions = new Map();
-@@ -2981,8 +3038,7 @@ async handleWebSocketMessage(data) {
+@@ -2981,8 +3057,7 @@ async handleWebSocketMessage(data) {
        updateDatum(edge);
        const signal = self.topologyBackhaulSignal(edge);
        d3.select(this)
@@ -312,7 +331,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
          .attr('opacity', !self.topologyIsWirelessBackhaul(edge) ? 1 :
            (signal.stale ? 0.7 : (signal.available ? 1 : 0.5)));
      });
-@@ -3025,9 +3081,27 @@ async handleWebSocketMessage(data) {
+@@ -3025,9 +3100,27 @@ async handleWebSocketMessage(data) {
      return associations;
    }
  
@@ -340,7 +359,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      const now = Date.now();
      for (const [mac, after] of next) {
        const before = previous.get(mac);
-@@ -3038,7 +3112,12 @@ async handleWebSocketMessage(data) {
+@@ -3038,7 +3131,12 @@ async handleWebSocketMessage(data) {
          toOwnerId: after.ownerId,
          toOwnerName: after.ownerName,
          ssid: after.ssid,
@@ -354,7 +373,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
        });
      }
      for (const [mac, effect] of this.staMoveEffects) {
-@@ -3052,10 +3131,22 @@ async handleWebSocketMessage(data) {
+@@ -3052,10 +3150,22 @@ async handleWebSocketMessage(data) {
      const effect = this.staMoveEffects.get(this.normalizeMac(sta?.staMAC));
      if (!effect || effect.toOwnerId !== String(nodeId || '')) return null;
      const ageMs = Math.max(0, Date.now() - effect.changedAt);
@@ -378,7 +397,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
    topologyBandLabel(band) {
      if (Number(band) === 0) return '2.4G';
      if (Number(band) === 1) return '5G';
-@@ -3302,6 +3393,16 @@ async handleWebSocketMessage(data) {
+@@ -3302,6 +3412,16 @@ async handleWebSocketMessage(data) {
        .attr('d', 'M0,-5L10,0L0,5')
        .attr('fill', '#7c3aed');
  
@@ -395,7 +414,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      defs.append('marker')
        .attr('id', 'backhaul-uplink-arrowhead')
        .attr('viewBox', '0 -5 10 10')
-@@ -3535,6 +3636,7 @@ async handleWebSocketMessage(data) {
+@@ -3535,6 +3655,7 @@ async handleWebSocketMessage(data) {
  
            const data = staElement.datum();
            const moveEffect = self.topologyMoveEffectForSTA(sta, d.id);
@@ -403,7 +422,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
  
            const from = data.from;
            const to = data.to;
-@@ -3559,6 +3661,7 @@ async handleWebSocketMessage(data) {
+@@ -3559,6 +3680,7 @@ async handleWebSocketMessage(data) {
  
            const signalGlyph = staElement.append('g')
              .attr('class', 'sta-signal-bars')
@@ -411,7 +430,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
              .style('pointer-events', 'none');
            signalGlyph.selectAll('path.sta-signal-arc')
              .data([0, 1, 2, 3, 4])
-@@ -3569,6 +3672,49 @@ async handleWebSocketMessage(data) {
+@@ -3569,6 +3691,49 @@ async handleWebSocketMessage(data) {
              .attr('stroke-linecap', 'round');
            self.updateTopologySignalArcs(staElement, data);
  
@@ -461,7 +480,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
            if (moveEffect) {
              const pulse = staElement.append('circle')
                .attr('class', 'sta-steer-pulse')
-@@ -3581,10 +3727,11 @@ async handleWebSocketMessage(data) {
+@@ -3581,10 +3746,11 @@ async handleWebSocketMessage(data) {
              pulse.append('animate')
                .attr('attributeName', 'r')
                .attr('values', `${data.iconSize / 2 + 7};${data.iconSize / 2 + 20}`)
@@ -475,7 +494,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
  
              const sourceNode = renderTopology.nodes.find(nodeItem =>
                String(nodeItem.id) === moveEffect.fromOwnerId);
-@@ -3605,6 +3752,41 @@ async handleWebSocketMessage(data) {
+@@ -3605,6 +3771,41 @@ async handleWebSocketMessage(data) {
                  .attr('to', 0)
                  .attr('dur', `${moveEffect.remainingMs}ms`)
                  .attr('fill', 'freeze');
@@ -517,7 +536,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
              }
            }
  
-@@ -3615,6 +3797,7 @@ async handleWebSocketMessage(data) {
+@@ -3615,6 +3816,7 @@ async handleWebSocketMessage(data) {
             .attr('y', to.y - data.iconSize / 2)
             .attr('width', data.iconSize)
             .attr('height', data.iconSize)
@@ -525,7 +544,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
             .on('mouseover', function(event) {
                let mldInfo = '';
                if (sta.MLDAddr && sta.MLDAddr !== '') {
-@@ -3652,6 +3835,7 @@ async handleWebSocketMessage(data) {
+@@ -3652,6 +3854,7 @@ async handleWebSocketMessage(data) {
              .attr('stroke-width', 3)
              .attr('paint-order', 'stroke')
              .style('pointer-events', 'none')
@@ -533,7 +552,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
              .text(staIdentity);
  
            staElement.append('text')
-@@ -3666,9 +3850,15 @@ async handleWebSocketMessage(data) {
+@@ -3666,9 +3869,15 @@ async handleWebSocketMessage(data) {
              .attr('stroke-width', 3)
              .attr('paint-order', 'stroke')
              .style('pointer-events', 'none')
@@ -549,7 +568,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
          });
  
        }
-@@ -3733,8 +3923,7 @@ async handleWebSocketMessage(data) {
+@@ -3733,8 +3942,7 @@ async handleWebSocketMessage(data) {
      .attr('fill', 'none')
      .attr('stroke-width', 2)
      .attr('stroke', d => bandColors[d.band] || '#000')
@@ -559,7 +578,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      .attr('opacity', d => {
        if (!self.topologyIsWirelessBackhaul(d)) return 1;
        const signal = self.topologyBackhaulSignal(d);
-@@ -3837,6 +4026,17 @@ async handleWebSocketMessage(data) {
+@@ -3837,6 +4045,17 @@ async handleWebSocketMessage(data) {
            const midY = (sourceY + targetY) / 2 - 35;
            return `M${sourceX},${sourceY} Q${midX},${midY} ${targetX},${targetY}`;
          });
@@ -577,7 +596,7 @@ index 05cc97e289bfb914951a5a08a1f4afec680bf299..06d7bf9e85311dedef3c18c764a0a4b3
      });
  
      function dragstarted(event, d) {
-@@ -4118,6 +4318,8 @@ async handleWebSocketMessage(data) {
+@@ -4118,6 +4337,8 @@ async handleWebSocketMessage(data) {
     * reported. Lab client MACs encode their number in the fifth octet.
     */
    getSTAIdentity(sta) {
@@ -688,4 +707,3 @@ index 11e8be9c76f765e120bda9a1d66ec1ec061767a3..9c8948959c90d45cecea5505e173e73b
  
 -- 
 2.43.0
-

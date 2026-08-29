@@ -128,24 +128,17 @@ const landscapeStar = controller.topologyLandscapeLayout(
   landscapeNodes, landscapeStarEdges, 1600, 900
 );
 assert.equal(landscapeStar.size, landscapeNodes.length);
-assert.ok(landscapeStar.get('controller').x < landscapeStar.get('agent').x,
-  'landscape layout did not keep the Controller left of Agent-1');
-assert.ok([1, 2, 3, 4].every(index =>
-  landscapeStar.get('agent').x < landscapeStar.get(`extender-${index}`).x),
-'landscape layout placed an extender left of its parent');
-assert.equal(new Set([1, 2, 3, 4].map(index =>
-  landscapeStar.get(`extender-${index}`).x)).size, 2,
-'four same-depth extenders were not wrapped across the landscape');
-for (const x of new Set([1, 2, 3, 4].map(index =>
-  landscapeStar.get(`extender-${index}`).x))) {
-  const column = [1, 2, 3, 4].map(index => landscapeStar.get(`extender-${index}`))
-    .filter(position => position.x === x).sort((left, right) => left.y - right.y);
-  assert.ok(column.length <= 2, 'landscape column contains too many extenders');
-  if (column.length === 2) {
-    assert.ok(column[1].y - column[0].y > 2 * 240,
-      'extent-aware landscape rows overlap their SSID/client bubbles');
-  }
-}
+assert.deepEqual(landscapeStar.get('controller'), { x: 0, y: 0 },
+  'two-level Controller -> colocated Agent -> extenders star was not detected');
+assert.ok(landscapeNodes.slice(1).every(node => {
+  const position = landscapeStar.get(node.id);
+  return position && Math.hypot(position.x, position.y) > 0;
+}), 'two-level star agents were not distributed around the Controller');
+assert.equal(new Set(landscapeNodes.slice(1).map(node => {
+  const position = landscapeStar.get(node.id);
+  return `${position.x.toFixed(3)},${position.y.toFixed(3)}`;
+})).size, landscapeNodes.length - 1,
+'two-level star assigned duplicate satellite positions');
 
 const landscapeChainEdges = landscapeNodes.slice(1).map((node, index) => ({
   from: landscapeNodes[index].id, to: node.id
