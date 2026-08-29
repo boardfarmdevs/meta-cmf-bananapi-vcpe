@@ -30,6 +30,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE_IMG="${WLAN_CLIENT_IMAGE:-wlan-client-base}"   # the self-contained client image
 SRC_IMG="${WLAN_CLIENT_SRC_IMAGE:-alpine}"          # minimal base to build it from
 WNMBIN="$HERE/wpa_supplicant/wpa_supplicant-wnm"    # committed CONFIG_WNM supplicant
+WLANSTART="$HERE/wlan-client/wlan.start"             # idempotent association + DHCP hook
 WMD_PIDF=${WMEDIUMD_PIDFILE:-/run/meta-cmf-wmediumd/wmediumd.pid}
 
 INST=""; FORCE_BUILD=0; COHORT=""; SECURITY="auto"; BAND="auto"
@@ -135,6 +136,7 @@ _build_base_image() {
     local B=wlan-client-imgbuild P=wlan-client-imgbuild-profile lab_pool
     lab_pool=$(ensure_lxd_lab_pool) || return 1
     [ -f "$WNMBIN" ] || { echo "missing WNM binary: $WNMBIN (build it with wpa_supplicant/build-wnm-supplicant.sh)"; return 1; }
+    [ -f "$WLANSTART" ] || { echo "missing client startup hook: $WLANSTART"; return 1; }
     lxc image info "$SRC_IMG" >/dev/null 2>&1 || { echo "source image '$SRC_IMG' missing on this host (import it first)"; return 1; }
     echo ">> building '$BASE_IMG' from '$SRC_IMG' (iw + wpa_supplicant + baked WNM + autostart)"
     lxc delete -f "$B" 2>/dev/null
@@ -151,24 +153,10 @@ _build_base_image() {
     lxc exec "$B" -- chmod +x /usr/local/sbin/wpa_supplicant-wnm
     lxc exec "$B" -- /usr/local/sbin/wpa_supplicant-wnm -v >/dev/null 2>&1 \
         || { echo ">> baked WNM binary does not run (missing libs) -- aborting"; lxc delete -f "$B"; lxc profile delete "$P" 2>/dev/null; return 1; }
-    lxc exec "$B" -- sh -c 'mkdir -p /etc/local.d; cat > /etc/local.d/wlan.start <<'\''EOS'\''
-#!/bin/sh
-[ -f /etc/wpa.conf ] || exit 0
-# LXD can start OpenRC before the physical hwsim device has completed its
-# move/rename into this namespace. Wait for that handoff, then assert UP on
-# both sides of a short settling interval; otherwise a supplicant can remain
-# alive forever on a DOWN 6 GHz interface without authenticating.
-i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done
-[ -e /sys/class/net/wlan0 ] || exit 1
-ip link set wlan0 up 2>/dev/null || exit 1
-sleep 1
-ip link set wlan0 up 2>/dev/null || exit 1
-[ -x /usr/local/sbin/wpa_supplicant-wnm ] && SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant
-pgrep -f "$SUP" >/dev/null || $SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1
-i=0; while [ $i -lt 20 ]; do iw dev wlan0 link 2>/dev/null | grep -q Connected && break; i=$((i+1)); sleep 1; done
-udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true
-EOS
-chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1'
+    lxc exec "$B" -- mkdir -p /etc/local.d
+    lxc file push -p "$WLANSTART" "$B/etc/local.d/wlan.start" >/dev/null
+    lxc exec "$B" -- sh -c \
+        'chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1'
     lxc stop "$B" >/dev/null 2>&1
     lxc image delete "$BASE_IMG" 2>/dev/null
     lxc publish "$B" --alias "$BASE_IMG" >/dev/null 2>&1
@@ -276,6 +264,14 @@ up)
         lxc exec "$CT" -- sh -c 'command -v wpa_supplicant >/dev/null && command -v iw >/dev/null || apk add --no-cache wpa_supplicant iw >/dev/null 2>&1'
         [ -f "$WNMBIN" ] && lxc file push -p "$WNMBIN" "$CT/usr/local/sbin/wpa_supplicant-wnm" 2>/dev/null && lxc exec "$CT" -- chmod +x /usr/local/sbin/wpa_supplicant-wnm 2>/dev/null
     fi
+    # Refresh the startup transaction even when an older base-image alias is
+    # reused. This makes DHCP/lifecycle fixes take effect without rebuilding
+    # the entire client image first.
+    [ -f "$WLANSTART" ] || { echo "missing client startup hook: $WLANSTART" >&2; exit 1; }
+    lxc exec "$CT" -- mkdir -p /etc/local.d
+    lxc file push -p "$WLANSTART" "$CT/etc/local.d/wlan.start" >/dev/null
+    lxc exec "$CT" -- sh -c \
+        'chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1'
     # A running wmediumd has a fixed radio matrix.  Adding a client radio after
     # REGISTER leaves that radio outside the medium until the daemon is
     # refreshed.  Do that as part of client creation, before starting the
@@ -291,7 +287,6 @@ up)
     # write the per-instance config and start via the baked autostart (which also
     # persists the connection across container restarts)
     lxc exec "$CT" -- sh -c "printf '$NET\n' > /etc/wpa.conf
-        [ -x /etc/local.d/wlan.start ] || { mkdir -p /etc/local.d; printf '#!/bin/sh\n[ -f /etc/wpa.conf ] || exit 0\nip link set wlan0 up\n[ -x /usr/local/sbin/wpa_supplicant-wnm ] \&\& SUP=/usr/local/sbin/wpa_supplicant-wnm || SUP=wpa_supplicant\npgrep -f \"\$SUP\" >/dev/null || \$SUP -B -i wlan0 -c /etc/wpa.conf -D nl80211 >/tmp/wpa.log 2>&1\nudhcpc -i wlan0 -n -q >/dev/null 2>&1 || true\n' > /etc/local.d/wlan.start; chmod +x /etc/local.d/wlan.start; rc-update add local default >/dev/null 2>&1; }
         i=0; while [ ! -e /sys/class/net/wlan0 ] && [ \$i -lt 50 ]; do i=\$((i+1)); sleep 0.1; done
         [ -e /sys/class/net/wlan0 ] || exit 1
         ip link set wlan0 up || exit 1
@@ -322,6 +317,7 @@ up)
                 done
                 sleep 1
                 rm -f /run/wpa_supplicant/wlan0 /var/run/wpa_supplicant/wlan0
+                ip -4 address flush dev wlan0 scope global 2>/dev/null || true
                 /etc/local.d/wlan.start'
             for n in $(seq 1 30); do
                 association_ready && break 2

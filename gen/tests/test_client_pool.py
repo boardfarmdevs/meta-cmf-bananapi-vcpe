@@ -7,6 +7,15 @@ import pytest
 
 
 POOL = Path(__file__).resolve().parents[1] / "wlan-client-pool.sh"
+CLIENT_HELPER = Path(__file__).resolve().parents[1] / "wlan-client.sh"
+CLIENT_START = Path(__file__).resolve().parents[1] / "wlan-client" / "wlan.start"
+LAB_RUNTIME = (
+    Path(__file__).resolve().parents[1]
+    / "vm"
+    / "scripts"
+    / "guest"
+    / "easymesh-lab-runtime"
+)
 
 
 def plan(profile: str) -> str:
@@ -43,3 +52,20 @@ def test_small_profile_assigns_distinct_ssid_cohorts_and_security():
     assert rows[9].endswith("\tprivate_ssid\tsae\t6")
     assert rows[9].startswith("9\twlan-client-009\t")
     assert rows[10].startswith("10\twlan-client-010\t")
+
+
+def test_client_startup_replaces_old_dhcp_lease_before_udhcpc():
+    hook = CLIENT_START.read_text()
+    helper = CLIENT_HELPER.read_text()
+    runtime = LAB_RUNTIME.read_text()
+
+    flush = "ip -4 address flush dev wlan0 scope global"
+    assert hook.index(flush) < hook.index("udhcpc -i wlan0")
+    assert 'WLANSTART="$HERE/wlan-client/wlan.start"' in helper
+    assert 'lxc file push -p "$WLANSTART"' in helper
+    assert "verify_client_ipv4_ownership" in runtime
+    assert 'addresses=$(lxc exec "$client" -- ip -4 -o address show' in runtime
+    assert (
+        'if [ "$medium_backend" = userspace ]; then\n'
+        "        if [ -f /run/meta-cmf-wmediumd/wmediumd.log ]; then"
+    ) in runtime

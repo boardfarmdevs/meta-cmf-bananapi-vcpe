@@ -96,6 +96,7 @@ if [ "$RUN" = "1" ]; then
         ip link set wlan0 up
         $BIN -B -P /tmp/wpa.pid -i wlan0 -c /tmp/wpa.conf -D nl80211 </dev/null >/tmp/wpa.log 2>&1
         for i in \$(seq 1 15); do iw dev wlan0 link 2>/dev/null | grep -q Connected && break; sleep 1; done
+        ip -4 address flush dev wlan0 scope global 2>/dev/null || true
         udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true"
     say "state: $(ce 'iw dev wlan0 link 2>/dev/null | grep -E "Connected to|SSID" | tr "\n" " "')"
 fi

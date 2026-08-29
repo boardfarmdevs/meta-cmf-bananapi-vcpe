@@ -1,0 +1,38 @@
+#!/bin/sh
+
+[ -f /etc/wpa.conf ] || exit 0
+
+# LXD can start OpenRC before the physical hwsim device has completed its
+# move/rename into this namespace. Wait for that handoff, then assert UP on
+# both sides of a short settling interval.
+i=0
+while [ ! -e /sys/class/net/wlan0 ] && [ "$i" -lt 50 ]; do
+    i=$((i + 1))
+    sleep 0.1
+done
+[ -e /sys/class/net/wlan0 ] || exit 1
+ip link set wlan0 up 2>/dev/null || exit 1
+sleep 1
+ip link set wlan0 up 2>/dev/null || exit 1
+
+if [ -x /usr/local/sbin/wpa_supplicant-wnm ]; then
+    supplicant=/usr/local/sbin/wpa_supplicant-wnm
+else
+    supplicant=wpa_supplicant
+fi
+pgrep -f "$supplicant" >/dev/null \
+    || "$supplicant" -B -i wlan0 -c /etc/wpa.conf -D nl80211 \
+        >/tmp/wpa.log 2>&1
+
+i=0
+while [ "$i" -lt 20 ]; do
+    iw dev wlan0 link 2>/dev/null | grep -q Connected && break
+    i=$((i + 1))
+    sleep 1
+done
+
+# BusyBox udhcpc's default script adds a new lease without deleting an old
+# address left by a previous association. Make every invocation a replacement
+# transaction so a recovery retry cannot accumulate secondary addresses.
+ip -4 address flush dev wlan0 scope global 2>/dev/null || true
+udhcpc -i wlan0 -n -q >/dev/null 2>&1 || true

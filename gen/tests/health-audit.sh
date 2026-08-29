@@ -83,6 +83,29 @@ while read -r client; do
 done < <(lxc list -c n --format csv |
     grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 
+echo IPV4_OWNERSHIP
+ipv4_fail=0
+declare -A ipv4_owner=()
+while read -r client; do
+    addresses=$(lxc exec "$client" -- ip -4 -o address show \
+        dev wlan0 scope global </dev/null 2>/dev/null | awk '{print $4}')
+    address_count=$(wc -w <<< "$addresses")
+    if [ "$address_count" -ne 1 ]; then
+        echo "$client count=$address_count addresses=${addresses:-none} FAIL"
+        ipv4_fail=1
+        continue
+    fi
+    address=${addresses%/*}
+    if [ -n "${ipv4_owner[$address]+present}" ]; then
+        echo "$client address=$address duplicates=${ipv4_owner[$address]} FAIL"
+        ipv4_fail=1
+    else
+        ipv4_owner[$address]=$client
+        echo "$client address=$address OK"
+    fi
+done < <(lxc list -c n --format csv |
+    grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
+
 echo RESTARTS
 restart_fail=0
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
@@ -156,6 +179,10 @@ free -h | sed -n '1,2p'
 }
 [ "$ownership_fail" = 0 ] || {
     echo "FAIL: physical and controller serving-BSSID ownership differ" >&2
+    exit 1
+}
+[ "$ipv4_fail" = 0 ] || {
+    echo "FAIL: each WLAN client must own exactly one unique IPv4 address" >&2
     exit 1
 }
 [ "$traffic_fail" = 0 ] || {
