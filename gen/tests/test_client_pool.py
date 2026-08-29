@@ -23,7 +23,7 @@ def plan(profile: str) -> str:
     (
         ("small", "private=10\tiot=10\ttotal=20", "required=25\tpool=32"),
         ("medium", "private=25\tiot=25\ttotal=50", "required=55\tpool=64"),
-        ("stress", "private=50\tiot=50\ttotal=100", "required=105\tpool=dynamic-required"),
+        ("stress", "private=50\tiot=50\ttotal=100", "required=105\tpool=128"),
     ),
 )
 def test_named_client_profiles_have_stable_counts(profile, cohorts, hwsim):

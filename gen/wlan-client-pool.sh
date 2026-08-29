@@ -32,10 +32,9 @@ Examples:
   ./wlan-client-pool.sh status
 
 Small is the current acceptance target. Medium and stress deliberately use the
-same naming/cohort model, but must pass their own hwsim, wmediumd, memory and
-controller scale gates before they are declared supported. The 100-client
-stress profile also needs a validated way around mac80211_hwsim's stock static
-100-radio limit because five additional radios are used by the mesh nodes.
+same naming/cohort model, but must pass their own hwsim, medium, memory and
+controller scale gates before they are declared supported. The patched lab
+hwsim module supports a bounded 128-radio static pool for the stress profile.
 EOF
 }
 
@@ -83,7 +82,7 @@ next_power_of_two() {
 required_radios=$((TOTAL + 5))
 
 radio_plan() {
-    if [ "$required_radios" -gt 100 ]; then
+    if [ "$required_radios" -gt 128 ]; then
         printf 'dynamic-required'
     else
         next_power_of_two "$((required_radios + 4))"
@@ -178,9 +177,9 @@ plan)
     ;;
 up)
     loaded=$(cat /sys/module/mac80211_hwsim/parameters/radios 2>/dev/null || true)
-    if [ "$required_radios" -gt 100 ]; then
+    if [ "$required_radios" -gt 128 ]; then
         echo "$TOTAL clients need $required_radios radios including the mesh nodes" >&2
-        echo "the stock static hwsim pool is limited to 100; this profile is planned, not runnable" >&2
+        echo "the patched static hwsim pool is limited to 128; this profile is not runnable" >&2
         exit 1
     fi
     if ! [[ "$loaded" =~ ^[0-9]+$ ]] || [ "$loaded" -lt "$required_radios" ]; then
