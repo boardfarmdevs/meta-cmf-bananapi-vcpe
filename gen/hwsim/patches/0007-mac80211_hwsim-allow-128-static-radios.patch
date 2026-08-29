@@ -8,7 +8,6 @@ the default radio count is unchanged.
 --- a/drivers/net/wireless/virtual/mac80211_hwsim.c
 +++ b/drivers/net/wireless/virtual/mac80211_hwsim.c
 @@ -7708,7 +7708,7 @@
- static int __init init_mac80211_hwsim(void)
  {
  	int i, err;
  

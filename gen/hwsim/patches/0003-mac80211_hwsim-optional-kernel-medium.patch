@@ -48,8 +48,7 @@ changing this opt-in/default contract.
  	/* only used when pmsr capability is supplied */
  	struct cfg80211_pmsr_capabilities pmsr_capa;
  	struct cfg80211_pmsr_request *pmsr_request;
-@@ -1837,6 +1859,28 @@ static bool mac80211_hwsim_tx_frame_no_nl(struct ieee80211_hw *hw,
- 			if (!tx_iter_data.receive)
+@@ -1869,6 +1891,28 @@
  				continue;
  		}
  
@@ -75,8 +74,9 @@ changing this opt-in/default contract.
 +				rx_status.signal += info->control.vif->bss_conf.txpower;
 +		}
 +
-		/*
+ 		/*
  		 * reserve some space for our vendor and the normal
+ 		 * radiotap header, since we're copying anyway
 @@ -1875,5 +1919,8 @@ static bool mac80211_hwsim_tx_frame_no_nl(struct ieee80211_hw *hw,
  
  		mac80211_hwsim_rx(data2, &rx_status, nskb);
