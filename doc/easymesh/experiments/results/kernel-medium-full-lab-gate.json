@@ -1,0 +1,25 @@
+{
+  "schema": "hwsim-kernel-medium-full-lab-gate.v1",
+  "date": "2026-08-29",
+  "environment": {
+    "host": "rev140",
+    "fixture": "hwsim-kernel-dev-0829",
+    "virtualization": "LXD virtual machine backed by QEMU/KVM",
+    "kernel": "7.0.0-30-generic",
+    "mesh_nodes_expected": 5,
+    "wlan_clients_expected": 20
+  },
+  "attempts": 2,
+  "result": "blocked-before-medium-selection",
+  "state_at_failure": {
+    "kernel_medium": false,
+    "userspace_wmediumd_running": false,
+    "failed_node": "bpiap",
+    "private_ssid_count": 0,
+    "iot_ssid_count": 0,
+    "backhaul": "not connected",
+    "readiness_error": "bpiap did not receive its complete tri-band configuration",
+    "repeated_hal_error": "No interface found for al_mac address"
+  },
+  "assessment": "The cloned fixture failed in the stock built-in-medium state before either experimental backend could run. Phase 3 therefore remains unaccepted; this result does not invalidate the isolated Phase 1/2 functional and performance results."
+}

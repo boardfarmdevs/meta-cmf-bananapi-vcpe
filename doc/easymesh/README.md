@@ -80,6 +80,7 @@ boundary:
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)
 - [wmediumd internals](reference/wmediumd-internals.md)
 - [wmediumd performance and CPU scaling](reference/wmediumd-performance.md)
+- [Optional hwsim kernel medium](reference/hwsim-kernel-medium.md)
 - [wmediumd convergence assessment](reference/wmediumd-convergence-assessment.md)
 - [wmediumd configurator](reference/wmediumd-configurator.md)
 - [wmediumd Console and telemetry protocol](reference/wmediumd-console.md)
