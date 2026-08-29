@@ -24,6 +24,7 @@ sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
+from wmdcfg.kernel_actuator import KernelMediumClient  # noqa: E402
 
 
 def lxc(container: str, command: str, attempts: int = 3) -> str:
@@ -113,6 +114,10 @@ def main() -> int:
     parser.add_argument("--client", default="wlan-client")
     parser.add_argument("--target", help="target extender container")
     parser.add_argument("--socket", default="/run/wmediumd-control.sock")
+    parser.add_argument(
+        "--backend", choices=("userspace", "kernel"),
+        default=os.environ.get("EASYMESH_MEDIUM_BACKEND", "userspace"),
+    )
     parser.add_argument("--api", default="http://127.0.0.1:8888/api/v1")
     parser.add_argument("--opclass", type=int, default=115)
     parser.add_argument("--channel", type=int, default=36)
@@ -144,8 +149,14 @@ def main() -> int:
         "frequency_mhz": args.frequency,
         "snr_db": args.snr,
         "expected_rcpi": expected_rcpi,
+        "medium_backend": args.backend,
     }
-    with ControlClient(args.socket) as control:
+    control_client = (
+        ControlClient(args.socket)
+        if args.backend == "userspace"
+        else KernelMediumClient()
+    )
+    with control_client as control:
         _, before_frequency = control.dump_frequency_links()
         _, original_value, original_override = control.get_frequency_link(
             source, destination, args.frequency

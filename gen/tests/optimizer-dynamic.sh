@@ -16,6 +16,17 @@ journal=$(mktemp /tmp/rdk-optimizer-journal.XXXXXX.jsonl)
 scenario_log=$(mktemp /tmp/rdk-optimizer-scenario.XXXXXX.log)
 optimizer_log=$(mktemp /tmp/rdk-optimizer-output.XXXXXX.log)
 scenario_pid=
+medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
+if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
+    medium_backend=$(sed -n 's/^[[:space:]]*EASYMESH_MEDIUM_BACKEND=//p' \
+        /etc/default/easymesh-lab | tail -1 | tr -d "'\"")
+fi
+medium_backend=${medium_backend:-userspace}
+case "$medium_backend" in
+    userspace) scenario_command=(python3 -m wmdcfg.cli run) ;;
+    kernel) scenario_command=(sudo -n python3 -m wmdcfg.cli run) ;;
+    *) echo "unsupported medium backend: $medium_backend" >&2; exit 2 ;;
+esac
 
 cleanup()
 {
@@ -105,7 +116,8 @@ python3 -m wmdcfg.cli compile scenarios/optimizer-five-ap-crossover.wmd \
     -o "$plan"
 
 echo "optimizer stimulus: $client $source -> $target ($target_bssid)"
-python3 -m wmdcfg.cli run "$plan" >"$scenario_log" 2>&1 &
+"${scenario_command[@]}" "$plan" --backend "$medium_backend" \
+    >"$scenario_log" 2>&1 &
 scenario_pid=$!
 sleep 2
 
@@ -113,6 +125,7 @@ cd "$root/gen/optimizer"
 args=(
     "$mode" --base-url http://127.0.0.1:8888
     --candidate-provider controller --allow-simulated-candidates
+    --candidate-attempts 2
     --policy configs/threshold-policy.yaml --journal "$journal"
     # One RDK controller candidate transaction spans roughly 20 seconds. Six
     # samples cover the policy hold while keeping this acceptance bounded by

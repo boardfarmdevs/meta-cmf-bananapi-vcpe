@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
+import time
 from typing import Any, Callable, Iterable
 import urllib.error
 import urllib.request
@@ -109,13 +110,21 @@ class ControllerCandidateProvider:
         requester: JsonRequester | None = None,
         allow_simulated: bool = False,
         max_parallel_agents: int = DEFAULT_MAX_PARALLEL_AGENTS,
+        request_attempts: int = 1,
+        retry_delay_seconds: float = 0.25,
     ) -> None:
         if max_parallel_agents < 1:
             raise ValueError("max_parallel_agents must be positive")
+        if request_attempts < 1:
+            raise ValueError("request_attempts must be positive")
+        if retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must not be negative")
         self.url = base_url.rstrip("/") + "/api/v1/unassoc_sta_query"
         self.requester = requester or _default_request
         self.allow_simulated = allow_simulated
         self.max_parallel_agents = max_parallel_agents
+        self.request_attempts = request_attempts
+        self.retry_delay_seconds = retry_delay_seconds
         self.last_raw: list[dict[str, Any]] = []
 
     def _channel(self, raw: dict[str, Any]) -> int:
@@ -228,19 +237,31 @@ class ControllerCandidateProvider:
                         for opclass, channels in sorted(by_opclass.items())
                     ],
                 }
-                transaction = {
-                    "request": payload,
-                    "query_radio": query_radio,
-                }
-                transactions_by_agent[agent].append(transaction)
-                try:
-                    response = self.requester(self.url, payload)
-                except CandidateMetricsError as error:
-                    transaction["error"] = str(error)
-                    raise CandidateMetricsError(
-                        f"candidate query failed for agent {agent} radio "
-                        f"{query_radio}: {error}"
-                    ) from error
+                response = None
+                for attempt in range(1, self.request_attempts + 1):
+                    transaction = {
+                        "request": payload,
+                        "query_radio": query_radio,
+                    }
+                    if self.request_attempts > 1:
+                        transaction["attempt"] = attempt
+                    transactions_by_agent[agent].append(transaction)
+                    try:
+                        response = self.requester(self.url, payload)
+                        break
+                    except CandidateMetricsError as error:
+                        transaction["error"] = str(error)
+                        if attempt == self.request_attempts:
+                            suffix = (
+                                f": {error}" if self.request_attempts == 1
+                                else f" after {attempt} attempt(s): {error}"
+                            )
+                            raise CandidateMetricsError(
+                                f"candidate query failed for agent {agent} radio "
+                                f"{query_radio}{suffix}"
+                            ) from error
+                        time.sleep(self.retry_delay_seconds)
+                assert response is not None
                 transaction["response"] = response
                 if response.get("success") is not True:
                     raise CandidateMetricsError(

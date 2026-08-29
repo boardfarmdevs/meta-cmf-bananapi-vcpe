@@ -63,6 +63,7 @@ def _live(args, mode: str) -> int:
         candidate_provider = ControllerCandidateProvider(
             args.base_url,
             allow_simulated=args.allow_simulated_candidates,
+            request_attempts=args.candidate_attempts,
         )
     observer = ControllerObserver(
         args.base_url,
@@ -207,6 +208,12 @@ def parser() -> argparse.ArgumentParser:
             default="off",
         )
         command.add_argument("--allow-simulated-candidates", action="store_true")
+        command.add_argument(
+            "--candidate-attempts",
+            type=_positive_int,
+            default=1,
+            help="bounded attempts for an idempotent candidate query (default: 1)",
+        )
         command.add_argument(
             "--observation-error-policy",
             choices=("stop", "continue"),

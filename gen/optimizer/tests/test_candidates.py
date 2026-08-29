@@ -405,6 +405,31 @@ def test_failed_query_records_agent_radio_and_failed_transaction():
     }]
 
 
+def test_idempotent_candidate_query_can_retry_one_transport_timeout():
+    calls = 0
+
+    def transient(_url, _payload):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise CandidateMetricsError("HTTP 504")
+        return response()
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=transient, allow_simulated=True,
+        request_attempts=2, retry_delay_seconds=0,
+    )
+    measured = list(provider(
+        (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
+    ))
+    assert len(measured) == 1
+    assert calls == 2
+    assert provider.last_raw[0]["attempt"] == 1
+    assert provider.last_raw[0]["error"] == "HTTP 504"
+    assert provider.last_raw[1]["attempt"] == 2
+    assert provider.last_raw[1]["response"]["success"] is True
+
+
 def test_partial_success_response_is_rejected():
     second_sta = "02:00:00:00:04:00"
     clients = (client(), replace(client(), sta_mac=second_sta))

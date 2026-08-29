@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,12 +72,14 @@ class KernelMediumClient:
         noise_floor_dbm: int = -91,
         lock_path: str = "/run/hwsim-kernel-medium.lock",
         parameters_root: str = "/sys/module/mac80211_hwsim/parameters",
+        locking: bool = True,
     ):
         self.root = Path(root)
         self.noise_floor_dbm = noise_floor_dbm
         self.lock_path = Path(lock_path)
         self.parameters_root = Path(parameters_root)
-        self._lock = None
+        self.locking = locking
+        self._connected = False
         self.instance_id: str | None = None
 
     def __enter__(self):
@@ -91,25 +94,34 @@ class KernelMediumClient:
         return self.parameters_root
 
     def connect(self) -> DaemonStatus:
-        if self._lock is not None:
+        if self._connected:
             raise ActuatorError("kernel-medium client is already connected")
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = self.lock_path.open("a+")
-        fcntl.flock(self._lock.fileno(), fcntl.LOCK_EX)
         try:
             if self._read_parameter("kernel_medium").lower() not in {"y", "1"}:
                 raise ActuatorError("hwsim kernel medium is not enabled")
             self.instance_id = self._instance_id()
-            return self.status()
+            status = self.status()
+            self._connected = True
+            return status
         except Exception:
             self.close()
             raise
 
     def close(self) -> None:
-        if self._lock is not None:
-            fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
-            self._lock.close()
-            self._lock = None
+        self._connected = False
+
+    @contextmanager
+    def _writer_lock(self):
+        if not self.locking:
+            yield
+            return
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def _read_parameter(self, name: str) -> str:
         try:
@@ -291,28 +303,29 @@ class KernelMediumClient:
     def apply_frequency(self, generation: int, updates: list[dict]) -> list[dict]:
         if not updates:
             raise ActuatorError("an atomic generation requires at least one update")
-        radios = self._radios()
-        desired = self._active_overrides(radios)
-        normalized = []
-        for item in updates:
-            update = {
-                "source": item["source"].lower(),
-                "destination": item["destination"].lower(),
-                "frequency_mhz": int(item["frequency_mhz"]),
-                "value": int(item.get("value", 0)),
-                "override": bool(item.get("override", True)),
-            }
-            key = (
-                update["source"],
-                update["destination"],
-                _band(update["frequency_mhz"]),
-            )
-            if update["override"]:
-                desired[key] = (self._signal(update["value"]), 0)
-            else:
-                desired.pop(key, None)
-            normalized.append(update)
-        self._commit(generation, desired)
+        with self._writer_lock():
+            radios = self._radios()
+            desired = self._active_overrides(radios)
+            normalized = []
+            for item in updates:
+                update = {
+                    "source": item["source"].lower(),
+                    "destination": item["destination"].lower(),
+                    "frequency_mhz": int(item["frequency_mhz"]),
+                    "value": int(item.get("value", 0)),
+                    "override": bool(item.get("override", True)),
+                }
+                key = (
+                    update["source"],
+                    update["destination"],
+                    _band(update["frequency_mhz"]),
+                )
+                if update["override"]:
+                    desired[key] = (self._signal(update["value"]), 0)
+                else:
+                    desired.pop(key, None)
+                normalized.append(update)
+            self._commit(generation, desired)
         return normalized
 
     def apply(self, generation: int, updates: list[dict]) -> list[dict]:

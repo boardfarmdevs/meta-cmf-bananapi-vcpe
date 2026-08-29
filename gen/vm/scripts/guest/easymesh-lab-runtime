@@ -17,6 +17,9 @@ expected_associated=$((client_count + 4))
 state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-vagrant/reboot-acceptance}
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-userspace}
 kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
+medium_runtime=/run/meta-cmf-wmediumd
+kernel_metrics_socket=$medium_runtime/metrics/control.sock
+kernel_metrics_unit=easymesh-kernel-metrics.service
 
 case "$medium_backend" in
 userspace|kernel) ;;
@@ -43,6 +46,7 @@ esac
 select_medium_backend() {
     case "$medium_backend" in
     userspace)
+        stop_kernel_metrics_proxy
         # The accepted path remains the default. If the optional module is
         # installed, explicitly turn its data path off before any node starts;
         # wmediumd will register after the complete radio roster is active.
@@ -69,6 +73,38 @@ select_medium_backend() {
     echo "medium backend selected: $medium_backend"
 }
 
+stop_kernel_metrics_proxy() {
+    systemctl stop "$kernel_metrics_unit" >/dev/null 2>&1 || true
+    systemctl reset-failed "$kernel_metrics_unit" >/dev/null 2>&1 || true
+    rm -f "$kernel_metrics_socket"
+}
+
+start_kernel_metrics_proxy() {
+    local status
+    stop_kernel_metrics_proxy
+    install -d -m 0755 -o root -g root "$medium_runtime/metrics"
+    systemd-run --quiet --collect --unit="$kernel_metrics_unit" \
+        --property=Type=simple \
+        --property=Restart=on-failure \
+        --property=RestartSec=1 \
+        /usr/bin/env PYTHONPATH="$gen/wmediumd/configurator" \
+            /usr/bin/python3 -m wmdcfg.kernel_metrics_proxy \
+            --socket "$kernel_metrics_socket"
+    for _ in $(seq 1 50); do
+        [ -S "$kernel_metrics_socket" ] \
+            && systemctl is-active --quiet "$kernel_metrics_unit" && break
+        sleep 0.1
+    done
+    [ -S "$kernel_metrics_socket" ] \
+        && systemctl is-active --quiet "$kernel_metrics_unit" || {
+        journalctl -u "$kernel_metrics_unit" -n 30 --no-pager >&2 || true
+        return 1
+    }
+    status=$(PYTHONPATH="$gen/wmediumd/configurator" \
+        python3 -m wmdcfg.cli status --socket "$kernel_metrics_socket")
+    jq -e '.capabilities | index("read_only") != null' >/dev/null <<<"$status"
+}
+
 verify_medium_backend() {
     local status
     case "$medium_backend" in
@@ -86,8 +122,19 @@ verify_medium_backend() {
         # make a requested kernel run silently exercise the wrong data path.
         ! pgrep -f '^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\.patched([[:space:]]|$)' \
             >/dev/null 2>&1
+        [ -S "$kernel_metrics_socket" ]
+        systemctl is-active --quiet "$kernel_metrics_unit"
         ;;
     esac
+}
+
+publish_radio_identity_inventory() {
+    local runtime=/run/meta-cmf-wmediumd
+    local output=$runtime/identity-inventory.json
+    install -d -m 0775 -o root -g lxd "$runtime"
+    "$gen/wmediumd/observer/generate-identity-inventory.sh" --output "$output"
+    jq -e --argjson expected "$((client_count + 5))" \
+        '(.stations | length) == $expected' "$output" >/dev/null
 }
 
 instance_state() {
@@ -468,6 +515,7 @@ capture_result() {
         done > "$run/kernel-medium.txt"
     fi
     journalctl -b -u easymesh-lab.service -o short-iso > "$run/easymesh-lab-journal.txt" 2>&1 || true
+    journalctl -b -u "$kernel_metrics_unit" -o short-iso > "$run/kernel-metrics-journal.txt" 2>&1 || true
     chown -R "$lab_user:$lab_group" "$run"
 }
 
@@ -519,6 +567,12 @@ start)
     if [ "$medium_backend" = userspace ]; then
         env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
     else
+        # Stable radio ownership is consumed by steering, the Console and
+        # test tooling independently of the packet data path.  Userspace
+        # wmediumd creates it while starting; publish the same contract when
+        # the in-kernel backend owns frame delivery.
+        publish_radio_identity_inventory
+        start_kernel_metrics_proxy
         verify_medium_backend
     fi
     wait_clients
@@ -537,6 +591,7 @@ start)
     echo "EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
     ;;
 stop)
+    stop_kernel_metrics_proxy
     "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     for container in $(printf '%s\n' $clients | sort -Vr) \
         bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
