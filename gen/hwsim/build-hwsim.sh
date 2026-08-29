@@ -1,12 +1,13 @@
 #!/bin/bash
 # build-hwsim.sh -- build a mac80211_hwsim.ko that lets wmediumd register at
 # channels > 1 (patch 0001), optionally with 6 GHz support and an opt-in
-# impaired in-kernel medium (patch 0003). Userspace wmediumd remains default.
+# impaired in-kernel medium (patches 0003-0007). Userspace wmediumd remains
+# default; the rate-aware PER model is separately opt-in.
 #
 #   ./build-hwsim.sh            # build patched module -> ./build/mac80211_hwsim.ko
 #   ./build-hwsim.sh --6ghz     # also enable 6 GHz (kernel-generation dependent)
 #   ./build-hwsim.sh --install  # build, then install to updates/ and depmod
-#   ./build-hwsim.sh --load     # build+install, then reload the pool patched
+#   ./build-hwsim.sh --load     # build+install, then reload the patched pool
 #                               #   (HWSIM_RADIOS / HWSIM_CHANNELS env, default 32/2)
 #
 # Kernel-generation aware: 6.8 and 7.0 are both proven and build without FORCE.
@@ -91,6 +92,9 @@ if [ "$WITH_6GHZ" = 1 ]; then
 fi
 apply "$HERE/patches/0003-mac80211_hwsim-optional-kernel-medium.patch"
 apply "$HERE/patches/0004-mac80211_hwsim-kernel-medium-link-matrix.patch"
+apply "$HERE/patches/0005-mac80211_hwsim-kernel-medium-rate-per.patch"
+apply "$HERE/patches/0006-mac80211_hwsim-kernel-medium-timing-observability.patch"
+apply "$HERE/patches/0007-mac80211_hwsim-allow-128-static-radios.patch"
 grep -q 'EXPERIMENTAL wmediumd' "$SRCDIR/mac80211_hwsim.c" \
     || { echo "patch 0001 did not apply -- check source version" >&2; exit 1; }
 
@@ -107,11 +111,9 @@ if [ "$DO_INSTALL" = 1 ]; then
 fi
 
 if [ "$DO_LOAD" = 1 ]; then
-    # 32 covers the target small profile: five mesh radios, twenty client
+    # 32 covers the target small profile: five mesh nodes, twenty client
     # radios and spare capacity for controlled replacement/tests. Medium uses
-    # 64. A 100-client stress profile needs 105 radios and therefore cannot use
-    # the stock module's static radios= limit; keep it gated until a dynamic or
-    # patched allocation path has its own acceptance evidence.
+    # 64 and the optional stress profile uses the patched 128-radio bound.
     R=${HWSIM_RADIOS:-32}
     # 6 GHz tri-band wants a third channel context; default channels=3 with --6ghz.
     if [ -n "${HWSIM_CHANNELS:-}" ]; then C=$HWSIM_CHANNELS
@@ -124,7 +126,7 @@ if [ "$DO_LOAD" = 1 ]; then
     fi
     KMEDIUM=""
     if [ "${HWSIM_KERNEL_MEDIUM:-0}" = 1 ]; then
-        KMEDIUM="kernel_medium=1 kernel_medium_cutoff=${HWSIM_KERNEL_MEDIUM_CUTOFF:--95} kernel_medium_loss_pct=${HWSIM_KERNEL_MEDIUM_LOSS_PCT:-0}"
+        KMEDIUM="kernel_medium=1 kernel_medium_cutoff=${HWSIM_KERNEL_MEDIUM_CUTOFF:--95} kernel_medium_loss_pct=${HWSIM_KERNEL_MEDIUM_LOSS_PCT:-0} kernel_medium_rate_per=${HWSIM_KERNEL_MEDIUM_RATE_PER:-0} kernel_medium_noise_floor=${HWSIM_KERNEL_MEDIUM_NOISE_FLOOR:--91} kernel_medium_delay_us=${HWSIM_KERNEL_MEDIUM_DELAY_US:-0} kernel_medium_jitter_us=${HWSIM_KERNEL_MEDIUM_JITTER_US:-0} kernel_medium_delay_queue_limit=${HWSIM_KERNEL_MEDIUM_QUEUE_LIMIT:-4096}"
     fi
     echo ">> reloading pool: radios=$R channels=$C $REG $KMEDIUM"
     sudo modprobe -r mac80211_hwsim || true
