@@ -21,6 +21,17 @@ sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
+from wmdcfg.kernel_actuator import KernelMediumClient  # noqa: E402
+
+
+def medium_client(args: argparse.Namespace):
+    if args.backend == "userspace":
+        return ControlClient(args.socket)
+    if args.backend == "kernel":
+        return KernelMediumClient(
+            args.kernel_root, noise_floor_dbm=args.noise_floor_dbm
+        )
+    raise RuntimeError(f"unsupported medium backend {args.backend!r}")
 
 
 def normalize_mac(value: str) -> str:
@@ -181,7 +192,7 @@ def apply(args: argparse.Namespace) -> int:
             else args.other_snr
         )
         pairs.extend(((station, radio), (radio, station)))
-    with ControlClient(args.socket) as control:
+    with medium_client(args) as control:
         status, prior = snapshot_frequency_links(control, pairs, args.frequency)
         for source, destination in pairs:
             radio = destination if source == station else source
@@ -194,6 +205,7 @@ def apply(args: argparse.Namespace) -> int:
             })
         state = {
             "schema": "easymesh.steering-rf-bias.v1",
+            "backend": args.backend,
             "instance_id": status.instance_id,
             "client": args.client,
             "target_bssid": target_bssid,
@@ -216,10 +228,15 @@ def restore(args: argparse.Namespace) -> int:
     updates = state.get("updates") or []
     if not updates:
         raise RuntimeError("steering RF-bias state has no updates")
-    with ControlClient(args.socket) as control:
+    state_backend = state.get("backend", "userspace")
+    if state_backend != args.backend:
+        raise RuntimeError(
+            f"RF-bias state belongs to {state_backend}, not {args.backend}"
+        )
+    with medium_client(args) as control:
         status = control.status()
         if status.instance_id != state.get("instance_id"):
-            raise RuntimeError("wmediumd instance changed; exact RF restore is unsafe")
+            raise RuntimeError("medium instance changed; exact RF restore is unsafe")
         control.apply_frequency(status.generation + 1, updates)
     args.state.unlink()
     print(f"RF bias restored: {state.get('client', 'unknown')}")
@@ -229,6 +246,13 @@ def restore(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", default="/run/wmediumd-control.sock")
+    parser.add_argument(
+        "--backend",
+        choices=("userspace", "kernel"),
+        default=os.environ.get("EASYMESH_MEDIUM_BACKEND", "userspace"),
+    )
+    parser.add_argument("--kernel-root", default="/sys/kernel/debug/ieee80211")
+    parser.add_argument("--noise-floor-dbm", type=int, default=-91)
     commands = parser.add_subparsers(dest="command", required=True)
 
     apply_parser = commands.add_parser("apply")

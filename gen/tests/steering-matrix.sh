@@ -35,6 +35,18 @@ commands=${COMMANDS_FILE:-${results%.csv}.commands.log}
 : > "$events"
 : > "$commands"
 
+medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
+if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
+    medium_backend=$(sed -n 's/^[[:space:]]*EASYMESH_MEDIUM_BACKEND=//p' \
+        /etc/default/easymesh-lab | tail -1 | tr -d "'\"")
+fi
+medium_backend=${medium_backend:-userspace}
+case "$medium_backend" in
+    userspace) bias_command=(python3 "$repo/gen/tests/steering-rf-bias.py" --backend userspace) ;;
+    kernel) bias_command=(sudo -n python3 "$repo/gen/tests/steering-rf-bias.py" --backend kernel) ;;
+    *) echo "unsupported medium backend: $medium_backend" >&2; exit 2 ;;
+esac
+
 # The test starts from the caller's current matrix and restores every temporary
 # bias exactly. A full all-strong restart is only the failure-path fallback.
 medium_restored=1
@@ -42,11 +54,13 @@ restore_medium() {
     if [ "$medium_restored" -eq 1 ]; then
         return 0
     fi
-    if SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null; then
+    if [[ -n ${active_bias_state:-} && -s $active_bias_state ]] \
+        && "${bias_command[@]}" restore --state "$active_bias_state" >/dev/null; then
+        active_bias_state=
         medium_restored=1
         return 0
     fi
-    echo "failed to restore the all-strong wmediumd matrix" >&2
+    echo "failed to restore the exact $medium_backend medium state" >&2
     return 1
 }
 cleanup() {
@@ -176,8 +190,9 @@ for ((round=1; round <= rounds; round++)); do
 
         bias_state=$(mktemp)
         rm -f "$bias_state"
+        active_bias_state=$bias_state
         medium_restored=0
-        python3 "$repo/gen/tests/steering-rf-bias.py" apply \
+        "${bias_command[@]}" apply \
             --client "$client" --source-bssid "$source" \
             --target-bssid "$target" --state "$bias_state" \
             --frequency "$steering_frequency" \
@@ -233,8 +248,9 @@ for ((round=1; round <= rounds; round++)); do
             sleep 0.1
         done
 
-        python3 "$repo/gen/tests/steering-rf-bias.py" restore \
+        "${bias_command[@]}" restore \
             --state "$bias_state" | tee -a "$commands"
+        active_bias_state=
         medium_restored=1
 
         wait "$ping_pid" || true

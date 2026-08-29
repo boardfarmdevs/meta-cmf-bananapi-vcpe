@@ -6,7 +6,24 @@ exec </dev/null
 ap=${1:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
 target=${2:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
 clients='wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009'
-wpid=$(cat /run/meta-cmf-wmediumd/wmediumd.pid)
+repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
+medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
+if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
+    medium_backend=$(sed -n 's/^[[:space:]]*EASYMESH_MEDIUM_BACKEND=//p' \
+        /etc/default/easymesh-lab | tail -1 | tr -d "'\"")
+fi
+medium_backend=${medium_backend:-userspace}
+medium_identity() {
+    case "$medium_backend" in
+        userspace) cat /run/meta-cmf-wmediumd/wmediumd.pid ;;
+        kernel)
+            sudo -n python3 "$repo/gen/wmediumd/configurator/wmdcfg.py" \
+                status --backend kernel | jq -r .instance_id
+            ;;
+        *) echo "unsupported medium backend: $medium_backend" >&2; return 2 ;;
+    esac
+}
+medium_id=$(medium_identity)
 topology_url=${TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
 ap_stopped=0
 
@@ -18,7 +35,7 @@ restore_ap() {
 }
 trap restore_ap EXIT
 
-echo "BASELINE ap=$ap target_bssid=$target wmediumd_pid=$wpid"
+echo "BASELINE ap=$ap target_bssid=$target medium_backend=$medium_backend medium_identity=$medium_id"
 impacted=()
 for client in $clients; do
     bssid=$(lxc exec "$client" -- iw dev wlan0 link \
@@ -165,8 +182,9 @@ for _ in $(seq 1 180); do
 done
 [ "$controller_ms" -ge 0 ]
 
-echo "wmediumd_pid_after=$(cat /run/meta-cmf-wmediumd/wmediumd.pid)"
-[ "$(cat /run/meta-cmf-wmediumd/wmediumd.pid)" = "$wpid" ]
+medium_id_after=$(medium_identity)
+echo "medium_identity_after=$medium_id_after"
+[ "$medium_id_after" = "$medium_id" ]
 lxc exec bpibroadband -- systemctl show em_ctrl em_cli \
     -p Id -p MainPID -p NRestarts --no-pager
 trap - EXIT

@@ -75,6 +75,17 @@ curl_timeout=${EASYMESH_CURL_TIMEOUT:-8}
 bias_timeout=${EASYMESH_BIAS_TIMEOUT:-30}
 controller_steer_timeout=${EASYMESH_CONTROLLER_STEER_TIMEOUT:-45}
 preview_seconds=${EASYMESH_STEERING_PREVIEW_SECONDS:-3}
+medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
+if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
+    medium_backend=$(sed -n 's/^[[:space:]]*EASYMESH_MEDIUM_BACKEND=//p' \
+        /etc/default/easymesh-lab | tail -1 | tr -d "'\"")
+fi
+medium_backend=${medium_backend:-userspace}
+case "$medium_backend" in
+    userspace) bias_command=(python3 "$bias_tool" --backend userspace) ;;
+    kernel) bias_command=(sudo -n python3 "$bias_tool" --backend kernel) ;;
+    *) echo "steer.sh: unsupported medium backend: $medium_backend" >&2; exit 2 ;;
+esac
 
 announce_steering() {
     local phase=$1
@@ -325,7 +336,7 @@ restore_bias() {
     # though the helper did not live long enough to report success.
     if ((bias_active)) || [[ -s $bias_state ]]; then
         if timeout --signal=TERM --kill-after=2 20 \
-                python3 "$bias_tool" restore --state "$bias_state"; then
+                "${bias_command[@]}" restore --state "$bias_state"; then
             bias_active=0
         else
             echo "steer.sh: WARNING: exact wmediumd RF restore failed; state retained at $bias_state" >&2
@@ -365,7 +376,7 @@ for radio in "${mesh_radios[@]}"; do
 done
 set +e
 timeout --signal=TERM --kill-after=2 "$bias_timeout" \
-    python3 "$bias_tool" "${bias_args[@]}"
+    "${bias_command[@]}" "${bias_args[@]}"
 bias_rc=$?
 set -e
 if ((bias_rc != 0)); then
