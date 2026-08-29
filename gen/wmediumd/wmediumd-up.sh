@@ -27,6 +27,18 @@ IDENTITY_GENERATOR=${WMEDIUMD_IDENTITY_GENERATOR:-$HERE/observer/generate-identi
 CFG=${CFG:-$RUNTIME/wmediumd.cfg}
 PIDF=${WMEDIUMD_PIDFILE:-$RUNTIME/wmediumd.pid}
 LOG=${WMEDIUMD_LOG:-$RUNTIME/wmediumd.log}
+CPU_AFFINITY=${WMEDIUMD_CPU_AFFINITY:-}
+
+if [ -n "$CPU_AFFINITY" ]; then
+    [[ "$CPU_AFFINITY" =~ ^[0-9]+([,-][0-9]+)*$ ]] || {
+        echo "invalid WMEDIUMD_CPU_AFFINITY: $CPU_AFFINITY" >&2
+        exit 2
+    }
+    command -v taskset >/dev/null 2>&1 || {
+        echo "WMEDIUMD_CPU_AFFINITY requires taskset" >&2
+        exit 2
+    }
+fi
 
 # Keep shared daemon state out of sticky /tmp. Ubuntu's protected-regular-file
 # policy otherwise makes a root provision fail after a non-root lab run (and
@@ -116,7 +128,11 @@ case "${1:-up}" in
         echo "WARN: Console identity inventory unavailable; telemetry will use radio MAC labels" >&2
         sudo rm -f "$IDENTITY"
     fi
-    sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' -R '$METRICS' -O '$OBSERVER' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
+    if [ -n "$CPU_AFFINITY" ]; then
+        sudo sh -c "taskset -c '$CPU_AFFINITY' '$WMD' -c '$CFG' -C '$CONTROL' -R '$METRICS' -O '$OBSERVER' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
+    else
+        sudo sh -c "'$WMD' -c '$CFG' -C '$CONTROL' -R '$METRICS' -O '$OBSERVER' >'$LOG' 2>&1 & echo \$! > '$PIDF'"
+    fi
     sleep 1
     pid=$(cat "$PIDF" 2>/dev/null || true)
     if [ -z "$pid" ] || ! sudo kill -0 "$pid" 2>/dev/null; then
@@ -159,7 +175,9 @@ case "${1:-up}" in
         | sudo tee "$DAEMON_MANIFEST" >/dev/null
     sudo chown root:root "$DAEMON_MANIFEST"
     sudo chmod 0644 "$DAEMON_MANIFEST"
-    echo ">> up (pid $pid); log $LOG; read-only metrics $METRICS; telemetry $OBSERVER; identities $IDENTITY; binary manifest $DAEMON_MANIFEST"
+    affinity=$(taskset -pc "$pid" 2>/dev/null | sed 's/.*: //' || true)
+    threads=$(ps -o nlwp= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    echo ">> up (pid $pid); threads ${threads:-unknown}; affinity ${affinity:-unknown}; log $LOG; read-only metrics $METRICS; telemetry $OBSERVER; identities $IDENTITY; binary manifest $DAEMON_MANIFEST"
     ;;
   down)
     stop_running_wmediumd
@@ -167,8 +185,11 @@ case "${1:-up}" in
     ;;
   status)
     if [ -f "$PIDF" ] && sudo kill -0 "$(cat "$PIDF")" 2>/dev/null; then
-        if [ -S "$CONTROL" ] && [ -S "$METRICS" ] && [ -S "$OBSERVER" ]; then
-            echo "wmediumd running (pid $(cat "$PIDF")); control, metrics and telemetry sockets ready"
+      if [ -S "$CONTROL" ] && [ -S "$METRICS" ] && [ -S "$OBSERVER" ]; then
+            pid=$(cat "$PIDF")
+            affinity=$(taskset -pc "$pid" 2>/dev/null | sed 's/.*: //' || true)
+            threads=$(ps -o nlwp= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+            echo "wmediumd running (pid $pid); threads ${threads:-unknown}; affinity ${affinity:-unknown}; control, metrics and telemetry sockets ready"
         else
             echo "wmediumd running (pid $(cat "$PIDF")); socket missing"
             exit 1

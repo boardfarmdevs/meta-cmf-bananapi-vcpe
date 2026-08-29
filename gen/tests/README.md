@@ -123,6 +123,7 @@ Docker/Boardfarm reconstruction.
 | `p0-churn-soak.py` | Repeated live RF acceptance | Temporary RF changes |
 | `p0-cold-reconstruction.sh` | Repeated full reconstruction | Yes, highly disruptive |
 | `bpibroadband-memory-profile.py` | Live measurement | No |
+| `wmediumd-performance.py` | Live CPU/traffic benchmark | Generates bounded WLAN traffic |
 | `deployment-model-evidence.sh` | Runtime/guest comparison evidence | Health audit only |
 | `deployment-host-evidence.sh` | Physical-host/hypervisor comparison evidence | No |
 | `steer-by-name-test.sh` | Isolated shell unit test | No |
@@ -136,6 +137,22 @@ Docker/Boardfarm reconstruction.
 | `webui-topology-layout-test.js` | Isolated WebUI unit test | No |
 
 ## Live health and configuration tests
+
+### `wmediumd-performance.py`
+
+Measure idle overhead or drive all selected WLAN clients concurrently:
+
+```sh
+./gen/tests/wmediumd-performance.py --mode idle --duration 30
+./gen/tests/wmediumd-performance.py \
+  --mode ping --duration 20 --ping-interval 0.02 --client-limit 20 \
+  --output /tmp/wmediumd-performance.json
+```
+
+The JSON report combines process CPU/RSS, affinity, context switches, netlink
+drops, packet and queue telemetry, and per-client ping results. CPU is a
+percentage of one logical CPU. The accepted measurements and overload boundary
+are documented in `doc/easymesh/reference/wmediumd-performance.md`.
 
 ### `optimizer-dynamic.sh`
 
