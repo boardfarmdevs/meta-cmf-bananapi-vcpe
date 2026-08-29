@@ -374,11 +374,17 @@ new_al_update = (
     "    sed -i \"s@\\\"AL_MAC_ADDR\\\"[[:space:]]*:[[:space:]]*\\\"[^\\\"]*\\\"@\\\"AL_MAC_ADDR\\\": \\\"$al_mac\\\"@\" /nvram/EasymeshCfg.json\n"
     "fi\n"
 )
-assert content.count(old_al_update) == 1, content.count(old_al_update)
-content = content.replace(old_al_update, new_al_update)
+old_al_count = content.count(old_al_update)
+if path.endswith("onewifi_pre_start_em_ext.sh"):
+    # Keep this assertion on the one script whose fresh-image failure is being
+    # repaired.  The controller script legitimately has no extender AL update.
+    assert old_al_count == 1, old_al_count
+    content = content.replace(old_al_update, new_al_update)
+else:
+    assert old_al_count == 0, old_al_count
 with open(path, "w") as fh:
     fh.write(content)
 PYEOF
-        bbnote "meta-cmf-bananapi-vcpe: added persistent VAP MAC generation and first-boot-safe EasyMesh AL-MAC update to $fn"
+        bbnote "meta-cmf-bananapi-vcpe: added persistent VAP MAC generation and the applicable first-boot-safe EasyMesh AL-MAC update to $fn"
     done
 }
