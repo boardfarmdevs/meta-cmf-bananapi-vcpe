@@ -3,9 +3,10 @@ set -euo pipefail
 
 exec </dev/null
 
-ap=${1:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
-target=${2:?usage: ap-recovery.sh AP_CONTAINER PRIVATE_BSSID}
-clients='wlan-client wlan-client-001 wlan-client-002 wlan-client-003 wlan-client-004 wlan-client-005 wlan-client-006 wlan-client-007 wlan-client-008 wlan-client-009'
+ap=${1:?usage: ap-recovery.sh AP_CONTAINER AP_BSSID}
+target=${2:?usage: ap-recovery.sh AP_CONTAINER AP_BSSID}
+mapfile -t clients < <(lxc list -c n --format csv \
+    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
 if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
@@ -17,8 +18,9 @@ medium_identity() {
     case "$medium_backend" in
         userspace) cat /run/meta-cmf-wmediumd/wmediumd.pid ;;
         kernel)
-            sudo -n python3 "$repo/gen/wmediumd/configurator/wmdcfg.py" \
-                status --backend kernel | jq -r .instance_id
+            sudo -n env PYTHONPATH="$repo/gen/wmediumd/configurator" \
+                python3 -m wmdcfg.cli status --backend kernel \
+                | jq -r .instance_id
             ;;
         *) echo "unsupported medium backend: $medium_backend" >&2; return 2 ;;
     esac
@@ -26,26 +28,79 @@ medium_identity() {
 medium_id=$(medium_identity)
 topology_url=${TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
 ap_stopped=0
+impacted=()
+
+topology=$(curl -fsS "$topology_url")
+mapfile -t target_bssids < <(jq -r --arg target "${target,,}" '
+    [.nodes[]?
+      | select(any(.haulTypes[]?.BSSList[]?;
+          ((.BSSID // "") | ascii_downcase) == $target))
+      | .haulTypes[]?.BSSList[]?.BSSID
+      | ascii_downcase]
+    | unique[]' <<<"$topology")
+[ "${#target_bssids[@]}" -gt 0 ] || {
+    echo "target BSSID $target is absent from the live topology" >&2
+    exit 1
+}
+
+bssid_belongs_to_ap() {
+    local actual=${1,,} candidate
+    for candidate in "${target_bssids[@]}"; do
+        [ "$actual" = "$candidate" ] && return 0
+    done
+    return 1
+}
 
 restore_ap() {
     if [ "$ap_stopped" -eq 1 ]; then
         echo "cleanup_restarting_ap=$ap" >&2
         lxc start "$ap" >/dev/null 2>&1 || true
+        for _ in $(seq 1 90); do
+            private=$(lxc exec "$ap" -- iw dev 2>/dev/null \
+                | grep -c 'ssid private_ssid' || true)
+            iot=$(lxc exec "$ap" -- iw dev 2>/dev/null \
+                | grep -c 'ssid iot_ssid' || true)
+            [ "$private" -eq 3 ] && [ "$iot" -eq 3 ] && break
+            sleep 1
+        done
+        for client in "${impacted[@]}"; do
+            lxc exec "$client" -- ip link set wlan0 down >/dev/null 2>&1 || true
+            lxc exec "$client" -- ip link set wlan0 up >/dev/null 2>&1 || true
+            lxc exec "$client" -- wpa_cli -i wlan0 enable_network all \
+                >/dev/null 2>&1 || true
+            lxc exec "$client" -- wpa_cli -i wlan0 reassociate \
+                >/dev/null 2>&1 || true
+        done
     fi
 }
 trap restore_ap EXIT
 
-echo "BASELINE ap=$ap target_bssid=$target medium_backend=$medium_backend medium_identity=$medium_id"
-impacted=()
-for client in $clients; do
+echo "BASELINE ap=$ap target_bssid=$target bss_count=${#target_bssids[@]} clients=${#clients[@]} medium_backend=$medium_backend medium_identity=$medium_id"
+for client in "${clients[@]}"; do
     bssid=$(lxc exec "$client" -- iw dev wlan0 link \
         | awk '/Connected to/{print $3}')
-    if [ "$bssid" = "$target" ]; then
-        echo "target_client=$client"
+    if bssid_belongs_to_ap "$bssid"; then
+        echo "target_client=$client bssid=$bssid"
         impacted+=("$client")
     fi
 done
 [ "${#impacted[@]}" -gt 0 ]
+
+# A destructive recovery measurement is meaningful only from a coherent
+# baseline.  Refuse to attribute a pre-existing controller ownership mismatch
+# to the AP outage being tested.
+for client in "${impacted[@]}"; do
+    sta=$(lxc exec "$client" -- cat /sys/class/net/wlan0/address)
+    link_bssid=$(lxc exec "$client" -- iw dev wlan0 link \
+        | awk '/Connected to/{print $3}')
+    db_bssid=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
+        -e "select BSSID from STAList where MACAddress='$sta' and Associated=1 limit 1" \
+        2>/dev/null || true)
+    [ "$db_bssid" = "$link_bssid" ] || {
+        echo "baseline_model_mismatch client=$client sta=$sta link=$link_bssid db=$db_bssid" >&2
+        exit 1
+    }
+done
 
 start=$(date +%s%3N)
 # This is an abrupt AP-loss test, so use LXD's forced stop. A graceful init
@@ -63,7 +118,7 @@ failed=0
 for client in "${impacted[@]}"; do
     bssid=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
         | awk '/Connected to/{print $3}')
-    if [ "$bssid" = "$target" ]; then
+    if bssid_belongs_to_ap "$bssid"; then
         stale=$((stale + 1))
     fi
     if ! lxc exec "$client" -- ping -q -c 2 -W 1 10.0.0.1 >/dev/null; then
@@ -75,34 +130,40 @@ echo "raw_ap_drop stale_links=$stale traffic_failures=$failed impacted=${#impact
 for client in "${impacted[@]}"; do
     lxc exec "$client" -- ip link set wlan0 down
     lxc exec "$client" -- ip link set wlan0 up
+    # Repeated authentication attempts while the AP is absent may leave the
+    # only configured network TEMP-DISABLED.  Re-enable it after injecting the
+    # hwsim link-loss transition so the station can select another live BSS
+    # immediately instead of waiting for supplicant backoff to expire.
+    lxc exec "$client" -- wpa_cli -i wlan0 enable_network all >/dev/null
+    lxc exec "$client" -- wpa_cli -i wlan0 reassociate >/dev/null
 done
 start=$(date +%s%3N)
 connected=0
 old=99
-for _ in $(seq 1 80); do
+for _ in $(seq 1 120); do
     connected=0
     old=0
-    for client in $clients; do
+    for client in "${clients[@]}"; do
         bssid=$(lxc exec "$client" -- iw dev wlan0 link 2>/dev/null \
             | awk '/Connected to/{print $3}')
         if [ -n "$bssid" ]; then
             connected=$((connected + 1))
         fi
-        if [ "$bssid" = "$target" ]; then
+        if bssid_belongs_to_ap "$bssid"; then
             old=$((old + 1))
         fi
     done
     elapsed=$(( $(date +%s%3N) - start ))
     echo "link_loss_recovery_ms=$elapsed connected=$connected old_bssid=$old"
-    if [ "$connected" -eq 10 ] && [ "$old" -eq 0 ]; then
+    if [ "$connected" -eq "${#clients[@]}" ] && [ "$old" -eq 0 ]; then
         break
     fi
     sleep 0.5
 done
-[ "$connected" -eq 10 ] && [ "$old" -eq 0 ]
+[ "$connected" -eq "${#clients[@]}" ] && [ "$old" -eq 0 ]
 
 traffic_failures=0
-for client in $clients; do
+for client in "${clients[@]}"; do
     if ! lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 >/dev/null; then
         traffic_failures=$((traffic_failures + 1))
     fi
