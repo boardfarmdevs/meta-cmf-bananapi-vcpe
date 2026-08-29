@@ -36,6 +36,7 @@ def _plan() -> dict:
 
 class FakeControlClient:
     fail_restore = False
+    conflict_once = False
     last = None
 
     def __init__(self, socket_path: str):
@@ -63,6 +64,13 @@ class FakeControlClient:
         ]
 
     def apply(self, generation: int, updates: list[dict]):
+        if self.conflict_once:
+            self.conflict_once = False
+            self.generation += 1
+            raise ActuatorError(
+                f"daemon rejected opcode 3: generation "
+                f"(effective generation {self.generation})"
+            )
         self.generation = generation
         for update in updates:
             if not (self.fail_restore and update["value"] == 40):
@@ -90,8 +98,9 @@ class FakeControlClient:
 
 
 class RunnerTests(unittest.TestCase):
-    def _execute(self, fail_restore: bool):
+    def _execute(self, fail_restore: bool, conflict_once: bool = False):
         FakeControlClient.fail_restore = fail_restore
+        FakeControlClient.conflict_once = conflict_once
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -146,6 +155,15 @@ class RunnerTests(unittest.TestCase):
         )
         runner.execute()
         self.assertEqual(FakeControlClient.last.frequency, {})
+
+    def test_external_generation_advance_is_retried_and_restored(self):
+        runner, _ = self._execute(False, conflict_once=True)
+        run_dir = runner.execute()
+        summary = json.loads((run_dir / "summary.json").read_text())
+        self.assertEqual(summary["outcome"], "passed")
+        self.assertTrue(summary["restored"])
+        self.assertEqual(FakeControlClient.last.matrix[(SOURCE, DESTINATION)], 40)
+        self.assertGreaterEqual(FakeControlClient.last.generation, 3)
 
 
 if __name__ == "__main__":

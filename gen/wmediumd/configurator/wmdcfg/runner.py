@@ -35,6 +35,38 @@ class Runner:
         self.stop_requested = True
 
     @staticmethod
+    def _apply_generation(
+        client: ControlClient,
+        previous_generation: int,
+        updates: list[dict],
+        frequency_mode: bool,
+        *,
+        attempts: int = 4,
+    ) -> tuple[int, list[dict]]:
+        """Apply one atomic generation without assuming exclusive socket use.
+
+        A steering actuator may temporarily bias the same medium while a timed
+        scenario is running.  That legitimate second writer advances the
+        daemon generation and makes a locally precomputed value stale.  Read
+        the current generation for every transaction and retry only the
+        daemon's explicit generation-conflict response.  Other actuator
+        failures remain fatal.
+        """
+        for attempt in range(attempts):
+            generation = max(previous_generation, client.status().generation) + 1
+            try:
+                applied = (
+                    client.apply_frequency(generation, updates)
+                    if frequency_mode
+                    else client.apply(generation, updates)
+                )
+                return generation, applied
+            except ActuatorError as error:
+                if "generation" not in str(error).lower() or attempt + 1 == attempts:
+                    raise
+        raise AssertionError("unreachable")
+
+    @staticmethod
     def _require_healthy(health: dict, stage: str) -> None:
         if health["api_active"] != health["api_total"]:
             raise ActuatorError(f"mesh {stage} has inactive clients")
@@ -155,12 +187,12 @@ class Runner:
                         if not event["updates"]:
                             _append(event_log, {"event": "mark", **event})
                             continue
-                        generation += 1
                         desired_at = execution_started + event["time_ms"] / 1000
-                        applied = (
-                            client.apply_frequency(generation, event["updates"])
-                            if frequency_mode else
-                            client.apply(generation, event["updates"])
+                        generation, applied = self._apply_generation(
+                            client,
+                            generation,
+                            event["updates"],
+                            frequency_mode,
                         )
                         if frequency_mode:
                             readback = []
@@ -212,9 +244,13 @@ class Runner:
                         time.sleep(min(end_deadline - time.monotonic(), 0.1))
                 finally:
                     if restore_updates:
-                        generation += 1
+                        generation, _ = self._apply_generation(
+                            client,
+                            generation,
+                            restore_updates,
+                            frequency_mode,
+                        )
                         if frequency_mode:
-                            client.apply_frequency(generation, restore_updates)
                             restored = all(
                                 client.get_frequency_link(
                                     item["source"], item["destination"],
@@ -225,7 +261,6 @@ class Runner:
                                 for item in restore_updates
                             )
                         else:
-                            client.apply(generation, restore_updates)
                             restored = all(
                                 client.get_link(item["source"], item["destination"])[1]
                                 == item["value"]
