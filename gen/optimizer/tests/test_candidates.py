@@ -247,7 +247,8 @@ def test_different_agents_are_queried_concurrently_with_stable_results():
         return result
 
     provider = ControllerCandidateProvider(
-        "http://controller", requester=request, allow_simulated=True
+        "http://controller", requester=request, allow_simulated=True,
+        max_parallel_agents=2,
     )
     measured = list(provider(
         (client(),), (inventory(), second_inventory), raw,
@@ -258,6 +259,53 @@ def test_different_agents_are_queried_concurrently_with_stable_results():
     assert [item["request"]["AlMac"] for item in provider.last_raw] == [
         AGENT, second_agent,
     ]
+
+
+def test_default_serializes_agents_for_the_native_cli_adapter():
+    second_agent = "02:00:00:00:0a:20"
+    second_radio = "02:00:00:00:0a:00"
+    second_bssid = "02:00:00:cc:cc:01"
+    second_inventory = replace(
+        inventory(), bssid=second_bssid, device_id=second_agent,
+        device_name="Extender-2",
+    )
+    raw = bsses() + [{
+        "bssid": second_bssid,
+        "device_id": second_agent,
+        "radio_id": second_radio,
+        "band": 1,
+        "channel": 36,
+        "ssid": "private_ssid",
+        "haul_type": "Fronthaul",
+    }]
+    active = 0
+    maximum_active = 0
+    calls_lock = Lock()
+
+    def request(_url, payload):
+        nonlocal active, maximum_active
+        with calls_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        result = response()
+        agent = payload["AlMac"]
+        result["metrics"][0].update({
+            "agent_al": agent,
+            "ruid": RADIO if agent == AGENT else second_radio,
+        })
+        with calls_lock:
+            active -= 1
+        return result
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=request, allow_simulated=True
+    )
+    measured = list(provider(
+        (client(),), (inventory(), second_inventory), raw,
+        "2026-08-21T20:00:01.000Z",
+    ))
+    assert maximum_active == 1
+    assert [item.bssid for item in measured] == [BSSID, second_bssid]
 
 
 def test_provider_splits_requests_at_controller_eight_sta_limit():

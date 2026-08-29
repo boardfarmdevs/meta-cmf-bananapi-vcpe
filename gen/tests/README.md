@@ -414,11 +414,14 @@ policy. It prints the decisions and reasons but does not deploy steering
 actions. `--policy`, `--maximum-age-seconds`, `--interval` and `--base-url`
 select the policy and observation constraints.
 
-The default 60-second freshness gate covers the measured 30-40 second
-collection interval of the 20-client lab. Candidate batches remain sequential
-within one Agent and run concurrently across independent Agents. Tighten the
-gate only when the complete observation interval has been measured below the
-new value; the native WebUI command path still serializes `libemcli` access.
+The default 60-second freshness gate covers the measured collection interval
+of the 20-client lab. Candidate batches and Agents are queried sequentially by
+default because the native WebUI command path serializes `libemcli` access.
+Launching concurrent HTTP handlers only makes them contend on that same path
+and previously caused repeatable 504/client timeouts across bare metal and both
+VM models. Tighten the gate or raise Agent concurrency only after the complete
+observation interval has been measured through a command adapter that actually
+supports concurrent transactions.
 
 Run this with the VM's supported Python environment; the optimizer package
 uses modern Python type syntax.

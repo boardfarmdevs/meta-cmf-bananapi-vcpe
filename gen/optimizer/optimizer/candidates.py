@@ -29,6 +29,14 @@ LAB_CONTROL_CHANNELS = {"2.4": 6, "5": 36, "6": 5}
 # correlated response, so keep every transaction within that real boundary.
 MAX_UNASSOC_STAS_PER_QUERY = 8
 
+# The HTTP adapter serializes every native libemcli call.  Agent protocol
+# transactions are independent, but concurrent HTTP handlers still contend on
+# that single command path while each handler polls through the same adapter.
+# Keep the release collector serial at this boundary.  A future adapter with a
+# genuinely concurrent command/result API can opt in to more workers.
+DEFAULT_MAX_PARALLEL_AGENTS = 1
+HTTP_REQUEST_TIMEOUT_SECONDS = 20
+
 
 class CandidateMetricsError(RuntimeError):
     """The controller could not produce a trustworthy candidate snapshot."""
@@ -65,7 +73,9 @@ def _default_request(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=12) as response:  # nosec B310
+        with urllib.request.urlopen(
+            request, timeout=HTTP_REQUEST_TIMEOUT_SECONDS
+        ) as response:  # nosec B310
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:
@@ -98,10 +108,14 @@ class ControllerCandidateProvider:
         *,
         requester: JsonRequester | None = None,
         allow_simulated: bool = False,
+        max_parallel_agents: int = DEFAULT_MAX_PARALLEL_AGENTS,
     ) -> None:
+        if max_parallel_agents < 1:
+            raise ValueError("max_parallel_agents must be positive")
         self.url = base_url.rstrip("/") + "/api/v1/unassoc_sta_query"
         self.requester = requester or _default_request
         self.allow_simulated = allow_simulated
+        self.max_parallel_agents = max_parallel_agents
         self.last_raw: list[dict[str, Any]] = []
 
     def _channel(self, raw: dict[str, Any]) -> int:
@@ -183,9 +197,9 @@ class ControllerCandidateProvider:
         # Each Agent owns an independent unassociated-STA response table and
         # EasyMesh command path.  Keep batches for one Agent sequential so a
         # later response cannot replace the previous eight-entry table before
-        # it is consumed, while querying different Agents concurrently.  A
-        # 20-client/five-Agent lab otherwise takes tens of seconds to observe
-        # and makes a 15-second freshness policy impossible to satisfy.
+        # it is consumed.  The current HTTP adapter also serializes native
+        # libemcli execution globally, so the release default runs Agents one
+        # at a time instead of creating competing polling handlers.
         transactions_by_agent: dict[str, list[dict[str, Any]]] = {
             agent: [] for agent in jobs_by_agent
         }
@@ -300,7 +314,7 @@ class ControllerCandidateProvider:
         failures: dict[str, CandidateMetricsError] = {}
         if jobs_by_agent:
             with ThreadPoolExecutor(
-                max_workers=min(8, len(jobs_by_agent)),
+                max_workers=min(self.max_parallel_agents, len(jobs_by_agent)),
                 thread_name_prefix="candidate-agent",
             ) as executor:
                 future_agents = {
