@@ -15,6 +15,80 @@ client_count=$(printf '%s\n' $clients | sed '/^$/d' | wc -l)
 [ "$client_count" -gt 0 ] || { echo 'no provisioned WLAN clients found' >&2; exit 1; }
 expected_associated=$((client_count + 4))
 state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-vagrant/reboot-acceptance}
+medium_backend=${EASYMESH_MEDIUM_BACKEND:-userspace}
+kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
+
+case "$medium_backend" in
+userspace|kernel) ;;
+*)
+    echo "invalid EASYMESH_MEDIUM_BACKEND=$medium_backend (expected userspace or kernel)" >&2
+    exit 2
+    ;;
+esac
+
+action=${1:-start}
+case "$action" in
+start|stop)
+    # systemd and an operator must never reconstruct the same radio pool at
+    # once. The lock covers the complete transaction, including failure
+    # evidence, and is inherited by every child process.
+    exec {lab_runtime_lock}>/run/easymesh-lab-runtime.lock
+    if ! flock -n "$lab_runtime_lock"; then
+        echo "another EasyMesh lab lifecycle transaction is already active" >&2
+        exit 75
+    fi
+    ;;
+esac
+
+select_medium_backend() {
+    case "$medium_backend" in
+    userspace)
+        # The accepted path remains the default. If the optional module is
+        # installed, explicitly turn its data path off before any node starts;
+        # wmediumd will register after the complete radio roster is active.
+        if [ -w "$kernel_medium_parameter" ]; then
+            printf 'N\n' > "$kernel_medium_parameter"
+        fi
+        ;;
+    kernel)
+        [ -w "$kernel_medium_parameter" ] || {
+            echo 'kernel medium requested but the loaded hwsim module has no writable kernel_medium parameter' >&2
+            return 1
+        }
+        printf 'Y\n' > "$kernel_medium_parameter"
+        grep -Eq '^(Y|1)$' "$kernel_medium_parameter" || {
+            echo 'kernel medium did not enable' >&2
+            return 1
+        }
+        [ -r /sys/module/mac80211_hwsim/parameters/kernel_medium_generation ] || {
+            echo 'kernel medium requested but atomic matrix controls are absent' >&2
+            return 1
+        }
+        ;;
+    esac
+    echo "medium backend selected: $medium_backend"
+}
+
+verify_medium_backend() {
+    local status
+    case "$medium_backend" in
+    userspace)
+        status=$("$gen/wmediumd/wmediumd-up.sh" status)
+        [[ "$status" == *'wmediumd running'* ]]
+        ;;
+    kernel)
+        grep -Eq '^(Y|1)$' "$kernel_medium_parameter"
+        status=$(PYTHONPATH="$gen/wmediumd/configurator" \
+            python3 -m wmdcfg.cli status --backend kernel)
+        jq -e '.capabilities | index("kernel_data_path") != null' \
+            >/dev/null <<< "$status"
+        # A registered userspace daemon always takes precedence, which would
+        # make a requested kernel run silently exercise the wrong data path.
+        ! pgrep -f '^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\.patched([[:space:]]|$)' \
+            >/dev/null 2>&1
+        ;;
+    esac
+}
 
 instance_state() {
     lxc info "$1" 2>/dev/null | sed -n 's/^Status: //p'
@@ -370,6 +444,7 @@ capture_result() {
     install -d -o "$lab_user" -g "$lab_group" "$run"
     date -Ins > "$run/completed-at.txt"
     printf '%s\n' "$result" > "$run/result.txt"
+    printf '%s\n' "$medium_backend" > "$run/medium-backend.txt"
     lxc list -c ns4t > "$run/lxc-list.txt" 2>&1 || true
     curl -fsS http://127.0.0.1:8888/api/v1/topology > "$run/topology.json" 2>/dev/null || true
     curl -fsS http://127.0.0.1:8888/api/v1/clients > "$run/clients.json" 2>/dev/null || true
@@ -383,11 +458,20 @@ capture_result() {
     elif [ -f /tmp/wmediumd.log ]; then
         cp /tmp/wmediumd.log "$run/wmediumd.log"
     fi
+    if [ -r /sys/module/mac80211_hwsim/parameters/kernel_medium ]; then
+        for parameter in kernel_medium kernel_medium_cutoff \
+            kernel_medium_loss_pct kernel_medium_bank \
+            kernel_medium_generation; do
+            [ -r "/sys/module/mac80211_hwsim/parameters/$parameter" ] || continue
+            printf '%s=%s\n' "$parameter" \
+                "$(cat "/sys/module/mac80211_hwsim/parameters/$parameter")"
+        done > "$run/kernel-medium.txt"
+    fi
     journalctl -b -u easymesh-lab.service -o short-iso > "$run/easymesh-lab-journal.txt" 2>&1 || true
     chown -R "$lab_user:$lab_group" "$run"
 }
 
-case "${1:-start}" in
+case "$action" in
 start)
     result=FAIL
     trap 'capture_result "$result"' EXIT
@@ -417,6 +501,7 @@ start)
         lxc config set "$container" boot.autostart false
     done
     reclaim_hwsim_vifs
+    select_medium_backend
 
     start_instance bpibroadband
     wait_controller
@@ -431,7 +516,11 @@ start)
         wait_client_live "$client"
     done
 
-    env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
+    if [ "$medium_backend" = userspace ]; then
+        env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
+    else
+        verify_medium_backend
+    fi
     wait_clients
     wait_mesh_model
     # Policy state in the agents is volatile.  The first application starts
@@ -453,16 +542,17 @@ stop)
         bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
     done
+    if [ -w "$kernel_medium_parameter" ]; then
+        printf 'N\n' > "$kernel_medium_parameter"
+    fi
     ;;
 status)
-    wmediumd_status=''
     systemctl is-active --quiet docker.service snap.lxd.daemon.service
     docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 | grep -vx true && exit 1 || true
     for container in $mesh $clients; do
         [ "$(instance_state "$container")" = RUNNING ] || exit 1
     done
-    wmediumd_status=$("$gen/wmediumd/wmediumd-up.sh" status)
-    [[ "$wmediumd_status" == *'wmediumd running'* ]]
+    verify_medium_backend
     [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
         'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
         2>/dev/null)" = "5/15/50/$expected_associated" ]

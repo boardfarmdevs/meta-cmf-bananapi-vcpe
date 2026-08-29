@@ -33,11 +33,13 @@ runtime_env=(
     "EASYMESH_LAB_HOME=$lab_home"
     "EASYMESH_GEN=$repo/gen"
     "EASYMESH_ACCEPTANCE_STATE=$campaign_dir/runtime-evidence"
+    "EASYMESH_MEDIUM_BACKEND=${EASYMESH_MEDIUM_BACKEND:-userspace}"
 )
 
-printf 'campaign=%s runs=%s host=%s kernel=%s revision=%s\n' \
+printf 'campaign=%s runs=%s host=%s kernel=%s revision=%s medium_backend=%s\n' \
     "$campaign" "$runs" "$(hostname)" "$(uname -r)" \
-    "$(git -C "$repo" rev-parse HEAD)" | tee "$campaign_dir/campaign.txt"
+    "$(git -C "$repo" rev-parse HEAD)" \
+    "${EASYMESH_MEDIUM_BACKEND:-userspace}" | tee "$campaign_dir/campaign.txt"
 
 passed=0
 for run in $(seq 1 "$runs"); do
