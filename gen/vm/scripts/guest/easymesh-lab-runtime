@@ -164,6 +164,34 @@ stop_instance() {
         || true
 }
 
+stop_client_instances() {
+    local parallelism=${EASYMESH_CLIENT_STOP_PARALLELISM:-8}
+    local container pid
+    local -a pids=()
+
+    [[ "$parallelism" =~ ^[1-9][0-9]*$ ]] || {
+        echo 'EASYMESH_CLIENT_STOP_PARALLELISM must be positive' >&2
+        return 2
+    }
+
+    # Client namespaces are independent. Stop them in bounded batches so the
+    # 50/100-client profiles do not exceed the systemd stop budget, but finish
+    # every batch before stopping mesh nodes or reclaiming returned PHYs.
+    while read -r container; do
+        [ -n "$container" ] || continue
+        (
+            stop_instance "$container"
+            lxc config set "$container" boot.autostart false
+        ) &
+        pids+=("$!")
+        if [ "${#pids[@]}" -ge "$parallelism" ]; then
+            for pid in "${pids[@]}"; do wait "$pid"; done
+            pids=()
+        fi
+    done < <(printf '%s\n' $clients | sort -Vr)
+    for pid in "${pids[@]}"; do wait "$pid"; done
+}
+
 reclaim_hwsim_vifs() {
     local phy netdevs pool_dev netdev
     # A stopped physical-NIC container returns its complete hwsim wiphy to the
@@ -543,8 +571,8 @@ start)
     # group. Keep lifecycle ownership in this root service; wmediumd-up still
     # applies its narrow socket permissions for operator access.
     "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
-    for container in $(printf '%s\n' $clients | sort -Vr) \
-        bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
+    stop_client_instances
+    for container in bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
         lxc config set "$container" boot.autostart false
     done
@@ -593,8 +621,8 @@ start)
 stop)
     stop_kernel_metrics_proxy
     "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
-    for container in $(printf '%s\n' $clients | sort -Vr) \
-        bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
+    stop_client_instances
+    for container in bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
         stop_instance "$container"
     done
     if [ -w "$kernel_medium_parameter" ]; then
