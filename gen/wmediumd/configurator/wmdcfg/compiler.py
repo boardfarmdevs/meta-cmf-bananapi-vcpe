@@ -110,6 +110,14 @@ def _bind(
         }
         if role_type == "fronthaul_ap":
             result[role]["fronthaul_frequencies_mhz"] = frequencies
+            if item.get("band_radios"):
+                result[role]["band_radios"] = item["band_radios"]
+        else:
+            result[role]["station_mac"] = item.get(
+                "station_mac", item["permanent_mac"]
+            )
+            result[role]["band"] = item.get("band")
+            result[role]["ssid"] = item.get("ssid")
         used.add(container)
     return result
 
@@ -125,19 +133,54 @@ def _directions(action: LinkAction) -> list[tuple[str, str]]:
 def _frequency(
     action: LinkAction, scenario: Scenario, bindings: dict[str, dict[str, Any]]
 ) -> int | None:
-    if action.band is None:
+    # On RDK one hwsim PHY carries all three logical Wi-Fi radios. Resolve an
+    # unqualified station/AP link to the station's current band so both actual
+    # frame delivery and the HAL's frequency-qualified candidate provider see
+    # the same dynamic medium value.
+    band = _action_band(action, scenario, bindings)
+    if band is None:
         return None
     ap_role = (
         action.source
         if scenario.roles[action.source] == "fronthaul_ap"
         else action.destination
     )
-    frequency = bindings[ap_role].get("fronthaul_frequencies_mhz", {}).get(action.band)
+    frequency = bindings[ap_role].get("fronthaul_frequencies_mhz", {}).get(band)
     if frequency is None:
         raise ScenarioError(
-            f"line {action.line}: role {ap_role} has no live {action.band}GHz fronthaul"
+            f"line {action.line}: role {ap_role} has no live {band}GHz fronthaul"
         )
     return int(frequency)
+
+
+def _action_band(
+    action: LinkAction, scenario: Scenario, bindings: dict[str, dict[str, Any]]
+) -> str | None:
+    if action.band is not None:
+        return action.band
+    station_role = (
+        action.source
+        if scenario.roles[action.source] == "station"
+        else action.destination
+    )
+    return bindings[station_role].get("band")
+
+
+def _role_tx_mac(
+    role: str,
+    band: str | None,
+    scenario: Scenario,
+    bindings: dict[str, dict[str, Any]],
+) -> str:
+    binding = bindings[role]
+    if scenario.roles[role] == "fronthaul_ap" and binding.get("band_radios"):
+        radio = binding["band_radios"].get(band)
+        if radio is None:
+            raise ScenarioError(
+                f"role {role}: no physical radio is available for band {band}"
+            )
+        return str(radio["tx_mac"])
+    return str(binding["radio_tx_mac"])
 
 
 def compile_scenario(
@@ -203,8 +246,13 @@ def compile_scenario(
                         + (action.end_snr_db - action.start_snr_db) * fraction
                     )
                 for source_role, destination_role in _directions(action):
-                    source_mac = bindings[source_role]["radio_tx_mac"]
-                    destination_mac = bindings[destination_role]["radio_tx_mac"]
+                    action_band = _action_band(action, scenario, bindings)
+                    source_mac = _role_tx_mac(
+                        source_role, action_band, scenario, bindings
+                    )
+                    destination_mac = _role_tx_mac(
+                        destination_role, action_band, scenario, bindings
+                    )
                     frequency_mhz = _frequency(action, scenario, bindings)
                     key = (source_mac, destination_mac, frequency_mhz)
                     update = {

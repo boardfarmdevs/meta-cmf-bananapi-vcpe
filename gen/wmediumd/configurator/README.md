@@ -47,12 +47,26 @@ Every station/AP pair declared by the scenario must be initialized in its first
 phase. Bindings are frozen to hwsim transmitter identities (`permanent | 0x40`)
 and never follow the client's association.
 
+RDK presents its 2.4, 5 and 6 GHz logical radios as VIFs on one hwsim PHY. The
+inventory records that one permanent identity plus all three frequency
+contexts. An unqualified station/AP link follows the station's band at compile
+time and becomes a frequency-qualified update. Consequently frame delivery,
+associated signal, and the HAL's candidate-link provider all observe the same
+scenario value without affecting the other two bands.
+
 For a two-minute visual check of live RCPI reporting, the wrapper discovers the
 selected client's current serving AP, oscillates only that RF link, samples
 `/api/v1/clients`, and restores the captured medium state:
 
 ```sh
 ./run-rcpi-monitor.sh wlan-client
+```
+
+The end-to-end policy acceptance is:
+
+```sh
+../../tests/optimizer-dynamic.sh recommend wlan-client-007 bpiap-001
+../../tests/optimizer-dynamic.sh act wlan-client-007 bpiap-001
 ```
 
 Keep the WebUI **Connected Clients** tab open during the run. Its Signal column

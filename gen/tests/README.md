@@ -117,6 +117,7 @@ Docker/Boardfarm reconstruction.
 | `ap-recovery.sh` | Live forced AP failure/recovery | Yes, disruptive |
 | `candidate-rcpi-test.py` | Live candidate telemetry | Temporary wmediumd override |
 | `optimizer-live-smoke.py` | Live optimizer observation/evaluation | No steering |
+| `optimizer-dynamic.sh` | Closed-loop scenario/telemetry/policy acceptance | Temporary RF changes; optional one steer |
 | `wmediumd-client-carousel.py` | Live RF/roaming demonstration | Temporary RF changes |
 | `wmediumd-extender-outage.py` | Live RF outage/recovery | Temporary RF changes |
 | `p0-churn-soak.py` | Repeated live RF acceptance | Temporary RF changes |
@@ -135,6 +136,33 @@ Docker/Boardfarm reconstruction.
 | `webui-topology-layout-test.js` | Isolated WebUI unit test | No |
 
 ## Live health and configuration tests
+
+### `optimizer-dynamic.sh`
+
+Run the complete five-node closed loop in recommendation-only mode, then in
+explicitly acting mode:
+
+```sh
+./gen/tests/optimizer-dynamic.sh recommend wlan-client-007 bpiap-001
+./gen/tests/optimizer-dynamic.sh act wlan-client-007 bpiap-001
+```
+
+The wrapper discovers the client's current owner, SSID and band, freezes the
+five mesh radio identities, and makes only the requested target improve while
+the other candidates remain weak. The RDK optimizer sees controller APIs and
+standard associated/unassociated STA metrics only; it receives neither the
+scenario plan nor the expected target.
+
+Recommendation mode requires the exact target BSSID in the optimizer journal.
+Act mode additionally requires a successful `steer.sh` action and association
+verification. Both modes require exact frequency-qualified wmediumd restore.
+The requested target must differ from the client's current serving node.
+
+RDK carries all three logical bands on one hwsim PHY. Inventory therefore
+records one permanent radio identity with three frequency contexts, and an
+unqualified client/AP scenario follows the client's live band. This keeps
+actual frame signal and the HAL's frequency-qualified candidate measurement on
+the same medium key.
 
 ### `health-audit.sh`
 

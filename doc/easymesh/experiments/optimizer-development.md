@@ -100,7 +100,7 @@ The practical simulation vocabulary is:
 | asymmetric link | different A-to-B and B-to-A values | evaluates each frame against its directed matrix cell | different uplink/downlink consequences where the stack reports them |
 | extender RF outage and return | atomically attenuate every link to one radio, then restore | stops useful frame exchange but does not delete a topology object | client recovery plus controller liveness/aging and re-onboarding behavior |
 | flash crowd | timed presence plus an independent traffic schedule | includes present radios in the matrix; handles their actual frames and contention | associations, load/traffic metrics that the current adapters expose |
-| band preference/crossover | band-specific AP/BSSID targets plus available measurements | isolates different frequencies, but one radio-pair SNR cell still spans that pair's bands | same-band candidate RCPI today; cross-band action remains gated without a sound adapter |
+| band preference/crossover | band-specific AP/BSSID targets plus available measurements | isolates frequency contexts on RDK's single hwsim PHY | same-band candidate RCPI today; cross-band action remains gated without a sound adapter |
 
 Traffic generation is orthogonal to RF geometry. Multiplying deterministic RF
 worlds by deterministic traffic profiles produces repeatable experiments
@@ -545,10 +545,21 @@ python3 -m wmdcfg.cli run /tmp/optimizer-five-ap.plan.json \
   --output-root /tmp/wmdcfg-runs
 ```
 
-Run `recommend` concurrently in another terminal. RF application and
-restoration evidence belongs to the configurator run; observations and
-decisions belong to the optimizer journal. Correlate them by UTC time. The
-optimizer receives no phase name.
+The repeatable wrapper starts the scenario and optimizer together, derives the
+expected BSSID independently, checks the journal, and verifies exact restore:
+
+```sh
+cd "$EM_REPO"
+gen/tests/optimizer-dynamic.sh recommend wlan-client-007 bpiap-001
+gen/tests/optimizer-dynamic.sh act wlan-client-007 bpiap-001
+```
+
+RF application and restoration evidence belongs to the configurator run;
+observations, decisions, action, and verification belong to the optimizer
+journal. The optimizer receives no phase name or expected target. RDK's one
+hwsim PHY carries all three bands, so the compiler resolves an unqualified
+client/AP role to the client's current frequency. This is required for actual
+frame signal and the HAL candidate provider to consume the same medium key.
 
 The scenario lasts 130 seconds. Its unique target remains favorable for 90
 seconds so the default hold can complete despite serialized metric collection.
@@ -640,3 +651,27 @@ A change is ready for team use only when all applicable gates pass:
 
 Keep raw evidence. A no-action result with a precise reason is often the
 correct and safest optimizer result.
+
+## RDK and prplMesh lab partition
+
+During this phase the reference optimizer and configurator are duplicated in
+the two mesh repositories. Run one process per lab and keep all mutable state
+separate:
+
+```text
+RDK:      lab_id=rdk-a   API=http://LAB-A:8888
+prplMesh: lab_id=prpl-b  API=http://LAB-B:8090
+```
+
+Do not share journals, output roots, policy state, cooldowns, action locks, or
+wmediumd sockets. A future common service should instantiate an isolated
+session for every `lab_id`; each session owns its backend observer, candidate
+provider, actuator, verifier, state and deadlines. State keys must be
+`(lab_id, sta_mac)`, and every action must retain its lab identity through
+verification. Cross-lab comparison should consume completed journals and must
+not merge live policy state.
+
+The eventual repository split should contain a neutral policy/scenario core
+plus RDK and prplMesh adapters. Extraction comes after both individual dynamic
+acceptance scripts remain green, so repository restructuring cannot hide a
+backend regression.

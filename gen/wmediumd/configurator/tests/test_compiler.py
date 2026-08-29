@@ -138,6 +138,44 @@ scenario band_specific {
             {5180},
         )
 
+    def test_unqualified_link_uses_station_band_physical_radio(self):
+        inventory = copy.deepcopy(INVENTORY)
+        station = next(item for item in inventory["radios"] if item["kind"] == "station")
+        station["band"] = "6"
+        mesh_index = 0
+        for item in inventory["radios"]:
+            if item["kind"] != "mesh":
+                continue
+            mesh_index += 1
+            item["interfaces"].append(
+                {
+                    "name": "wifi2.1",
+                    "mac": f"02:60:00:00:00:{mesh_index:02x}",
+                    "ssid": "private_ssid",
+                    "frequency_mhz": 5975,
+                }
+            )
+            item["band_radios"] = {
+                "2.4": {"tx_mac": f"42:24:00:00:00:{mesh_index:02x}"},
+                "5": {"tx_mac": f"42:50:00:00:00:{mesh_index:02x}"},
+                "6": {"tx_mac": f"42:60:00:00:00:{mesh_index:02x}"},
+            }
+        source = (ROOT / "scenarios/two-ap-crossover.wmd").read_text()
+        plan = compile_scenario(parse(source), source, inventory, BINDINGS)
+        ap_macs = {
+            update["source"]
+            for update in plan["events"][0]["updates"]
+            if update["source_role"] in {"ap_a", "ap_b"}
+        }
+        self.assertEqual(
+            ap_macs,
+            {"42:60:00:00:00:01", "42:60:00:00:00:02"},
+        )
+        self.assertEqual(
+            {update["frequency_mhz"] for update in plan["events"][0]["updates"]},
+            {5975},
+        )
+
     def test_band_qualified_link_requires_capability_and_cannot_mix(self):
         missing = """
 scenario bad {

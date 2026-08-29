@@ -31,7 +31,35 @@ def test_inventory_probe_retries_a_bounded_timeout():
     sleep.assert_called_once_with(0.5)
 
 
-def test_discover_ignores_stopped_matching_containers():
+def _mesh_iw(first: int) -> str:
+    return "\n".join(
+        (
+            f"phy#{first}\n Interface wifi2.1\n  addr 02:00:00:10:{first + 2:02x}:01\n  ssid private_ssid\n  channel 5 (5975 MHz)",
+            f" Interface wifi1.1\n  addr 02:00:00:10:{first + 1:02x}:01\n  ssid private_ssid\n  channel 36 (5180 MHz)",
+            f" Interface wifi0.1\n  addr 02:00:00:10:{first:02x}:01\n  ssid private_ssid\n  channel 6 (2437 MHz)",
+        )
+    )
+
+
+def _inspect(container: str, command: str) -> str:
+    first = 0 if container == "bpibroadband" else 3
+    if "macaddress" in command:
+        if container.startswith("wlan-client"):
+            return "phy15 02:00:00:00:0f:00"
+        return f"phy{first} 02:00:00:00:{first:02x}:00"
+    if command == "iw dev 2>/dev/null":
+        if container.startswith("wlan-client"):
+            return (
+                "phy#15\n Interface wlan0\n  addr 02:00:00:20:01:00\n"
+                "  ssid iot_ssid\n  channel 36 (5180 MHz)"
+            )
+        return _mesh_iw(first)
+    if command.startswith("iw dev wlan0 link"):
+        return "Connected to 02:00:00:10:04:01\n\tSSID: iot_ssid\n\tfreq: 5180"
+    return ""
+
+
+def test_discover_ignores_stopped_matching_containers_and_maps_tri_band_radios():
     listing = "\n".join(
         (
             "bpibroadband,RUNNING",
@@ -42,20 +70,8 @@ def test_discover_ignores_stopped_matching_containers():
         )
     )
 
-    def inspect(container: str, command: str) -> str:
-        assert container not in {"bpiap-001", "wlan-client-001"}
-        if "macaddress" in command:
-            return {
-                "bpibroadband": "02:00:00:00:00:01",
-                "bpiap": "02:00:00:00:00:02",
-                "wlan-client": "02:00:00:00:00:03",
-            }[container]
-        if command.startswith("iw dev wlan0 link"):
-            return "Connected to 02:00:00:10:00:01\n\tSSID: iot_ssid\n\tfreq: 5180"
-        return ""
-
     with patch("wmdcfg.inventory._run", return_value=listing), patch(
-        "wmdcfg.inventory._exec", side_effect=inspect
+        "wmdcfg.inventory._exec", side_effect=_inspect
     ):
         inventory = discover()
 
@@ -64,8 +80,14 @@ def test_discover_ignores_stopped_matching_containers():
         "bpibroadband",
         "wlan-client",
     ]
+    mesh = next(item for item in inventory["radios"] if item["container"] == "bpiap")
+    assert set(mesh["band_radios"]) == {"2.4", "5", "6"}
+    assert mesh["band_radios"]["5"]["tx_mac"] == "42:00:00:00:03:00"
+    assert len({entry["phy"] for entry in mesh["band_radios"].values()}) == 1
     station = next(item for item in inventory["radios"] if item["kind"] == "station")
-    assert station["associated_bssid"] == "02:00:00:10:00:01"
+    assert station["station_mac"] == "02:00:00:20:01:00"
+    assert station["associated_bssid"] == "02:00:00:10:04:01"
+    assert station["band"] == "5"
     assert station["ssid"] == "iot_ssid"
     assert station["cohort"] == "iot"
 
@@ -83,15 +105,7 @@ def test_discover_can_limit_station_probes_without_omitting_mesh_radios():
 
     def inspect(container: str, command: str) -> str:
         inspected.add(container)
-        if "macaddress" in command:
-            return {
-                "bpibroadband": "02:00:00:00:00:01",
-                "bpiap": "02:00:00:00:00:02",
-                "wlan-client-001": "02:00:00:00:00:04",
-            }[container]
-        if command.startswith("iw dev wlan0 link"):
-            return "Connected to 02:00:00:10:00:01\n\tSSID: private_ssid"
-        return ""
+        return _inspect(container, command)
 
     with patch("wmdcfg.inventory._run", return_value=listing), patch(
         "wmdcfg.inventory._exec", side_effect=inspect
