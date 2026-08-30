@@ -108,6 +108,14 @@ for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     fi
 done
 
+# The boot-time runtime is root-owned and stages images below the checkout.
+# A later operator-driven reprovision must be able to replace those generated
+# files and allocate new NVRAM directories without changing ownership inside
+# retained NVRAM trees.
+sudo install -d -o "$(id -u)" -g "$(id -g)" "$repo/tmp" \
+    "$repo/tmp/bpi-nvram"
+sudo rm -f "$repo/tmp/ofw-exm-qemux86-bpibroadband.tar.bz2" \
+    "$repo/tmp/ofw-exm-qemux86-bpiap.tar.bz2"
 sudo rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 EASYMESH_REPO="$repo" \
 CONTROLLER_IMAGE="$controller_image" \
