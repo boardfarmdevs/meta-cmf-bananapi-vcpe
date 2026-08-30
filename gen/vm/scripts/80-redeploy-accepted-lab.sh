@@ -32,8 +32,12 @@ unset HWSIM_RADIOS
 mkdir -p "$evidence"
 exec > >(tee "$evidence/deploy.log") 2>&1
 
-test "$(git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
-test -z "$(git -C "$repo" status --porcelain)"
+# Appliance lifecycle runs as root because nested snap-LXD cannot reliably
+# track a non-login sudo child. Trust only this explicit, caller-selected
+# checkout rather than mutating root's global safe.directory configuration.
+test "$(git -c safe.directory="$repo" -C "$repo" rev-parse HEAD)" = \
+    "$expected_repo_head"
+test -z "$(git -c safe.directory="$repo" -C "$repo" status --porcelain)"
 test "$(sha256sum "$controller_image" | awk '{print $1}')" = \
     "$controller_sha256"
 test "$(sha256sum "$extender_image" | awk '{print $1}')" = \
