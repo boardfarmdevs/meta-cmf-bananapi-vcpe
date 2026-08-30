@@ -27,6 +27,22 @@ boardfarm_ready() {
             | grep -q '10\.101\.0\.20/24'
 }
 
+# Docker preserves the two Boardfarm containers and their networks in the
+# appliance, but older releases created them without a restart policy.  A
+# normal guest reboot must revive that preserved state instead of entering the
+# destructive teardown/setup recovery path (which also discards cached
+# images).  Starting an already-running container is harmless.
+for container in dhcp-cpe1 wan-cpe1; do
+    if docker container inspect "$container" >/dev/null 2>&1; then
+        docker start "$container" >/dev/null 2>&1 || true
+    fi
+done
+
+for attempt in $(seq 1 20); do
+    boardfarm_ready && break
+    sleep 1
+done
+
 if ! boardfarm_ready; then
     # A forced host power-off can leave LXD's volatile state marked RUNNING
     # even though boot.autostart is false. Release br-wan101 before bf-lab
@@ -42,6 +58,10 @@ if ! boardfarm_ready; then
     cd "$lab_repo/lab"
     "$bf_lab" teardown,setup,status
 fi
+
+# Make Docker perform the fast path itself on subsequent boots.  The explicit
+# start above keeps imported appliances made by older releases compatible.
+docker update --restart unless-stopped dhcp-cpe1 wan-cpe1 >/dev/null
 
 # Keep an existing controller profile aligned with the selected WAN provider.
 # New cold deployments create this parent directly through bpi.sh.
