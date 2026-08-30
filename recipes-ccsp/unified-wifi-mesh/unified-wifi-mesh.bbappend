@@ -128,6 +128,9 @@ EASYMESH_CORE_PATCHES = " \
     file://0125-steering-report-from-topology-synchronized-state.patch \
     file://0126-cli-stage-steering-and-shape-layout.patch \
     file://0127-controller-reconcile-client-snapshot-across-agent-models.patch \
+    file://0128-orch-complete-upstream-command-lifetime-fixes.patch \
+    file://0129-controller-bound-dataelements-device-enumeration.patch \
+    file://0130-controller-lightweight-em-config-stage-clones.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

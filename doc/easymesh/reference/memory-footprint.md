@@ -22,10 +22,13 @@ numbers below remain the accepted cold-bring-up baseline rather than a
 | swap used | 0 |
 | cgroup pressure, limit or OOM events | 0 |
 
-The structural footprint reductions proposed below remain design proposals;
-their savings are projections rather than measured results. Correctness fixes
-for retained periodic telemetry state are now implemented separately. They
-remove unbounded growth without changing the intended steady-state model.
+The broad structural footprint reductions proposed below remain design
+proposals; their savings are projections rather than measured results. Two
+targeted controller command fixes are now implemented and measured separately:
+bounded DataElements enumeration and lightweight `em_config` stage clones.
+Correctness fixes for retained periodic telemetry state are also implemented.
+Together they remove unbounded growth and bound the cold-start command pulse
+without changing the intended steady-state model.
 
 Cold bring-up creates a temporary controller allocation pulse while agent,
 radio and BSS records are configured. The pulse is released after convergence.
@@ -97,6 +100,62 @@ was 20 KiB. It also separates fixed `OneWifi` first-touch behavior from heap
 growth. It is not a replacement for the deferred long-duration acceptance run.
 Acceptance is based on loss of the sustained station-count-proportional heap
 slope, not on demanding byte-for-byte PSS constancy.
+
+## 50-client controller command-pulse fix
+
+A later 50-client LXD-VM qualification exposed a different, transient source
+of controller growth during restart. GDB inspection 12 seconds after a
+controller restart found 90 pending and 13 active `em_config` commands. Each
+`em_cmd_t` was 2,456,120 bytes because it embedded a complete
+`dm_easy_mesh_t` by value. An M2 event deliberately expands into nine
+orchestration stages, so the normal five-device, 15-radio fan-out could create
+roughly 135 multi-MiB command objects before earlier stages completed.
+
+This was compounded by an upstream DataElements defect: the controller was
+included in `DeviceNumberOfEntries`, while device enumeration searched sparse
+positive agent IDs. That loop could keep requesting nonexistent entries. The
+accepted fix consists of three bounded changes:
+
+1. apply the remaining upstream command destruction and map-ownership fixes;
+2. exclude the controller and bound sparse DataElements device enumeration;
+3. retain all nine `em_config` stages, but clone them without initializing or
+   copying the unused command-local full mesh model. The stages continue to
+   operate on the manager-owned live model and carry the M2 radio/agent keys in
+   their existing command parameters.
+
+The final change keeps the existing object layout and orchestration behavior,
+but prevents every queued stage from committing all pages of its unused local
+model. The full image and recipe builds completed successfully.
+
+A controlled cold start then reconstructed four extenders and 50 clients from
+zero running lab containers. Results are controller PSS unless noted:
+
+| Measurement | Before fix | Accepted fix |
+| --- | ---: | ---: |
+| adverse reproduction peak | 727,593 KiB | - |
+| five-device/15-radio onboarding peak | - | 191,665 KiB |
+| 50-client association peak | - | 220,860 KiB |
+| converged controller PSS | approximately 54 MiB | 42,585 KiB |
+| final model | recovered after timeout | 5 devices / 15 radios / 50 BSS / 54 STA |
+| cold-start acceptance | timeout | pass in 438 seconds |
+
+The final 54 STA records are 50 WLAN clients plus four wireless-backhaul STA
+interfaces. The exact model first converged at 171 seconds and remained stable
+through the service's acceptance gate. The topology API returned HTTP 200 in
+74 ms. A post-gate deterministic steer of `sta-0c` to `extender-2` completed in
+about six seconds, including RF bias application and restoration, and verified
+both physical and controller-visible ownership.
+
+Evidence is retained inside the rev140 lab VM at:
+
+```text
+/home/easymesh/easymesh-evidence/controller-lifetime/20260830-lightweight-emconfig-cold-start/
+```
+
+This fixes the pathological command pulse; it does not claim that embedding a
+maximum-sized model in the generic command base is an efficient architecture.
+The broader topology-sized-storage proposal remains valid for reducing steady
+and worst-case footprint further.
 
 ## Measured configuration
 
