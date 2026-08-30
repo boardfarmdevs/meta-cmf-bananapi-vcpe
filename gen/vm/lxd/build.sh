@@ -233,6 +233,25 @@ run_root() {
         EASYMESH_RUNTIME_BRANCH="$runtime_branch" "$@"
 }
 
+configure_no_secure_boot() {
+    # LXD 6.9 exports boot.mode and rejects the retired
+    # security.secureboot key during import.  Prefer the current spelling so
+    # backups remain portable across maintained LXD releases; retain the old
+    # key only for hosts old enough not to understand boot.mode.
+    if lxc config set "$name" boot.mode uefi-nosecureboot 2>/dev/null; then
+        lxc config unset "$name" security.secureboot 2>/dev/null || true
+    else
+        lxc config set "$name" security.secureboot false
+    fi
+}
+
+clear_secure_boot_config() {
+    # A backup must not contain either version-specific spelling.  The
+    # importer sets the spelling supported by its own LXD before first boot.
+    lxc config unset "$name" boot.mode 2>/dev/null || true
+    lxc config unset "$name" security.secureboot 2>/dev/null || true
+}
+
 build_vm() {
     local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
     require_command git
@@ -258,7 +277,7 @@ build_vm() {
     # The appliance builds the narrowly-scoped multichannel hwsim module from
     # the exact Ubuntu source package. Disable guest Secure Boot before first
     # boot so that this locally-built module can load after installation.
-    lxc config set "$name" security.secureboot false
+    configure_no_secure_boot
     lxc config device override "$name" root size="$disk"
     appliance_ipv4=$(select_guest_ipv4)
     lxc config device override "$name" eth0 network="$network" \
@@ -344,9 +363,20 @@ status_vm() {
 }
 
 check_vm() {
+    local host_commit guest_commit
     start_vm
-    run_root env HEALTH_EXPECT_CLIENTS="$profile_clients" \
-        /usr/local/sbin/easymesh-labctl check
+    host_commit=$(git -C "$root" rev-parse HEAD)
+    guest_commit=$(lxc exec "$name" -- sudo -H -u easymesh \
+        git -C /home/easymesh/git/meta-cmf-bananapi-vcpe rev-parse HEAD)
+    [ "$guest_commit" = "$host_commit" ] || {
+        echo "$name contains source $guest_commit, expected $host_commit" >&2
+        echo "rebuild or reprovision the appliance before release" >&2
+        return 1
+    }
+    # Do not inject the expected scale here. A portable appliance must retain
+    # its own profile in /etc/default/easymesh-lab so that a new operator can
+    # run the exact same self-check without knowing a hidden environment flag.
+    run_root /usr/local/sbin/easymesh-labctl check
 }
 
 snapshot_vm() {
@@ -358,17 +388,35 @@ snapshot_vm() {
 }
 
 export_vm() {
-    local short bundle output created
+    local short bundle output created actual_cpus actual_memory actual_disk
     require_command jq
     check_vm
+    actual_cpus=$(lxc config get "$name" limits.cpu)
+    actual_memory=$(lxc config get "$name" limits.memory)
+    actual_disk=$(lxc config device get "$name" root size)
+    [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] || {
+        echo "cannot determine actual resources for $name" >&2
+        exit 1
+    }
+    if [ "$actual_cpus" != "$cpus" ] || [ "$actual_memory" != "$memory" ] || [ "$actual_disk" != "$disk" ]; then
+        printf 'exporting actual resources rather than profile defaults: cpu=%s memory=%s disk=%s\n' \
+            "$actual_cpus" "$actual_memory" "$actual_disk" >&2
+    fi
     stop_vm
+    clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     bundle="$export_dir/rdkeasymesh-${profile_clients}-0829-${short}-lxd"
     output="$bundle/rdkeasymesh-${profile_clients}-0829-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
-    lxc export "$name" "$output" --instance-only --compression zstd
+    if ! lxc export "$name" "$output" --instance-only --compression zstd; then
+        configure_no_secure_boot
+        return 1
+    fi
+    # Restore the release-builder instance. The exported archive intentionally
+    # remains firmware-neutral until import.sh selects the target-LXD key.
+    configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
@@ -379,9 +427,9 @@ LAB_PROFILE=$profile
 LAB_CLIENTS=$profile_clients
 LAB_HWSIM_RADIOS=$profile_radios
 LAB_DEFAULT_NAME=$name
-LAB_DEFAULT_CPUS=$cpus
-LAB_DEFAULT_MEMORY=$memory
-LAB_DEFAULT_DISK=$disk
+LAB_DEFAULT_CPUS=$actual_cpus
+LAB_DEFAULT_MEMORY=$actual_memory
+LAB_DEFAULT_DISK=$actual_disk
 LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
 EOF
     jq -n \
@@ -389,8 +437,8 @@ EOF
         --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
         --arg source_commit "$(git -C "$root" rev-parse HEAD)" \
         --arg created_at "$created" --arg archive "$(basename "$output")" \
-        --arg instance "$name" --arg cpus "$cpus" --arg memory "$memory" \
-        --arg disk "$disk" \
+        --arg instance "$name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
+        --arg disk "$actual_disk" \
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},

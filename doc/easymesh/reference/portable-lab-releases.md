@@ -31,7 +31,16 @@ STACK-CLIENTS-DATE-COMMIT-lxd/
 
 The adjacent `*-bundle.tar.sha256` authenticates the outer download. Neither
 artifact contains a fixed outer-host IP address, host source mount, Git
-credential or Google credential.
+credential or Google credential. Its checksum entry contains only the bundle
+filename, never the release host's absolute path.
+
+Before export, the builder removes both version-specific Secure-Boot settings
+from the stopped VM. This prevents a backup made on an older LXD host from
+retaining the retired `security.secureboot` key that current LXD rejects
+during import. Before first boot, the importer disables Secure Boot using
+`boot.mode=uefi-nosecureboot` or the guarded legacy fallback supported by its
+destination LXD. Release metadata is populated from the instance's actual CPU,
+memory and root-disk configuration rather than inferred profile defaults.
 
 ## Google Drive layout
 

@@ -72,6 +72,13 @@ lxc config set "$name" volatile.cloud-init.instance-id "$instance_uuid"
 lxc config set "$name" volatile.vsock_id "$vsock_id"
 lxc config set "$name" limits.cpu "$cpus"
 lxc config set "$name" limits.memory "$memory"
+# The portable backup deliberately contains no LXD-version-specific Secure
+# Boot key. Select the spelling understood by this host before first boot.
+if lxc config set "$name" boot.mode uefi-nosecureboot 2>/dev/null; then
+    lxc config unset "$name" security.secureboot 2>/dev/null || true
+else
+    lxc config set "$name" security.secureboot false
+fi
 lxc config set "$name" boot.autostart true
 for device in easymesh-webui wmediumd-console; do
     if lxc config device show "$name" | grep -q "^${device}:"; then

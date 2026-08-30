@@ -125,7 +125,12 @@ for Google Drive with:
 ```
 
 Upload the resulting `*-bundle.tar` and its adjacent `.sha256`. Google Drive
-is transport only; the checksum and `release.json` identify the release.
+is transport only; the checksum and `release.json` identify the release. The
+outer checksum records only the bundle filename, so verification works from
+any empty download directory. Export also records the VM's actual CPU, memory
+and disk settings. The backup remains neutral between the old and current LXD
+Secure-Boot keys; the importer disables Secure Boot using the spelling
+supported by the destination host before the VM's first boot.
 
 ## Import on another host
 
