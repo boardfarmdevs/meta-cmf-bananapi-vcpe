@@ -12,6 +12,7 @@ controller_sha256=${CONTROLLER_SHA256:?set CONTROLLER_SHA256}
 extender_sha256=${EXTENDER_SHA256:?set EXTENDER_SHA256}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:?set EXPECTED_WMEDIUMD_SHA256}
 evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/easymesh/easymesh-evidence}
+nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-32}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 evidence="$evidence_root/$run_id"
@@ -50,7 +51,7 @@ cd "$repo/gen"
 
 # Stop every disposable lab instance before detaching legacy NVRAM devices.
 # The old bind directories are retained for explicit audit/purge; bpi.sh then
-# creates new identities below this checkout instead of silently reusing them.
+# creates new identities in appliance-owned state, independent of the checkout.
 while read -r container; do
     [ -n "$container" ] || continue
     if [ "$(lxc info "$container" 2>/dev/null | sed -n 's/^Status: //p')" = RUNNING ]; then
@@ -109,23 +110,24 @@ for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
 done
 
 # The boot-time runtime is root-owned and stages images below the checkout.
-# A later operator-driven reprovision must be able to replace those generated
-# files and allocate new NVRAM directories without changing ownership inside
-# retained NVRAM trees.
+# NVRAM is deliberately outside that checkout: source synchronization and
+# replacement must not be able to delete AL-MAC/RUID identities.
 sudo install -d -o "$(id -u)" -g "$(id -g)" "$repo/tmp" \
-    "$repo/tmp/bpi-nvram" \
+    "$nvram_root" \
     /home/easymesh/.local/state/easymesh-lab
 sudo rm -f "$repo/tmp/ofw-exm-qemux86-bpibroadband.tar.bz2" \
     "$repo/tmp/ofw-exm-qemux86-bpiap.tar.bz2"
 sudo rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 EASYMESH_REPO="$repo" \
+EASYMESH_NVRAM_ROOT="$nvram_root" \
 CONTROLLER_IMAGE="$controller_image" \
 EXTENDER_IMAGE="$extender_image" \
 EXPECTED_REPO_HEAD="$expected_repo_head" \
 EXPECTED_WMEDIUMD_SHA256="$expected_wmediumd_sha256" \
     bash "$repo/gen/vm/scripts/40-deploy-easymesh.sh"
 
-EASYMESH_REPO="$repo" EXTENDER_IMAGE="$extender_image" \
+EASYMESH_REPO="$repo" EASYMESH_NVRAM_ROOT="$nvram_root" \
+EXTENDER_IMAGE="$extender_image" \
     bash "$repo/gen/vm/scripts/55-scale-topology.sh"
 
 sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-lab-runtime" \

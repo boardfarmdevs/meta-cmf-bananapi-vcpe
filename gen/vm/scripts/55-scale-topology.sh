@@ -6,7 +6,11 @@ exec </dev/null
 repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
+nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
+
+mkdir -p "$nvram_root"
+export BPI_NVRAM_ROOT="$nvram_root"
 
 model_counts() {
     lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \

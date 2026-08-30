@@ -78,6 +78,7 @@ current client metrics   20 / 20
 fresh backhaul signals   4 / 4
 gateway traffic          20 / 20 clients, 10 packets each, 0% loss
 service restarts         0
+NVRAM bind sources       5 / 5 persistent and non-empty
 optimizer observation    20 current links / 80 same-band candidate links
 optimizer closed loop    recommendation and acting crossover passed
 wmediumd Console         25 identities, 600 directed pairs, health ok
@@ -126,6 +127,9 @@ or import and are never baked into the portable artifact.
   for independent node lifecycle. A direct bare-metal host should not
   auto-start the lab; only an explicitly started EasyMesh VM should auto-start
   its internal lab.
+- Appliance NVRAM lives in `/var/lib/easymesh-lab/nvram`, not below the Git
+  checkout. The health gate verifies all five BPI bind sources so source
+  synchronization cannot invalidate persistent mesh identities.
 
 ## Evidence and reproducibility
 

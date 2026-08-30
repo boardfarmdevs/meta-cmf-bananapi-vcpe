@@ -50,13 +50,19 @@ The builder:
 3. installs Docker, nested LXD and the single Boardfarm repository;
 4. builds and loads the patched 32-radio, three-channel hwsim module;
 5. deploys the controller, four extenders, ten private and ten IoT clients;
-6. installs userspace wmediumd, the Console, configurator and optimizer;
-7. reboots the VM and lets systemd reconstruct the lab; and
-8. requires `easymesh-labctl check` plus both host-side HTTP health gates.
+6. keeps BPI NVRAM identities under `/var/lib/easymesh-lab/nvram`, outside
+   the replaceable source checkout;
+7. installs userspace wmediumd, the Console, configurator and optimizer;
+8. reboots the VM and lets systemd reconstruct the lab; and
+9. requires `easymesh-labctl check` plus both host-side HTTP health gates.
 
 Source and Boardfarm enter the VM as commit-bounded Git bundles. Images are
 checksum verified. Host Git credentials and host-mounted source directories do
 not enter the appliance.
+
+The acceptance audit rejects a mesh node whose `/nvram` bind source is missing
+or empty. Updating or replacing `/home/easymesh/git/meta-cmf-bananapi-vcpe`
+therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 
 ## Operate and verify
 

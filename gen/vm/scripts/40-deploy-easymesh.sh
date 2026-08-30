@@ -10,13 +10,15 @@ repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 state=${EASYMESH_STATE:-/home/easymesh/.local/state/easymesh-lab}
+nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-lab/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 expected_repo_head=${EXPECTED_REPO_HEAD:-$(git -C "$repo" rev-parse HEAD)}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')}
 
-mkdir -p "$state"
+mkdir -p "$state" "$nvram_root"
+export BPI_NVRAM_ROOT="$nvram_root"
 test -f "$boardfarm_status"
 test "$(systemctl is-active boardfarm-lab.service 2>/dev/null)" = active
 ip link show br-wan101 >/dev/null

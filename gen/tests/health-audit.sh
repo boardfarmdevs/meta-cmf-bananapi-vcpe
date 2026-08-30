@@ -60,6 +60,25 @@ echo "fresh=$fresh_edges/$wireless_edges"
 [ "$wireless_edges" = "$((expected_devices - 1))" ] || model_fail=1
 [ "$fresh_edges" = "$wireless_edges" ] || model_fail=1
 
+echo NVRAM_BINDINGS
+nvram_fail=0
+for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+    nvram_source=$(lxc config show "$container" --expanded 2>/dev/null |
+        awk '
+            /^  nvram:$/ {in_nvram=1; next}
+            in_nvram && /^    source:/ {sub(/^    source: /, ""); print; exit}
+            in_nvram && /^  [^ ]/ {in_nvram=0}
+        ')
+    if [ -z "$nvram_source" ] || [ ! -d "$nvram_source" ] \
+        || ! find "$nvram_source" -mindepth 1 -maxdepth 2 -type f \
+            -print -quit 2>/dev/null | grep -q .; then
+        echo "$container source=${nvram_source:-missing} FAIL"
+        nvram_fail=1
+    else
+        echo "$container source=$nvram_source OK"
+    fi
+done
+
 echo ASSOCIATION_OWNERSHIP
 clients_json=$(mktemp)
 trap 'rm -f "$clients_json" "$topology_json"' EXIT
@@ -187,5 +206,9 @@ free -h | sed -n '1,2p'
 }
 [ "$traffic_fail" = 0 ] || {
     echo "FAIL: one or more WLAN clients exceeded ${ping_max_loss}% packet loss" >&2
+    exit 1
+}
+[ "$nvram_fail" = 0 ] || {
+    echo "FAIL: one or more BPI NVRAM bind sources are missing or empty" >&2
     exit 1
 }
