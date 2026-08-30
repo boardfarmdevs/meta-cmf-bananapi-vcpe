@@ -1,8 +1,7 @@
 # Portable LXD VM appliance
 
 LXD VM is the supported portable EasyMesh lab. Bare metal remains the
-performance and kernel-debug reference. VirtualBox, Vagrant and `.box`
-artifacts are not required or supported.
+performance and kernel-debug reference.
 
 ```text
 Ubuntu 22.04/24.04 host + LXD/KVM

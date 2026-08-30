@@ -10,7 +10,7 @@ assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 meta_workspace=/home/easymesh/git
 boardfarm_workspace=/home/easymesh/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
-expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
+expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0829-lxd-primary}
 alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
 
@@ -20,6 +20,15 @@ if [ "$(uname -r)" != "$expected_kernel" ]; then
 fi
 
 install -d -o easymesh -g easymesh "$meta_workspace" "$boardfarm_workspace"
+
+if [ -z "$expected_meta_head" ]; then
+    expected_meta_head=$(git bundle list-heads "$meta_bundle" \
+        | awk '$2 == "refs/heads/lxd-appliance-export" {print $1; exit}')
+    [ -n "$expected_meta_head" ] || {
+        echo "cannot determine the bundled EasyMesh source revision" >&2
+        exit 1
+    }
+fi
 
 if [ ! -d "$meta_workspace/meta-cmf-bananapi-vcpe/.git" ]; then
     test -f "$meta_bundle"

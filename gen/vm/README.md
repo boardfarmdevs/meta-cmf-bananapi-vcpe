@@ -1,8 +1,6 @@
 # EasyMesh LXD VM appliance
 
 The portable EasyMesh lab is distributed as an LXD virtual-machine backup.
-VirtualBox, Vagrant, `.box` files, and provider-specific `Vagrantfile` files are
-not part of the supported deployment.
 
 The VM contains Ubuntu 24.04, Linux 7, Docker/Boardfarm, nested LXD, the BPI
 controller and extender containers, WLAN clients, hwsim, wmediumd, the WebUI,

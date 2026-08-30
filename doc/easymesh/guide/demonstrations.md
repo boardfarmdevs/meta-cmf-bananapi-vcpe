@@ -1,8 +1,8 @@
-# rev130 demonstration runbook
+# EasyMesh demonstration runbook
 
 ## What this demonstrates
 
-This runbook starts with the accepted, fully loaded rev130 lab and presents four
+This runbook starts with the accepted, fully loaded lab and presents four
 short demonstrations that are visible in both a terminal and the WebUI:
 
 1. a named, manually commanded EasyMesh steer;
@@ -26,17 +26,16 @@ demo proves an autonomous optimizer or a novel steering policy.
 
 ## Prepare the room
 
-SSH to rev130 and use the canonical checkout:
+Enter the canonical checkout on the lab host or appliance VM:
 
 ```sh
-ssh rev130
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 ```
 
 Open the WebUI from the lab LAN and select **Network Topology**:
 
 ```text
-http://192.168.2.130:8888
+http://HOST:PORT
 ```
 
 The page refreshes live topology every two seconds. Click **Optimize Layout**
@@ -251,7 +250,7 @@ while client traffic continues through other APs. A pass also requires exact
 medium readback/restoration, stable controller PIDs and restart counts, 20/20
 traffic, and 75 seconds of physical/API placement agreement after recovery.
 
-## Bring the complete rev130 Wi-Fi lab down and back up
+## Bring the complete Wi-Fi lab down and back up
 
 ### Scope and safety
 

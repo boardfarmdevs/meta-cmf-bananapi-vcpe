@@ -6,7 +6,7 @@ exec </dev/null
 repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
-extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2"}
+extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 
 model_counts() {
     lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \

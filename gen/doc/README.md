@@ -34,7 +34,7 @@ tree unless an explicit runtime directory is documented.
 
 ## Hard invariants
 
-- The official runtime is Linux 7.0.0-28.
+- The official runtime is Linux 7.0.0-30.
 - Load 32 patched hwsim radios with `channels=3 regtest=5` for the current
   five-node/20-client profile.
 - Attach exactly one hwsim wiphy to each BPI container.

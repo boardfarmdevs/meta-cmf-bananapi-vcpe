@@ -121,6 +121,7 @@ Docker/Boardfarm reconstruction.
 | `wmediumd-client-carousel.py` | Live RF/roaming demonstration | Temporary RF changes |
 | `wmediumd-extender-outage.py` | Live RF outage/recovery | Temporary RF changes |
 | `p0-churn-soak.py` | Repeated live RF acceptance | Temporary RF changes |
+| `scale-soak-campaign.sh` | Sequential 20/50/100-client qualification | Reprovisions the hwsim pool and client roster |
 | `p0-cold-reconstruction.sh` | Repeated full reconstruction | Yes, highly disruptive |
 | `bpibroadband-memory-profile.py` | Live measurement | No |
 | `wmediumd-performance.py` | Live CPU/traffic benchmark | Generates bounded WLAN traffic |
@@ -530,8 +531,8 @@ Run the runtime collector inside the operating-system boundary that owns hwsim
 and the host collector on the physical machine:
 
 ```sh
-./gen/tests/deployment-model-evidence.sh rev120-bare /path/to/evidence 30
-./gen/tests/deployment-host-evidence.sh rev120-bare /path/to/evidence 30
+./gen/tests/deployment-model-evidence.sh bare-metal /path/to/evidence 30
+./gen/tests/deployment-host-evidence.sh bare-metal /path/to/evidence 30
 ```
 
 For a VM, the first command runs in the guest and the second runs on the outer
@@ -567,6 +568,37 @@ calculation; short or workload-count-limited runs are shakedowns. Default
 limits cover `em_ctrl`, `em_cli`, wmediumd RSS, PSS growth and journal size.
 Each campaign writes baselines, per-workload logs, JSONL events, memory samples
 and `summary.json` below `/tmp/easymesh-p0-soak` unless overridden.
+
+### `scale-soak-campaign.sh`
+
+Run this as root inside the appliance VM or dedicated bare-metal lab host:
+
+```sh
+EASYMESH_SOAK_PROFILE_SECONDS=43200 \
+  gen/tests/scale-soak-campaign.sh small medium stress
+```
+
+The campaign qualifies 20, 50 and 100 clients sequentially. At each boundary
+it stops every managed node, changes the idle hwsim pool to 32, 64 or 128
+radios, reconstructs the already provisioned roster, adds only missing client
+identities, then performs a clean whole-profile stop/start and health audit.
+It never changes a BPI `/nvram` identity. Each profile then runs the normal RF
+churn soak with an exact expected-client count.
+
+The default is twelve hours per profile. Results survive reboots below
+`/home/easymesh/easymesh-evidence/scale-soak`. To launch it as a managed
+background campaign:
+
+```sh
+sudo systemd-run --unit=easymesh-scale-soak --collect \
+  --property=Type=exec \
+  /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/scale-soak-campaign.sh
+sudo journalctl -fu easymesh-scale-soak.service
+```
+
+The first failed provisioning, health or soak gate stops the sequence and
+retains the failing profile's logs. A profile is not accepted merely because
+its containers started; its `summary.json` must report `outcome: passed`.
 
 ### `p0-cold-reconstruction.sh`
 

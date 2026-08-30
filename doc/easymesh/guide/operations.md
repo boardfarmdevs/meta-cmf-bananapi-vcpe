@@ -8,10 +8,8 @@
 
 | System | Role |
 | --- | --- |
-| rev140 | Yocto build host and LXD VM appliance runtime |
-| rev120 | direct Linux 7.0/LXD performance runtime |
-| rev130 | constrained direct Linux 7.0/LXD runtime |
-| another Ubuntu 22.04/24.04 host | imported LXD VM portability target |
+| Bare-metal Ubuntu 24.04/Linux 7 host | performance, scale and kernel debugging |
+| Ubuntu 22.04/24.04 LXD host | portable appliance import and operation |
 
 `codex/0829-lxd-primary` is authoritative. Runtime results are comparable only
 when source revision, image hashes, kernel, topology, clients, medium backend
@@ -24,10 +22,10 @@ fully rebuilt pair is:
 
 ```text
 host/runtime source       codex/0829-lxd-primary
-image content             EasyMesh 0123; OneWifi 0020; Wi-Fi HAL 0030
-kernel                    7.0.0-28-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260828161337.rootfs.lxc.tar.bz2
+image content             EasyMesh 0127; OneWifi 0022; Wi-Fi HAL 0030
+kernel                    7.0.0-30-generic
+controller image          X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2
+extender image            X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2
 ```
 
 These hashes identify this pair; do not apply them to a newer rebuild:
@@ -37,8 +35,8 @@ sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
 ```text
-9a4c432c857dbbf80a68c5b7835d7d0ba39327919dc53becc3c5a9eeb78d51cd  controller
-8e8ffbfe4b2404dfc9ae19ab27b0eab6243d3bc55d443ceca0d269d36b3e5d18  extender
+69cb6f064b779438264fdefbd54f4ef74367d917ffdf78a96685b40974c0719f  controller
+32d54805de07a5dd4d45412cd5664c49a9d028da755ec14dda8342cb60767d76  extender
 ```
 
 For any current pair, verify and retain its hashes before use:
@@ -47,12 +45,12 @@ For any current pair, verify and retain its hashes before use:
 sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
-Artifacts are built on rev140 from the clean canonical source checkout. Build
-instructions are in [the build guide](../../build/README.md).
+Artifacts are built from a clean canonical source checkout. Build instructions
+are in [the build guide](../../build/README.md).
 
 ## Runtime prerequisites
 
-- Linux 7.0.0-28 with the patched hwsim module;
+- Linux 7.0.0-30 with the patched hwsim module;
 - LXD 6.7 or 6.9 with a storage pool and management bridge;
 - a 32-radio hwsim pool loaded with `channels=3 regtest=5` for the current
   20-client profile;
@@ -183,7 +181,7 @@ cd gen/vm/lxd
 Host installation, clean build, portable import, acceptance, export and
 removal are maintained in `gen/vm/lxd/README.md`.
 
-### rev130 recovery after a host reboot
+### Bare-metal recovery after a host reboot
 
 LXD node and client profiles deliberately use `boot.autostart=false`; Docker's
 Boardfarm WAN/DHCP containers also use `restart: "no"`. A host reboot therefore
@@ -197,8 +195,8 @@ starting its old containers. The only Boardfarm source checkout is
 and no LAN or shared-service containers:
 
 ```sh
-mkdir -p /home/rev/git/boardfarm-open-0406
-cd /home/rev/git/boardfarm-open-0406
+mkdir -p /home/rev/boardfarm-lab
+cd /home/rev/boardfarm-lab
 uv venv --python 3.13 --prompt bf-venv .venv
 source .venv/bin/activate
 git clone git@github.com:robvogelaar/boardfarm-lab-staging.git
@@ -206,7 +204,7 @@ uv pip install -e boardfarm-lab-staging
 
 export BF_LAB_CONFIG=ca-desk6.json
 export BF_INVENTORY=ca-desk6.json
-cd /home/rev/git/boardfarm-open-0406/boardfarm-lab-staging/lab
+cd /home/rev/boardfarm-lab/boardfarm-lab-staging/lab
 ../../.venv/bin/bf-lab teardown,setup,status
 
 # The lean profile must contain exactly these two containers.
@@ -425,9 +423,9 @@ The graph has one synthetic green edge from `Controller` to the colocated
 backhaul edges. An unchanged two-second API poll must not move an optimized or
 manually positioned graph.
 
-## Parity procedure
+## Deployment parity procedure
 
-Before comparing rev130 and the VM, record on both:
+Before comparing a bare-metal run and an appliance VM, record on both:
 
 ```sh
 git rev-parse HEAD

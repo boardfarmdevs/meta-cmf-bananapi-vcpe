@@ -13,8 +13,8 @@ link here instead of repeating versioned results.
 | Item | Accepted value |
 | --- | --- |
 | Source branch | `codex/0829-lxd-primary` |
-| Runtime image source | consolidated EasyMesh `0123`, OneWifi `0020`, Wi-Fi HAL `0030` |
-| Kernel | Linux `7.0.0-28-generic` |
+| Runtime image source | EasyMesh through `0127`, OneWifi through `0022`, Wi-Fi HAL through `0030` |
+| Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
 | Mesh | controller, colocated Agent-1, and four extenders |
@@ -30,11 +30,13 @@ from its colocated radio agent.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2` | `9a4c432c857dbbf80a68c5b7835d7d0ba39327919dc53becc3c5a9eeb78d51cd` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260828161337.rootfs.lxc.tar.bz2` | `8e8ffbfe4b2404dfc9ae19ab27b0eab6243d3bc55d443ceca0d269d36b3e5d18` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `69cb6f064b779438264fdefbd54f4ef74367d917ffdf78a96685b40974c0719f` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `32d54805de07a5dd4d45412cd5664c49a9d028da755ec14dda8342cb60767d76` |
 
-Both images derive from the consolidated EasyMesh source series through
-`0123`; their installed controller/Agent binaries remain role-specific.
+Both images derive from the same source series through `0127`; their installed
+controller/Agent binaries remain role-specific. The latest reconciliation fix
+applies an Agent's complete Associated Clients snapshot to all of its
+radio-scoped controller models, including the valid zero-client withdrawal.
 IEEE 1905 is at `0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c,
 journald, and SNMP fixes are described in
 [the patch reference](reference/patch-set.md).
@@ -57,15 +59,17 @@ journald, and SNMP fixes are described in
 | wmediumd dynamic pair/frequency control | Accepted |
 | wmediumd Console Phase 1/2 visibility | Accepted |
 | External optimizer unit and replay framework | Accepted |
+| Live optimizer observation with 20 current links and 80 same-band candidate links | Accepted |
+| Dynamic optimizer recommendation and bounded acting loop | Accepted |
 | Independent start/stop/restart of every provisioned node without medium regeneration, unrelated-node restart, identity repair, database correction, or manual recovery | Not yet accepted |
-| Direct-host reboot remains stopped while packaged VM boot starts the lab | Not yet accepted as a unified installation policy |
+| Direct-host reboot remains stopped while appliance-VM boot starts the lab | Accepted installation policy |
 | Autonomous production steering policy | Not implemented |
 | Completed 12-hour 20-client churn soak | Not yet claimed |
-| Validated 50/100-client runtime | 50-client bounded cold reconstruction passed in the isolated `0829` experiment; duration acceptance and the 100-client full lab are not claimed |
+| Validated 50/100-client runtime | Campaign automation exists; duration acceptance is not claimed until its recorded runs complete |
 
 ## Acceptance
 
-The clean rev130 deployment completed without an operator nudge:
+The clean LXD-VM deployment completed without an operator nudge:
 
 ```text
 model                    5 / 15 / 50 / 24
@@ -74,7 +78,8 @@ current client metrics   20 / 20
 fresh backhaul signals   4 / 4
 gateway traffic          20 / 20 clients, 10 packets each, 0% loss
 service restarts         0
-named steering           sta-11 -> Extender-2 in 1.379 s, 0% loss
+optimizer observation    20 current links / 80 same-band candidate links
+optimizer closed loop    recommendation and acting crossover passed
 wmediumd Console         25 identities, 600 directed pairs, health ok
 SNMP                     one systemd-owned subagent, no launcher leak
 ```
@@ -82,10 +87,12 @@ SNMP                     one systemd-owned subagent, no launcher leak
 The Console also passed every REST resource, Prometheus export, live packet
 telemetry, provenance reporting, and rejection of writes in read-only mode.
 
-The LXD VM deployment and guest reboot reconstruction must both reach
+The LXD VM deployment and guest reboot reconstruction reached
 `5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero RCPI
 values, four fresh backhaul signals, 20/20 working WLAN data paths, and zero
-OneWifi/EasyMesh restarts before an instance backup is published.
+OneWifi/EasyMesh restarts. The post-roam ownership regression remained correct
+for two 150-second stability windows, and the live optimizer subsequently
+completed three no-retry candidate-collection cycles.
 
 ## Runtime access
 
@@ -111,10 +118,10 @@ or import and are never baked into the portable artifact.
 - Immediate reconstruction and functional acceptance do not replace the
   separately defined long-duration soak.
 - Userspace wmediumd remains the accepted and default medium. The optional
-  `0829` kernel medium is a reduced-physics comparison backend, not a baseline
+  kernel medium is a reduced-physics comparison backend, not a baseline
   replacement. Its implementation and bounded 50-client results are in the
   [kernel-medium reference](reference/hwsim-kernel-medium.md).
-- The packaged VM currently performs a complete ordered runtime reconstruction
+- The appliance VM performs a complete ordered runtime reconstruction
   after boot. That is a temporary recovery mechanism, not the accepted target
   for independent node lifecycle. A direct bare-metal host should not
   auto-start the lab; only an explicitly started EasyMesh VM should auto-start
@@ -122,10 +129,10 @@ or import and are never baked into the portable artifact.
 
 ## Evidence and reproducibility
 
-Acceptance evidence is consolidated under the active lab root:
+Acceptance evidence is stored outside the source tree inside the appliance:
 
 ```text
-/home/rev/easymesh-lab/0824-clean/evidence/0824-acceptance/
+/home/easymesh/easymesh-evidence/
 ```
 
 Evidence is intentionally outside the Git worktree and must record source

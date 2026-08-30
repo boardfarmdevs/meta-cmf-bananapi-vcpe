@@ -28,14 +28,32 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=1)
     parser.add_argument("--maximum-age-seconds", type=float, default=60)
     parser.add_argument(
+        "--candidate-attempts",
+        type=int,
+        default=1,
+        help="bounded attempts for each idempotent candidate query (default: 1)",
+    )
+    parser.add_argument(
         "--policy",
         default=str(REPO / "gen" / "optimizer" / "configs" / "threshold-policy.yaml"),
     )
     args = parser.parse_args()
-    if args.cycles < 1 or args.interval < 0 or args.maximum_age_seconds <= 0:
-        parser.error("cycles and maximum age must be positive; interval cannot be negative")
+    if (
+        args.cycles < 1
+        or args.interval < 0
+        or args.maximum_age_seconds <= 0
+        or args.candidate_attempts < 1
+    ):
+        parser.error(
+            "cycles, maximum age and candidate attempts must be positive; "
+            "interval cannot be negative"
+        )
 
-    provider = ControllerCandidateProvider(args.base_url, allow_simulated=True)
+    provider = ControllerCandidateProvider(
+        args.base_url,
+        allow_simulated=True,
+        request_attempts=args.candidate_attempts,
+    )
     observer = ControllerObserver(args.base_url, candidate_provider=provider)
     policy = ThresholdPolicy(load_policy(args.policy))
     state = PolicyState()
@@ -45,6 +63,10 @@ def main() -> int:
             snapshot = observer.observe()
         except (CandidateMetricsError, OSError, ValueError) as error:
             print(f"FAIL cycle={cycle}: {error}", file=sys.stderr)
+            if provider.last_raw:
+                print(json.dumps({
+                    "candidate_transactions": provider.last_raw,
+                }, sort_keys=True), file=sys.stderr)
             return 1
 
         if snapshot.health.devices != policy.config.expected_devices:

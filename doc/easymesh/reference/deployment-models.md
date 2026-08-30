@@ -29,11 +29,6 @@ flowchart LR
 | Lab after guest reboot | n/a | Reconstructs automatically |
 | Host management stack | LXD and Docker | LXD/KVM only |
 
-VirtualBox and Vagrant are retired. They added a second hypervisor, kernel
-module and packaging stack without improving EasyMesh behavior. Previous box
-artifacts remain available through Git history but are not release inputs,
-dependencies, or acceptance targets.
-
 ## Bare-metal configuration
 
 Use Ubuntu 24.04 with the accepted Linux 7 kernel, patched hwsim module, Docker,

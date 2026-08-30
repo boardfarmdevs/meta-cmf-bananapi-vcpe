@@ -1,6 +1,6 @@
 # Quickstart for an installed lab
 
-Audience: an operator using the prepared rev130 lab or an equivalent installed
+Audience: an operator using a prepared bare-metal lab or imported appliance
 VM.
 
 Purpose: reach a known-good state, open both UIs, perform one manual steer, and
@@ -9,14 +9,7 @@ deployment or reboot recovery, use [operations](operations.md).
 
 ## 1. Enter the current checkout
 
-On rev130:
-
-```sh
-ssh rev130
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
-```
-
-Inside a packaged VM, the repository is normally:
+Inside the appliance VM, the repository is:
 
 ```sh
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe
@@ -54,11 +47,13 @@ zero monitored service restarts
 
 ## 3. Open the live views
 
-For rev130:
+Use the address and ports selected during installation or import:
 
 ```text
-EasyMesh WebUI       http://192.168.2.130:8888
-wmediumd Console     http://192.168.2.130:8890
+bare-metal WebUI       http://HOST:8888
+bare-metal Console     http://HOST:8890
+appliance WebUI        http://HOST:18889
+appliance Console      http://HOST:18890
 ```
 
 In the EasyMesh WebUI, select **Network Topology**. In the Console, verify that
