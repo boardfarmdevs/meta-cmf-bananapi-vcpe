@@ -29,6 +29,24 @@ boardfarm_ready() {
         && docker exec dhcp-cpe1 pidof kea-dhcp6 >/dev/null
 }
 
+wait_boardfarm_ready() {
+    local attempt attempts=${1:-20}
+    for attempt in $(seq 1 "$attempts"); do
+        boardfarm_ready && return 0
+        sleep 1
+    done
+    return 1
+}
+
+restart_dhcp_clean() {
+    docker container inspect dhcp-cpe1 >/dev/null 2>&1 || return 1
+    # Kea stores runtime PID files in the container writable layer. They can
+    # survive a Docker stop or appliance power-off even though the recorded
+    # processes do not. Remove them immediately before the bounded restart.
+    docker exec dhcp-cpe1 sh -c 'rm -f /var/run/kea/*.pid /run/kea/*.pid'
+    docker restart dhcp-cpe1 >/dev/null
+}
+
 # Docker preserves the two Boardfarm containers and their networks in the
 # appliance, but older releases created them without a restart policy.  A
 # normal guest reboot must revive that preserved state instead of entering the
@@ -40,22 +58,13 @@ for container in dhcp-cpe1 wan-cpe1; do
     fi
 done
 
-# The Boardfarm DHCP image keeps Kea PID files in its writable layer.  Docker
-# preserves that layer across an appliance reboot, while the recorded PIDs do
-# not identify the old daemons any longer.  keactrl otherwise mistakes an
-# unrelated new process with the same PID for a live Kea daemon and the WAN
-# bridge has addresses but no DHCP server.  Repair only this known stale
-# runtime state and restart the DHCP provider once; do not rebuild the lab.
-if docker container inspect dhcp-cpe1 >/dev/null 2>&1 &&
-   ! docker exec dhcp-cpe1 pidof kea-dhcp4 >/dev/null 2>&1; then
-    docker exec dhcp-cpe1 sh -c 'rm -f /var/run/kea/*.pid'
-    docker restart dhcp-cpe1 >/dev/null
+# Give a normally starting preserved container time to launch Kea before
+# touching its state. If it does not become ready, repair only the known stale
+# PID state and give that single clean restart another bounded interval.
+if ! wait_boardfarm_ready 20; then
+    restart_dhcp_clean || true
 fi
-
-for attempt in $(seq 1 20); do
-    boardfarm_ready && break
-    sleep 1
-done
+wait_boardfarm_ready 30 || true
 
 if ! boardfarm_ready; then
     # A forced host power-off can leave LXD's volatile state marked RUNNING
@@ -71,6 +80,17 @@ if ! boardfarm_ready; then
 
     cd "$lab_repo/lab"
     "$bf_lab" teardown,setup,status
+fi
+
+# bf-lab status proves the Docker topology, but not that Kea survived a rapid
+# second container start during boot. Enforce the service-level postcondition
+# here, with one final stale-state repair before declaring reconstruction bad.
+if ! wait_boardfarm_ready 60; then
+    restart_dhcp_clean || true
+    wait_boardfarm_ready 30 || {
+        echo 'Boardfarm containers exist but Kea DHCP did not become ready' >&2
+        exit 1
+    }
 fi
 
 # Make Docker perform the fast path itself on subsequent boots.  The explicit
@@ -90,6 +110,7 @@ docker exec dhcp-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.10/24'
 docker exec wan-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.20/24'
 test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
+boardfarm_ready
 
 install -d /var/lib/easymesh-lab
 date -Ins > /var/lib/easymesh-lab/boardfarm.completed-at
