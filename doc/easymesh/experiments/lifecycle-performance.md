@@ -5,6 +5,9 @@
 Bounded parallel lifecycle management reduced complete 25-container cold
 reconstruction from 15 minutes 18 seconds to 6 minutes 21 seconds, and the
 55-container reconstruction from 26 minutes 8 seconds to 6 minutes 50 seconds.
+Overlapping controller and extender container boot, while retaining all
+protocol gates, reduced the accepted transactions again to 5 minutes 52 seconds
+and 6 minutes 31 seconds respectively.
 Complete shutdown now takes 32 to 43 seconds rather than 95 to 127 seconds.
 
 These are complete service transactions, not just `lxc start` latency. Start
@@ -12,10 +15,10 @@ time includes controller and extender readiness, all client associations and
 DHCP leases, medium startup, metrics convergence, a 120-second stability hold,
 traffic verification, zero-restart checks, and evidence capture.
 
-| Profile | Medium | Serial start | Parallel start | Reduction | Serial stop | Parallel stop | Reduction |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 5 mesh + 20 clients (25 containers) | userspace wmediumd | 917.6 s | 381.2 s | 58.5% | 126.8 s | 31.7 s | 75.0% |
-| 5 mesh + 50 clients (55 containers) | experimental kernel medium | 1568.3 s | 409.6 s | 73.9% | 95.0 s | 42.7 s | 55.0% |
+| Profile | Medium | Serial | Gated parallel | Overlap | Total reduction | Parallel stop |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 5 mesh + 20 clients (25 containers) | userspace wmediumd | 917.6 s | 381.2 s | 352.2 s | 61.6% | 31.7 s |
+| 5 mesh + 50 clients (55 containers) | experimental kernel medium | 1568.3 s | 409.6 s | 390.6 s | 75.1% | 42.7 s |
 
 The 55-container timing row is a cold-lifecycle acceptance result for the
 optional kernel backend. A separate 50-client userspace-wmediumd bounded cold
@@ -26,12 +29,15 @@ result is a long-duration 50-client soak claim.
 
 ## Implementation
 
-The runtime preserves its dependency gates:
+The runtime preserves its dependency gates. The default `overlap` mode launches
+the controller and four extender containers together, waits for controller
+readiness, then evaluates all extender readiness gates concurrently:
 
 ```text
 Boardfarm WAN and hwsim ownership
-  -> controller start and readiness
-  -> four extenders started concurrently
+  -> controller and four extender containers launched concurrently
+  -> controller readiness
+  -> four extender readiness gates evaluated concurrently
   -> exact 5-device / 15-radio / 50-BSS model
   -> clients started and checked in bounded cohorts
   -> selected medium backend
@@ -54,8 +60,16 @@ The default limits are:
 They can be overridden through the corresponding `EASYMESH_*` environment
 variables. Parallelism is bounded so a larger profile does not issue an
 uncontrolled burst of LXD, network-namespace, DHCP, or controller operations.
-The controller still starts alone. No client starts until all extenders and the
-complete mesh model are ready.
+No client starts until all extenders and the complete mesh model are ready.
+`EASYMESH_START_MODE=gated` retains the earlier controller-first launch for
+diagnosis.
+
+An additional `burst` experiment launched all 55 containers in 13.6 seconds,
+but it was rejected: clients started before BSS readiness, only 44 of 50
+clients supplied metrics, and the formal transaction failed after 571.9
+seconds. “All containers at once” is therefore neither the fastest complete
+transaction nor an accepted lifecycle. It remains an explicit experimental
+mode and is not the default.
 
 Whole-lab shutdown stops the medium first, stops stateless clients in bounded
 batches with a short graceful interval, stops extenders concurrently, and
@@ -73,7 +87,7 @@ The record includes backend, mesh/client/container counts, total elapsed time,
 result, and every phase duration. The combined measurement from this evaluation
 is [lifecycle-parallel-eval-0829.json](results/lifecycle-parallel-eval-0829.json).
 
-## Final phase measurements
+## Final gated-parallel phase measurements
 
 | Phase | 25 containers | 55 containers |
 | --- | ---: | ---: |

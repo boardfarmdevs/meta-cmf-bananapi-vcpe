@@ -20,6 +20,7 @@ kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
 medium_runtime=/run/meta-cmf-wmediumd
 kernel_metrics_socket=$medium_runtime/metrics/control.sock
 kernel_metrics_unit=easymesh-kernel-metrics.service
+start_mode=${EASYMESH_START_MODE:-overlap}
 extender_start_parallelism=${EASYMESH_EXTENDER_START_PARALLELISM:-4}
 extender_ready_parallelism=${EASYMESH_EXTENDER_READY_PARALLELISM:-4}
 extender_stop_parallelism=${EASYMESH_EXTENDER_STOP_PARALLELISM:-4}
@@ -29,6 +30,7 @@ client_stop_parallelism=${EASYMESH_CLIENT_STOP_PARALLELISM:-16}
 traffic_parallelism=${EASYMESH_TRAFFIC_PARALLELISM:-10}
 client_stop_timeout=${EASYMESH_CLIENT_STOP_TIMEOUT:-2}
 mesh_stop_timeout=${EASYMESH_MESH_STOP_TIMEOUT:-10}
+burst_start_parallelism=${EASYMESH_BURST_START_PARALLELISM:-$((client_count + 5))}
 lifecycle_started_ms=$(date +%s%3N)
 lifecycle_timing_file=
 lifecycle_phase=
@@ -38,6 +40,14 @@ case "$medium_backend" in
 userspace|kernel) ;;
 *)
     echo "invalid EASYMESH_MEDIUM_BACKEND=$medium_backend (expected userspace or kernel)" >&2
+    exit 2
+    ;;
+esac
+
+case "$start_mode" in
+gated|overlap|burst) ;;
+*)
+    echo "invalid EASYMESH_START_MODE=$start_mode (expected gated, overlap or burst)" >&2
     exit 2
     ;;
 esac
@@ -58,7 +68,7 @@ start|stop)
             "$extender_stop_parallelism" "$client_start_parallelism" \
             "$client_ready_parallelism" "$client_stop_parallelism" \
             "$traffic_parallelism" "$client_stop_timeout" \
-            "$mesh_stop_timeout"; do
+            "$mesh_stop_timeout" "$burst_start_parallelism"; do
         [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
             echo 'lifecycle parallelism and timeout values must be positive integers' >&2
             exit 2
@@ -94,6 +104,7 @@ write_lifecycle_timing() {
         --arg action "$action" \
         --arg result "$result" \
         --arg backend "$medium_backend" \
+        --arg start_mode "$start_mode" \
         --argjson containers "$((client_count + 5))" \
         --argjson mesh_nodes 5 \
         --argjson clients "$client_count" \
@@ -104,6 +115,7 @@ write_lifecycle_timing() {
             action: $action,
             result: $result,
             medium_backend: $backend,
+            start_mode: $start_mode,
             containers: $containers,
             mesh_nodes: $mesh_nodes,
             clients: $clients,
@@ -719,14 +731,42 @@ start)
     select_medium_backend
     end_phase
 
-    begin_phase controller
-    start_instance bpibroadband
-    wait_controller
-    end_phase
+    case "$start_mode" in
+    gated)
+        begin_phase controller
+        start_instance bpibroadband
+        wait_controller
+        end_phase
 
-    begin_phase extenders
-    start_instances_bounded "$extender_start_parallelism" $extenders
-    run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
+        begin_phase extenders
+        start_instances_bounded "$extender_start_parallelism" $extenders
+        run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
+        ;;
+    overlap)
+        begin_phase mesh_launch
+        start_instances_bounded "$extender_start_parallelism" $mesh
+        end_phase
+
+        begin_phase controller
+        wait_controller
+        end_phase
+
+        begin_phase extenders
+        run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
+        ;;
+    burst)
+        begin_phase all_container_launch
+        start_instances_bounded "$burst_start_parallelism" $mesh $clients
+        end_phase
+
+        begin_phase controller
+        wait_controller
+        end_phase
+
+        begin_phase extenders
+        run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
+        ;;
+    esac
     wait_mesh_model
     end_phase
 
@@ -735,7 +775,9 @@ start)
     end_phase
 
     begin_phase clients
-    start_instances_bounded "$client_start_parallelism" $clients
+    if [ "$start_mode" != burst ]; then
+        start_instances_bounded "$client_start_parallelism" $clients
+    fi
     run_bounded "$client_ready_parallelism" wait_client_live $clients
     end_phase
 
