@@ -197,6 +197,13 @@ def split_groups(clients: list[dict], count: int) -> list[list[dict]]:
     return [group for group in groups if group]
 
 
+def bounded_groups(items: list[dict], size: int = 2) -> list[list[dict]]:
+    """Split recovery work so it cannot create an association burst."""
+    if size < 1:
+        raise ValueError("group size must be positive")
+    return [items[index:index + size] for index in range(0, len(items), size)]
+
+
 def matrix_updates(
     clients: list[dict], aps: list[dict], targets: dict[str, str | None],
     strong_snr: int, outage_snr: int,
@@ -890,8 +897,20 @@ class Carousel:
                     # them through a different RF-reachable AP and back. A
                     # simple wlan0 down/up on the same BSSID is insufficient
                     # because it need not produce a new parent transition.
-                    repair_timeout = min(args.return_timeout, 30)
-                    for repair_attempt in range(1, 4):
+                    # IoT controller convergence normally takes 38--43
+                    # seconds in this lab, so the old 30-second cap could
+                    # reject a healthy repair before the normal event path
+                    # had converged. Keep the operator-configured bound and
+                    # repair one station at a time to avoid recreating the
+                    # association burst that phased restoration prevents.
+                    # Both legs must remain stable before the next station is
+                    # touched; the temporary alternate leg requires physical
+                    # convergence, while the return leg requires exact
+                    # physical/controller BSSID agreement.  The controller
+                    # may legitimately miss the deliberately short-lived
+                    # alternate ownership, which is only a repair stimulus.
+                    repair_timeout = args.return_timeout
+                    for repair_attempt in range(1, 6):
                         try:
                             elapsed, returned = self.wait_for_stable(
                                 repair_timeout, args.restore_settle,
@@ -915,82 +934,117 @@ class Carousel:
                                 client for client in clients
                                 if client["container"] in names
                             ]
-                            if not repair or repair_attempt == 3:
+                            if not repair or repair_attempt == 5:
                                 raise
-                            alternate_targets = {}
-                            for client in repair:
-                                original_index = next(
-                                    index for index, ap in enumerate(aps)
-                                    if ap["container"]
-                                    == original_targets[client["container"]]
+                            for batch_index, batch in enumerate(
+                                bounded_groups(repair, size=1), start=1
+                            ):
+                                alternate_targets = {}
+                                for client in batch:
+                                    original_index = next(
+                                        index for index, ap in enumerate(aps)
+                                        if ap["container"]
+                                        == original_targets[client["container"]]
+                                    )
+                                    alternate_targets[client["container"]] = aps[
+                                        (original_index + 1) % len(aps)
+                                    ]["container"]
+                                self.recorder.write(
+                                    "placement_repair_started",
+                                    attempt=repair_attempt, batch=batch_index,
+                                    clients=[client["label"] for client in batch],
+                                    observation=current,
                                 )
-                                alternate_targets[client["container"]] = aps[
-                                    (original_index + 1) % len(aps)
-                                ]["container"]
-                            self.recorder.write(
-                                "placement_repair_started", attempt=repair_attempt,
-                                clients=[client["label"] for client in repair],
-                                observation=current,
-                            )
-                            set_client_link(repair, "down")
-                            generation += 1
-                            control.apply(
-                                generation,
-                                matrix_updates(
-                                    repair, aps, alternate_targets,
-                                    args.strong_snr, args.outage_snr,
-                                ),
-                            )
-                            set_client_link(repair, "up")
-                            prime_candidate_scans(
-                                repair, aps_by_container, alternate_targets
-                            )
-                            self.wait_for(
-                                repair_timeout,
-                                lambda: (
-                                    assignment_reached(
-                                        (value := observe(
-                                            repair, bssid_to_ap, node_to_ap,
-                                            args.topology_url,
-                                        )), alternate_targets
-                                    ), value
-                                ),
-                                "placement repair alternate AP", allow_stop=False,
-                            )
-                            repair_targets = {
-                                client["container"]:
-                                original_targets[client["container"]]
-                                for client in repair
-                            }
-                            set_client_link(repair, "down")
-                            generation += 1
-                            control.apply(
-                                generation,
-                                matrix_updates(
-                                    repair, aps, repair_targets,
-                                    args.strong_snr, args.outage_snr,
-                                ),
-                            )
-                            set_client_link(repair, "up")
-                            prime_candidate_scans(
-                                repair, aps_by_container, repair_targets
-                            )
-                            self.wait_for(
-                                repair_timeout,
-                                lambda: (
-                                    assignment_reached(
-                                        (value := observe(
-                                            repair, bssid_to_ap, node_to_ap,
-                                            args.topology_url,
-                                        )), repair_targets
-                                    ), value
-                                ),
-                                "placement repair original AP", allow_stop=False,
-                            )
-                            self.recorder.write(
-                                "placement_repair_completed", attempt=repair_attempt,
-                                clients=[client["label"] for client in repair],
-                            )
+                                set_client_link(batch, "down")
+                                self.wait_for(
+                                    args.disconnect_timeout,
+                                    lambda batch=batch: (
+                                        radio_disconnected(
+                                            (value := observe(
+                                                batch, bssid_to_ap, node_to_ap,
+                                                args.topology_url,
+                                            ))
+                                        ), value
+                                    ),
+                                    "placement repair disconnect before alternate AP",
+                                    allow_stop=False,
+                                )
+                                self.hold(args.blackout_hold)
+                                generation += 1
+                                control.apply(
+                                    generation,
+                                    matrix_updates(
+                                        batch, aps, alternate_targets,
+                                        args.strong_snr, args.outage_snr,
+                                    ),
+                                )
+                                set_client_link(batch, "up")
+                                prime_candidate_scans(
+                                    batch, aps_by_container, alternate_targets
+                                )
+                                self.wait_for_stable(
+                                    repair_timeout, args.restore_settle,
+                                    lambda batch=batch,
+                                    alternate_targets=alternate_targets: (
+                                        radio_assignment_reached(
+                                            (value := observe(
+                                                batch, bssid_to_ap, node_to_ap,
+                                                args.topology_url,
+                                            )), alternate_targets
+                                        ), value
+                                    ),
+                                    "placement repair alternate AP",
+                                )
+                                repair_targets = {
+                                    client["container"]:
+                                    original_targets[client["container"]]
+                                    for client in batch
+                                }
+                                set_client_link(batch, "down")
+                                self.wait_for(
+                                    args.disconnect_timeout,
+                                    lambda batch=batch: (
+                                        radio_disconnected(
+                                            (value := observe(
+                                                batch, bssid_to_ap, node_to_ap,
+                                                args.topology_url,
+                                            ))
+                                        ), value
+                                    ),
+                                    "placement repair disconnect before original AP",
+                                    allow_stop=False,
+                                )
+                                self.hold(args.blackout_hold)
+                                generation += 1
+                                control.apply(
+                                    generation,
+                                    matrix_updates(
+                                        batch, aps, repair_targets,
+                                        args.strong_snr, args.outage_snr,
+                                    ),
+                                )
+                                set_client_link(batch, "up")
+                                prime_candidate_scans(
+                                    batch, aps_by_container, repair_targets
+                                )
+                                self.wait_for_stable(
+                                    repair_timeout, args.restore_settle,
+                                    lambda batch=batch,
+                                    repair_targets=repair_targets: (
+                                        assignment_reached(
+                                            (value := observe(
+                                                batch, bssid_to_ap, node_to_ap,
+                                                args.topology_url,
+                                            )), repair_targets
+                                        ), value
+                                    ),
+                                    "placement repair original AP",
+                                )
+                                self.recorder.write(
+                                    "placement_repair_completed",
+                                    attempt=repair_attempt, batch=batch_index,
+                                    clients=[client["label"] for client in batch],
+                                )
                     placement_restored = True
                     self.recorder.write("placement_restored", elapsed_ms=elapsed,
                                         observation=returned)

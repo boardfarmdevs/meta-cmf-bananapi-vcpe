@@ -239,6 +239,20 @@ def test_carousel_client_label_uses_the_selected_cohort_prefix():
     assert carousel.sta_label("02:00:00:00:13:00", "IOT") == "IOT-13"
 
 
+def test_carousel_bounds_repair_association_groups():
+    carousel = load_script("wmediumd-client-carousel.py")
+    clients = [{"container": f"wlan-client-{index:03d}"} for index in range(5)]
+
+    assert carousel.bounded_groups(clients) == [
+        clients[0:2], clients[2:4], clients[4:5]
+    ]
+    assert carousel.bounded_groups(clients, 1) == [
+        clients[0:1], clients[1:2], clients[2:3], clients[3:4], clients[4:5]
+    ]
+    with pytest.raises(ValueError):
+        carousel.bounded_groups(clients, 0)
+
+
 def test_carousel_reads_pinned_or_current_client_frequency():
     carousel = load_script("wmediumd-client-carousel.py")
 
