@@ -57,6 +57,10 @@ for profile in "${profiles[@]}"; do
 done
 [ -x "$runtime" ] || { echo "runtime helper is missing: $runtime" >&2; exit 1; }
 [ -x "$repo/gen/wlan-client-pool.sh" ] || { echo "invalid repository: $repo" >&2; exit 1; }
+# gen-util deliberately rejects lifecycle calls made from outside the source
+# tree. systemd services start in /, so establish the accepted repository as
+# the campaign working directory before invoking any provisioning helper.
+cd "$repo"
 
 exec {campaign_lock}>/run/easymesh-scale-soak.lock
 flock -n "$campaign_lock" || {
