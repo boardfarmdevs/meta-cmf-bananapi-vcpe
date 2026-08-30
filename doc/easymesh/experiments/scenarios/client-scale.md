@@ -8,9 +8,9 @@ separate inputs:
 
 | Profile | Private clients | IoT clients | Total | State |
 | --- | ---: | ---: | ---: | --- |
-| `small` | 10 | 10 | 20 | current rev130 acceptance profile |
+| `small` | 10 | 10 | 20 | routine accepted profile |
 | `medium` | 25 | 25 | 50 | bounded cold reconstruction accepted in the isolated Linux 7 evaluation VM |
-| `stress` | 50 | 50 | 100 | provisioner and optional 128-radio hwsim bound are ready; full lab acceptance is not complete |
+| `stress` | 50 | 50 | 100 | provisioner and 128-radio hwsim bound are ready; duration acceptance is pending |
 
 Twenty clients remain the routine policy-development profile. Fifty clients
 now pass bounded cold reconstruction with userspace wmediumd and the optional

@@ -2,16 +2,14 @@
 
 ## Purpose
 
-The long soak is a requirements-driven characterization of the same small lab
-on rev130, the rev120 VM and the rev150 VM. It is not a passive uptime check.
-Each run alternates controlled RF churn with complete health, traffic,
-state-restoration and memory gates. A 12-hour memory-growth acceptance remains
-defined below but is deliberately deferred; shorter shakedowns are not labeled
-as long-duration acceptance.
+The long soak is a requirements-driven characterization of the supported
+bare-metal and LXD-VM execution models. It is not a passive uptime check. Each
+run alternates controlled RF churn with complete health, traffic,
+state-restoration and memory gates. A 12-hour profile is the acceptance unit;
+shorter shakedowns are not labeled as long-duration acceptance.
 
 The executable definition is `gen/tests/p0-churn-soak.py`. Every sample and
-workload writes machine-readable evidence under `/var/tmp/easymesh-soak` on
-the target running the lab.
+workload writes machine-readable evidence on the target running the lab.
 
 ## Acceptance requirements
 
@@ -105,6 +103,32 @@ sudo /usr/bin/python3 <repo>/gen/tests/p0-churn-soak.py \
 Do not claim acceptance from a running unit. A run passes only when its final
 `summary.json` says `outcome: passed` and `growth.acceptance_eligible: true`.
 An interrupted run remains useful diagnostic evidence but is not acceptance.
+
+## 20/50/100-client campaign
+
+`gen/tests/scale-soak-campaign.sh` owns the complete sequence. It stops the
+lab, selects the required 32-, 64-, or 128-radio pool, provisions the exact
+client cohort, proves a clean reconstruction, runs the duration-bound soak,
+and records every transition. The default campaign spends 12 hours on each
+profile, for 36 hours total:
+
+```sh
+sudo systemd-run \
+  --unit=easymesh-scale-soak \
+  --collect \
+  --property=Type=exec \
+  /usr/bin/env EASYMESH_SOAK_PROFILE_SECONDS=43200 \
+  /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/scale-soak-campaign.sh
+
+sudo systemctl status easymesh-scale-soak.service
+sudo journalctl -fu easymesh-scale-soak.service
+```
+
+Evidence is written below
+`/home/easymesh/easymesh-evidence/scale-soak/TIMESTAMP/`. The `small`,
+`medium`, and `stress` directories correspond to 20, 50, and 100 clients.
+Each profile must produce a passing `summary.json`; starting the campaign is
+not itself an acceptance result.
 
 ## Candidate measurement boundary
 
