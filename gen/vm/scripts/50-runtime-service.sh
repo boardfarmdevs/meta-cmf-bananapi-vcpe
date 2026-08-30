@@ -3,6 +3,13 @@ set -euo pipefail
 
 test -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 
+profile=${EASYMESH_SCALE_PROFILE:-small}
+expected_clients=${HEALTH_EXPECT_CLIENTS:-20}
+cat > /etc/default/easymesh-lab <<EOF
+EASYMESH_SCALE_PROFILE=$profile
+HEALTH_EXPECT_CLIENTS=$expected_clients
+EOF
+
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-lab-runtime \
     /usr/local/sbin/easymesh-lab-runtime
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-lab.service \

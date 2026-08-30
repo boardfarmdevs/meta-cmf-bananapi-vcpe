@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-backup=${1:?usage: import.sh EASYMESH-LXD-BACKUP.tar.zst}
-name=${EASYMESH_LXD_NAME:-easymesh-lab-0829}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [ -r "$script_dir/release.env" ]; then
+    # shellcheck disable=SC1091
+    . "$script_dir/release.env"
+fi
+backup=${1:-}
+if [ -z "$backup" ]; then
+    mapfile -t candidates < <(find "$script_dir" -maxdepth 1 -type f \
+        -name '*.tar.zst' -printf '%p\n' | sort)
+    [ "${#candidates[@]}" -eq 1 ] || {
+        echo "usage: $0 EASYMESH-LXD-BACKUP.tar.zst" >&2
+        echo "automatic selection requires exactly one .tar.zst beside import.sh" >&2
+        exit 2
+    }
+    backup=${candidates[0]}
+fi
+name=${EASYMESH_LXD_NAME:-${LAB_DEFAULT_NAME:-rdkeasymesh-20-0829}}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
-cpus=${EASYMESH_LXD_CPUS:-6}
-memory=${EASYMESH_LXD_MEMORY:-6GiB}
+cpus=${EASYMESH_LXD_CPUS:-${LAB_DEFAULT_CPUS:-6}}
+memory=${EASYMESH_LXD_MEMORY:-${LAB_DEFAULT_MEMORY:-8GiB}}
 host_address=${EASYMESH_WEBUI_HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')}
 host_address=${host_address:-127.0.0.1}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
@@ -74,6 +89,7 @@ lxc config device add "$name" wmediumd-console proxy nat=true \
 lxc start "$name"
 
 echo "LXD VM started: $name"
+echo "profile:           ${LAB_CLIENTS:-unknown} clients (${LAB_PROFILE:-unknown})"
 echo "EasyMesh WebUI:   http://${host_address}:${webui_port}/"
 echo "wmediumd Console: http://${console_address}:${console_port}/"
 echo "monitor: lxc exec $name -- journalctl -fu easymesh-lab.service"

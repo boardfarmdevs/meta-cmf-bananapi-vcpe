@@ -88,6 +88,7 @@ boundary:
 - [Memory footprint](reference/memory-footprint.md)
 - [Association ownership case study](reference/association-ownership-case-study.md)
 - [Bare-metal and LXD VM deployment models](reference/deployment-models.md)
+- [Portable LXD VM releases](reference/portable-lab-releases.md)
 - [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
 - [Lab appliance refactor plan](reference/lab-appliance-refactor-plan.md)
 - [prplMesh virtual-radio evaluation plan](reference/prplmesh-virtual-radio-evaluation-plan.md)

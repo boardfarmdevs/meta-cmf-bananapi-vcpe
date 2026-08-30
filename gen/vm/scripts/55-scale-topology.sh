@@ -8,6 +8,13 @@ gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
+profile=${EASYMESH_SCALE_PROFILE:-small}
+case "$profile" in
+    20|small) profile=small; expected_clients=20; expected_private=10; expected_iot=10 ;;
+    50|medium) profile=medium; expected_clients=50; expected_private=25; expected_iot=25 ;;
+    100|stress) profile=stress; expected_clients=100; expected_private=50; expected_iot=50 ;;
+    *) echo "invalid EASYMESH_SCALE_PROFILE: $profile" >&2; exit 2 ;;
+esac
 
 mkdir -p "$nvram_root"
 export BPI_NVRAM_ROOT="$nvram_root"
@@ -67,7 +74,7 @@ done
 # resumable operation. The pool helper retains the five healthy private clients
 # from the base deployment and registers wmediumd once after all new radios
 # exist, rather than restarting it for every station.
-./wlan-client-pool.sh up --profile small
+./wlan-client-pool.sh up --profile "$profile"
 
 for attempt in $(seq 1 30); do
     topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology 2>/dev/null || true)
@@ -85,13 +92,15 @@ for attempt in $(seq 1 30); do
     # The topology counts are SSID-qualified and therefore exact.  STAList also
     # contains the four associated extender backhaul STAs in this profile, so
     # use it only to prove that at least all 20 fronthaul clients are present.
-    if [ "$live" = 20 ] && [ "$private_live" = 10 ] \
-        && [ "$iot_live" = 10 ] && [[ "$stations" =~ ^[0-9]+$ ]] \
-        && [ "$stations" -ge 20 ]; then
+    if [ "$live" = "$expected_clients" ] \
+        && [ "$private_live" = "$expected_private" ] \
+        && [ "$iot_live" = "$expected_iot" ] \
+        && [[ "$stations" =~ ^[0-9]+$ ]] \
+        && [ "$stations" -ge "$expected_clients" ]; then
         exit 0
     fi
     sleep 10
 done
 
-echo 'scaled topology did not converge to 4 extenders, 10 private and 10 IoT clients' >&2
+echo "scaled topology did not converge to 4 extenders, $expected_private private and $expected_iot IoT clients" >&2
 exit 1

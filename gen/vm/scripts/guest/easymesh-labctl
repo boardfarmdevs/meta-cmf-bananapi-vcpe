@@ -8,6 +8,12 @@ fi
 
 runtime=/usr/local/sbin/easymesh-lab-runtime
 audit=/usr/local/sbin/easymesh-health-audit
+if [ -r /etc/default/easymesh-lab ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /etc/default/easymesh-lab
+    set +a
+fi
 
 wait_for_start() {
     systemctl start boardfarm-lab.service

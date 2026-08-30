@@ -2,14 +2,19 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+# shellcheck source=profile.sh
+source "$root/gen/vm/lxd/profile.sh"
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
     | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 default_host_address=${default_host_address:-127.0.0.1}
-name=${EASYMESH_LXD_NAME:-easymesh-lab-0829}
+profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
+profile_clients=$(easymesh_profile_clients "$profile")
+profile_radios=$(easymesh_profile_radios "$profile")
+name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0829}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
-cpus=${EASYMESH_LXD_CPUS:-6}
-memory=${EASYMESH_LXD_MEMORY:-6GiB}
-disk=${EASYMESH_LXD_DISK:-64GiB}
+cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
+memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
+disk=${EASYMESH_LXD_DISK:-$(easymesh_profile_disk "$profile")}
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
 guest_ipv4=${EASYMESH_LXD_IPV4:-}
@@ -44,6 +49,7 @@ Build inputs:
   EASYMESH_EXTENDER_IMAGE=/path/to/extender.rootfs.lxc.tar.bz2
 
 Common overrides:
+  EASYMESH_LAB_PROFILE=$profile_clients (20, 50 or 100)
   EASYMESH_LXD_NAME=$name
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
@@ -271,6 +277,7 @@ build_vm() {
     test "$(lxc exec "$name" -- uname -r)" = "$kernel"
 
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
+        HWSIM_RADIOS="$profile_radios" \
         bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
     run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
@@ -284,8 +291,11 @@ build_vm() {
         bash /home/easymesh/easymesh-provision/40-deploy-easymesh.sh
     run_root env HOME=/home/easymesh \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
+        EASYMESH_SCALE_PROFILE="$profile" \
         bash /home/easymesh/easymesh-provision/55-scale-topology.sh
-    run_root bash /home/easymesh/easymesh-provision/50-runtime-service.sh
+    run_root env EASYMESH_SCALE_PROFILE="$profile" \
+        HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        bash /home/easymesh/easymesh-provision/50-runtime-service.sh
     run_root bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/install.sh --start
     # A VM NAT proxy connects to the guest NIC, not to guest loopback. Keep the
     # Console's normal package default private, but bind its appliance instance
@@ -299,7 +309,8 @@ build_vm() {
     lxc restart "$name" --timeout 300
     wait_agent
     run_root systemctl start easymesh-lab.service
-    run_root /usr/local/sbin/easymesh-labctl check
+    run_root env HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        /usr/local/sbin/easymesh-labctl check
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
     curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
@@ -334,7 +345,8 @@ status_vm() {
 
 check_vm() {
     start_vm
-    run_root /usr/local/sbin/easymesh-labctl check
+    run_root env HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        /usr/local/sbin/easymesh-labctl check
 }
 
 snapshot_vm() {
@@ -346,21 +358,47 @@ snapshot_vm() {
 }
 
 export_vm() {
-    local short bundle output
+    local short bundle output created
+    require_command jq
     check_vm
     stop_vm
     short=$(git -C "$root" rev-parse --short=7 HEAD)
-    bundle="$export_dir/easymesh-lab-0829-${short}-lxd"
-    output="$bundle/easymesh-lab-0829-${short}-lxd.tar.zst"
+    created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-0829-${short}-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-0829-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     lxc export "$name" "$output" --instance-only --compression zstd
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
+    install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    cat > "$bundle/release.env" <<EOF
+LAB_STACK=rdkeasymesh
+LAB_PROFILE=$profile
+LAB_CLIENTS=$profile_clients
+LAB_HWSIM_RADIOS=$profile_radios
+LAB_DEFAULT_NAME=$name
+LAB_DEFAULT_CPUS=$cpus
+LAB_DEFAULT_MEMORY=$memory
+LAB_DEFAULT_DISK=$disk
+LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
+EOF
+    jq -n \
+        --arg stack rdkeasymesh --arg profile "$profile" \
+        --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
+        --arg source_commit "$(git -C "$root" rev-parse HEAD)" \
+        --arg created_at "$created" --arg archive "$(basename "$output")" \
+        --arg instance "$name" --arg cpus "$cpus" --arg memory "$memory" \
+        --arg disk "$disk" \
+        '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
+          hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
+          archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
-        sha256sum "$(basename "$output")" import.sh install-host.sh README.md \
+        sha256sum "$(basename "$output")" import.sh install-host.sh \
+            package-release.sh README.md release.env release.json \
             > SHA256SUMS
     )
     ls -lh "$bundle"/*
