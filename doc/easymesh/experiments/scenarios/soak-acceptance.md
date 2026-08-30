@@ -5,8 +5,10 @@
 The long soak is a requirements-driven characterization of the supported
 bare-metal and LXD-VM execution models. It is not a passive uptime check. Each
 run alternates controlled RF churn with complete health, traffic,
-state-restoration and memory gates. A 12-hour profile is the acceptance unit;
-shorter shakedowns are not labeled as long-duration acceptance.
+state-restoration and memory gates. A one-hour run of every scale profile is
+the campaign qualification gate. A 12-hour profile remains the long-duration
+acceptance unit; the one-hour qualification is not labeled as long-duration
+acceptance.
 
 The executable definition is `gen/tests/p0-churn-soak.py`. Every sample and
 workload writes machine-readable evidence on the target running the lab.
@@ -109,8 +111,20 @@ An interrupted run remains useful diagnostic evidence but is not acceptance.
 `gen/tests/scale-soak-campaign.sh` owns the complete sequence. It stops the
 lab, selects the required 32-, 64-, or 128-radio pool, provisions the exact
 client cohort, proves a clean reconstruction, runs the duration-bound soak,
-and records every transition. The default campaign spends 12 hours on each
-profile, for 36 hours total:
+and records every transition. Qualify the complete sequence with one hour per
+profile before starting the extended campaign:
+
+```sh
+sudo systemd-run \
+  --unit=easymesh-scale-soak \
+  --collect \
+  --property=Type=exec \
+  /usr/bin/env EASYMESH_SOAK_PROFILE_SECONDS=3600 \
+  /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/scale-soak-campaign.sh
+```
+
+Only after all three one-hour summaries pass, run the 12-hour-per-profile,
+36-hour long-duration campaign:
 
 ```sh
 sudo systemd-run \
@@ -127,6 +141,8 @@ sudo journalctl -fu easymesh-scale-soak.service
 Evidence is written below
 `/home/easymesh/easymesh-evidence/scale-soak/TIMESTAMP/`. The `small`,
 `medium`, and `stress` directories correspond to 20, 50, and 100 clients.
+The runner attempts every requested profile even when an earlier profile
+fails, then returns a failing campaign result with all failed profiles named.
 Each profile must produce a passing `summary.json`; starting the campaign is
 not itself an acceptance result.
 

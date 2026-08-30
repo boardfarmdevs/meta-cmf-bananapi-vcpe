@@ -93,28 +93,29 @@ resize_hwsim() {
     record hwsim_resize_begin "from=${loaded:-unloaded} to=$radios"
     # runtime stop returns every wiphy and removes all dynamic VAPs before the
     # module is replaced. No node identity or LXD profile is regenerated.
-    modprobe -r mac80211_hwsim
+    modprobe -r mac80211_hwsim || return
     printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$radios" \
-        > /etc/modprobe.d/easymesh-hwsim.conf
-    modprobe mac80211_hwsim
+        > /etc/modprobe.d/easymesh-hwsim.conf || return
+    modprobe mac80211_hwsim || return
     systemctl reset-failed easymesh-hwsim-pool.service 2>/dev/null || true
-    /usr/local/sbin/easymesh-hwsim-pool
-    test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$radios"
+    /usr/local/sbin/easymesh-hwsim-pool || return
+    test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$radios" \
+        || return
     test "$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'virt-wlan*' | wc -l)" \
-        -eq "$radios"
+        -eq "$radios" || return
     record hwsim_resize_complete "radios=$radios"
 }
 
 prepare_profile() {
     local profile=$1 expected=$2 radios=$3 current
-    stop_lab
-    resize_hwsim "$radios"
+    stop_lab || return
+    resize_hwsim "$radios" || return
 
     # First reconstruct the currently provisioned roster. The pool helper can
     # then add only the missing clients while the APs are available, register
     # one complete medium matrix, and retain every established identity.
-    "$runtime" start
-    "$repo/gen/wlan-client-pool.sh" up --profile "$profile"
+    "$runtime" start || return
+    "$repo/gen/wlan-client-pool.sh" up --profile "$profile" || return
     current=$(lxc list -c n --format csv \
         | grep -Ec '^wlan-client(-[0-9]{3})?$' || true)
     [ "$current" -eq "$expected" ] || {
@@ -124,18 +125,18 @@ prepare_profile() {
 
     # A clean stop/start proves the complete profile is reconstructible and
     # establishes fresh zero-restart baselines for the soak.
-    "$runtime" stop
-    "$runtime" start
+    "$runtime" stop || return
+    "$runtime" start || return
     HEALTH_EXPECT_CLIENTS="$expected" "$repo/gen/tests/health-audit.sh" \
-        > "$campaign/$profile-health.log" 2>&1
+        > "$campaign/$profile-health.log" 2>&1 || return
     record profile_ready "profile=$profile clients=$expected radios=$radios"
 }
 
-campaign_result=failed
+campaign_result=running
 cleanup() {
     status=$?
     chown -R easymesh:easymesh "$campaign" 2>/dev/null || true
-    if [ "$campaign_result" != passed ]; then
+    if [ "$campaign_result" = running ]; then
         record campaign_stopped "status=$status result=$campaign_result"
     fi
 }
@@ -146,27 +147,50 @@ source_commit=$(git -c safe.directory="$repo" -C "$repo" rev-parse HEAD \
 record campaign_start \
     "profiles=${profiles[*]} seconds_per_profile=$duration source=$source_commit"
 
+failed_profiles=()
 for profile in "${profiles[@]}"; do
     expected=$(profile_clients "$profile")
     radios=$(profile_radios "$profile")
     record profile_start "profile=$profile clients=$expected radios=$radios"
-    prepare_profile "$profile" "$expected" "$radios"
+    if prepare_profile "$profile" "$expected" "$radios"; then
+        :
+    else
+        status=$?
+        failed_profiles+=("$profile")
+        record profile_fail \
+            "profile=$profile phase=prepare status=$status"
+        continue
+    fi
 
     profile_root="$campaign/$profile"
     install -d -o easymesh -g easymesh "$profile_root"
+    status=0
     python3 "$repo/gen/tests/p0-churn-soak.py" \
-        --duration "$duration" \
-        --sample-interval "$sample_interval" \
-        --settle "$settle" \
-        --expected-clients "$expected" \
-        --max-cli-rss-mib "$(profile_cli_limit "$profile")" \
-        --output-root "$profile_root" \
-        > "$profile_root/campaign.log" 2>&1
+            --duration "$duration" \
+            --sample-interval "$sample_interval" \
+            --settle "$settle" \
+            --expected-clients "$expected" \
+            --max-cli-rss-mib "$(profile_cli_limit "$profile")" \
+            --output-root "$profile_root" \
+            > "$profile_root/campaign.log" 2>&1 || status=$?
     summary=$(find "$profile_root" -mindepth 2 -maxdepth 2 -name summary.json \
         -type f | sort | tail -1)
-    jq -e '.outcome == "passed"' "$summary" >/dev/null
-    record profile_pass "profile=$profile summary=$summary"
+    if [ "$status" -eq 0 ] && [ -n "$summary" ] \
+            && jq -e '.outcome == "passed"' "$summary" >/dev/null; then
+        record profile_pass "profile=$profile summary=$summary"
+    else
+        failed_profiles+=("$profile")
+        record profile_fail \
+            "profile=$profile phase=soak status=$status summary=${summary:-missing}"
+    fi
 done
+
+if [ "${#failed_profiles[@]}" -ne 0 ]; then
+    campaign_result=failed
+    record campaign_fail "profiles=${failed_profiles[*]}"
+    printf '%s\n' "$campaign"
+    exit 1
+fi
 
 campaign_result=passed
 record campaign_pass "profiles=${profiles[*]}"
