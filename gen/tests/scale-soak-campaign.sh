@@ -141,8 +141,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+source_commit=$(git -c safe.directory="$repo" -C "$repo" rev-parse HEAD \
+    2>/dev/null || printf 'unknown')
 record campaign_start \
-    "profiles=${profiles[*]} seconds_per_profile=$duration source=$(git -C "$repo" rev-parse HEAD)"
+    "profiles=${profiles[*]} seconds_per_profile=$duration source=$source_commit"
 
 for profile in "${profiles[@]}"; do
     expected=$(profile_clients "$profile")
