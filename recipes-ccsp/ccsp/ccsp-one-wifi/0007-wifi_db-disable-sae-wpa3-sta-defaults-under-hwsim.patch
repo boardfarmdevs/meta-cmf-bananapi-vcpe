@@ -1,0 +1,61 @@
+Completes patch 0005, which disabled the WPA3/SAE defaults under HWSIM_RADIO
+for the *AP-side* VAPs (cfg.u.bss_info.security, two sites) but missed the
+*STA-side* equivalent (cfg.u.sta_info.security) in the isVapSTAMesh() branch
+of the same file. The result was a security mismatch between the two ends of
+the EasyMesh backhaul link:
+
+  - controller's mesh_backhaul_5g AP (bss_info, patched by 0005): WPA2-PSK,
+    MFP disabled, AES-CCMP
+  - extender's mesh_sta_5g STA (sta_info, NOT patched):           WPA3-SAE,
+    MFP *required*, key type SAE
+
+Root-caused by following the connection attempt all the way down after the
+SSID fix (rdk-wifi-hal 0009) got the extender to actually start connecting:
+
+  1. Extender's state machine now finds the candidate and calls
+     wifi_hal_connect(vap 15, bssid 02:00:00:e1:16:33) every cycle --
+     confirmed via ext_try_connecting:1175 "connecting to ssid:mesh_backhaul".
+  2. nl80211_connect_sta() runs to completion ("Proceeding with legacy Auth")
+     and calls sme_send_authentication().
+  3. But wifi_supplicant_drv_authenticate() -- the driver op that actually
+     builds NL80211_CMD_AUTHENTICATE -- is NEVER reached: its "Enter" debug
+     print never appears in /tmp/wifiHal, and `iw event` shows zero auth/assoc
+     frames over many full connect cycles (only scan started/finished).
+  4. sme_send_authentication() (wpa_supplicant/sme.c) returns void and bails
+     silently via wpas_connect_work_done() when wpa_supplicant_set_suites()
+     fails -- which is exactly what a key-mgmt/cipher/MFP mismatch between the
+     STA's configured suites and the AP's advertised RSN IE produces. It logs
+     only at MSG_WARNING through wpa_msg(), which is not routed anywhere in
+     this build, hence the complete silence.
+
+The non-BananaPi branch immediately below already contains exactly the right
+values for this case (wpa2_personal / mfp_disabled / aes), so gate the
+BananaPi-R4 WPA3 block behind !HWSIM_RADIO and fall through to it -- the same
+one-line change, and the same rationale, as 0005 applied to the AP side. Real
+BananaPi R4 hardware is unaffected.
+
+---
+ source/db/wifi_db.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/source/db/wifi_db.c b/source/db/wifi_db.c
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -371,7 +371,7 @@
+             cfg.u.sta_info.security.encr = wifi_encryption_aes;
+ #endif /* CONFIG_IEEE80211BE */
+         } else {
+-#if defined(_PLATFORM_BANANAPI_R4_)
++#if defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO)
+             cfg.u.sta_info.security.mode = wifi_security_mode_wpa3_personal;
+             cfg.u.sta_info.security.wpa3_transition_disable = false;
+             cfg.u.sta_info.security.mfp = wifi_mfp_cfg_required;
+@@ -385,7 +385,7 @@
+             cfg.u.sta_info.security.mfp = wifi_mfp_cfg_disabled;
+             cfg.u.sta_info.security.mode = wifi_security_mode_wpa2_personal;
+             cfg.u.sta_info.security.encr = wifi_encryption_aes;
+-#endif // _PLATFORM_BANANAPI_R4_
++#endif // _PLATFORM_BANANAPI_R4_ && !HWSIM_RADIO
+         }
+         cfg.u.sta_info.enabled = false;
+         cfg.u.sta_info.scan_params.period = 10;

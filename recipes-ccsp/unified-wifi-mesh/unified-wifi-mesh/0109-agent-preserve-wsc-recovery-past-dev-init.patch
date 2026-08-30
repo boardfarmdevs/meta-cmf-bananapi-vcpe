@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000109 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 17:05:00 -0700
+Subject: [PATCH] agent: preserve WSC recovery past device-init command
+
+A strict persistent reconstruction reached an Agent with an associated
+backhaul and all three local radio configurations, while the Controller had
+only three of its ten BSS records.  The Agent had received all three initial
+M2 frames, but OneWifi did not return the provider callback for the first WSC
+subdoc.  The subdoc watchdog and the generic device-init command both expired
+at 30 seconds.  The generic timeout won the race, cancelled the shared
+command, and reset the two incomplete radio state machines to unconfigured.
+The protocol retry deliberately made independent of the command lifetime in
+the preceding patch therefore had no WSC state left to service.
+
+Treat an incomplete per-radio WSC exchange as protocol-owned when the shared
+device-init command expires.  Cancel the stale orchestration command, but
+preserve wsc_m2_pending and owconfig_pending so their bounded recovery can
+finish without an operator restart.  Other command timeout behavior is
+unchanged.
+
+Also make the OneWifi completion watchdog shorter than the command TTL.  Five
+seconds is long compared with normal local subdoc application, but leaves
+enough time for the existing fresh-crypto M1 retry budget when an RBUS
+provider callback is missed.  The retry remains idempotent and bounded.
+
+Upstream-Status: Pending
+---
+ src/agent/em_agent.cpp      |  2 +-
+ src/orch/em_orch_agent.cpp | 15 +++++++++++++--
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 58de17e..6b71f04 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1548,7 +1548,7 @@ void em_agent_t::handle_2s_tick()
+ 
+ void em_agent_t::handle_1s_tick()
+ {
+-    if (!m_onewifi_wsc_subdoc_active || ++m_onewifi_wsc_wait_ticks < 30) {
++    if (!m_onewifi_wsc_subdoc_active || ++m_onewifi_wsc_wait_ticks < 5) {
+         return;
+     }
+ 
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 1111111..2222222 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -55,9 +55,20 @@ void em_orch_agent_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+ 
+     if (stats->time > EM_MAX_CMD_GEN_TTL) {
+         em_printfout("Canceling cmd: %s because time limit exceeded\n", pcmd->get_cmd_name());
++        em_state_t state = em->get_state();
++        em_cmd_type_t cmd_type = pcmd->get_type();
+-        cancel_command(pcmd->get_type());
++        cancel_command(cmd_type);
+-    	if (em->get_state() < em_state_agent_topo_synchronized) {
++        if (cmd_type == em_cmd_type_dev_init &&
++                (state == em_state_agent_wsc_m2_pending ||
++                 state == em_state_agent_owconfig_pending)) {
++            // WSC is a per-radio protocol transaction and its bounded retry
++            // remains live after the shared device-init command is gone.
++            // Do not erase that ownership state on the generic command TTL.
++            em_printfout("Preserving %s after device-init timeout for radio %s",
++                em_t::state_2_str(state),
++                util::mac_to_string(em->get_radio_interface_mac()).c_str());
++        } else if (state < em_state_agent_topo_synchronized) {
+ 	    	em->set_state(em_state_agent_unconfigured);
+ 		} else {
+ 	    	em->set_state(em_state_agent_topo_synchronized);
+ 		}
+-- 
+2.43.0

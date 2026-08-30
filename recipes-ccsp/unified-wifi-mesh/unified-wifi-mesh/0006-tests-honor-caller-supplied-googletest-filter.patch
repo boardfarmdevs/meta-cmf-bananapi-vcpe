@@ -1,0 +1,76 @@
+From: Rene Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] tests: honor a caller-supplied GoogleTest filter
+
+tests/main.cpp assigned its built-in negative filter AFTER InitGoogleTest()
+had already parsed and stored --gtest_filter, so the assignment overwrote
+whatever the caller asked for. GTEST_FILTER was discarded for the same
+reason. The binary therefore had no supported way to select a subset: every
+invocation ran all ~2900 registered tests, and a run aborted inside an
+unrelated pre-existing failure long before reaching the suite under test.
+
+Testing GTEST_FLAG(filter) after InitGoogleTest() cannot fix this, because
+InitGoogleTest consumes the option out of argv -- afterwards "the caller
+asked for *" and "the caller asked for nothing" are indistinguishable.
+
+Decide before InitGoogleTest() instead, by inspecting argv and the
+environment directly, and install the built-in exclusion list only when the
+caller supplied neither form.
+
+Verified both branches on the built binary:
+
+    --gtest_filter=EmSteeringSerializer.*   -> banner prints, 7 tests run
+    GTEST_FILTER=EmSteeringSerializer.*     -> banner prints, 7 tests run
+    no caller filter                        -> 2268 of 2917 tests listed,
+                                               i.e. exclusions still applied
+
+Upstream develop (43f7f7127c8035ff18aa7a78eb82c1b22795ef1a) still carries
+the unconditional override, so this is suitable to send upstream as-is.
+
+Upstream-Status: Pending
+---
+diff --git a/tests/main.cpp b/tests/main.cpp
+index ece2896e..fa55e5ac 100644
+--- a/tests/main.cpp
++++ b/tests/main.cpp
+@@ -17,10 +17,34 @@
+  * limitations under the License.
+  */
+ #include <gtest/gtest.h>
++#include <string.h>
++#include <stdlib.h>
+ 
+ int main(int argc, char **argv) {
++    // Decide BEFORE InitGoogleTest whether the caller asked for a specific
++    // filter: InitGoogleTest consumes --gtest_filter out of argv, so testing
++    // GTEST_FLAG(filter) afterwards cannot distinguish "caller asked for *"
++    // from "caller asked for nothing". Assigning the built-in exclusion list
++    // unconditionally after InitGoogleTest -- as this file used to -- overrides
++    // both --gtest_filter and GTEST_FILTER, so no subset can ever be selected
++    // and every invocation runs the entire binary.
++    bool caller_supplied_filter = (getenv("GTEST_FILTER") != NULL);
++    for (int i = 1; i < argc; i++) {
++        if (argv[i] != NULL && strncmp(argv[i], "--gtest_filter=", 15) == 0) {
++            caller_supplied_filter = true;
++            break;
++        }
++    }
++
+     ::testing::InitGoogleTest(&argc, argv);
+ 
++    if (!caller_supplied_filter)
++
++    // Only apply the built-in exclusion list when the caller did not ask for a
++    // specific filter. Assigning unconditionally here overrides both
++    // --gtest_filter and GTEST_FILTER, which makes it impossible to run a single
++    // test or suite -- every invocation runs the whole binary.
++    if (::testing::GTEST_FLAG(filter) == "*") {
+ ::testing::GTEST_FLAG(filter) =
+     "-dm_ap_mld_t_Test.DecodeValidJsonObjectWithNullParentID:"
+     "dm_ap_mld_t_Test.DecodeNullJsonObjectWithValidParentID:"
+@@ -714,5 +738,6 @@ int main(int argc, char **argv) {
+     "em_ctrl_t_Test.input_listen_default:"
+     "em_ctrl_t_Test.delete_nodes_valid:"
+     "em_ctrl_t_Test.delete_node_existing_ieee80211n_24";
++    }
+     return RUN_ALL_TESTS();
+ }

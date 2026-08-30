@@ -1,0 +1,93 @@
+From f310448052e34bd49f7ac75e63081b0539000033 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 17 Aug 2026 01:58:00 -0700
+Subject: [PATCH] dm: retain STA capability on an empty roam report
+
+The hwsim OneWifi raw-frame provider can deliver the association notification
+for a successful BTM roam while its 512-byte frame buffer is all zero.  The
+controller treated that buffer as a new Client Capability Report, replaced the
+station's last valid association frame, and consequently lost the decoded
+SSID.  The physical link and MariaDB BSSID were correct, but the WebUI hid the
+station because an associated record with no SSID is incomplete.
+
+An association frame begins with four fixed bytes followed by a non-empty,
+mandatory SSID IE.  A reassociation frame adds the six-byte Current AP Address
+before that IE.  If neither layout contains that IE, retain the last valid
+capability frame for the same station while updating its new BSSID and radio.
+Client capabilities do not change merely because the station roams; a later
+valid report can still replace the retained frame.
+
+This is deliberately in the controller's consolidated STA update path.  It
+covers both orderings observed in practice: the empty report may create the
+new BSSID row, or it may arrive after a valid association delta and attempt to
+overwrite that row.
+
+Upstream-Status: Pending
+Signed-off-by: Codex <codex@openai.com>
+---
+ src/dm/dm_sta_list.cpp | 43 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/src/dm/dm_sta_list.cpp b/src/dm/dm_sta_list.cpp
+index c861756..9067c02 100644
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -70,6 +70,30 @@ int dm_sta_list_t::analyze_config(const cJSON *obj_arr, void *parent_id, em_cmd_
+     return 0;
+ }
+ 
++static bool has_valid_assoc_capability_frame(const em_sta_info_t& info)
++{
++    const unsigned int ie_offsets[] = {4, 10};
++
++    if (info.frame_body_len > sizeof(info.frame_body)) {
++        return false;
++    }
++
++    for (unsigned int offset : ie_offsets) {
++        if (offset + 2 > info.frame_body_len ||
++                info.frame_body[offset] != tag_ssid) {
++            continue;
++        }
++
++        unsigned int ssid_len = info.frame_body[offset + 1];
++        if (ssid_len > 0 && ssid_len <= 32 &&
++                offset + 2 + ssid_len <= info.frame_body_len) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
+ /* OneWifi reports association changes as deltas. For the non-MLO station
+  * records used here, a new Associated=1 record displaces every attribution
+  * for the same station on a different BSS. Run this before update_list():
+@@ -99,6 +123,25 @@ void dm_sta_list_t::enforce_single_assoc(db_client_t& db_client, dm_sta_t& sta)
+         return;
+     }
+ 
++    /* A capability-only delta may contain a zero-filled raw frame.  Preserve
++     * the last usable frame before the old BSS attribution is removed, or
++     * before a same-BSS partial update overwrites it. */
++    if (!has_valid_assoc_capability_frame(sta.m_sta_info)) {
++        psta = get_first_sta();
++        while (psta != NULL) {
++            if (memcmp(psta->m_sta_info.id, sta.m_sta_info.id,
++                       sizeof(mac_address_t)) == 0 &&
++                    has_valid_assoc_capability_frame(psta->m_sta_info)) {
++                sta.m_sta_info.frame_body_len = psta->m_sta_info.frame_body_len;
++                memcpy(sta.m_sta_info.frame_body, psta->m_sta_info.frame_body,
++                       psta->m_sta_info.frame_body_len);
++                em_printfout("Retained STA capability frame across partial association update");
++                break;
++            }
++            psta = get_next_sta(psta);
++        }
++    }
++
+     psta = get_first_sta();
+     while (psta != NULL) {
+         if ((memcmp(psta->m_sta_info.id, sta.m_sta_info.id, sizeof(mac_address_t)) == 0) &&
+-- 
+2.34.1

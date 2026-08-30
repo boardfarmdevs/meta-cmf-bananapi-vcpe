@@ -1,0 +1,68 @@
+{
+  "configurations": [
+    {
+      "delay_us": 2000,
+      "fixed_legacy_rate_mbps": null,
+      "jitter_us": 500,
+      "kernel_counters": {
+        "phy84": {
+          "considered": 116,
+          "delivered": 115,
+          "dropped": 0
+        },
+        "phy85": {
+          "considered": 2715,
+          "delivered": 2715,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 2,
+      "kernel_link_state": {
+        "phy84": [
+          "set 1 42:00:00:00:01:00 2.4 -50 0",
+          "stats considered 116 delivered 115 dropped 0",
+          "rate stats considered 0 dropped 0 last_signal 0 last_snr 0 required_snr 0 rate_loss_pct 0 effective_loss_pct 0 rate_idx 0 encoding 0 nss 0 bw 0",
+          "airtime last_us 33 band_2_4_us 47700 band_5_us 0 band_6_us 0 overlap_2_4 13 overlap_5 0 overlap_6 0"
+        ],
+        "phy85": [
+          "set 1 42:00:00:00:00:00 2.4 -50 0",
+          "stats considered 2715 delivered 2715 dropped 0",
+          "rate stats considered 0 dropped 0 last_signal 0 last_snr 0 required_snr 0 rate_loss_pct 0 effective_loss_pct 0 rate_idx 0 encoding 0 nss 0 bw 0",
+          "airtime last_us 33 band_2_4_us 582393 band_5_us 0 band_6_us 0 overlap_2_4 81 overlap_5 0 overlap_6 0"
+        ]
+      },
+      "kernel_medium_enabled": true,
+      "matrix_override": true,
+      "matrix_snr_db": 41,
+      "name": "kernel-delay-jitter",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 3.878,
+        "rtt_pseudo_max_ms": 3.984
+      },
+      "rate_per_enabled": false,
+      "traffic": {
+        "duration_seconds": 5.03,
+        "guest_cpu": {
+          "capacity_percent": 17.085,
+          "equivalent_core_percent": 102.508,
+          "softirq_percent": 0.167,
+          "steal_percent": 0.067,
+          "system_percent": 0.167
+        },
+        "jitter_ms": 0.0337,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 2604,
+        "received_mbps": 4.999,
+        "requested_rate": "5M"
+      },
+      "userspace_wmediumd_registered": false
+    }
+  ],
+  "duration_seconds": 5,
+  "kernel": "7.0.0-30-generic",
+  "rate": "5M",
+  "schema": "hwsim-medium-evaluation.v2",
+  "vcpus": 6
+}

@@ -1,0 +1,42 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] cli: reject command errors as unavailable topology
+
+libemcli represents a command transport failure as a valid JSON status tree.
+The topology handler checked only for a nil tree, so it traversed the status
+object as topology and returned HTTP 200 with empty nodes and edges.  A
+temporary controller failure therefore looked exactly like authoritative
+proof that the entire mesh had disappeared.
+
+Require the Device root before constructing a topology response and use HTTP
+503 for either missing command data or a status/error tree.  This lets the
+browser and experiment harness distinguish observation failure from a real
+empty network.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/main.go | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4247,12 +4247,16 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+ 
+     topologyTree := execEMCommand(cmd, nil)
+     if topologyTree == nil {
+-        http.Error(w, "Failed to fetch reset tree", http.StatusInternalServerError)
++        http.Error(w, "Controller topology unavailable", http.StatusServiceUnavailable)
+         return
+     }
+     defer C.free_network_tree(topologyTree)
+ 
+     topoDeviceTree := getNetworkTreeByKey(topologyTree, "Device")
++    if topoDeviceTree == nil {
++        http.Error(w, "Controller topology unavailable", http.StatusServiceUnavailable)
++        return
++    }
+ 
+     // Helper to create STA list with circular layout
+     createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
+-- 
+2.43.0

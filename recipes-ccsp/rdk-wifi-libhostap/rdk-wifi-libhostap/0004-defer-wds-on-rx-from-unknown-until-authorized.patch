@@ -1,0 +1,47 @@
+From: Rob Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] ap: defer WDS-STA setup in ieee802_11_rx_from_unknown until authorized
+
+Companion to 0003: the 4-address WDS STA netdev is also created from
+ieee802_11_rx_from_unknown() on the first 4-addr frame (M2), before the 4-way. On
+mac80211_hwsim that diverts the STA's pre-auth EAPOL (M4) to the WDS netdev instead
+of the authenticator, so the 4-way times out (reason 15). Mark WLAN_STA_WDS early
+(so ap_sta_set_authorized() has a trigger) but defer the netdev creation until the
+station is AUTHORIZED.
+---
+--- a/source/hostap-2.11/src/ap/ieee802_11.c
++++ b/source/hostap-2.11/src/ap/ieee802_11.c
+@@ -7325,18 +7325,25 @@
+ 		}
+ 
+ 		if (wds && !(sta->flags & WLAN_STA_WDS)) {
+-			int ret;
+-			char ifname_wds[IFNAMSIZ + 1];
+-
+-			wpa_printf(MSG_DEBUG, "Enable 4-address WDS mode for "
+-				   "STA " MACSTR " (aid %u)",
+-				   MAC2STR(sta->addr), sta->aid);
++			/* meta-cmf-bananapi-vcpe: mark the STA as 4-address (preserve state) but defer
++			 * creating/enslaving the WDS netdev until it is AUTHORIZED. Creating it now -- on
++			 * the first 4-addr frame (typically M2) -- makes mac80211_hwsim route the STA's
++			 * pre-auth EAPOL (M4) to the WDS netdev before the authenticator receives it, so
++			 * the 4-way times out (reason 15). ap_sta_set_authorized() creates it on auth. */
+ 			sta->flags |= WLAN_STA_WDS;
+-			ret = hostapd_set_wds_sta(hapd, ifname_wds,
++			if (sta->flags & WLAN_STA_AUTHORIZED) {
++				int ret;
++				char ifname_wds[IFNAMSIZ + 1];
++
++				wpa_printf(MSG_DEBUG, "Enable 4-address WDS mode for "
++					   "STA " MACSTR " (aid %u)",
++					   MAC2STR(sta->addr), sta->aid);
++				ret = hostapd_set_wds_sta(hapd, ifname_wds,
+ 						  sta->addr, sta->aid, 1);
+-			if (!ret)
+-				hostapd_set_wds_encryption(hapd, sta,
++				if (!ret)
++					hostapd_set_wds_encryption(hapd, sta,
+ 							   ifname_wds);
++			}
+ 		}
+ 		return;
+ 	}

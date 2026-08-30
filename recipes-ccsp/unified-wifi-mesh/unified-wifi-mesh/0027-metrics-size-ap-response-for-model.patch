@@ -1,0 +1,174 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] metrics: size AP response for the reporting model
+
+send_ap_metrics_response() builds AP, radio, and associated-STA TLVs into a
+1024-byte stack buffer without checking its capacity.  A tri-band agent with
+ten BSSs and four associated stations produces a valid response larger than
+that buffer.  The write crosses the stack canary and terminates em_agent from
+__stack_chk_fail after the response is sent.
+
+Allocate the construction buffer on the heap and size it from the maximum TLV
+count for the agent's current BSS, STA, radio, and profile data.  Reserve one
+MAX_EM_BUFF_SZ block per TLV value, validate every encoder's returned size,
+and keep an end-of-message slot.  This leaves AL-SAP responsible for its
+existing 1481-byte transport fragmentation instead of imposing the unrelated
+1024-byte construction limit.
+
+The failure was reproduced under gdb at send_ap_metrics_response() line 1265
+with the stack protector firing after a 10-BSS/four-STA response.
+
+---
+ src/em/metrics/em_metrics.cpp | 48 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -36,6 +36,7 @@
+ #include <sys/time.h>
+ #include <unistd.h>
+ #include <pthread.h>
++#include <vector>
+ #include <openssl/rand.h>
+ #include "em_metrics.h"
+ #include "em_msg.h"
+@@ -1099,18 +1100,39 @@ int em_metrics_t::send_link_quality_report()
+ 
+ int em_metrics_t::send_ap_metrics_response()
+ {
+-    unsigned char buff[MAX_EM_BUFF_SZ] = {0};
++    dm_easy_mesh_t *dm = get_data_model();
++    const size_t num_bss_tlvs = static_cast<size_t>(dm->m_num_bss) *
++        ((get_profile_type() > em_profile_type_1) ? 2U : 1U);
++    const size_t sta_tlvs_per_sta = 3U +
++        ((get_profile_type() > em_profile_type_1) ? 1U : 0U) +
++        ((get_profile_type() > em_profile_type_2) ? 1U : 0U);
++    const size_t num_sta_tlvs = static_cast<size_t>(hash_map_count(dm->m_sta_map)) *
++        sta_tlvs_per_sta;
++    const size_t num_radio_tlvs = (get_profile_type() > em_profile_type_1) ?
++        static_cast<size_t>(get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) : 0U;
++    const size_t max_tlv_value_size = MAX_EM_BUFF_SZ;
++    const size_t max_tlv_count = num_bss_tlvs + num_sta_tlvs + num_radio_tlvs;
++    const size_t buff_capacity = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) +
++        ((max_tlv_count + 1U) * (sizeof(em_tlv_t) + max_tlv_value_size));
++    std::vector<unsigned char> buff(buff_capacity, 0);
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+     unsigned short  msg_type = em_msg_type_ap_metrics_rsp;
+     size_t len = 0;
+     em_cmdu_t *cmdu;
+     em_tlv_t *tlv;
+-    unsigned char *tmp = buff;
++    unsigned char *tmp = buff.data();
+     short sz = 0;
+     unsigned short type = htons(ETH_P_1905);
+-    dm_easy_mesh_t *dm = get_data_model();
+     dm_sta_t *sta;
+     int bss_index = 0;
++    auto valid_tlv_size = [max_tlv_value_size](short value_size, const char *name) {
++        if (value_size < 0 || static_cast<size_t>(value_size) > max_tlv_value_size) {
++            em_printfout("%s TLV size %d exceeds reserved maximum %zu", name,
++                value_size, max_tlv_value_size);
++            return false;
++        }
++        return true;
++    };
+ 
+     memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
+     tmp += sizeof(mac_address_t);
+@@ -1146,6 +1168,7 @@ int em_metrics_t::send_ap_metrics_response()
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_ap_metrics;
+         sz = create_ap_metrics_tlv(tlv->value, dm->m_bss[bss_index]);
++        if (!valid_tlv_size(sz, "AP Metrics")) return -1;
+         tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+         tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1156,6 +1179,7 @@ int em_metrics_t::send_ap_metrics_response()
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_ap_ext_metric;
+             sz = create_ap_ext_metrics_tlv(tlv->value, dm->m_bss[bss_index]);
++            if (!valid_tlv_size(sz, "AP Extended Metrics")) return -1;
+             tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+             tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1173,6 +1197,7 @@ int em_metrics_t::send_ap_metrics_response()
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_assoc_sta_traffic_sts;
+             sz = create_assoc_sta_traffic_stats_tlv(tlv->value, sta);
++            if (!valid_tlv_size(sz, "Associated STA Traffic Stats")) return -1;
+             tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+             tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1182,6 +1207,7 @@ int em_metrics_t::send_ap_metrics_response()
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_assoc_sta_link_metric;
+             sz = create_assoc_sta_link_metrics_tlv(tlv->value, sta->m_sta_info.id, sta);
++            if (!valid_tlv_size(sz, "Associated STA Link Metrics")) return -1;
+             tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+             tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1192,6 +1218,7 @@ int em_metrics_t::send_ap_metrics_response()
+                 tlv = reinterpret_cast<em_tlv_t *> (tmp);
+                 tlv->type = em_tlv_type_assoc_sta_ext_link_metric;
+                 sz = create_assoc_ext_sta_link_metrics_tlv(tlv->value, sta->m_sta_info.id, sta);
++                if (!valid_tlv_size(sz, "Associated STA Extended Link Metrics")) return -1;
+                 tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+                 tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1204,6 +1231,7 @@ int em_metrics_t::send_ap_metrics_response()
+                 tlv = reinterpret_cast<em_tlv_t *> (tmp);
+                 tlv->type = em_tlv_type_assoc_wifi6_sta_rprt;
+                 sz = create_assoc_wifi6_sta_sta_report_tlv(tlv->value, sta);
++                if (!valid_tlv_size(sz, "Associated Wi-Fi 6 STA Report")) return -1;
+                 tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+                 tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+@@ -1214,28 +1242,30 @@ int em_metrics_t::send_ap_metrics_response()
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_vendor_specific;
+             sz = create_assoc_vendor_sta_link_metrics_tlv(tlv->value, sta->m_sta_info.id, sta);
++            if (!valid_tlv_size(sz, "Associated Vendor STA Link Metrics")) return -1;
+             tlv->len = htons(static_cast<short unsigned int> (sz));
+ 
+             tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+             len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+ 
+             sta = reinterpret_cast<dm_sta_t *> (hash_map_get_next(dm->m_sta_map, sta));
+         }
+     }
+ 
+     for (int i = 0; i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios; i++) {
+         //Radio Metrics TLV (17.2.60)
+         if (get_profile_type() > em_profile_type_1) {
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_radio_metric;
+             sz = create_radio_metrics_tlv(tlv->value, i);
+             if (sz == 0) {
+                 em_printfout("create_radio_metrics_tlv size equals to zero\n");
+                 continue;
+             }
++            if (!valid_tlv_size(sz, "Radio Metrics")) return -1;
+             tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+             tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+             len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+         }
+     }
+@@ -1248,13 +1278,13 @@ int em_metrics_t::send_ap_metrics_response()
+     tmp += (sizeof(em_tlv_t));
+     len += (sizeof(em_tlv_t));
+ 
+-    if (em_msg_t(em_msg_type_ap_metrics_rsp, get_profile_type(), buff, static_cast<unsigned int> (len)).validate(errors) == 0) {
++    if (em_msg_t(em_msg_type_ap_metrics_rsp, get_profile_type(), buff.data(), static_cast<unsigned int> (len)).validate(errors) == 0) {
+         em_printfout("AP Metrics Response validation failed for agent:%s, still sending",
+             util::mac_to_string(dm->get_agent_al_interface_mac()).c_str());
+         //return -1;
+     }
+ 
+-    if (send_frame(buff, static_cast<unsigned int> (len))  < 0) {
++    if (send_frame(buff.data(), static_cast<unsigned int> (len))  < 0) {
+         em_printfout("AP Metrics Response send failed, error:%d\n", errno);
+         return -1;
+     }
+-- 
+2.43.0

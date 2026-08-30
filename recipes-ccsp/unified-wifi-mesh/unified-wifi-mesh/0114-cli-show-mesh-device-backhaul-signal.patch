@@ -1,0 +1,240 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 24 Aug 2026 10:00:00 -0700
+Subject: [PATCH] cli: report backhaul signal on mesh devices
+
+The topology endpoint already publishes the authoritative timestamped
+Associated STA Link Metrics observation for each wireless extender edge, but
+the devices endpoint leaves Device.Signal unset. Consequently the Mesh Devices
+page says that every extender signal is not reported even while the topology
+shows a fresh value.
+
+Join each device's exact backhaul STA and upstream BSSID to the same metrics
+snapshot and publish the same fresh, stale, or unknown contract as
+backhaul_signal. Retain the legacy numeric signal only while the observation
+is fresh. Render the structured value on each device card and refresh the
+visible Mesh Devices tab every two seconds without overlapping native queries.
+
+diff --git a/src/rdkb-cli/backhaul_signal.go b/src/rdkb-cli/backhaul_signal.go
+index a0700c3823449f65bc9ac2ea8ed5c78ce069abc6..769c94ef0246c488f87e1c427811cdbef17b34ef 100644
+--- a/src/rdkb-cli/backhaul_signal.go
++++ b/src/rdkb-cli/backhaul_signal.go
+@@ -16,7 +16,10 @@
+ 
+ package main
+ 
+-import "time"
++import (
++	"strings"
++	"time"
++)
+ 
+ const (
+ 	backhaulSignalFresh           = "fresh"
+@@ -94,3 +97,29 @@ func classifyBackhaulSignal(metric *BackhaulLinkMetric, now time.Time) BackhaulS
+ 		AgeSeconds: &ageSeconds,
+ 	}
+ }
++
++// classifyDeviceBackhaulSignal applies the same exact bSTA/upstream-BSSID
++// join and freshness contract used by the topology endpoint. The legacy RSSI
++// pointer is populated only while the standard observation is fresh.
++func classifyDeviceBackhaulSignal(metrics map[string]BackhaulLinkMetric,
++	backhaulSTA, upstreamBSSID, mediaType string, now time.Time) (*BackhaulSignal, *int) {
++	backhaulSTA = strings.ToLower(strings.TrimSpace(backhaulSTA))
++	upstreamBSSID = strings.ToLower(strings.TrimSpace(upstreamBSSID))
++	if strings.EqualFold(strings.TrimSpace(mediaType), "Ethernet") ||
++		backhaulSTA == "" || upstreamBSSID == "" ||
++		upstreamBSSID == "00:00:00:00:00:00" {
++		return nil, nil
++	}
++
++	metric, found := metrics[backhaulSTA+"@"+upstreamBSSID]
++	var metricPtr *BackhaulLinkMetric
++	if found {
++		metricPtr = &metric
++	}
++	signal := classifyBackhaulSignal(metricPtr, now)
++	if signal.Status != backhaulSignalFresh || signal.RSSI == nil {
++		return &signal, nil
++	}
++	legacyRSSI := *signal.RSSI
++	return &signal, &legacyRSSI
++}
+diff --git a/src/rdkb-cli/backhaul_signal_test.go b/src/rdkb-cli/backhaul_signal_test.go
+index 2d595bb9b6a828da9e7642a16e73ad2c7bb0a0cc..530e2c24f330afe8fcfa4267cf0461c00484cd97 100644
+--- a/src/rdkb-cli/backhaul_signal_test.go
++++ b/src/rdkb-cli/backhaul_signal_test.go
+@@ -88,3 +88,33 @@ func TestBackhaulSignalFreshStaleAndUnknown(t *testing.T) {
+ 		t.Fatalf("equal-time duplicate selection depended on traversal order: %+v", selected)
+ 	}
+ }
++
++func TestDeviceBackhaulSignalUsesExactFreshMetric(t *testing.T) {
++	now := time.Date(2026, 8, 24, 12, 0, 20, 0, time.UTC)
++	fresh, ok := parseBackhaulLinkMetric(138, "2026-08-24T12:00:15Z")
++	if !ok {
++		t.Fatal("valid device metric was rejected")
++	}
++	metrics := map[string]BackhaulLinkMetric{
++		"02:00:00:00:01:20@02:00:00:00:01:30": fresh,
++	}
++
++	signal, legacy := classifyDeviceBackhaulSignal(metrics,
++		"02:00:00:00:01:20", "02:00:00:00:01:30", "Wireless LAN", now)
++	if signal == nil || signal.Status != backhaulSignalFresh ||
++		signal.RCPI == nil || *signal.RCPI != 138 || legacy == nil || *legacy != -41 {
++		t.Fatalf("device did not expose its fresh exact link metric: signal=%+v legacy=%v", signal, legacy)
++	}
++
++	unknown, unknownLegacy := classifyDeviceBackhaulSignal(metrics,
++		"02:00:00:00:02:20", "02:00:00:00:01:30", "Wireless LAN", now)
++	if unknown == nil || unknown.Status != backhaulSignalUnknown || unknownLegacy != nil {
++		t.Fatalf("missing exact link was presented as current: signal=%+v legacy=%v", unknown, unknownLegacy)
++	}
++
++	local, localLegacy := classifyDeviceBackhaulSignal(metrics,
++		"", "00:00:00:00:00:00", "Ethernet", now)
++	if local != nil || localLegacy != nil {
++		t.Fatalf("local Ethernet device received a radio signal: signal=%+v legacy=%v", local, localLegacy)
++	}
++}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index e1f3ed57a96a0cd05e87c7192cbc49e5446479c3..c66e2538f0b79c0c0b2d7d0bd47d37b23b62182f 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -227,6 +227,7 @@ type Device struct {
+ 	LastSeen        time.Time      `json:"last_seen"`
+ 	Uptime          string         `json:"uptime"`
+ 	Signal          *int           `json:"signal,omitempty"`
++	BackhaulSignal  *BackhaulSignal `json:"backhaul_signal,omitempty"`
+ 	BackhaulType    string         `json:"backhaul_type,omitempty"`
+ 	Capabilities    Capability     `json:"capabilities"`
+ 	Metrics         DeviceMetrics  `json:"metrics"`
+@@ -3336,6 +3337,7 @@ func buildLiveInventory() ([]Device, []Client, error) {
+     if err != nil {
+         return nil, nil, err
+     }
++	backhaulMetrics := collectBackhaulLinkMetrics(radioInventory)
+ 	var inventoryDevices []Device
+ 	var inventoryClients []Client
+ 	agentCount, extenderCount := 1, 1
+@@ -3394,9 +3396,13 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 		if uptimeSeconds > 0 {
+ 			uptimeText = formatUptimeSeconds(uptimeSeconds)
+ 		}
++		deviceSignal, legacySignal := classifyDeviceBackhaulSignal(
++			backhaulMetrics, getTreeValue(backhaul, "STAAddress"),
++			getTreeValue(backhaul, "MACAddress"), backhaulMedia, observedAt.UTC())
+ 		inventoryDevices = append(inventoryDevices, Device{
+ 			MAC: deviceID, Role: role, Vendor: "RDK-B", Model: "EasyMesh node",
+ 			Status: "Online", LastSeen: observedAt, Uptime: uptimeText,
++			Signal: legacySignal, BackhaulSignal: deviceSignal,
+ 			BackhaulType: backhaulMedia,
+ 			Capabilities: Capability{SupportedBands: bands},
+ 			Metrics: DeviceMetrics{Uptime: uptimeSeconds, LastUpdated: observedAt},
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 05230d6203d1255528cea73105840fcde56ef8a5..f701bd169d806628b9774a02b4e2015c40c7e9e4 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2038,7 +2038,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=backhaul-signal-freshness-1"></script>
++    <script src="static/script.js?v=mesh-device-backhaul-signal-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index d4dce8b3fb79b85347d7f563fa0ad6fd440cfae9..94a33cb8c092f252840d1c1a13f85c219a530ae7 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -30,6 +30,7 @@ class EasyMeshController {
+     this.wsConnection = null;
+     this.currentTab = 'dashboard';
+     this.devices = [];
++    this.devicesRefreshInFlight = false;
+     this.clients = [];
+     this.clientsRefreshInFlight = false;
+     this.topology = {};
+@@ -2004,16 +2005,37 @@ async handleWebSocketMessage(data) {
+     return 'POOR';
+   }
+ 
++  deviceBackhaulSignal(device) {
++    return this.topologyBackhaulSignal({
++      signal: device?.backhaul_signal,
++      rssi: device?.signal
++    });
++  }
++
++  deviceBackhaulSignalDisplay(device) {
++    if (device?.role === 'Controller' || device?.role?.startsWith('Agent-') ||
++        String(device?.backhaul_type || '').toLowerCase() === 'ethernet') {
++      return 'Local / Ethernet';
++    }
++    const signal = this.deviceBackhaulSignal(device);
++    if (signal.available) {
++      return `${this.getSignalStrengthIcon(signal.rssi)} ${signal.rssi} dBm ` +
++        `(RCPI ${signal.rcpi}, ${signal.ageSeconds}s old)`;
++    }
++    if (signal.stale) {
++      return `Stale — last ${signal.rssi} dBm ` +
++        `(RCPI ${signal.rcpi}, ${signal.ageSeconds}s old)`;
++    }
++    return 'Unknown — no fresh link metric';
++  }
++
+   createDeviceCard(device) {
+     const card = document.createElement('div');
+     card.className = 'device-card';
+     card.onclick = () => this.showDeviceDetails(device);
+ 
+     const statusClass = device.status === 'Online' ? 'online' : 'offline';
+-    const signalStrength = Number.isFinite(device.signal)
+-      ? `${this.getSignalStrengthIcon(device.signal)} ${device.signal} dBm`
+-      : ((device.role === 'Controller' || device.role?.startsWith('Agent-') ||
+-          device.backhaul_type === 'Ethernet') ? 'Local / Ethernet' : 'Not reported');
++    const signalStrength = this.deviceBackhaulSignalDisplay(device);
+     const uptime = device.uptime || 'Not reported';
+ 
+     card.innerHTML = `
+@@ -4476,6 +4498,21 @@ async handleWebSocketMessage(data) {
+     }
+   }
+ 
++  async refreshDevices() {
++    if (this.devicesRefreshInFlight) return;
++    this.devicesRefreshInFlight = true;
++    try {
++      const response = await this.apiCall('/devices');
++      this.devices = response.devices || [];
++      this.updateDevicesList();
++      this.updateCountBadges();
++    } catch (error) {
++      console.error('Failed to refresh mesh devices:', error);
++    } finally {
++      this.devicesRefreshInFlight = false;
++    }
++  }
++
+   startRefreshTimers() {
+     // Refresh dashboard every 10 seconds
+     this.refreshIntervals.dashboard = setInterval(() => {
+@@ -4494,6 +4531,13 @@ async handleWebSocketMessage(data) {
+       if (this.currentTab === 'clients') this.refreshClients();
+     }, 2000);
+ 
++    // Backhaul link metrics have the same 20-second freshness contract as the
++    // topology view. Refresh the visible Mesh Devices cards without waiting
++    // for a page reload, while preventing overlapping native controller calls.
++    this.refreshIntervals.devices = setInterval(() => {
++      if (this.currentTab === 'devices') this.refreshDevices();
++    }, 2000);
++
+     // Keep steering and RF-loss experiments visible without a page reload.
+     // Do not overlap native/API requests and redraw only on a real change.
+     this.refreshIntervals.topology = setInterval(async () => {
+-- 
+2.39.2

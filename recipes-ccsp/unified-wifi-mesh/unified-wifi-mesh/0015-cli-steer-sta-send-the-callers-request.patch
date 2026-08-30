@@ -1,0 +1,56 @@
+cli: fix the client-steering trigger to send the caller's request
+
+Two defects made a commanded (non-interactive) steer impossible on the CLI:
+
+1. steer_sta ignored the caller-supplied params node and instead scraped
+   `get_sta <net> 1` (the whole network dump), wrapping that as the ClientSteer
+   subdoc -- so the controller received no actual steer target and emitted no
+   Client Steering Request. set_ssid/set_channel already use m_param.net_node;
+   make steer_sta do the same, falling back to get_sta only for the interactive
+   editor (no params supplied).
+
+2. get_edited_node() aliased a subtree of the caller's tree (the get_sta
+   "Result" node) into new_node and freed it at the end, so the caller later
+   double-freed it. The found_result==false branch already cloned; clone in the
+   found_result==true branch too.
+
+With these plus the tree-string buffer fix, a scripted ClientSteer JSON drives a
+full BTM steer end to end (verified: client roams controller<->extender, both
+ways, repeatably).
+
+diff --git a/src/rdkb-cli/em_cmd_cli.cpp b/src/rdkb-cli/em_cmd_cli.cpp
+index 41af9b5e..85eb6691 100644
+--- a/src/rdkb-cli/em_cmd_cli.cpp
++++ b/src/rdkb-cli/em_cmd_cli.cpp
+@@ -121,7 +121,11 @@ int em_cmd_cli_t::get_edited_node(em_network_node_t *node, const char *header, c
+     for (i = 0; i < node->num_children; i++) {
+         if (strncmp(node->child[i]->key, "Result", strlen("Result")) == 0) {
+             found_result = true;
+-			child = node->child[i];
++			/* Clone, do not alias into the caller's tree: new_node is built from
++			   child and freed at the end of this function, which would otherwise
++			   free a subtree the caller still owns and frees again (a double free).
++			   The found_result==false branch below already clones. */
++			child = em_net_node_t::clone_network_tree(node->child[i]);
+             break;
+         }
+     }
+@@ -382,9 +386,15 @@ int em_cmd_cli_t::execute(char *result)
+             break;
+ 
+         case em_cmd_type_steer_sta:
+-            snprintf(in, sizeof(em_long_string_t), "get_sta %s 1", m_cmd.m_param.u.args.args[1]);
+-			if ((node = m_cli.exec(in, strlen(in), NULL)) == NULL) {
+-				return -1;
++			/* A caller-supplied params node (non-interactive: the web UI or a
++			   script passing a ClientSteer JSON) IS the steer request -- use it
++			   directly, the way set_ssid/set_channel use net_node. Only fall back
++			   to scraping get_sta for the interactive editor case (no params). */
++			if ((node = m_cmd.m_param.net_node) == NULL) {
++				snprintf(in, sizeof(em_long_string_t), "get_sta %s 1", m_cmd.m_param.u.args.args[1]);
++				if ((node = m_cli.exec(in, strlen(in), NULL)) == NULL) {
++					return -1;
++				}
+ 			}
+             bevt->type = em_bus_event_type_steer_sta;
+             info = &bevt->u.subdoc;

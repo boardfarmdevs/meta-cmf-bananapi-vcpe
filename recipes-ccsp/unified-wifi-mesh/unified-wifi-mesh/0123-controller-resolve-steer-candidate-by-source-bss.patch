@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000123 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 27 Aug 2026 04:00:00 -0700
+Subject: [PATCH] controller: resolve steer candidate by source BSS
+
+The steering input is built from the controller database and identifies the
+station's current BSSID, but build_candidates() required the same station to
+also exist in the transient per-radio STA map.  A full topology update can
+briefly rebuild that map; during the gap steer_drv returned success while the
+controller selected no radio and sent no Client Steering Request.
+
+The source BSSID already identifies the owning radio unambiguously.  Preserve
+the STA-map lookup as the primary path and, when it misses, resolve the radio
+from the source BSS's RUID.  This makes steering tolerant of model refresh
+ordering without guessing an agent or accepting an unknown source BSS.
+
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/orch/em_orch_ctrl.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 9f48e30..22823f8 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -753,12 +753,41 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
+                 }
+                 break;
+ 
+-            case em_cmd_type_sta_steer:
++            case em_cmd_type_sta_steer: {
+                 if (em->find_sta(pcmd->m_param.u.steer_params.sta_mac, pcmd->m_param.u.steer_params.source) != NULL) {
+                     queue_push(pcmd->m_em_candidates, em);
+                     count++;
++                    break;
++                }
++
++                /* The database-backed command has an authoritative source
++                 * BSSID, while the per-radio STA map is transient during a
++                 * topology snapshot refresh.  A missing STA-map entry must
++                 * not turn an otherwise valid steering request into a silent
++                 * no-candidate success.  Resolve the same radio through its
++                 * source BSS and RUID; unknown BSSIDs still match nothing. */
++                dm = em->get_data_model();
++                if (dm == NULL || em->is_al_interface_em()) {
++                    break;
++                }
++                for (i = 0; i < dm->get_num_bss(); i++) {
++                    em_bss_info_t *bss = dm->get_bss_info(i);
++                    if ((bss != NULL) &&
++                        (memcmp(bss->bssid.mac,
++                                pcmd->m_param.u.steer_params.source,
++                                sizeof(bssid_t)) == 0) &&
++                        (memcmp(bss->ruid.mac, em->get_radio_interface_mac(),
++                                sizeof(mac_address_t)) == 0)) {
++                        em_printfout("Steer candidate fallback: source BSS %s resolved to radio %s",
++                            util::mac_to_string(bss->bssid.mac).c_str(),
++                            util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                        queue_push(pcmd->m_em_candidates, em);
++                        count++;
++                        break;
++                    }
+                 }
+                 break;
++            }
+ 
+             case em_cmd_type_sta_disassoc:
+                 dm = pcmd->get_data_model();
+-- 
+2.43.0

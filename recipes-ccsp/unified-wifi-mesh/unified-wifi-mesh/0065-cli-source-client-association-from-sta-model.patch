@@ -1,0 +1,224 @@
+From: Codex <codex@openai.com>
+Date: Thu, 20 Aug 2026 18:25:00 -0700
+Subject: [PATCH] cli: source client association from detailed STA model
+
+The controller's get_network topology representation can legitimately omit
+STAList entries even while STAList in the controller model contains every
+current association.  The dashboard treated that topology projection as the
+authoritative association source, causing /clients and the topology overlay
+to report zero clients during an otherwise complete cold reconstruction.
+
+Build the client inventory from get_sta instead.  That command is the
+controller's detailed associated-STA observation and carries the owning
+device, radio, BSS, association state and link metrics in one tree.  Continue
+to use get_network for device topology.  The topology overlay, WebSocket
+initial state and client-metrics route now consume the same detailed client
+snapshot as /clients.
+
+This removes the last dependency on the topology projection containing STA
+rows and does not read MariaDB or simulated wmediumd truth.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3331,9 +3331,10 @@
+ 	return fmt.Sprintf("%dm %ds", minutes, seconds%60)
+ }
+ 
+-// loadLiveClientMetrics uses the detailed STA command because the topology
+-// form returned by get_network intentionally omits periodic metric fields.
+-func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
++// loadDetailedLiveClients uses get_sta as the authoritative association and
++// metric source. get_network is a topology projection and may omit STAList
++// entries even when the controller's associated-STA model is complete.
++func loadDetailedLiveClients() ([]Client, error) {
+ 	cmd := C.CString("get_sta OneWifiMesh")
+ 	defer C.free(unsafe.Pointer(cmd))
+ 
+@@ -3350,72 +3351,100 @@
+ 	}
+ 	defer C.free_network_tree(tree)
+ 
++	deviceList := getNetworkTreeByKey(tree, "DeviceList")
++	if deviceList == nil {
++		return nil, fmt.Errorf("controller STA tree has no DeviceList")
++	}
++
+ 	observedAt := time.Now()
+-	metricsByMAC := make(map[string]ClientMetrics)
+-	directChild := func(node *C.em_network_node_t, key string) *C.em_network_node_t {
+-		if node == nil {
+-			return nil
+-		}
+-		for i := 0; i < int(node.num_children); i++ {
+-			child := node.child[i]
+-			if child != nil && C.GoString(&child.key[0]) == key {
+-				return child
++	clients := make([]Client, 0)
++	seen := make(map[string]struct{})
++
++	for deviceIndex := 0; deviceIndex < int(deviceList.num_children); deviceIndex++ {
++		device := deviceList.child[deviceIndex]
++		if device == nil {
++			continue
++		}
++		deviceID := strings.ToLower(getTreeValue(device, "ID"))
++		radioList := getNetworkTreeByKey(device, "RadioList")
++		if deviceID == "" || radioList == nil {
++			continue
++		}
++		for radioIndex := 0; radioIndex < int(radioList.num_children); radioIndex++ {
++			radio := radioList.child[radioIndex]
++			if radio == nil {
++				continue
+ 			}
+-		}
+-		return nil
+-	}
+-	var walk func(*C.em_network_node_t)
+-	walk = func(node *C.em_network_node_t) {
+-		if node == nil {
+-			return
+-		}
+-		macNode := directChild(node, "MACAddress")
+-		rcpiNode := directChild(node, "RCPI")
+-		if macNode != nil && C.get_node_type(macNode) == C.em_network_node_data_type_string {
+-			mac := strings.ToLower(C.GoString(&macNode.value_str[0]))
+-			if mac != "" {
+-				metrics := ClientMetrics{}
+-				if rcpiNode != nil && C.get_node_type(rcpiNode) == C.em_network_node_data_type_number {
+-					rcpi := int(rcpiNode.value_int)
++			band := getKeyIntValue(radio, "Band")
++			bssList := getNetworkTreeByKey(radio, "BSSList")
++			if bssList == nil {
++				continue
++			}
++			for bssIndex := 0; bssIndex < int(bssList.num_children); bssIndex++ {
++				bss := bssList.child[bssIndex]
++				if bss == nil {
++					continue
++				}
++				bssid := strings.ToLower(getTreeValue(bss, "BSSID"))
++				ssid := getTreeValue(bss, "SSID")
++				haulType := getTreeValue(bss, "HaulType")
++				staList := getNetworkTreeByKey(bss, "STAList")
++				if bssid == "" || ssid == "" || haulType == "Backhaul" || staList == nil {
++					continue
++				}
++				for staIndex := 0; staIndex < int(staList.num_children); staIndex++ {
++					sta := staList.child[staIndex]
++					if sta == nil || getTreeValue(sta, "Associated") != "true" {
++						continue
++					}
++					mac := strings.ToLower(getTreeValue(sta, "MACAddress"))
++					mld := strings.ToLower(getTreeValue(sta, "MLDAddr"))
++					identity := mac + "_" + mld
++					if mac == "" {
++						continue
++					}
++					if _, found := seen[identity]; found {
++						continue
++					}
++					seen[identity] = struct{}{}
++
++					metrics := ClientMetrics{}
++					rcpi := getKeyIntValue(sta, "RCPI")
+ 					if rcpi > 0 && rcpi <= 220 {
+ 						metrics.RCPI = rcpi
+ 						metrics.RSSI = rcpi/2 - 110
+ 						metrics.LastUpdated = observedAt
+ 					}
++					metrics.AssociationUptime = int64(getKeyIntValue(sta, "LastConnectTime"))
++
++					connectionTime := time.Time{}
++					if metrics.AssociationUptime > 0 {
++						connectionTime = observedAt.Add(-time.Duration(metrics.AssociationUptime) * time.Second)
++					}
++					clients = append(clients, Client{
++						MAC: mac, Hostname: mac,
++						ConnectedAP: deviceID, ConnectedBSSID: bssid,
++						ConnectionTime: connectionTime,
++						DeviceType: "Wi-Fi Client", LastActivity: observedAt,
++						ClientMetrics: metrics,
++						TopologyBand: band, TopologySSID: ssid,
++						TopologyMLDAddr: mld,
++					})
+ 				}
+-				uptimeNode := directChild(node, "LastConnectTime")
+-				if uptimeNode != nil && C.get_node_type(uptimeNode) == C.em_network_node_data_type_number {
+-					metrics.AssociationUptime = int64(uptimeNode.value_int)
+-				}
+-				metricsByMAC[mac] = metrics
+ 			}
+ 		}
+-		for i := 0; i < int(node.num_children); i++ {
+-			walk(node.child[i])
+-		}
+ 	}
+-	walk(tree)
+-	return metricsByMAC, nil
++	return clients, nil
+ }
+ 
+ func getLiveClientsWithMetrics() ([]Client, error) {
+-	_, clientList, err := getLiveInventory()
+-	if err != nil {
+-		return nil, err
+-	}
+-	metricsByMAC, err := loadLiveClientMetrics()
++	// Keep get_network as a device/topology availability gate, but never use
++	// its optional STA projection as the association authority.
++	_, _, err := getLiveInventory()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	for i := range clientList {
+-		if metrics, found := metricsByMAC[strings.ToLower(clientList[i].MAC)]; found {
+-			clientList[i].ClientMetrics = metrics
+-			if metrics.AssociationUptime > 0 {
+-				clientList[i].ConnectionTime = time.Now().Add(-time.Duration(metrics.AssociationUptime) * time.Second)
+-			}
+-		}
+-	}
+-	return clientList, nil
++	return loadDetailedLiveClients()
+ }
+ 
+ // getLiveInventory falls back only to the last successful live snapshot.
+@@ -3442,7 +3471,7 @@
+ // authoritative ownership snapshot.  The topology-specific native traversal
+ // remains responsible for nodes, hauls and coordinates only.
+ func overlayLiveTopologyClients(nodes []map[string]interface{}) {
+-	_, clientList, err := getLiveInventory()
++	clientList, err := getLiveClientsWithMetrics()
+ 	if err != nil {
+ 		log.Printf("topology client overlay unavailable: %v", err)
+ 		return
+@@ -3699,7 +3728,7 @@
+ }
+ 
+ func getClientMetricsHandler(w http.ResponseWriter, r *http.Request) {
+-	_, liveClientList, err := getLiveInventory()
++	liveClientList, err := getLiveClientsWithMetrics()
+ 	if err != nil {
+ 		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
+ 		return
+@@ -6231,10 +6260,14 @@
+ 	log.Printf("WebSocket client connected. Total: %d", total)
+ 
+ 	// Never let a WebSocket reconnect replace live API data with demo JSON.
+-	initialDevices, initialClients, inventoryErr := getLiveInventory()
++	initialDevices, _, inventoryErr := getLiveInventory()
+ 	if inventoryErr != nil {
+ 		log.Printf("WebSocket initial live inventory unavailable: %v", inventoryErr)
+ 		initialDevices = []Device{}
++	}
++	initialClients, clientsErr := getLiveClientsWithMetrics()
++	if clientsErr != nil {
++		log.Printf("WebSocket initial live client inventory unavailable: %v", clientsErr)
+ 		initialClients = []Client{}
+ 	}
+ 	initialData := map[string]interface{}{
+-- 
+2.43.0

@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000105 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 14:26:00 -0700
+Subject: [PATCH] agent: serialize WSC M2 and retry failed subdoc delivery
+
+A four-extender cold reconstruction reproduced two related tri-band races on
+the third extender. The 2.4 and 6 GHz M2 frames entered
+handle_autoconfig_wsc_m2 concurrently. Ten WSC TLVs authenticated, but only
+one invocation reached encrypted-settings processing. The successful
+invocation then queued a OneWifi SOUTH subdoc and moved the radio out of
+wsc_m2_pending before delivery was confirmed. When the synchronous RBUS set
+lost its provider response, the radio remained in owconfig_pending forever and
+the existing lost-M2 retry could not run.
+
+Serialize M2 parsing across the agent because its WSC crypto/settings path is
+not re-entrant across radio service threads. If the bounded OneWifi subdoc set
+fails, put the affected radio back in wsc_m2_pending. The existing bounded,
+fresh-crypto M1 retry then replays only that radio's idempotent configuration.
+Successful sets and callbacks retain the normal state machine.
+
+Upstream-Status: Pending
+---
+ src/agent/em_agent.cpp             | 22 ++++++++++++++++++----
+ src/em/config/em_configuration.cpp |  6 ++++++
+ 2 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 1111111..2222222 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -293,14 +293,29 @@ void em_agent_t::handle_m2ctrl_configuration(em_bus_event_t *evt)
+ {
+-    unsigned int num;
++    int result;
+     wifi_bus_desc_t *desc;
+ 
+     if((desc = get_bus_descriptor()) == NULL) {
+        printf("descriptor is null");
++       return;
+     }
+ 
+     if (m_orch->is_cmd_type_in_progress(evt) == true) {
+         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
+-    } else if ((num = static_cast<unsigned int>(m_data_model.analyze_m2ctrl_configuration(evt, desc, &m_bus_hdl))) == 0) {
++        return;
++    }
++
++    result = m_data_model.analyze_m2ctrl_configuration(evt, desc, &m_bus_hdl);
++    if (result < 0) {
++        m2ctrl_radioconfig *config =
++            reinterpret_cast<m2ctrl_radioconfig *>(evt->u.raw_buff);
++        std::string ruid = util::mac_to_string(config->radio_mac[0]);
++        em_t *em = static_cast<em_t *>(hash_map_get(m_em_map, ruid.c_str()));
++        if (em != NULL && em->get_state() == em_state_agent_owconfig_pending) {
++            em->set_state(em_state_agent_wsc_m2_pending);
++            em_printfout("OneWifi subdoc delivery failed for radio %s; re-arming WSC M2 recovery",
++                ruid.c_str());
++        }
++    } else if (result == 0) {
+ 	    printf("analyze_onewifi_private_subdoc complete");
+     }
+ }
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 3333333..4444444 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -4865,5 +4865,11 @@ int em_configuration_t::handle_autoconfig_wsc_m2(unsigned char *buff, unsigned
+ int em_configuration_t::handle_autoconfig_wsc_m2(unsigned char *buff, unsigned int len)
+ {
++    // Radio service threads can deliver tri-band M2 frames concurrently. The
++    // enrollee crypto/settings path is stateful and is not re-entrant across
++    // those invocations, so serialize it through subdoc creation.
++    static std::mutex wsc_m2_mutex;
++    std::lock_guard<std::mutex> lock(wsc_m2_mutex);
++
+     em_tlv_t *tlv;
+     int tmp_len;
+     unsigned int wsc_tlv_count = 0;

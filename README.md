@@ -1,107 +1,52 @@
-# Build vcpe (bpi) container image
+# meta-cmf-bananapi-vcpe
 
-# create repo mirror (once)
+Retargets the **Banana Pi R4 (MediaTek Filogic / MT7988) RDK-B broadband build**
+to **x86 userspace packaged as an LXC container** for running inside LXD on a host
+machine. The output is a `*.lxc.tar.bz2` rootfs that runs the same RDK-B userspace
+stack the physical Banana Pi runs (utopia, ccsp-*, RdkWanManager, ccsp-dhcp-mgr,
+hal-generic, rbus, sysevent, syscfg, telemetry, …) on x86 with no kernel modules.
 
-```text
+Wi-Fi is provided by `mac80211_hwsim` radios moved into the container as
+`nictype: physical` NICs instead of real hardware. That is what the
+`HWSIM_RADIO`-gated patches exist for — hwsim implements no MLO, requires
+explicit multichannel adaptation for the three concurrent channel contexts,
+and advertises no MAC ACL capability, none of which the Banana Pi defaults
+expect. Patches that are not gated fix defects that are real on hardware
+too but only get exercised here; each patch header carries the trace it was
+root-caused from.
 
-mkdir -p $HOME/yocto/mirror/rdkb-bpi-nosrc
-cd $HOME/yocto/mirror/rdkb-bpi-nosrc
+The two machines are the two EasyMesh roles: `qemux86bpibroadband` is the
+controller (`EasyMesh with_alsap`, plus a colocated agent) and `qemux86bpiap` is
+the agent/extender (`em_extender`). Run one of each and they form a mesh over the
+simulated radios — 1905 transport, AP-Autoconfiguration, WSC M1/M2, wireless
+backhaul, and the fronthaul VAPs the controller pushes to the extender.
 
-repo init --mirror \
-  -u https://code.rdkcentral.com/r/manifests \
-  -b kirkstone \
-  -m rdkb-bpi-nosrc.xml \
-  --no-clone-bundle
+## documentation
 
-repo sync -j$(nproc) \
-  --no-clone-bundle \
-  --no-tags \
-  --optimized-fetch \
-  --fail-fast
+| | |
+|---|---|
+| [doc/easymesh](doc/easymesh) | the EasyMesh lab — start here |
+| [current state](doc/easymesh/current-state.md) | supported topology, capabilities and limitations |
+| [quick start](doc/easymesh/guide/quickstart.md) | validate and use an installed lab |
+| [architecture](doc/easymesh/concepts/architecture.md) | EasyMesh, containers, hwsim and clients |
+| [operations](doc/easymesh/guide/operations.md) | deploy, start, stop, recover and validate |
+| [experiments](doc/easymesh/experiments/README.md) | steering, RF scenarios and optimizer evaluation |
+| [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
 
-```
+## layout
 
-# update repo mirror
+| | |
+|---|---|
+| `conf/machine/` | the two x86 container machines, `qemux86bpibroadband` and `qemux86bpiap` |
+| `recipes-ccsp/hal/rdk-wifi-hal` | Wi-Fi HAL patches — `HWSIM_RADIO`-gated adaptations plus ungated defect fixes |
+| `recipes-ccsp/ccsp/ccsp-one-wifi` | OneWifi radio/security defaults for hwsim |
+| `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig` | EasyMesh translation, security/policy decode and live association snapshots |
+| `recipes-ccsp/unified-wifi-mesh` | EasyMesh controller/agent fixes, DB bootstrap, and the `steer_drv`/`steer.sh` + em-cli tooling |
+| `recipes-ccsp/ieee1905` | 1905 service lifecycle and topology-change publication |
+| `recipes-ccsp/rdk-wifi-libhostap` | hostapd/supplicant fixes |
+| `recipes-core/images` | image customisations for the container |
 
-```text
-cd $HOME/yocto/mirror/rdkb-bpi-nosrc
-repo sync -j$(nproc) --no-clone-bundle --no-tags
-
-```
-
-# create new repo from repo mirror
-
-```text
-
-mkdir -p $HOME/yocto/rdkb-bpi-nosrc-vcpe-0408
-cd $HOME/yocto/rdkb-bpi-nosrc-vcpe-0408
-
-
-repo init \
-  -u https://code.rdkcentral.com/r/manifests \
-  -b kirkstone \
-  -m rdkb-bpi-nosrc.xml \
-  --reference=$HOME/yocto/mirror/rdkb-bpi-nosrc
-
-
-repo sync -j$(nproc) \
-  --no-clone-bundle \
-  --no-tags \
-  --optimized-fetch
-
-```
-
-# build
-
-```text
-
-git clone git@github.com:robvogelaar/meta-cmf-bananapi-vcpe.git
-
-cp meta-cmf-bananapi-vcpe/conf/machine/qemux86bpibroadband.conf.sample meta-cmf-bananapi/conf/machine/qemux86bpibroadband.conf
-
-MACHINE=qemux86bpibroadband source meta-cmf-bananapi/setup-environment-refboard-rdkb
-
-bitbake-layers add-layer ../meta-cmf-bananapi-vcpe
-
-bitbake rdk-generic-broadband-image -k
-```
-
-# build with dac-lcm
-
-To include the prpl Lifecycle Manager (cthulhu + AMX stack, OCI bundles via crun)
-in the image, add the meta-lcm layer and switch the apps toolkit runtime from its
-default ("DAC") to LCM. Can use a separate build directory (e.g.
-`build-qemux86bpibroadband-lcm`) sharing the same `DL_DIR`/`SSTATE_DIR`, as the
-`DISTRO_FEATURES` change invalidates sstate broadly and toggling it in-place
-forces large rebuilds.
-
-```text
-
-bitbake-layers add-layer ../meta-lcm
-```
-
-Add to conf/local.conf:
-
-```text
-
-# Switch the apps toolkit from its default ("DAC") to LCM
-RDK_BB_APPS_TOOLKIT_CRUNTIME = "LCM"
-
-# meta-lcm ships cmake 3.18.4 pinned to dunfell; mask it so OE's 3.22.3 wins
-BBMASK_append = "|meta-lcm/recipes-devtools/cmake/"
-
-# OCI bundles + crun instead of LXC-in-LXC
-DISTRO_FEATURES_remove = "lcm-images lxc-backend"
-DISTRO_FEATURES_append = " lcm-bundles crun-backend "
-```
-
-Then build as usual. A deployable demo app bundle can be built with
-`bitbake dac-image-tictactoe` (see classes/dac-bundle-image.bbclass and
-examples/).
-
-# Summary
-
-This layer takes the **Banana Pi R4 (MediaTek Filogic880 / MT7988) RDK-B broadband build** and retargets it to **x86 userspace packaged as an LXC
-container** for running inside LXD on a host machine. The output is a `*.lxc.tar.bz2` rootfs tarball that runs the same RDK-B userspace stack
-the physical bananapi runs (utopia, ccsp-*, RdkWanManager, ccsp-dhcp-mgr, hal-generic, rbus, sysevent, syscfg, telemetry, ...) on
-x86 with no kernel modules and no real wifi radio.
+Every patch header carries the trace it was root-caused from — minidump stacks,
+netlink captures, or log excerpts — so start there rather than from the diff. See
+[the patch-set reference](doc/easymesh/reference/patch-set.md) for the retention and
+ownership rationale; the bbappends remain the executable patch inventory.

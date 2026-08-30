@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Docker owns the host FORWARD chain and defaults it to DROP. LXD creates its
+# managed bridge asynchronously after the daemon reports active, so wait for
+# both objects before installing the boundary.
+for attempt in $(seq 1 60); do
+    if ip link show lxdbr0 >/dev/null 2>&1 \
+        && iptables -w -S DOCKER-USER >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+ip link show lxdbr0 >/dev/null
+iptables -w -S DOCKER-USER >/dev/null
+iptables -w -C DOCKER-USER -i lxdbr0 -j ACCEPT 2>/dev/null \
+    || iptables -w -I DOCKER-USER 1 -i lxdbr0 -j ACCEPT
+iptables -w -C DOCKER-USER -o lxdbr0 -j ACCEPT 2>/dev/null \
+    || iptables -w -I DOCKER-USER 1 -o lxdbr0 -j ACCEPT

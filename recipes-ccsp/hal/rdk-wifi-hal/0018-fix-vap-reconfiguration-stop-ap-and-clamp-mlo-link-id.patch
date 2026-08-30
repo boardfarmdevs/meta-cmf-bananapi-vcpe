@@ -1,0 +1,160 @@
+Fix VAP reconfiguration: stop the AP before restarting it, and never emit an
+out-of-range MLO link id.
+
+THE SYMPTOM this fixes, end to end: a BananaPi RDK-B controller could never
+apply an EasyMesh-provided SSID to its own radios. The whole 1905/WSC exchange
+worked, the configuration arrived correctly, OneWifi decoded and dispatched it
+correctly, and the radios kept beaconing the image default SSID forever -- so
+the controller and its extender never shared a fronthaul ESS and client roaming
+between them could not be tested at all.
+
+Two defects in this file, in one code path. They must be fixed together: either
+one alone changes nothing, which was confirmed by testing each in isolation.
+
+DEFECT 1 -- restart_interface() starts an AP that is already running.
+
+    interface->beacon_set = 0;              /* forces the START_AP path */
+    if (start_bss(interface) < 0) { ... }   /* but the AP is still running */
+
+beacon_set is what wifi_drv_set_ap() uses to choose between reconfiguring a
+live AP and starting one:
+
+    beacon_set = params->reenable ? 0 : interface->beacon_set;
+    if (beacon_set) { cmd = NL80211_CMD_SET_BEACON; }   /* else START_AP */
+    if (beacon_set == 0) { nl80211_fill_chandef(msg, radio, interface); }
+
+restart_interface() zeroes it unconditionally and never issues
+NL80211_CMD_STOP_AP, so the HAL asks mac80211 to START an AP that is already
+started, and gets:
+
+    wifi_drv_set_ap:17523: Failed to set beacon parameter for interface: wifi1
+        error: -114(Operation already in progress)
+    start_bss:3423: vap:private_ssid_5g:1 create is failed:-1
+    restart_interface:6307: interface:wifi1 failed to start BSS
+
+-114 is EALREADY. params->reenable is not involved -- that is set only on the
+DFS path -- interface->beacon_set is genuinely 0 while the AP runs.
+
+The stop here is deliberately UNCONDITIONAL rather than guarded on
+interface->bss_started: that flag was observed false while the AP was up and
+beaconing, so guarding on it skips the stop in exactly the case that needs it.
+Stopping an interface with no AP running returns a harmless error (-2 ENOENT),
+which is logged at debug level and ignored.
+
+DEFECT 2 -- the required STOP_AP was itself rejected, with -34 ERANGE.
+
+Dumping every attribute emitted immediately before the send separates the
+harmless case from the real one, on the same interface:
+
+    link_id=-1  (NA) emitted=no   attr IFINDEX=16   -> -2 ENOENT   (no AP yet)
+    link_id=255 (NA=-1) emitted=YES attr IFINDEX=16 -> -34 ERANGE
+
+The cause is two different "unset" sentinels being conflated:
+
+    #define NL80211_DRV_LINK_ID_NA (-1)
+
+    wifi_hal_get_mld_link_id():
+        if (!wifi_hal_is_mld_enabled(interface)) return NL80211_DRV_LINK_ID_NA;
+        if (vap_mode == ap) return ...mld_info.common_info.mld_link_id;  /* 255 */
+
+    nl80211_enable_ap():
+        if (link_id != NL80211_DRV_LINK_ID_NA &&
+            nla_put_u8(msg, NL80211_ATTR_MLO_LINK_ID, link_id) < 0)
+
+mld_link_id is an unsigned char left at 255 when no MLO link has been
+established -- the same 255 that appears as "MLD_Link_ID": 255 in the OneWifi
+VAP JSON. MLD is enabled in configuration here but never actually negotiated,
+so the accessor returns 255, the caller's not-applicable test only knows about
+-1, and 255 is emitted as a real link id. nl80211 range-checks
+NL80211_ATTR_MLO_LINK_ID (IEEE 802.11be allows at most 15 links, so 0..14) and
+rejects the ENTIRE message with -ERANGE.
+
+Fixed in the accessor rather than at the emit site, so every caller is covered
+at once. A defensive range check at each NL80211_ATTR_MLO_LINK_ID put would
+also be worth having, for paths that read mld_link_id directly.
+
+This is the same underlying condition as patch 0017 -- MLD configured but not
+established -- surfacing in a different code path.
+
+VERIFIED on a controller and its extender:
+
+    before   wifi0/wifi1: BPI-RDKB-MLO-AP-, "create is failed:-1", -114 EALREADY
+    after    wifi0/wifi1: private_ssid, zero create failures, zero -114, zero -34
+
+and the client now sees a genuine shared ESS across both nodes and both bands:
+
+    BSS 02:00:00:83:91:65 -- associated   SSID: private_ssid   extender 5GHz
+    BSS 02:00:00:bf:ee:16                 SSID: private_ssid   extender 2.4GHz
+    BSS 02:00:00:85:96:09                 SSID: private_ssid   controller 5GHz
+    BSS 02:00:00:cb:bd:25                 SSID: private_ssid   controller 2.4GHz
+
+NOT gated behind HWSIM_RADIO. Whether real hardware avoids either defect --
+a vendor driver tolerating START_AP on a running AP, or MLD genuinely
+establishing so mld_link_id holds a valid 0..14 -- is UNTESTED. That would
+explain why both survive upstream, and it is the open question for anyone
+considering this for a hardware build.
+
+---
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -5872,6 +5873,15 @@ int wifi_hal_set_mld_enabled(wifi_interface_info_t *interface, bool enabled)
+ #define NL80211_DRV_LINK_ID_NA (-1)
+ #endif
+ 
++// IEEE 802.11be allows at most 15 links, so nl80211 accepts link IDs 0..14 and
++// range-checks NL80211_ATTR_MLO_LINK_ID against that. Anything above it is not a
++// link id but the data model's "unset" marker -- mld_link_id is an unsigned char
++// left at 255 when no MLO link has been established, which is what appears as
++// "MLD_Link_ID": 255 in the OneWifi VAP JSON.
++#ifndef NL80211_DRV_LINK_ID_MAX
++#define NL80211_DRV_LINK_ID_MAX (14)
++#endif
++
+ int wifi_hal_get_mld_link_id(wifi_interface_info_t *interface)
+ {
+     if (interface == NULL) {
+@@ -5884,7 +5894,19 @@ int wifi_hal_get_mld_link_id(wifi_interface_info_t *interface)
+     }
+ 
+     if (interface->vap_info.vap_mode == wifi_vap_mode_ap) {
+-        return interface->vap_info.u.bss_info.mld_info.common_info.mld_link_id;
++        unsigned char link_id = interface->vap_info.u.bss_info.mld_info.common_info.mld_link_id;
++
++        // Normalise the data model's unset marker to this file's own, so callers
++        // that only test against NL80211_DRV_LINK_ID_NA behave correctly. Without
++        // this they see 255, conclude a link id is applicable, and emit
++        // NL80211_ATTR_MLO_LINK_ID = 255 -- which the kernel range-checks and
++        // rejects, failing the ENTIRE netlink message with -ERANGE. That is not a
++        // theoretical concern: it is why NL80211_CMD_STOP_AP could not stop a
++        // running AP here, which in turn made every VAP reconfiguration fail.
++        if (link_id > NL80211_DRV_LINK_ID_MAX) {
++            return NL80211_DRV_LINK_ID_NA;
++        }
++        return link_id;
+     }
+ 
+     return NL80211_DRV_LINK_ID_NA;
+@@ -6301,6 +6323,23 @@ int restart_interface(wifi_interface_info_t *interface)
+     if (interface->vap_info.u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
+         interface->vap_initialized == true) {
+         wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__, __LINE__, interface_name);
++
++        // Stop the AP before restarting it. Zeroing beacon_set below makes
++        // wifi_drv_set_ap() use NL80211_CMD_START_AP rather than SET_BEACON, and
++        // mac80211 rejects START_AP on an interface whose AP is already running
++        // with -114 EALREADY -- so without this the restart fails and the VAP
++        // keeps its previous SSID and key.
++        //
++        // Deliberately unconditional: interface->bss_started was observed false
++        // while the AP was up and beaconing, so guarding on it skips the stop in
++        // exactly the case that needs it. Stopping an interface with no AP
++        // running returns a harmless error which is logged and ignored.
++        if (nl80211_enable_ap(interface, false) < 0) {
++            wifi_hal_dbg_print("%s:%d: interface:%s stop AP before restart returned an "
++                "error (expected when no AP was running)\n", __func__, __LINE__, interface_name);
++        }
++        interface->bss_started = false;
++
+         interface->beacon_set = 0;
+         if (start_bss(interface) < 0) {
+             wifi_hal_error_print("%s:%d: interface:%s failed to start BSS\n", __func__, __LINE__,

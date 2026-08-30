@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 15:00:00 -0700
+Subject: [PATCH] metrics: create defaults for reloaded radios
+
+Per-radio metrics and steering defaults were created only in put_radio()'s
+new-radio branch.  When a radio was already present in the controller model,
+pradio was found but dm remained NULL and the complete policy initialization
+block was skipped.  A cold controller reconstruction consequently exposed
+three radio-metrics rows for the colocated agent and none for four otherwise
+complete extenders.  No network-wide Policy Configuration Request could then
+be constructed, leaving every associated STA RCPI at zero.
+
+Resolve the owning data model after updating either a new or existing radio.
+The existing per-radio duplicate checks keep this idempotent while allowing a
+reloaded radio to repair missing defaults with its real device and radio IDs.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/dm/dm_easy_mesh_list.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -373,6 +373,11 @@ void dm_easy_mesh_list_t::put_radio(const char *key, const dm_radio_t *radio)
+     }
+     *pradio = *radio;
+ 
++    // Existing radios also need an owning model so a controller reload can
++    // repair policy defaults that were absent from persistent state.
++    if (dm == NULL) {
++        dm = get_data_model(pradio->m_radio_info.id.net_id, pradio->m_radio_info.id.dev_mac);
++    }
+     // Create default per-radio policies (radio_metrics_rep and steering_param) for newly discovered radios.
+     if (dm != NULL) {
+         bool has_radio_metrics = false, has_steering_param = false;
+-- 
+2.43.0

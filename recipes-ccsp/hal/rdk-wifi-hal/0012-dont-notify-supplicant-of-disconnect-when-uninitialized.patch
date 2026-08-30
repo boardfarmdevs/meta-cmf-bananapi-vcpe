@@ -1,0 +1,82 @@
+nl80211_disconnect_event(): don't push a disconnect into a supplicant
+context that was never initialized.
+
+This handler unconditionally forwards every NL80211_CMD_DISCONNECT into
+supplicant_event(&interface->wpa_s, EVENT_DISASSOC, NULL), including for
+interfaces where no supplicant session ever existed -- interface->wpa_s
+is an embedded struct that is zero-initialized with the rest of
+wifi_interface_info_t, so its wpa_sm and drv_priv are simply NULL until
+a connect actually happens.
+
+hostap's disassoc path then walks straight into those NULLs. Two
+separate SIGSEGVs were observed from this one call site, both on the
+EasyMesh leaf at the exact moment the controller's WSC M2 fronthaul VAP
+configuration was applied and interfaces were being brought down:
+
+  wpa_sm_notify_disassoc     NULL struct wpa_sm *   (crash addr 0x44c)
+  wifi_drv_set_operstate     NULL priv              (crash addr 0x562)
+
+  Thread 1 (crashed)
+   0  librdk_wifihal.so.0    get_vap_bridge_name
+   1  librdk_wifihal.so.0    wifi_drv_set_operstate
+   2  libhostap.so.2         wpa_supplicant_set_state
+   3  libhostap.so.2         wpa_supplicant_mark_disassoc
+   4  libhostap.so.2         wpas_event_disconnect
+   5  librdk_wifihal.so.0    nl80211_disconnect_event
+
+The second only became reachable once the first was guarded, which is
+the point: fixing this one callee at a time is unbounded, because
+wpa_supplicant_mark_disassoc() fans out into a whole chain of helpers
+that each assume a live session. wifi_drv_set_operstate() in particular
+cannot defend itself meaningfully -- it does
+
+    interface = (wifi_interface_info_t *)priv;
+    vap = &interface->vap_info;
+    wifi_hal_info_print(..., interface->name, get_vap_bridge_name(vap), ...);
+
+so a NULL priv faults before any check it could contain would run.
+
+Guard at the source instead. The check has to include wpa_s.drv_priv:
+that is the pointer wpa_supplicant_set_state() hands to
+wifi_drv_set_operstate() as priv, and it is independent of
+interface->u.sta.wpa_sm -- a first attempt guarding only on wpa_sm was
+observed to still crash here with an identical stack and crash address,
+because wpa_sm had been allocated while drv_priv had not. wpa_sm is kept
+in the condition as well since it is this file's own marker for "a
+supplicant session exists" (the block immediately below uses exactly
+that test to decide whether there is anything to tear down), and the
+same chain reaches wpa_sm_notify_disassoc(wpa_s->wpa).
+
+The state assignments above it (cancel_auth_timeout, disconnected = 1)
+are left unconditional -- they only touch the embedded struct's own
+fields and are harmless on a fresh one.
+
+Not hwsim-specific: any interface that sees a DISCONNECT before or
+without a completed connect hits this, so it is left ungated.
+
+---
+ src/wifi_hal_nl80211_events.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/wifi_hal_nl80211_events.c b/wifi_hal_nl80211_events.c
+--- a/wifi_hal_nl80211_events.c
++++ b/wifi_hal_nl80211_events.c
+@@ -848,11 +848,16 @@
+ #if defined(CONFIG_WIFI_EMULATOR) || defined(BANANA_PI_PORT)
+     wpa_supplicant_cancel_auth_timeout(&interface->wpa_s);
+     interface->wpa_s.disconnected = 1;
++    /* No supplicant session was ever established on this interface, so there is
++     * nothing to disassociate. drv_priv is what wifi_drv_set_operstate() is handed
++     * and dereferences unconditionally, so it is the field that has to be checked. */
++    if (interface->wpa_s.drv_priv != NULL && interface->u.sta.wpa_sm != NULL) {
+ #if defined(BANANA_PI_PORT) && (HOSTAPD_VERSION >= 211)
+-    supplicant_event(&interface->wpa_s, EVENT_DISASSOC, NULL);
++        supplicant_event(&interface->wpa_s, EVENT_DISASSOC, NULL);
+ #else
+-    wpa_supplicant_event_wpa(&interface->wpa_s, EVENT_DISASSOC, NULL);
++        wpa_supplicant_event_wpa(&interface->wpa_s, EVENT_DISASSOC, NULL);
+ #endif // BANANA_PI_PORT
++    }
+ #endif
+     if (interface->u.sta.wpa_sm != NULL) {
+         eapol_sm_deinit(interface->u.sta.wpa_sm->eapol);

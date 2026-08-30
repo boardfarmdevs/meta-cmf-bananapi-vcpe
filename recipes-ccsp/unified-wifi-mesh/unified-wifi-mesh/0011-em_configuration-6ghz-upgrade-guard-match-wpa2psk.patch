@@ -1,0 +1,19 @@
+From: Rob Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] em_configuration: match EM_AUTH_WPA2PSK in the 6 GHz auth-upgrade guard
+
+build_wsc_m2 upgrades a 6 GHz haul from WPA2/Open/WPA3-Transition to WPA3-Personal,
+but tested EM_AUTH_WPA2 (0x10) only. NetworkSSIDList WPA2 Personal resolves via
+get_Auth_type_hex() to EM_AUTH_WPA2PSK (0x20), so the guard never fired and the
+6 GHz M2 carried WPA2-PSK -- which the leaf encode_security_object() rejects (WPA2
+is illegal on 6 GHz). Also match EM_AUTH_WPA2PSK.
+---
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -5275,6 +5275,7 @@
+     auth_type = get_Auth_type_hex(net_ssid_info->auth_type);
+ 
+     if((get_band() == em_freq_band_6) && ((auth_type == EM_AUTH_WPA2) ||
++                                         (auth_type == EM_AUTH_WPA2PSK) ||
+                                          (auth_type == EM_AUTH_OPEN) ||
+                                          (auth_type == EM_AUTH_WPA3_TRANSITION))) {
+         // WPA2 Personal and open and WPA3 personal transition authentication type does not

@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000118 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Wed, 26 Aug 2026 12:00:00 -0700
+Subject: [PATCH] cli: optimize topology for landscape viewport
+
+The generic force solver centered the device icons but did not reason about
+the full SSID/client bubble extent or the topology hierarchy. It could waste
+horizontal space, place the Controller in the middle, and leave part of a
+large extender group below the visible pane.
+
+Replace the explicit Optimize Layout action with a deterministic landscape
+hierarchy. Place roots at the left, advance children by backhaul depth, wrap
+dense levels into additional columns, and space rows and columns using each
+node's complete rendered extent. The existing fit-to-view operation then
+uses the current responsive viewport and includes every bubble and client.
+The runtime force simulation remains available for initial rendering and drag
+interactions; this changes only the operator-requested graphical layout.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+---
+ src/rdkb-cli/static/index.html |   2 +-
+ src/rdkb-cli/static/script.js  | 119 ++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 110 insertions(+), 11 deletions(-)
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2449,2 +2449,100 @@ async handleWebSocketMessage(data) {
+-   * Re-run D3's force model to improve only the on-screen graph layout.
+-   * This never sends an EasyMesh command or changes the actual network.
++   * Build a deterministic left-to-right hierarchy for a landscape viewport.
++   * Dense levels wrap into additional columns so a four-extender star uses a
++   * two-row grid instead of one tall column. Node extents include the SSID
++   * bubbles and their clients, which keeps the fitted result inside the pane.
++   */
++  topologyLandscapeLayout(nodes, edges, width = 1600, height = 900) {
++    const rendered = Array.isArray(nodes) ? nodes : [];
++    const byId = new Map(rendered.map(node => [String(node.id), node]));
++    const children = new Map(rendered.map(node => [String(node.id), new Set()]));
++    const indegree = new Map(rendered.map(node => [String(node.id), 0]));
++    const endpointId = endpoint => String(
++      endpoint && typeof endpoint === 'object' ? endpoint.id : endpoint
++    );
++
++    for (const edge of Array.isArray(edges) ? edges : []) {
++      const from = endpointId(edge?.from ?? edge?.source);
++      const to = endpointId(edge?.to ?? edge?.target);
++      if (!byId.has(from) || !byId.has(to) || from === to || children.get(from).has(to)) continue;
++      children.get(from).add(to);
++      indegree.set(to, (indegree.get(to) || 0) + 1);
++    }
++
++    const nodeOrder = (left, right) => {
++      const leftController = /^controller$/i.test(String(left?.name || '')) ? 0 : 1;
++      const rightController = /^controller$/i.test(String(right?.name || '')) ? 0 : 1;
++      return leftController - rightController ||
++        String(left?.name || left?.id).localeCompare(String(right?.name || right?.id));
++    };
++    const roots = rendered.filter(node => (indegree.get(String(node.id)) || 0) === 0)
++      .sort(nodeOrder);
++    if (roots.length === 0 && rendered.length > 0) {
++      roots.push([...rendered].sort(nodeOrder)[0]);
++    }
++
++    const depth = new Map();
++    const queue = [];
++    for (const root of roots) {
++      const id = String(root.id);
++      if (!depth.has(id)) { depth.set(id, 0); queue.push(id); }
++    }
++    while (queue.length > 0) {
++      const parent = queue.shift();
++      const parentDepth = depth.get(parent) || 0;
++      for (const child of children.get(parent) || []) {
++        if (depth.has(child)) continue;
++        depth.set(child, parentDepth + 1);
++        queue.push(child);
++      }
++    }
++    let orphanDepth = Math.max(0, ...depth.values()) + 1;
++    for (const node of [...rendered].sort(nodeOrder)) {
++      const id = String(node.id);
++      if (!depth.has(id)) depth.set(id, orphanDepth++);
++    }
++
++    const levels = new Map();
++    for (const node of rendered) {
++      const level = depth.get(String(node.id)) || 0;
++      if (!levels.has(level)) levels.set(level, []);
++      levels.get(level).push(node);
++    }
++    const aspect = Math.max(1, Number(width) || 1) / Math.max(1, Number(height) || 1);
++    const targetColumns = Math.max(1, Math.ceil(Math.sqrt(rendered.length * aspect)));
++    const targetRows = Math.max(1, Math.ceil(rendered.length / targetColumns));
++    const columns = [];
++    for (const level of [...levels.keys()].sort((left, right) => left - right)) {
++      const items = levels.get(level).sort(nodeOrder);
++      for (let start = 0; start < items.length; start += targetRows) {
++        columns.push(items.slice(start, start + targetRows));
++      }
++    }
++
++    const extentFor = node => Math.max(80,
++      Number(this.topologyNodeExtent?.(node)) || 80);
++    const horizontalGap = 100;
++    const verticalGap = 70;
++    const positions = new Map();
++    let cursorX = 0;
++    for (const column of columns) {
++      const columnExtent = Math.max(...column.map(extentFor));
++      const centerX = cursorX + columnExtent;
++      const columnHeight = column.reduce((total, node) => total + 2 * extentFor(node), 0) +
++        verticalGap * Math.max(0, column.length - 1);
++      let cursorY = -columnHeight / 2;
++      for (const node of column) {
++        const extent = extentFor(node);
++        positions.set(String(node.id), {
++          x: centerX,
++          y: cursorY + extent
++        });
++        cursorY += 2 * extent + verticalGap;
++      }
++      cursorX += 2 * columnExtent + horizontalGap;
++    }
++    return positions;
++  }
++
++  /**
++   * Arrange only the on-screen graph as a landscape hierarchy. This never
++   * sends an EasyMesh command or changes the actual network.
+@@ -2475 +2573 @@ async handleWebSocketMessage(data) {
+-    this.showNotification('Arranging the topology diagram…', 'info');
++    this.showNotification('Arranging the topology for this landscape viewport…', 'info');
+@@ -2477,2 +2575,13 @@ async handleWebSocketMessage(data) {
+-    simulation.stop().alpha(1).alphaTarget(0);
+-    for (let tick = 0; tick < 180; tick += 1) simulation.tick();
++    simulation.stop();
++    const positions = this.topologyLandscapeLayout(
++      nodes,
++      this.topology?.edges || [],
++      this.topologyView?.width || 1600,
++      this.topologyView?.height || 900
++    );
++    nodes.forEach(node => {
++      const position = positions.get(String(node.id));
++      if (!position) return;
++      node.x = position.x;
++      node.y = position.y;
++    });
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2041 +2041 @@
+-    <script src="static/script.js?v=topology-responsive-viewport-1"></script>
++    <script src="static/script.js?v=topology-landscape-layout-2"></script>

@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000011 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 14:26:00 -0700
+Subject: [PATCH] bus: bound synchronous RBUS set provider waits
+
+The generic RBUS bus_set wrapper used rbus_set(), whose provider exchange has
+no caller-selected timeout. During simultaneous tri-band EasyMesh onboarding
+OneWifi applied a Vap_2.4G SOUTH subdoc, but the provider response was lost and
+onewifi_em_agent remained blocked inside rbus_set for more than seven minutes.
+That stopped the agent event queue, so the remaining radio subdocs and their
+completion callbacks could never be processed.
+
+Use the single-property form of rbus_setMultiExt with a five-second provider
+timeout. It preserves the same value and immediate-commit semantics while
+turning a lost provider response into a bounded error that the EasyMesh agent
+can recover by replaying the WSC transaction.
+
+Upstream-Status: Pending
+---
+ source/platform/rdkb/bus.c | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/source/platform/rdkb/bus.c b/source/platform/rdkb/bus.c
+index 1111111..2222222 100644
+--- a/source/platform/rdkb/bus.c
++++ b/source/platform/rdkb/bus.c
+@@ -1275,7 +1275,10 @@ static bus_error_t bus_set(bus_handle_t *handle, char const *name, raw_data_t *
+ {
+     rbusError_t rc = RBUS_ERROR_SUCCESS;
++    rbusProperty_t property = NULL;
++    char *failed_parameter = NULL;
+     VERIFY_NULL_WITH_RC(name);
+ 
++    const uint32_t provider_timeout_ms = 5000;
+     rbusHandle_t p_rbus_handle = handle->u.rbus_handle;
+ 
+     rbusValue_t value;
+@@ -1307,11 +1310,22 @@ static bus_error_t bus_set(bus_handle_t *handle, char const *name, raw_data_t *
+         break;
+     };
+ 
+-    rc = rbus_set(p_rbus_handle, name, value, NULL);
++    rbusProperty_Init(&property, name, value);
++    if (property == NULL) {
++        rbusValue_Release(value);
++        return bus_error_out_of_resources;
++    }
++
++    rc = rbus_setMultiExt(p_rbus_handle, 1, property, NULL,
++        provider_timeout_ms, &failed_parameter);
+     if (rc != RBUS_ERROR_SUCCESS) {
+-        wifi_util_dbg_print(WIFI_BUS, "%s:%d bus: rbus_set() failed:%d for name:%s\n",
+-          __func__, __LINE__, rc, name);
++        wifi_util_error_print(WIFI_BUS,
++          "%s:%d bus: bounded rbus_set failed:%d for name:%s failed_parameter:%s\n",
++          __func__, __LINE__, rc, name,
++          failed_parameter != NULL ? failed_parameter : "none");
+     }
++    free(failed_parameter);
++    rbusProperty_Release(property);
+     rbusValue_Release(value);
+     return convert_rbus_to_bus_error_code(rc);
+ }

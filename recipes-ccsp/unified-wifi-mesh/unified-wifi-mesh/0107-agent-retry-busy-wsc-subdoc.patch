@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000107 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 15:10:00 -0700
+Subject: [PATCH] agent: serialize WSC subdocs through OneWifi completion
+
+During persistent cold reconstruction all three radio M2 frames can arrive
+within milliseconds. The M2 parser is serialized, but each successful parse
+posts a separate OneWifi subdoc. RBUS SET acceptance is not OneWifi apply
+completion, so submitting the next band immediately can leave only the first
+VAP subdoc applied and the other radios permanently in owconfig_pending.
+
+The M2 event is not an orchestrated command and maps to em_cmd_type_none, so
+the generic previous-command gate cannot serialize these writes. Track the
+actual asynchronous OneWifi boundary instead: admit one subdoc, defer the
+other radio identities, and release one deferred radio into the existing
+fresh-M1 retry path for each OneWifi apply callback. A 30-second completion
+watchdog also re-arms the active radio if its callback is lost. Failed SET or
+encode operations release the slot immediately. Preserve the analyzer's
+existing contract in which zero means that the asynchronous SET was accepted.
+
+This preserves OneWifi's single-writer behavior, applies each band only after
+the previous apply completes, and retains the existing bounded WSC retry
+budget instead of declaring configuration complete early.
+
+Upstream-Status: Pending
+---
+ inc/em_agent.h         |  7 +++++
+ src/agent/em_agent.cpp | 78 ++++++++++++++++++++++++++++++++++++++++++--------
+ 2 files changed, 73 insertions(+), 12 deletions(-)
+
+diff --git a/inc/em_agent.h b/inc/em_agent.h
+index e9d592c..f9e66b3 100644
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -28,6 +28,7 @@
+ #include "em_simulator.h"
+ #include "bus.h"
+ 
++#include <deque>
+ #include <string>
+ 
+ #ifdef AL_SAP
+@@ -46,8 +47,14 @@ class em_agent_t : public em_mgr_t {
+     em_cmd_agent_t  *m_agent_cmd;
+ 	em_simulator_t	m_simulator;
+     bool m_initial_op_channel_report_sent = false;
++    bool m_onewifi_wsc_subdoc_active = false;
++    std::string m_onewifi_wsc_ruid;
++    unsigned int m_onewifi_wsc_wait_ticks = 0;
++    std::deque<std::string> m_deferred_onewifi_wsc_ruids;
+ 
+     bool publish_initial_operating_channels();
++    bool rearm_onewifi_wsc_radio(const std::string& ruid, const char *reason);
++    void release_next_onewifi_wsc_radio(const char *reason);
+ 
+ 	
+ 	/**!
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 68ebf99..58de17e 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -294,30 +294,66 @@ void em_agent_t::handle_m2ctrl_configuration(em_bus_event_t *evt)
+ {
+     int result;
+     wifi_bus_desc_t *desc;
++    m2ctrl_radioconfig *config =
++        reinterpret_cast<m2ctrl_radioconfig *>(evt->u.raw_buff);
++    std::string ruid = util::mac_to_string(config->radio_mac[0]);
+ 
+     if((desc = get_bus_descriptor()) == NULL) {
+        printf("descriptor is null");
+        return;
+     }
+ 
+-    if (m_orch->is_cmd_type_in_progress(evt) == true) {
++    if (m_onewifi_wsc_subdoc_active) {
++        bool already_deferred = false;
++        for (const std::string& deferred : m_deferred_onewifi_wsc_ruids) {
++            if (deferred == ruid) {
++                already_deferred = true;
++                break;
++            }
++        }
++        if (!already_deferred) {
++            m_deferred_onewifi_wsc_ruids.push_back(ruid);
++        }
++        em_printfout("OneWifi subdoc for radio %s queued behind radio %s",
++            ruid.c_str(), m_onewifi_wsc_ruid.c_str());
+         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
+         return;
+     }
+ 
++    m_onewifi_wsc_subdoc_active = true;
++    m_onewifi_wsc_ruid = ruid;
++    m_onewifi_wsc_wait_ticks = 0;
+     result = m_data_model.analyze_m2ctrl_configuration(evt, desc, &m_bus_hdl);
+-    if (result < 0) {
+-        m2ctrl_radioconfig *config =
+-            reinterpret_cast<m2ctrl_radioconfig *>(evt->u.raw_buff);
+-        std::string ruid = util::mac_to_string(config->radio_mac[0]);
+-        em_t *em = static_cast<em_t *>(hash_map_get(m_em_map, ruid.c_str()));
+-        if (em != NULL && em->get_state() == em_state_agent_owconfig_pending) {
+-            em->set_state(em_state_agent_wsc_m2_pending);
+-            em_printfout("OneWifi subdoc delivery failed for radio %s; re-arming WSC M2 recovery",
+-                ruid.c_str());
++    if (result < 0) {
++        m_onewifi_wsc_subdoc_active = false;
++        m_onewifi_wsc_ruid.clear();
++        m_onewifi_wsc_wait_ticks = 0;
++        rearm_onewifi_wsc_radio(ruid, "OneWifi subdoc delivery failed");
++        release_next_onewifi_wsc_radio("OneWifi subdoc delivery failure");
++    }
++}
++
++bool em_agent_t::rearm_onewifi_wsc_radio(const std::string& ruid,
++    const char *reason)
++{
++    em_t *em = static_cast<em_t *>(hash_map_get(m_em_map, ruid.c_str()));
++    if (em == NULL || em->get_state() != em_state_agent_owconfig_pending) {
++        return false;
++    }
++    em->set_state(em_state_agent_wsc_m2_pending);
++    em_printfout("%s for radio %s; re-arming WSC M2 recovery",
++        reason, ruid.c_str());
++    return true;
++}
++
++void em_agent_t::release_next_onewifi_wsc_radio(const char *reason)
++{
++    while (!m_deferred_onewifi_wsc_ruids.empty()) {
++        std::string ruid = m_deferred_onewifi_wsc_ruids.front();
++        m_deferred_onewifi_wsc_ruids.pop_front();
++        if (rearm_onewifi_wsc_radio(ruid, reason)) {
++            return;
+         }
+-    } else if (result == 0) {
+-	    printf("analyze_onewifi_private_subdoc complete");
+     }
+ }
+ 
+@@ -327,6 +363,15 @@ void em_agent_t::handle_onewifi_private_cb(em_bus_event_t *evt)
+     unsigned int num;
+     wifi_bus_desc_t *desc;
+ 
++    if (m_onewifi_wsc_subdoc_active) {
++        em_printfout("OneWifi completed WSC subdoc for radio %s",
++            m_onewifi_wsc_ruid.c_str());
++        m_onewifi_wsc_subdoc_active = false;
++        m_onewifi_wsc_ruid.clear();
++        m_onewifi_wsc_wait_ticks = 0;
++        release_next_onewifi_wsc_radio("Previous OneWifi subdoc completed");
++    }
++
+     if ((desc = get_bus_descriptor()) == NULL) {
+         em_printfout("descriptor is null");
+     }
+@@ -1503,7 +1548,16 @@ void em_agent_t::handle_2s_tick()
+ 
+ void em_agent_t::handle_1s_tick()
+ {
++    if (!m_onewifi_wsc_subdoc_active || ++m_onewifi_wsc_wait_ticks < 30) {
++        return;
++    }
+ 
++    std::string ruid = m_onewifi_wsc_ruid;
++    m_onewifi_wsc_subdoc_active = false;
++    m_onewifi_wsc_ruid.clear();
++    m_onewifi_wsc_wait_ticks = 0;
++    rearm_onewifi_wsc_radio(ruid, "OneWifi subdoc callback timed out");
++    release_next_onewifi_wsc_radio("OneWifi subdoc callback timeout");
+ }
+ 
+ void em_agent_t::handle_250ms_tick()
+-- 
+2.43.0

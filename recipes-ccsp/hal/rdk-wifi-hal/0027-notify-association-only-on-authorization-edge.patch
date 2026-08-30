@@ -1,0 +1,147 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] nl80211: notify association only on authorization edge
+
+wifi_drv_sta_set_flags() called nl80211_read_sta_data() whenever total_flags
+contained WPA_STA_AUTHORIZED.  total_flags describes the resulting state, not
+the flags changed by this operation.  Consequently a later WMM, MFP, or other
+station-flag update for an already-authorized entry replayed the HAL's
+associated-device callback.
+
+That callback is an authoritative association edge for OneWifi and EasyMesh.
+When mac80211_hwsim retained the old AP's station entry after a silent BTM
+roam, a subsequent flag update from that AP could therefore move the client
+back to its former BSS in the controller model even though the client remained
+associated to the target BSS over the air.
+
+Use flags_or, which contains the bits enabled by this operation, to identify
+the transition into WPA_STA_AUTHORIZED.  Apply NL80211_CMD_SET_STATION first;
+only after it succeeds read the station data and emit the association callback.
+Keep the existing Banana Pi backhaul WDS setup on the same successful
+authorization edge.
+
+This restores the HAL contract required by the controller: telemetry reads and
+unrelated flag maintenance cannot manufacture association events, while every
+new or returning authorized association still emits exactly one event.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211.c | 94 +++++++++++++++++++++++++++++------------------
+ 1 file changed, 59 insertions(+), 35 deletions(-)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+index 1111111..2222222 100644
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -14641,6 +14641,8 @@ int wifi_drv_sta_set_flags(void *priv, const u8 *addr,
+     struct nlattr *flags;
+     struct nl80211_sta_flag_update upd;
+     mac_addr_str_t mac_str;
++    bool authorization_started;
++    int ret;
+ 
+     interface = (wifi_interface_info_t *)priv;
+ 
+@@ -14651,42 +14653,12 @@ int wifi_drv_sta_set_flags(void *priv, const u8 *addr,
+           interface->name, to_mac_str(addr, mac_str), total_flags, flags_or, flags_and,
+           !!(total_flags & WPA_STA_AUTHORIZED));
+ 
+-    if (!!(total_flags & WPA_STA_AUTHORIZED)) {
+-        nl80211_read_sta_data(interface, addr);
+-#ifdef BANANA_PI_PORT
+-        /* meta-cmf-bananapi-vcpe: bring up the 4-address WDS STA netdev now that the station
+-         * is AUTHORIZED (the 4-way has completed). Creating it earlier -- at association or on
+-         * the first 4-addr frame -- makes mac80211_hwsim divert the station's pre-auth EAPOL
+-         * (notably M4) to the WDS netdev before the authenticator receives it, so the 4-way
+-         * times out (reason 15); the hostapd side (rdk-wifi-libhostap 0003/0004) therefore
+-         * defers WDS-STA setup to authorization. Do it here from the HAL, on the reliably
+-         * delivered SET_STATION(authorized) event, because a WDS netdev left over from an
+-         * earlier association (e.g. across a OneWifi restart or a container recreate, since
+-         * the hwsim phy outlives the container) suppresses the UNEXPECTED_4ADDR event that
+-         * would otherwise re-trigger it -- so the station would associate and 4-way but never
+-         * get its bridge port back. wifi_drv_set_wds_sta() creates the netdev, or re-enslaves
+-         * an existing one (see 0015), and leaves it forwarding (see 0014). Restricted to a
+-         * Multi-AP backhaul BSS so ordinary fronthaul clients never get a WDS netdev. */
+-        if (interface->vap_info.vap_mode == wifi_vap_mode_ap &&
+-            (interface->u.ap.conf.multi_ap & BACKHAUL_BSS)) {
+-            struct sta_info *bh_sta = ap_get_sta(&interface->u.ap.hapd, addr);
+-
+-            if (bh_sta != NULL) {
+-                char ifname_wds[IFNAMSIZ + 1] = { 0 };
+-
+-                interface->u.ap.conf.wds_sta = 1;
+-                strncpy(interface->u.ap.conf.wds_bridge, interface->vap_info.bridge_name,
+-                    sizeof(interface->u.ap.conf.wds_bridge) - 1);
+-                wifi_hal_info_print("%s:%d: STA %s authorized on backhaul %s -- setting up "
+-                    "4-address WDS aid=%d bridge=%s\n", __func__, __LINE__,
+-                    to_mac_str(addr, mac_str), interface->name, bh_sta->aid,
+-                    interface->vap_info.bridge_name);
+-                wifi_drv_set_wds_sta(interface, addr, bh_sta->aid, 1,
+-                    interface->vap_info.bridge_name, ifname_wds);
+-            }
+-        }
+-#endif // BANANA_PI_PORT
+-    }
++    /* total_flags describes the resulting station state.  It remains
++     * authorized while hostapd changes unrelated WMM/MFP/etc. flags, so it
++     * cannot identify a new association.  flags_or contains only bits being
++     * enabled by this operation and therefore identifies the authorization
++     * edge that completes a new or returning association. */
++    authorization_started = (flags_or & WPA_STA_AUTHORIZED) != 0;
+ 
+     if (!(msg = nl80211_drv_cmd_msg(g_wifi_hal.nl80211_id, interface, 0, NL80211_CMD_SET_STATION)) ||
+           nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, addr))
+@@ -14722,7 +14694,51 @@ int wifi_drv_sta_set_flags(void *priv, const u8 *addr,
+         goto fail;
+     }
+ 
+-    return nl80211_send_and_recv(msg, NULL, NULL, NULL, NULL);
++    ret = nl80211_send_and_recv(msg, NULL, NULL, NULL, NULL);
++    if (ret != 0 || !authorization_started) {
++        return ret;
++    }
++
++    /* Publish an associated-device callback only after the authorization
++     * update succeeds.  OneWifi and EasyMesh treat this callback as an
++     * authoritative association edge; replaying it for a retained station
++     * lets an old AP overwrite the client's current owner. */
++    nl80211_read_sta_data(interface, addr);
++#ifdef BANANA_PI_PORT
++    /* meta-cmf-bananapi-vcpe: bring up the 4-address WDS STA netdev now that the station
++     * is AUTHORIZED (the 4-way has completed). Creating it earlier -- at association or on
++     * the first 4-addr frame -- makes mac80211_hwsim divert the station's pre-auth EAPOL
++     * (notably M4) to the WDS netdev before the authenticator receives it, so the 4-way
++     * times out (reason 15); the hostapd side (rdk-wifi-libhostap 0003/0004) therefore
++     * defers WDS-STA setup to authorization. Do it here from the HAL, on the reliably
++     * delivered SET_STATION(authorized) event, because a WDS netdev left over from an
++     * earlier association (e.g. across a OneWifi restart or a container recreate, since
++     * the hwsim phy outlives the container) suppresses the UNEXPECTED_4ADDR event that
++     * would otherwise re-trigger it -- so the station would associate and 4-way but never
++     * get its bridge port back. wifi_drv_set_wds_sta() creates the netdev, or re-enslaves
++     * an existing one (see 0015), and leaves it forwarding (see 0014). Restricted to a
++     * Multi-AP backhaul BSS so ordinary fronthaul clients never get a WDS netdev. */
++    if (interface->vap_info.vap_mode == wifi_vap_mode_ap &&
++        (interface->u.ap.conf.multi_ap & BACKHAUL_BSS)) {
++        struct sta_info *bh_sta = ap_get_sta(&interface->u.ap.hapd, addr);
++
++        if (bh_sta != NULL) {
++            char ifname_wds[IFNAMSIZ + 1] = { 0 };
++
++            interface->u.ap.conf.wds_sta = 1;
++            strncpy(interface->u.ap.conf.wds_bridge, interface->vap_info.bridge_name,
++                sizeof(interface->u.ap.conf.wds_bridge) - 1);
++            wifi_hal_info_print("%s:%d: STA %s authorized on backhaul %s -- setting up "
++                "4-address WDS aid=%d bridge=%s\n", __func__, __LINE__,
++                to_mac_str(addr, mac_str), interface->name, bh_sta->aid,
++                interface->vap_info.bridge_name);
++            wifi_drv_set_wds_sta(interface, addr, bh_sta->aid, 1,
++                interface->vap_info.bridge_name, ifname_wds);
++        }
++    }
++#endif // BANANA_PI_PORT
++
++    return ret;
+ fail:
+     nlmsg_free(msg);
+     return -ENOBUFS;
+-- 
+2.43.0

@@ -1,0 +1,80 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] radio: service protocol timers under frame load
+
+Each em_t radio owns a protocol thread and queue separate from the manager
+queue fixed by 0053.  proto_run() called proto_timeout() only when its timed
+condition wait expired.  A continuously non-empty frame/command queue therefore
+starved the radio state machine indefinitely.
+
+This defeats the bounded WSC-M1 retransmission in 0021.  During the first cold
+reconstruction of a clean rev120 VM, all three bpiap-001 radios sent M1 at
+03:53:29.  The controller answered only the 5 and 6 GHz radios.  The 2.4 GHz
+radio remained in wsc_m2_pending for more than four minutes without emitting
+any of the expected M1 retries while its queue continued to receive normal
+protocol traffic.  The runtime correctly failed with only two configured
+fronthaul bands and zero process restarts.
+
+Track the radio's timeout deadline with a monotonic clock and service one due
+protocol tick between queued events as well as after an idle timed wait.  Do
+not replay missed ticks in a burst: state-machine retry counters represent
+elapsed opportunities, and one transition per event boundary is sufficient to
+restore progress without racing the radio thread.
+
+Upstream-Status: Pending
+---
+ src/em/em.cpp | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -38,6 +38,7 @@
+ #include <sys/un.h>
+ #include <unistd.h>
+ #include <pthread.h>
++#include <chrono>
+ #include <openssl/rand.h>
+ #include <openssl/evp.h>
+ #include <openssl/dh.h>
+@@ -620,6 +621,24 @@ void em_t::proto_run()
+     struct timespec time_to_wait;
+     struct timeval tm;
+ 
++    using steady_clock = std::chrono::steady_clock;
++    const auto timeout_interval = std::chrono::seconds(m_iq.timeout);
++    auto next_timeout = steady_clock::now() + timeout_interval;
++
++    // A busy radio queue must not suppress protocol timers.  In particular,
++    // wsc_m2_pending uses these ticks to retransmit M1 when one of several
++    // simultaneous radio M2 responses is lost.  This runs on the existing
++    // radio thread, so state transitions remain serialized with frames.
++    auto run_due_timeout = [&]() {
++        const auto now = steady_clock::now();
++        if (now < next_timeout) {
++            return;
++        }
++        proto_timeout();
++        // Resume from now rather than replaying delayed state transitions.
++        next_timeout = now + timeout_interval;
++    };
++
+     pthread_mutex_lock(&m_iq.lock);
+     while (m_exit == false) {
+         rc = 0;
+@@ -650,11 +668,12 @@ void em_t::proto_run()
+                     proto_process(&cevnt); // pass pointer
+                 }
+                 free(evt);
++                run_due_timeout();
+                 pthread_mutex_lock(&m_iq.lock);
+             }
+         } else if (rc == ETIMEDOUT) {
+             pthread_mutex_unlock(&m_iq.lock);
+-            proto_timeout();
++            run_due_timeout();
+             pthread_mutex_lock(&m_iq.lock);
+         } else {
+             printf("%s:%d em exited with rc - %d\n",__func__,__LINE__,rc);
+
+-- 
+2.43.0

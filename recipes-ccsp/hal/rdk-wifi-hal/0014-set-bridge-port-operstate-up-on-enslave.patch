@@ -1,0 +1,145 @@
+nl80211_create_bridge(): mark a newly enslaved interface operationally
+up, so the bridge actually forwards on that port.
+
+This is the same defect patch 0011 fixed for the mesh STA, on the AP
+side. It only became reachable once patch 0013 stopped the bogus OVS
+path from silently no-oping every enslavement -- before that the AP VAPs
+were never in a Linux bridge at all, so the port state never mattered.
+
+A Linux bridge holds any port whose netdev operstate is IF_OPER_DORMANT
+in the non-forwarding "disabled" state. mac80211_hwsim leaves AP
+interfaces dormant (and NO-CARRIER) even while the BSS is up and
+beaconing, and nothing in wifi_hal or hostapd sets IFLA_OPERSTATE for
+them, so every fronthaul and backhaul AP ended up as:
+
+  wifi1    dormant   ->  bridge port state disabled
+  wifi1.1  dormant   ->  bridge port state disabled
+  wifi1.2  dormant   ->  bridge port state disabled
+  eth1     up        ->  bridge port state forwarding
+
+hostapd is configured with bridge=brlan0, so it opens its EAPOL socket
+on the bridge. Frames it sends still reach the air, but EAPOL coming
+back from the station is dropped on ingress at the disabled port, so the
+4-Way Handshake never advances past message 1 and every association
+fails identically:
+
+  client: WPA: RX message 1 of 4-Way Handshake from 02:00:00:0e:d7:22
+  client: WPA: RX message 1 of 4-Way Handshake from 02:00:00:0e:d7:22   (retry)
+  client: CTRL-EVENT-DISCONNECTED bssid=02:00:00:0e:d7:22 reason=15
+  client: WPA: 4-Way Handshake failed - pre-shared key may be incorrect
+  ctrl:   wifi_drv_hapd_send_eapol: eapol_timeout callback is called
+  ctrl:   wifi_drv_sta_deauth: Enter <sta> 15
+
+reason 15 being 4-Way Handshake Timeout. The supplicant's "pre-shared
+key may be incorrect" is a red herring -- it is what wpa_supplicant
+always reports when M2/M3 never complete. Verified not to be a key or
+suite problem: the AP advertises [WPA2-PSK-CCMP] in a scan, and
+Device.WiFi.AccessPoint.N.Security.KeyPassphrase matches what the client
+was configured with exactly.
+
+Reproduced with a plain wpa_supplicant client on a separate hwsim radio,
+not just with the EasyMesh mesh STA, which is what established this is
+an AP-side bug rather than anything mesh-specific.
+
+Setting the port operationally up at the point of enslavement is
+necessary but not sufficient for an AP VAP: bringing the BSS up
+afterwards puts the netdev back into IF_OPER_DORMANT, which parks the
+port in "disabled" again. Observed directly on a freshly deployed
+controller carrying only the enslave-time half of this change -- wifi1
+came up "up"/forwarding while wifi1.1 and wifi1.2, whose BSSes started
+later, were back to dormant/disabled. So re-assert it in start_bss()
+once hostapd_setup_bss_internal() has succeeded, which also requires
+exporting the helper (it was static) and declaring it in
+wifi_hal_priv.h alongside nl80211_create_bridge().
+
+Verified against a live controller: forcing IFLA_OPERSTATE up on the
+backhaul AP by hand made the previously-failing 4-Way Handshake complete
+end to end --
+
+  sending eapol m1 ... to:02:00:00:d8:b7:19    received eapol m2
+  sending eapol m3                             received eapol m4
+
+Not hwsim-gated: a dormant port is non-forwarding on any kernel, so this
+is correct anywhere.
+
+---
+ wifi_hal_nl80211.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -87,6 +87,15 @@
+ /* ovs-vsctl's compiled-in default database socket. Presence of the kernel module
+  * alone does not mean this system's bridges are OVS bridges -- see nl80211_create_bridge(). */
+ #define OVS_DB_SOCK "/var/run/openvswitch/db.sock"
++
++/* RFC2863 operational states. nl80211_create_bridge() below needs the helper, which is
++ * defined further down this file, so declare it here. */
++#ifndef IF_OPER_DORMANT
++#define IF_OPER_DORMANT 5
++#endif
++#ifndef IF_OPER_UP
++#define IF_OPER_UP 6
++#endif
+ #define ONEWIFI_TESTSUITE_TMPFILE "/tmp/onewifi_testsuite_configured"
+ #define KEY_MGMT_SAE_EXT 67108864
+ #define MAX_MBSSID_INTERFACES 8
+@@ -4488,6 +4497,11 @@
+         return -1;
+     }
+ 
++    /* The interface is now a bridge port, but the Linux bridge holds any port whose
++     * netdev operstate is IF_OPER_DORMANT in the non-forwarding "disabled" state, so
++     * nothing -- including EAPOL -- crosses it. See nl80211_set_iface_operstate(). */
++    nl80211_set_iface_operstate(if_name, IF_OPER_UP);
++
+     wifi_hal_info_print("%s:%d: bridge:%s nl free\n", __func__, __LINE__, br_name);
+ 
+     rtnl_link_put(bridge);
+@@ -9058,12 +9072,6 @@
+ 
+ /* IF_OPER_* live in <linux/if.h>, which cannot be included alongside glibc's
+  * <net/if.h> without conflicts. Define the two values we need locally. */
+-#ifndef IF_OPER_DORMANT
+-#define IF_OPER_DORMANT 5
+-#endif
+-#ifndef IF_OPER_UP
+-#define IF_OPER_UP 6
+-#endif
+ 
+ /* Set an interface's RFC2863 operational state via RTM_SETLINK/IFLA_OPERSTATE.
+  *
+@@ -9073,7 +9081,7 @@
+  * connected station is left in IF_OPER_DORMANT forever. The Linux bridge keeps a
+  * dormant port in the "disabled" (non-forwarding) state, which silently breaks all
+  * bridged traffic over a 4-address/WDS backhaul link. */
+-static int nl80211_set_iface_operstate(const char *ifname, unsigned char operstate)
++int nl80211_set_iface_operstate(const char *ifname, unsigned char operstate)
+ {
+     struct {
+         struct nlmsghdr nh;
+--- a/wifi_hal_priv.h
++++ b/wifi_hal_priv.h
+@@ -1019,6 +1019,7 @@
+ int     nl80211_enable_ap(wifi_interface_info_t *interface, bool enable);
+ int     nl80211_kick_device(wifi_interface_info_t *interface, mac_address_t mac);
+ int     nl80211_create_bridge(const char *if_name, const char *br_name);
++int     nl80211_set_iface_operstate(const char *ifname, unsigned char operstate);
+ int     nl80211_remove_from_bridge(const char *if_name);
+ int     nl80211_update_interface(wifi_interface_info_t *interface);
+ int     nl80211_interface_enable(const char *ifname, bool enable);
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
+@@ -3422,6 +3422,12 @@
+     if (ret != RETURN_OK) {
+         wifi_hal_error_print("%s:%d: vap:%s:%d create is failed:%d csa status:%d\n", __func__,
+             __LINE__, vap->vap_name, vap->vap_index, ret, interface->u.ap.hapd.csa_in_progress);
++    } else {
++        /* Bringing the BSS up puts the netdev back into IF_OPER_DORMANT, which parks the
++         * interface's bridge port in the non-forwarding "disabled" state again -- setting
++         * operstate at enslave time alone is therefore not enough for an AP VAP. Re-assert
++         * it here, once the BSS is actually running. */
++        nl80211_set_iface_operstate(interface->name, 6 /* IF_OPER_UP */);
+     }
+ #ifndef CONFIG_GENERIC_MLO
+ #ifdef CONFIG_IEEE80211BE

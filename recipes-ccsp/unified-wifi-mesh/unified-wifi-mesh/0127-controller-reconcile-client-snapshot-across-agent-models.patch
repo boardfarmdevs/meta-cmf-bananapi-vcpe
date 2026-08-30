@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000127 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 30 Aug 2026 07:25:00 -0700
+Subject: [PATCH] controller: reconcile client snapshot across agent models
+
+The controller stores one agent across multiple radio-scoped data models, but
+the authoritative Associated Clients snapshot was reconciled only against the
+model which received the Topology Response.  A station withdrawn from another
+radio model therefore remained associated indefinitely.  Its artificial age
+could then be refreshed, defeat current ownership evidence, make the WebUI
+show the old BSS, and prevent candidate-link metrics from completing.
+
+Reconcile the complete snapshot against every controller data model having the
+reporting agent's AL MAC.  Queue each removed row through that model's normal
+database deletion path.  Also emit the valid one-byte, zero-BSS Associated
+Clients TLV when an agent has no clients; omitting the optional TLV cannot
+withdraw its final stale owner.
+
+Upstream-Status: Submitted [RDKB-EM lab validation]
+---
+ src/em/config/em_configuration.cpp | 67 +++++++++++++++++++++++---------------
+ 1 file changed, 41 insertions(+), 26 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1650,10 +1650,6 @@ int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
+         bss_count++;
+     }
+ 
+-    if (bss_count == 0) {
+-        return 0;
+-    }
+-
+     value[0] = static_cast<unsigned char>(bss_count);
+     tlv->type = em_tlv_type_associated_clients;
+     tlv->len = htons(static_cast<uint16_t>(payload_len));
+@@ -2456,46 +2452,67 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+         /* The received Associated Clients TLV is the complete association
+          * snapshot for this reporting device.  Reconcile omissions before
+          * the pending additions are committed so a withdrawn owner cannot
+-         * defeat current ownership evidence from another agent. */
+-        unsigned int removed = 0;
+-        dm_sta_t *sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
+-        while (sta != NULL) {
+-            dm_sta_t *next = static_cast<dm_sta_t *>(
+-                    hash_map_get_next(dm->m_sta_map, sta));
+-            mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
+-            em_long_string_t key;
+-            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
+-            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bssid_str);
+-            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
+-                                               radio_mac_str);
+-            snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str, bssid_str,
+-                     radio_mac_str);
+-
+-            if (sta->m_sta_info.associated &&
+-                    snapshot_keys.find(key) == snapshot_keys.end()) {
+-                em_sta_info_t removed_info = sta->m_sta_info;
+-                removed_info.associated = false;
+-                dm->put_sta_info(&removed_info, em_target_sta_map_disassoc);
+-                dm_sta_t *old = static_cast<dm_sta_t *>(
+-                        hash_map_remove(dm->m_sta_map, key));
+-                delete old;
+-                removed++;
+-                em_printfout("Topology Response removed absent owner key=%s",
+-                             key);
+-            }
+-            sta = next;
++         * defeat current ownership evidence from another agent.  An agent is
++         * represented by several radio-scoped controller data models, so the
++         * snapshot must be applied to every model sharing its AL MAC. */
++        unsigned int total_removed = 0;
++        dm_easy_mesh_t *owner_dm = get_mgr()->get_first_dm();
++        while (owner_dm != NULL) {
++            if (memcmp(owner_dm->get_agent_al_interface_mac(),
++                       dm->get_agent_al_interface_mac(),
++                       sizeof(mac_address_t)) != 0) {
++                owner_dm = get_mgr()->get_next_dm(owner_dm);
++                continue;
++            }
++            unsigned int removed = 0;
++            dm_sta_t *sta = static_cast<dm_sta_t *>(
++                    hash_map_get_first(owner_dm->m_sta_map));
++            while (sta != NULL) {
++                dm_sta_t *next = static_cast<dm_sta_t *>(
++                        hash_map_get_next(owner_dm->m_sta_map, sta));
++                mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
++                em_long_string_t key;
++                dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id,
++                                                   sta_mac_str);
++                dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid,
++                                                   bssid_str);
++                dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
++                                                   radio_mac_str);
++                snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str,
++                         bssid_str, radio_mac_str);
++
++                if (sta->m_sta_info.associated &&
++                        snapshot_keys.find(key) == snapshot_keys.end()) {
++                    em_sta_info_t removed_info = sta->m_sta_info;
++                    removed_info.associated = false;
++                    owner_dm->put_sta_info(&removed_info,
++                                           em_target_sta_map_disassoc);
++                    dm_sta_t *old = static_cast<dm_sta_t *>(
++                            hash_map_remove(owner_dm->m_sta_map, key));
++                    delete old;
++                    removed++;
++                    em_printfout(
++                            "Topology Response removed absent owner key=%s",
++                            key);
++                }
++                sta = next;
++            }
++            if (removed != 0) {
++                owner_dm->set_db_cfg_param(db_cfg_type_sta_list_delete, "");
++                total_removed += removed;
++            }
++            owner_dm = get_mgr()->get_next_dm(owner_dm);
+         }
+ 
+         if (added != 0) {
+             dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
+             em_printfout("Topology Response reconciled %u client association(s)", added);
+         }
+-        if (removed != 0) {
+-            dm->set_db_cfg_param(db_cfg_type_sta_list_delete, "");
++        if (total_removed != 0) {
+             em_printfout("Topology Response removed %u absent client association(s)",
+-                         removed);
++                         total_removed);
+         }
+-        return static_cast<int>(added + removed);
++        return static_cast<int>(added + total_removed);
+     }
+     return 0;
+ }
+-- 
+2.43.0

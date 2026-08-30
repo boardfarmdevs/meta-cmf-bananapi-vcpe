@@ -1,0 +1,25 @@
+Fix build on 32-bit x86: WIFI_MTU_SIZE is `#define`d as `(1500UL - 100UL)`,
+type `unsigned long`. `size_t` is also `unsigned long` on 64-bit/arm64
+(this project's usual targets), so `std::min(WIFI_MTU_SIZE, len - offset)`
+resolves there without any cast. On i686 (this container's target),
+`size_t` is `unsigned int` - a distinct type from `unsigned long` even
+though both are 4 bytes - so template argument deduction for std::min
+can't unify the two arguments to one type and fails to compile
+(error: no matching function for call to 'min(long unsigned int, size_t)').
+
+---
+ src/em/prov/easyconnect/ec_pa_configurator.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/em/prov/easyconnect/ec_pa_configurator.cpp b/src/em/prov/easyconnect/ec_pa_configurator.cpp
+--- a/src/em/prov/easyconnect/ec_pa_configurator.cpp
++++ b/src/em/prov/easyconnect/ec_pa_configurator.cpp
+@@ -461,7 +461,7 @@
+     uint8_t frag_id = 0;
+
+     while (offset < len) {
+-        size_t chunk_size = std::min(WIFI_MTU_SIZE, len - offset);
++        size_t chunk_size = std::min(static_cast<size_t>(WIFI_MTU_SIZE), len - offset);
+
+         auto [base_frame, base_len] = ec_util::alloc_gas_frame(dpp_gas_comeback_resp, dialog_token);
+         if (!base_frame) {

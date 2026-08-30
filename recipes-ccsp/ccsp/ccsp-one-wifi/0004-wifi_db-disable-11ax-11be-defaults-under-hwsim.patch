@@ -1,0 +1,61 @@
+init_radio_config_default() (source/db/wifi_db.c) hardcodes 802.11be (WiFi7/EHT)
+and the resulting 802.11ax (HE) + 40MHz-bandwidth defaults for the 2.4GHz radio
+whenever CONFIG_IEEE80211BE && _PLATFORM_BANANAPI_R4_ -- true for both real
+BananaPi R4 hardware (which has actual WiFi7-capable silicon) and this LXD
+container build (which shares the same platform defines but runs on
+mac80211_hwsim, a purely simulated radio with no HE/EHT support).
+
+Confirmed via wifiHal.txt: the very first VAP's beacon-start call
+(wifi_drv_set_ap -> nl80211 "Set freq ... he_enabled=1, bandwidth=40 MHz")
+fails with kernel error -95 (Operation not supported), and every subsequent
+VAP on the same radio then fails earlier still ("Station flush failed: ret=-100
+Network is down") because the radio was left in a half-configured state -- no
+VAP on the controller ever beacons, blocking the EasyMesh controller<->extender
+link entirely.
+
+Gate the 802.11be/802.11ax-implied defaults (and the 5GHz radio's own
+802.11ax default) behind a new HWSIM_RADIO macro, defined only in this
+container's own ccsp-one-wifi.bbappend (meta-cmf-bananapi-vcpe), leaving real
+BananaPi R4 hardware builds (meta-cmf-bananapi/meta-rdk-mtk-bpir4) unchanged.
+6GHz is left as-is: 802.11ax is mandatory for that band (no legacy fallback
+exists per spec), so it simply won't beacon under hwsim -- EasyMesh still
+works fine over 2.4/5GHz.
+
+---
+ source/db/wifi_db.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/source/db/wifi_db.c b/source/db/wifi_db.c
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -105,10 +105,10 @@
+             cfg.channel = 6;
+             cfg.channelWidth = WIFI_CHANNELBANDWIDTH_20MHZ;
+             cfg.variant = WIFI_80211_VARIANT_G | WIFI_80211_VARIANT_N;
+-#if defined(CONFIG_IEEE80211BE) && defined(_PLATFORM_BANANAPI_R4_)
++#if defined(CONFIG_IEEE80211BE) && defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO)
+             cfg.variant |= WIFI_80211_VARIANT_BE;
+             cfg.channelWidth = WIFI_CHANNELBANDWIDTH_40MHZ;
+-#endif /* defined(CONFIG_IEEE80211BE) && defined(_PLATFORM_BANANAPI_R4_) */
++#endif /* defined(CONFIG_IEEE80211BE) && defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO) */
+             break;
+         case WIFI_FREQUENCY_5_BAND:
+         case WIFI_FREQUENCY_5L_BAND:
+@@ -117,13 +117,15 @@
+             cfg.channelWidth = WIFI_CHANNELBANDWIDTH_80MHZ;
+ #if defined (_HUB4_PRODUCT_REQ_) && !defined (_SR213_PRODUCT_REQ_)
+             cfg.variant = WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC;
++#elif defined(HWSIM_RADIO)
++            cfg.variant = WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC;
+ #else
+             cfg.variant = WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC | WIFI_80211_VARIANT_AX;
+ #endif
+
+-#ifdef CONFIG_IEEE80211BE
++#if defined(CONFIG_IEEE80211BE) && !defined(HWSIM_RADIO)
+             cfg.variant |= WIFI_80211_VARIANT_BE;
+-#endif /* CONFIG_IEEE80211BE */
++#endif /* defined(CONFIG_IEEE80211BE) && !defined(HWSIM_RADIO) */
+             break;
+         case WIFI_FREQUENCY_5H_BAND:
+             cfg.operatingClass = 128;

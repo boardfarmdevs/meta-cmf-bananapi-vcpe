@@ -1,0 +1,185 @@
+{
+  "configurations": [
+    {
+      "kernel_medium_enabled": false,
+      "matrix_override": false,
+      "name": "stock-built-in",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.114,
+        "rtt_pseudo_max_ms": 0.28
+      },
+      "traffic": {
+        "duration_seconds": 10.005,
+        "guest_cpu": {
+          "capacity_percent": 17.59,
+          "equivalent_core_percent": 105.538,
+          "softirq_percent": 0.522,
+          "steal_percent": 0.235,
+          "system_percent": 0.151
+        },
+        "jitter_ms": 0.0048,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 52079,
+        "received_mbps": 49.994,
+        "requested_rate": "50M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_medium_enabled": false,
+      "matrix_override": false,
+      "name": "userspace-wmediumd-default",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.814,
+        "rtt_pseudo_max_ms": 1.944
+      },
+      "traffic": {
+        "duration_seconds": 10.049,
+        "guest_cpu": {
+          "capacity_percent": 3.668,
+          "equivalent_core_percent": 22.006,
+          "softirq_percent": 1.055,
+          "steal_percent": 0.084,
+          "system_percent": 1.926
+        },
+        "jitter_ms": 0.392,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 22391,
+        "received_mbps": 21.492,
+        "requested_rate": "50M",
+        "wmediumd_core_percent": 11.942
+      },
+      "userspace_wmediumd_registered": true
+    },
+    {
+      "kernel_counters": {
+        "phy82": {
+          "considered": 243,
+          "delivered": 243,
+          "dropped": 0
+        },
+        "phy83": {
+          "considered": 52322,
+          "delivered": 52322,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 1,
+      "kernel_medium_enabled": true,
+      "matrix_override": false,
+      "name": "kernel-medium-default",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.097,
+        "rtt_pseudo_max_ms": 0.213
+      },
+      "traffic": {
+        "duration_seconds": 10.003,
+        "guest_cpu": {
+          "capacity_percent": 17.045,
+          "equivalent_core_percent": 102.273,
+          "softirq_percent": 0.034,
+          "steal_percent": 0.186,
+          "system_percent": 0.051
+        },
+        "jitter_ms": 0.004,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 52079,
+        "received_mbps": 49.995,
+        "requested_rate": "50M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_counters": {
+        "phy84": {
+          "considered": 244,
+          "delivered": 244,
+          "dropped": 0
+        },
+        "phy85": {
+          "considered": 52322,
+          "delivered": 52322,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 2,
+      "kernel_medium_enabled": true,
+      "matrix_override": true,
+      "name": "kernel-medium-matrix",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.117,
+        "rtt_pseudo_max_ms": 0.49
+      },
+      "traffic": {
+        "duration_seconds": 10.004,
+        "guest_cpu": {
+          "capacity_percent": 16.98,
+          "equivalent_core_percent": 101.879,
+          "softirq_percent": 0.0,
+          "steal_percent": 0.085,
+          "system_percent": 0.068
+        },
+        "jitter_ms": 0.0043,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 52079,
+        "received_mbps": 49.994,
+        "requested_rate": "50M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_counters": {
+        "phy86": {
+          "considered": 0,
+          "delivered": 0,
+          "dropped": 0
+        },
+        "phy87": {
+          "considered": 0,
+          "delivered": 0,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 1,
+      "kernel_medium_enabled": true,
+      "matrix_override": false,
+      "name": "kernel-enabled-userspace-precedence",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.881,
+        "rtt_pseudo_max_ms": 2.3
+      },
+      "traffic": {
+        "duration_seconds": 10.03,
+        "guest_cpu": {
+          "capacity_percent": 3.979,
+          "equivalent_core_percent": 23.872,
+          "softirq_percent": 0.635,
+          "steal_percent": 0.067,
+          "system_percent": 2.407
+        },
+        "jitter_ms": 0.0434,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 22453,
+        "received_mbps": 21.552,
+        "requested_rate": "50M",
+        "wmediumd_core_percent": 11.565
+      },
+      "userspace_wmediumd_registered": true
+    }
+  ],
+  "duration_seconds": 10,
+  "kernel": "7.0.0-30-generic",
+  "rate": "50M",
+  "schema": "hwsim-medium-evaluation.v1",
+  "vcpus": 6
+}

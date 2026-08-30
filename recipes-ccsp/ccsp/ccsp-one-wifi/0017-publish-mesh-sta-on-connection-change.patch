@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000017 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 23:35:00 -0700
+Subject: [PATCH] webconfig: publish mesh STA on connection change
+
+The mesh-STA HAL connection indication updates OneWifi's authoritative VAP
+cache, but the pending-response path encoded a generic `dml` document.  The
+EasyMesh agent subscribes to the northbound WebConfig event and intentionally
+dispatches only radio, fronthaul and mesh-STA documents; it logged the `dml`
+document and ignored it.  A live backhaul reparent therefore changed the real
+association while the agent and controller continued reporting the old BSSID.
+
+Encode the mesh-STA subdocument for a mesh-STA connection-status response.
+This publishes the BSSID that the HAL confirmed and lets the agent reconcile
+its BSTA record and notify the controller without a process restart.
+
+Upstream-Status: Pending
+---
+ source/core/wifi_ctrl_webconfig.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source/core/wifi_ctrl_webconfig.c b/source/core/wifi_ctrl_webconfig.c
+index 1111111..2222222 100644
+--- a/source/core/wifi_ctrl_webconfig.c
++++ b/source/core/wifi_ctrl_webconfig.c
+@@ -553,7 +553,7 @@ int webconfig_state_machine(wifi_ctrl_t *ctrl)
+             }
+         break;
+         case ctrl_webconfig_state_sta_conn_status_rsp_pending:
+-            type = webconfig_subdoc_type_dml;
++            type = webconfig_subdoc_type_mesh_sta;
+             webconfig_send_vap_subdoc_status(ctrl, type);
+         break;
+         case ctrl_webconfig_state_vap_mesh_sta_cfg_rsp_pending:
+-- 
+2.43.0

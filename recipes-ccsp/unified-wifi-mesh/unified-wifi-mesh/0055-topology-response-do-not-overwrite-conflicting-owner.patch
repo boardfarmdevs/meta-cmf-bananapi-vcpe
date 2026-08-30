@@ -1,0 +1,71 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: do not let ambiguous snapshots move a client
+
+An Agent can retain an associated station after that station has reassociated
+elsewhere without sending a disassociation frame.  This is especially visible
+during a complete RF outage: the destination Agent publishes the authoritative
+Client Association Event, but the isolated source Agent still has the old
+station in its local driver table.  When that Agent rejoins, its Associated
+Clients TLV is a stale snapshot.  The topology-response repair path treated the
+snapshot as a new association and evicted the newer, notification-owned row.
+
+An Associated Clients TLV has no transaction ordering that can resolve two
+simultaneous claims.  Before using a Topology Response to create an association,
+scan the controller's per-device models.  If another device still has an
+associated claim for the same STA on another BSS, retain the current owner and
+wait for an unambiguous association event or snapshot.  Exact same-BSS reports
+remain idempotent and a response can still repair a genuinely missing client.
+
+This preserves the existing authority boundary: a Client Association Event can
+move ownership; an ambiguous periodic snapshot cannot reverse it.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2351,6 +2351,39 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                 memcpy(sta_info.bssid, bssid, sizeof(bssid_t));
+                 memcpy(sta_info.radiomac, bss_info->ruid.mac, sizeof(mac_address_t));
+                 sta_info.associated = true;
++
++                /* A Topology Response is an unordered snapshot.  If two
++                 * device models claim the same STA on different BSSs, it
++                 * cannot establish which association happened last.  Do not
++                 * let a rejoining Agent's stale driver row reverse the
++                 * authoritative Client Association Event from the current
++                 * owner. */
++                bool conflicting_claim = false;
++                dm_easy_mesh_t *claim_dm = get_mgr()->get_first_dm();
++                while (claim_dm != NULL && !conflicting_claim) {
++                    if (claim_dm != dm) {
++                        dm_sta_t *claim = claim_dm->get_first_sta(sta_info.id);
++                        while (claim != NULL) {
++                            if (claim->m_sta_info.associated &&
++                                    memcmp(claim->m_sta_info.bssid,
++                                           sta_info.bssid,
++                                           sizeof(bssid_t)) != 0) {
++                                conflicting_claim = true;
++                                break;
++                            }
++                            claim = claim_dm->get_next_sta(sta_info.id, claim);
++                        }
++                    }
++                    claim_dm = get_mgr()->get_next_dm(claim_dm);
++                }
++                if (conflicting_claim) {
++                    em_printfout(
++                            "Skipping ambiguous Topology Response owner for sta=%s bssid=%s",
++                            util::mac_to_string(sta_info.id).c_str(),
++                            util::mac_to_string(sta_info.bssid).c_str());
++                    continue;
++                }
++
+                 if (dm->get_sta_info(sta_info.id, sta_info.bssid, sta_info.radiomac,
+                                      em_target_sta_map_consolidated) != NULL) {
+                     continue;
+-- 
+2.43.0

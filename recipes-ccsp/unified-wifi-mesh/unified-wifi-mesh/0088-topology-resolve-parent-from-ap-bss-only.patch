@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000088 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 23:40:00 -0700
+Subject: [PATCH] topology: resolve wireless parent from AP BSS only
+
+The topology tree locates a wireless parent by searching for the child's
+upstream BSSID.  get_bss_info_with_mac() also matches a station-mode record,
+however, and every directly connected extender carries the gateway BSSID in
+its own mesh-STA record.  Tree traversal can therefore select an arbitrary
+extender as the owner of the gateway BSSID and place its siblings beneath it.
+
+An upstream BSSID is owned by the node advertising it as an AP BSS.  Accept
+only AP-mode matches while continuing the recursive search past station-mode
+references.  This also makes extender-to-extender parent lookup unambiguous:
+the parent owns the AP record and the child merely references it from its STA
+record.
+
+Upstream-Status: Pending
+---
+ src/ctrl/em_network_topo.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
+index 1111111..2222222 100644
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -170,13 +170,17 @@ em_network_topo_t *em_network_topo_t::find_topology_by_bss_mac(mac_address_t bss
+ 	em_network_topo_t *topo;
+ 
+ 	std::string bss_mac_str = util::mac_to_string(bss_mac);
+ 	em_bss_info_t* bss_info = m_data_model->get_bss_info_with_mac(bss_mac);
+-	if (bss_info) {
++	if (bss_info && bss_info->vap_mode == em_vap_mode_ap) {
+ 		// If we found the bss info, then return the current topology.
+ 		em_printfout("Found topology of bss mac: %s num_child_topo:%d", bss_mac_str.c_str(),
+ 			this->m_num_topologies);
+ 		return this;
+ 	}
++	if (bss_info) {
++		em_printfout("Ignoring station-mode reference to parent bss mac: %s",
++			bss_mac_str.c_str());
++	}
+ 
+ 	// If not found in the current topology check recursively other child topologies.
+ 	em_printfout("Could not find bss mac: %s, continuing with child topologies", bss_mac_str.c_str());
+-- 
+2.43.0

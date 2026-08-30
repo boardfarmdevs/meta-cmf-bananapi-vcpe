@@ -1,0 +1,60 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] WSC: refresh registrar crypto for every M1 transaction
+
+The agent's bounded M1 retry cannot recover when the controller's registrar
+DH key is unusable.  The controller currently creates a keypair once when the
+radio object starts and reuses it for every duplicate M1.  In the observed
+failure, all four 5 GHz M2 responses arrived, but each failed at
+EVP_PKEY_derive_set_peer because every response carried the same rejected
+registrar public key.  The radio remained in wsc_m2_pending and its BSS rows
+were never published.
+
+A WSC M1 starts a new protocol transaction.  Reinitialize the controller's
+registrar nonce/keypair immediately before parsing each M1; parsing then
+replaces the enrollee half with the values from that M1 while retaining the
+fresh registrar half for M2.  A duplicate M1 therefore receives an independent
+M2 and can recover instead of deterministically repeating the failed key.
+
+Also propagate initial crypto-generation failure from em_t::init rather than
+starting a radio object with zero or partial key material.
+---
+ src/em/config/em_configuration.cpp | 8 ++++++++
+ src/em/em.cpp                       | 5 ++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -5581,6 +5581,15 @@ int em_configuration_t::handle_autoconfig_wsc_m1(unsigned char *buff, unsigned
+         //return -1;
+     }
+ 
++    // M1 begins a fresh WSC transaction.  Generate a new registrar nonce and
++    // DH keypair before handle_wsc_m1() replaces the enrollee half with the
++    // values carried by this M1.  In particular, a duplicate M1 must not cause
++    // the controller to resend an M2 with the same unusable registrar key.
++    if (m_crypto.init() != 0) {
++        em_printfout("Failed to initialize registrar crypto for WSC M1");
++        return -1;
++    }
++
+     tlv = reinterpret_cast<em_tlv_t *>(buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)); 
+     tlv_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -2810,7 +2810,10 @@ int em_t::init()
+     m_iq.timeout = EM_PROTO_TOUT;
+ 
+     // initialize the crypto
+-    m_crypto.init();
++    if (m_crypto.init() != 0) {
++        em_printfout("Failed to initialize WSC crypto");
++        return -1;
++    }
+ 
+     size_t stack_size = 0x800000; /* 8MB */
+     pthread_attr_t attr;
+-- 
+2.43.0

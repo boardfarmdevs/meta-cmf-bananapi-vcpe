@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Fri, 21 Aug 2026 22:15:00 -0700
+Subject: [PATCH] cli: join topology to authoritative radio inventory
+
+The get_network topology projection does not place a direct RadioList below
+the Controller and colocated-Agent records.  A recursive RadioList lookup then
+falls into the first descendant and renders that extender's BSSs on several
+unrelated nodes.  This makes topology BSSID/name resolution unsafe after a
+steer even though the flat controller model remains correct.
+
+Read the authoritative get_sta DeviceList once, copy each Agent's RadioList
+into Go-owned values, and join it to topology records by exact AL MAC.  Use the
+same inventory for the devices endpoint and backhaul-band rendering.  A node
+with no matching Agent record now has no invented radios.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/main.go | 72 ++++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 67 insertions(+), 5 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3196,5 +3196,47 @@ func controllerIPHandler(w http.ResponseWriter, r *http.Request) {
+ 
+ }
++
++// loadLiveRadioInventory copies the flat controller Agent inventory into Go
++// values. get_network is a topology projection and its nested child records
++// do not consistently contain their own RadioList.
++func loadLiveRadioInventory() (map[string][]Radio, error) {
++    cmd := C.CString("get_sta OneWifiMesh")
++    defer C.free(unsafe.Pointer(cmd))
++
++    var tree *C.em_network_node_t
++    for attempt := 0; attempt < 3; attempt++ {
++        tree = execEMCommand(cmd, nil)
++        if tree != nil {
++            break
++        }
++        time.Sleep(200 * time.Millisecond)
++    }
++    if tree == nil {
++        return nil, fmt.Errorf("controller returned no radio inventory data")
++    }
++    defer C.free_network_tree(tree)
++
++    deviceList := getNetworkTreeByKey(tree, "DeviceList")
++    if deviceList == nil {
++        return nil, fmt.Errorf("controller radio inventory has no DeviceList")
++    }
++
++    inventory := make(map[string][]Radio)
++    for index := 0; index < int(deviceList.num_children); index++ {
++        device := deviceList.child[index]
++        if device == nil {
++            continue
++        }
++        deviceID := strings.ToLower(getTreeValue(device, "ID"))
++        radioList := getNetworkTreeByKey(device, "RadioList")
++        if deviceID == "" || radioList == nil {
++            continue
++        }
++        inventory[deviceID] = parseRadioList(radioList)
++    }
++    return inventory, nil
++}
++
+ // buildLiveInventory maps the current controller tree to the dashboard models.
+ // Fields absent from EasyMesh stay empty rather than inheriting demo values.
+ func buildLiveInventory() ([]Device, []Client, error) {
+@@ -3227,6 +3269,10 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 		return nil, nil, fmt.Errorf("controller network tree has no Device root")
+ 	}
+ 
++    radioInventory, err := loadLiveRadioInventory()
++    if err != nil {
++        return nil, nil, err
++    }
+ 	var inventoryDevices []Device
+ 	var inventoryClients []Client
+ 	agentCount, extenderCount := 1, 1
+@@ -3242,7 +3288,7 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 		if deviceID == "" || backhaul == nil {
+ 			return
+ 		}
+-		radios := parseRadioList(deviceNode.child[2])
++        radios := radioInventory[strings.ToLower(deviceID)]
+ 		backhaulMedia := getTreeValue(backhaul, "MediaType")
+ 
+ 		role := "Controller"
+@@ -4738,6 +4784,12 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+         return
+     }
+ 
++    radioInventory, err := loadLiveRadioInventory()
++    if err != nil {
++        http.Error(w, "Controller radio inventory unavailable", http.StatusServiceUnavailable)
++        return
++    }
++
+     // Helper to create STA list with circular layout
+     createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
+         var staList []map[string]interface{}
+@@ -4765,8 +4817,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+             return
+         }
+ 
+-        radioTree := getNetworkTreeByKey(deviceNode, "RadioList")
+-        radioList := parseRadioList(radioTree)
++        radioList := radioInventory[strings.ToLower(deviceID)]
+         haulTypes := buildHaulTypes(radioList)
+ 
+         backhaulMacAddr := getTreeValue(backhaulTree, "MACAddress")
+@@ -4825,8 +4876,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+             channel := 0
+ 
+             // parse the band with extender connected
+-            childRadioTree := getNetworkTreeByKey(child, "RadioList")
+-            band, channel = getBandAndChannelFromRadioTree(childRadioTree)
++            childRadios := radioInventory[strings.ToLower(childID)]
++            band, channel = getBandAndChannelFromRadios(childRadios)
+ 
+            edges = append(edges, map[string]interface{}{
+                 "from":     deviceID,
+@@ -5073,6 +5124,17 @@ func parseRadioList(tree *C.em_network_node_t) []Radio {
+     return radios
+ }
+ 
++func getBandAndChannelFromRadios(radios []Radio) (int, int) {
++    for _, radio := range radios {
++        for _, bss := range radio.BSSList {
++            if bss.VapMode == 1 && bss.BSSID != "00:00:00:00:00:00" {
++                return radio.Band, radio.Channel
++            }
++        }
++    }
++    return -1, 0
++}
++
+ /* func: getBandAndChannelFromRadioTree()
+  * Description:
+  * this function Parse the RadioList node and get the band info
+-- 
+2.43.0

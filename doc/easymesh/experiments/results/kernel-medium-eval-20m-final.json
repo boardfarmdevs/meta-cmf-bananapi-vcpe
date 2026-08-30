@@ -1,0 +1,185 @@
+{
+  "configurations": [
+    {
+      "kernel_medium_enabled": false,
+      "matrix_override": false,
+      "name": "stock-built-in",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.107,
+        "rtt_pseudo_max_ms": 0.259
+      },
+      "traffic": {
+        "duration_seconds": 10.006,
+        "guest_cpu": {
+          "capacity_percent": 17.084,
+          "equivalent_core_percent": 102.503,
+          "softirq_percent": 0.101,
+          "steal_percent": 0.169,
+          "system_percent": 0.068
+        },
+        "jitter_ms": 0.0347,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 20832,
+        "received_mbps": 19.998,
+        "requested_rate": "20M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_medium_enabled": false,
+      "matrix_override": false,
+      "name": "userspace-wmediumd-default",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.824,
+        "rtt_pseudo_max_ms": 2.074
+      },
+      "traffic": {
+        "duration_seconds": 10.013,
+        "guest_cpu": {
+          "capacity_percent": 22.973,
+          "equivalent_core_percent": 137.84,
+          "softirq_percent": 1.794,
+          "steal_percent": 0.16,
+          "system_percent": 3.573
+        },
+        "jitter_ms": 0.2745,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 20832,
+        "received_mbps": 19.998,
+        "requested_rate": "20M",
+        "wmediumd_core_percent": 9.887
+      },
+      "userspace_wmediumd_registered": true
+    },
+    {
+      "kernel_counters": {
+        "phy72": {
+          "considered": 243,
+          "delivered": 243,
+          "dropped": 0
+        },
+        "phy73": {
+          "considered": 21072,
+          "delivered": 21072,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 1,
+      "kernel_medium_enabled": true,
+      "matrix_override": false,
+      "name": "kernel-medium-default",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.114,
+        "rtt_pseudo_max_ms": 0.332
+      },
+      "traffic": {
+        "duration_seconds": 10.008,
+        "guest_cpu": {
+          "capacity_percent": 17.027,
+          "equivalent_core_percent": 102.16,
+          "softirq_percent": 0.084,
+          "steal_percent": 0.135,
+          "system_percent": 0.101
+        },
+        "jitter_ms": 0.005,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 20832,
+        "received_mbps": 19.998,
+        "requested_rate": "20M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_counters": {
+        "phy74": {
+          "considered": 240,
+          "delivered": 240,
+          "dropped": 0
+        },
+        "phy75": {
+          "considered": 21069,
+          "delivered": 21069,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 2,
+      "kernel_medium_enabled": true,
+      "matrix_override": true,
+      "name": "kernel-medium-matrix",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.111,
+        "rtt_pseudo_max_ms": 0.228
+      },
+      "traffic": {
+        "duration_seconds": 10.004,
+        "guest_cpu": {
+          "capacity_percent": 17.029,
+          "equivalent_core_percent": 102.175,
+          "softirq_percent": 0.067,
+          "steal_percent": 0.118,
+          "system_percent": 0.067
+        },
+        "jitter_ms": 0.0059,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 20832,
+        "received_mbps": 19.998,
+        "requested_rate": "20M"
+      },
+      "userspace_wmediumd_registered": false
+    },
+    {
+      "kernel_counters": {
+        "phy76": {
+          "considered": 0,
+          "delivered": 0,
+          "dropped": 0
+        },
+        "phy77": {
+          "considered": 0,
+          "delivered": 0,
+          "dropped": 0
+        }
+      },
+      "kernel_generation": 1,
+      "kernel_medium_enabled": true,
+      "matrix_override": false,
+      "name": "kernel-enabled-userspace-precedence",
+      "ping": {
+        "loss_percent": 0.0,
+        "rtt_avg_ms": 0.819,
+        "rtt_pseudo_max_ms": 2.588
+      },
+      "traffic": {
+        "duration_seconds": 10.013,
+        "guest_cpu": {
+          "capacity_percent": 23.116,
+          "equivalent_core_percent": 138.697,
+          "softirq_percent": 3.911,
+          "steal_percent": 0.112,
+          "system_percent": 2.538
+        },
+        "jitter_ms": 0.3235,
+        "lost_packets": 0,
+        "lost_percent": 0,
+        "packets": 20832,
+        "received_mbps": 19.998,
+        "requested_rate": "20M",
+        "wmediumd_core_percent": 9.188
+      },
+      "userspace_wmediumd_registered": true
+    }
+  ],
+  "duration_seconds": 10,
+  "kernel": "7.0.0-30-generic",
+  "rate": "20M",
+  "schema": "hwsim-medium-evaluation.v1",
+  "vcpus": 6
+}

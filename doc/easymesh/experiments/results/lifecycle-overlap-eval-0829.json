@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "evaluation": "bounded startup dependency experiment",
+  "host": "rev140",
+  "results": [
+    {
+      "profile": "5-mesh-20-client",
+      "medium_backend": "userspace",
+      "mode": "overlap",
+      "result": "PASS",
+      "elapsed_ms": 352163,
+      "previous_gated_ms": 381152,
+      "improvement_pct": 7.6,
+      "associated_clients": 20,
+      "clients_with_nonzero_rcpi": 20
+    },
+    {
+      "profile": "5-mesh-50-client",
+      "medium_backend": "kernel",
+      "mode": "overlap",
+      "result": "PASS",
+      "elapsed_ms": 390597,
+      "previous_gated_ms": 409642,
+      "improvement_pct": 4.6,
+      "associated_clients": 50,
+      "clients_with_nonzero_rcpi": 50
+    },
+    {
+      "profile": "5-mesh-50-client",
+      "medium_backend": "kernel",
+      "mode": "burst",
+      "result": "FAIL",
+      "wall_elapsed_ms": 571879,
+      "container_launch_ms": 13599,
+      "associated_clients": 50,
+      "clients_with_nonzero_rcpi": 44,
+      "reason": "client telemetry did not converge when clients launched before BSS readiness"
+    }
+  ],
+  "selected_default": "overlap"
+}

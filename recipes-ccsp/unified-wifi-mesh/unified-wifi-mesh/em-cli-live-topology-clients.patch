@@ -1,0 +1,96 @@
+Make the topology graph consume the same live client snapshot as /clients.
+
+The topology handler and /clients independently walked the libemcli network
+tree. On a live multi-agent model the topology walk consistently omitted the
+three clients owned by the co-located controller agent, while /clients and the
+controller STAList contained all five. Preserve the topology handler's device,
+radio and haul layout, but overlay each node's station list from the successful
+live /clients traversal. Retain the band, SSID and MLD metadata as internal
+Client fields, and use the last-known-good live snapshot on a transient read
+failure.
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -192,6 +192,11 @@
+ 	LastActivity   time.Time     `json:"last_activity"`
+ 	ClientMetrics  ClientMetrics `json:"client_metrics"`
+ 	Location       ClientLocation `json:"location"`
++	// Topology-only fields are collected while walking the same live controller
++	// snapshot as /clients. They are intentionally omitted from the clients API.
++	TopologyBand    int           `json:"-"`
++	TopologySSID    string        `json:"-"`
++	TopologyMLDAddr string        `json:"-"`
+ }
+ 
+ type ClientMetrics struct {
+@@ -3083,6 +3088,8 @@
+ 						MAC: sta.MACAddress, Hostname: sta.MACAddress,
+ 						ConnectedAP: deviceID, ConnectedBSSID: bss.BSSID,
+ 						DeviceType: dt, ConnectionTime: now, LastActivity: now,
++						TopologyBand: radio.Band, TopologySSID: bss.SSID,
++						TopologyMLDAddr: sta.MLDAddr,
+ 					})
+ 				}
+ 			}
+@@ -3100,6 +3107,53 @@
+ 	return liveDevices, liveClients, nil
+ }
+ 
++// overlayLiveTopologyClients makes the topology graph and /clients consume the
++// same authoritative ownership snapshot. The older topology traversal performs
++// a separate libemcli tree walk and can omit stations from some device nodes
++// even while the controller STAList and /clients contain them. Keep the graph's
++// device/radio/haul layout, but replace every node's station list atomically
++// from the live client result. On a transient controller read failure, use the
++// last successful live snapshot rather than reintroducing a partial graph.
++func overlayLiveTopologyClients(nodes []map[string]interface{}) {
++	_, liveClients, err := buildLiveDevicesClients()
++	if err != nil {
++		liveCacheMu.Lock()
++		if haveLiveCache {
++			liveClients = append([]Client(nil), cachedClients...)
++		}
++		haveCache := haveLiveCache
++		liveCacheMu.Unlock()
++		if !haveCache {
++			log.Printf("topology client overlay: live fetch failed: %v", err)
++			return
++		}
++		log.Printf("topology client overlay: live fetch failed (%v), using last-known-good", err)
++	}
++
++	clientsByDevice := make(map[string][]map[string]interface{})
++	for _, client := range liveClients {
++		clientsByDevice[client.ConnectedAP] = append(
++			clientsByDevice[client.ConnectedAP],
++			map[string]interface{}{
++				"staMAC":     client.MAC,
++				"clientType": client.DeviceType,
++				"MLDAddr":    client.TopologyMLDAddr,
++				"band":       client.TopologyBand,
++				"ssid":       client.TopologySSID,
++			},
++		)
++	}
++
++	for _, node := range nodes {
++		deviceID, _ := node["id"].(string)
++		staList := clientsByDevice[deviceID]
++		if staList == nil {
++			staList = []map[string]interface{}{}
++		}
++		node["STAList"] = staList
++	}
++}
++
+ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
+ 
+@@ -4176,6 +4230,7 @@
+     }
+ 
+     traverse(topoDeviceTree, 0, 0, 0, 0)
++    overlayLiveTopologyClients(nodes)
+ 
+     // Send the response to frontend
+     w.Header().Set("Content-Type", "application/json")

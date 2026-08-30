@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000117 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Wed, 26 Aug 2026 11:20:00 -0700
+Subject: [PATCH] cli: resolve wireless parent from live AP BSS owner
+
+The container lab carries IEEE 1905 control traffic over a shared sideband L2
+path.  The controller transport hierarchy can consequently remain a star even
+after the Wi-Fi data plane has formed a multi-hop backhaul chain.  The topology
+endpoint already exposes every child's current upstream BSSID, but copied the
+stale transport-tree parent into the edge's from field.
+
+Build a bounded ownership index from live AP BSS rows and resolve each wireless
+edge through the unique owner of its upstream BSSID.  Do not use backhaul STA
+rows because they repeat the upstream BSSID in every child.  Missing, ambiguous
+and self-owned BSSIDs retain the controller edge rather than inventing a parent.
+Also source the edge band and channel from the resolved parent AP.
+
+This makes the API, WebUI and multihop acceptance test describe the physical
+backhaul tree while leaving the controller's internal transport tree unchanged.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+---
+ src/rdkb-cli/backhaul_signal.go      | 56 ++++++++++++++++++++++++++++
+ src/rdkb-cli/backhaul_signal_test.go | 42 +++++++++++++++++++++
+ src/rdkb-cli/main.go                 | 24 ++++++++++++
+ 3 files changed, 122 insertions(+)
+
+diff --git a/src/rdkb-cli/backhaul_signal.go b/src/rdkb-cli/backhaul_signal.go
+--- a/src/rdkb-cli/backhaul_signal.go
++++ b/src/rdkb-cli/backhaul_signal.go
+@@ -50,6 +50,62 @@ type BackhaulSignal struct {
+ 	AgeSeconds *int64 `json:"age_seconds,omitempty"`
+ }
+ 
++// topologyAPOwner is the minimal live BSS inventory needed to turn a
++// wireless edge's upstream BSSID into its actual data-plane parent.  The
++// controller transport tree can remain a star in the container lab because
++// IEEE 1905 also has a shared sideband L2 path.
++type topologyAPOwner struct {
++	DeviceID string
++	BSSID    string
++	Band     int
++	Channel  int
++}
++
++// resolveTopologyWirelessParents rewrites only uniquely owned wireless
++// edges. Missing, self-owned and ambiguous BSSIDs retain the controller's
++// original edge, so an incomplete inventory cannot invent a topology.
++func resolveTopologyWirelessParents(edges []map[string]interface{}, candidates []topologyAPOwner) int {
++	owners := make(map[string]topologyAPOwner)
++	ambiguous := make(map[string]bool)
++	for _, candidate := range candidates {
++		candidate.DeviceID = strings.ToLower(strings.TrimSpace(candidate.DeviceID))
++		candidate.BSSID = strings.ToLower(strings.TrimSpace(candidate.BSSID))
++		if candidate.DeviceID == "" || candidate.BSSID == "" ||
++			candidate.BSSID == "00:00:00:00:00:00" {
++			continue
++		}
++		if previous, found := owners[candidate.BSSID]; found &&
++			previous.DeviceID != candidate.DeviceID {
++			ambiguous[candidate.BSSID] = true
++			continue
++		}
++		owners[candidate.BSSID] = candidate
++	}
++
++	resolved := 0
++	for _, edge := range edges {
++		mediaType, _ := edge["mediaType"].(string)
++		if strings.EqualFold(strings.TrimSpace(mediaType), "Ethernet") {
++			continue
++		}
++		upstreamBSSID, _ := edge["upstreamBSSID"].(string)
++		upstreamBSSID = strings.ToLower(strings.TrimSpace(upstreamBSSID))
++		owner, found := owners[upstreamBSSID]
++		if !found || ambiguous[upstreamBSSID] {
++			continue
++		}
++		childID, _ := edge["to"].(string)
++		if owner.DeviceID == strings.ToLower(strings.TrimSpace(childID)) {
++			continue
++		}
++		edge["from"] = owner.DeviceID
++		edge["band"] = owner.Band
++		edge["channel"] = owner.Channel
++		resolved++
++	}
++	return resolved
++}
++
+ func parseBackhaulLinkMetric(rcpi int, timestamp string) (BackhaulLinkMetric, bool) {
+ 	// RCPI 0 is a real standards value (at or below -110 dBm). It is only
+ 	// distinguishable from an uninitialized model row when a metric timestamp
+diff --git a/src/rdkb-cli/backhaul_signal_test.go b/src/rdkb-cli/backhaul_signal_test.go
+--- a/src/rdkb-cli/backhaul_signal_test.go
++++ b/src/rdkb-cli/backhaul_signal_test.go
+@@ -118,3 +118,45 @@ func TestDeviceBackhaulSignalUsesExactFreshMetric(t *testing.T) {
+ 		t.Fatalf("local Ethernet device received a radio signal: signal=%+v legacy=%v", local, localLegacy)
+ 	}
+ }
++
++func TestResolveTopologyWirelessParentsFromUniqueAPBSSID(t *testing.T) {
++	edges := []map[string]interface{}{
++		{"from": "agent", "to": "extender-1", "mediaType": "Wireless LAN",
++			"upstreamBSSID": "02:00:00:00:00:10", "band": -1, "channel": 0},
++		{"from": "agent", "to": "extender-2", "mediaType": "Wireless LAN",
++			"upstreamBSSID": "02:00:00:00:00:20", "band": 1, "channel": 0},
++		{"from": "controller", "to": "agent", "mediaType": "Ethernet",
++			"upstreamBSSID": "00:00:00:00:00:00", "band": -1, "channel": 0},
++	}
++	owners := []topologyAPOwner{
++		{DeviceID: "AGENT", BSSID: "02:00:00:00:00:10", Band: 1, Channel: 36},
++		{DeviceID: "EXTENDER-1", BSSID: "02:00:00:00:00:20", Band: 3, Channel: 1},
++		// A backhaul STA row must never be supplied by the inventory adapter;
++		// this synthetic duplicate proves the resolver itself remains bounded
++		// if an ambiguous owner reaches it.
++		{DeviceID: "extender-3", BSSID: "02:00:00:00:00:30", Band: 1, Channel: 36},
++		{DeviceID: "extender-4", BSSID: "02:00:00:00:00:30", Band: 1, Channel: 36},
++	}
++
++	if got := resolveTopologyWirelessParents(edges, owners); got != 2 {
++		t.Fatalf("resolved %d edges, want 2", got)
++	}
++	if edges[0]["from"] != "agent" || edges[0]["band"] != 1 || edges[0]["channel"] != 36 {
++		t.Fatalf("direct extender edge was not resolved to agent AP: %+v", edges[0])
++	}
++	if edges[1]["from"] != "extender-1" || edges[1]["band"] != 3 || edges[1]["channel"] != 1 {
++		t.Fatalf("multihop edge was not resolved to extender AP: %+v", edges[1])
++	}
++	if edges[2]["from"] != "controller" {
++		t.Fatalf("Ethernet edge was rewritten: %+v", edges[2])
++	}
++
++	ambiguous := []map[string]interface{}{{
++		"from": "agent", "to": "extender-5", "mediaType": "Wireless LAN",
++		"upstreamBSSID": "02:00:00:00:00:30", "band": 1, "channel": 36,
++	}}
++	if got := resolveTopologyWirelessParents(ambiguous, owners); got != 0 ||
++		ambiguous[0]["from"] != "agent" {
++		t.Fatalf("ambiguous BSSID invented a parent: %+v", ambiguous[0])
++	}
++}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -5013,6 +5013,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+     }
+ 
+     traverse(topoDeviceTree, 0, 0, 0, 0)
++	resolveTopologyWirelessParents(edges, topologyAPOwnersFromInventory(radioInventory))
+     overlayLiveTopologyClients(nodes)
+ 
+     // Send the response to frontend
+@@ -5278,6 +5279,29 @@ func getBandAndChannelForBSSID(radios []Radio, bssid string) (int, int) {
+     return -1, 0
+ }
+ 
++// topologyAPOwnersFromInventory deliberately accepts AP BSS rows only.
++// Backhaul STA rows repeat their upstream BSSID in each child and therefore
++// cannot identify the owner of that BSSID.
++func topologyAPOwnersFromInventory(inventory map[string][]Radio) []topologyAPOwner {
++	owners := make([]topologyAPOwner, 0)
++	for deviceID, radios := range inventory {
++		for _, radio := range radios {
++			for _, bss := range radio.BSSList {
++				if bss.VapMode != 0 {
++					continue
++				}
++				owners = append(owners, topologyAPOwner{
++					DeviceID: deviceID,
++					BSSID:    bss.BSSID,
++					Band:     radio.Band,
++					Channel:  radio.Channel,
++				})
++			}
++		}
++	}
++	return owners
++}
++
+ // loadLocalRadioChannels reads the colocated Agent's actual kernel radio
+ // state. EasyMesh Operating Channel Reports remain the primary source; this
+ // bounded cache fills the startup gap before the Controller has received one.
+-- 
+2.43.0

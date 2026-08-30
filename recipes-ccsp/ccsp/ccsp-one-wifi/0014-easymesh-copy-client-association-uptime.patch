@@ -1,0 +1,27 @@
+From: Codex <codex@openai.com>
+Date: Thu, 20 Aug 2026 12:20:00 -0700
+Subject: [PATCH] webconfig: copy client association uptime to EasyMesh
+
+The monitor already calculates assoc_dev_data_t.last_connect_time as seconds
+since the station associated, and the EasyMesh em_sta_info_t has the matching
+last_conn_time field.  The associated-clients translator omitted the copy, so
+the agent always received zero and could not report client connection uptime.
+
+Copy the existing observation into the EasyMesh data model.  This is the
+duration of the current association and naturally resets after a disconnect or
+roam.
+
+Upstream-Status: Pending
+
+diff --git a/source/webconfig/wifi_easymesh_translator.c b/source/webconfig/wifi_easymesh_translator.c
+index c5fd7ec..84d78f2 100644
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -1463,6 +1463,7 @@ webconfig_error_t translate_associated_client_object_to_easymesh(webconfig_subd
+                     memcpy(em_sta_dev_info->radiomac, radio_info->intf.mac, sizeof(mac_address_t));
+                     em_sta_dev_info->last_ul_rate = assoc_dev_data->dev_stats.cli_LastDataUplinkRate;
+                     em_sta_dev_info->last_dl_rate = assoc_dev_data->dev_stats.cli_LastDataDownlinkRate;
++                    em_sta_dev_info->last_conn_time = assoc_dev_data->last_connect_time;
+                     em_sta_dev_info->retrans_count = assoc_dev_data->dev_stats.cli_RetransCount;
+                     em_sta_dev_info->signal_strength=assoc_dev_data->dev_stats.cli_SignalStrength;
+                     em_sta_dev_info->pkts_tx=assoc_dev_data->dev_stats.cli_PacketsSent;

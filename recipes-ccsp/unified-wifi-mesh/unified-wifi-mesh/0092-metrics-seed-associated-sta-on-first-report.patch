@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000092 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 01:24:00 -0700
+Subject: [PATCH] metrics: seed associated STA on first report
+
+The initial association event can occur before the EasyMesh agent is ready
+during a cold boot. This is common for the anchor extender's backhaul STA,
+which is already connected to the colocated gateway AP. OneWifi continues to
+publish valid link metrics, but its link-metrics decoder populates the command
+snapshot's consolidated map while the metrics orchestrator incorrectly walks
+the association-event map. It consequently processes no measurement rows.
+
+Walk the command's metrics map. A row in this associated-link metrics
+subdocument is current positive ownership evidence; the subdocument does not
+redundantly populate the row's association Boolean. Insert it into the live
+consolidated map when the association event was missed so the current
+measurement and future reports follow the normal EasyMesh AP Metrics Response
+path.
+
+Upstream-Status: Pending
+---
+ src/orch/em_orch_agent.cpp | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 1111111..2222222 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -355,13 +355,30 @@ int em_orch_agent_t::submit_command(em_cmd_t *pcmd, em_cmd_ctx_t *ctx)
+                 dm = m_mgr->create_data_model(GLOBAL_NET_ID, intf);
+             }
+ 
+-            sta = static_cast<dm_sta_t *> (hash_map_get_first(pcmd->get_data_model()->m_sta_assoc_map));
++            /* Link-metrics decoding populates the command snapshot's
++             * consolidated map, not the association-event map. */
++            sta = static_cast<dm_sta_t *> (hash_map_get_first(pcmd->get_data_model()->m_sta_map));
+             while(sta != NULL) {
+                 em_sta_info_t *em_sta = dm->get_sta_info(sta->get_sta_info()->id, sta->get_sta_info()->bssid, sta->get_sta_info()->radiomac, em_target_sta_map_consolidated);
+                 if (em_sta != NULL) {
+                     memcpy(em_sta, &sta->m_sta_info, sizeof(em_sta_info_t));
++                } else {
++                    /* A link-metrics event is also positive evidence that the
++                     * AP currently owns this associated station.  The first
++                     * association event can precede the EasyMesh agent during
++                     * cold onboarding, especially for a backhaul STA already
++                     * connected to the colocated gateway AP.  Seed the
++                     * consolidated map so this and subsequent measurements
++                     * are emitted in the AP Metrics Response. */
++                    dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
++                    dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
++                    dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
++                    snprintf(key, sizeof(em_long_string_t), "%s@%s@%s",
++                        sta_mac_str, bss_mac_str, radio_mac_str);
++                    em_printfout("Link metrics seeded missing associated STA key=%s", key);
++                    hash_map_put(dm->m_sta_map, strdup(key), new dm_sta_t(*sta));
+                 }
+-                sta = static_cast<dm_sta_t *> (hash_map_get_next(pcmd->get_data_model()->m_sta_assoc_map, sta));
++                sta = static_cast<dm_sta_t *> (hash_map_get_next(pcmd->get_data_model()->m_sta_map, sta));
+             }
+             break;
+ 
+-- 
+2.43.0

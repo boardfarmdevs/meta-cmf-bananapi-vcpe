@@ -1,0 +1,285 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] ctrl: reconcile agent reachability after topology change
+
+IEEE1905 now emits a normal Topology Notification when an established
+neighbor expires, but the controller routes every notification through the
+client-association path.  A neighbor-only notification has no BSSID and is
+discarded before Unified Wi-Fi Mesh can react.  The stale agent consequently
+remains in the active topology indefinitely.
+
+Route notifications without a Client Association Event through a synchronized
+controller radio and start a bounded, one-shot Topology Query probe of the
+affected agent.  The AL node is only a transport listener and never reaches the
+topology-synchronized protocol state required by the configuration handler.
+Any valid EasyMesh frame refreshes that agent's controller-owned last-seen state.
+If an agent does not answer within ten seconds, suppress it from the active
+topology without deleting its runtime or persistent identity.  The first
+valid returning frame makes the same logical device reachable and publishes
+it again.  This also handles re-parenting: an agent reachable through any path
+answers its direct controller probe and is never aged out.  The local AL-SAP
+indication carries the expired neighbor in its endpoint metadata; the Ethernet
+multicast notification remains a standard IEEE 1905 frame.
+
+The probe is triggered only by the IEEE1905 topology-change notification; it
+is not a periodic poll and uses no wmediumd or WebUI knowledge.
+The colocated Agent is exempt because it is a local controller data-model
+identity rather than a remote radio endpoint and does not answer this probe.
+
+Upstream-Status: Pending
+---
+ inc/em_ctrl.h                           | 19 +++++++
+ inc/em_mgr.h                            |  6 +++
+ src/ctrl/dm_easy_mesh_ctrl.cpp          | 11 +++++
+ src/ctrl/em_ctrl.cpp                    | 112 ++++++++++++++++++++++++++++++++
+ src/em/config/em_configuration.cpp      |  8 +++-
+ 5 files changed, 155 insertions(+), 1 deletion(-)
+
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -19,6 +19,10 @@
+ #ifndef EMCTRL_H
+ #define EMCTRL_H
+ 
++#include <chrono>
++#include <map>
++#include <mutex>
++#include <string>
+ #include "em.h"
+ #include "em_mgr.h"
+ #include "dm_easy_mesh_ctrl.h"
+@@ -39,6 +43,15 @@ class em_ctrl_t : public em_mgr_t {
+     em_cmd_ctrl_t   *m_ctrl_cmd;
+     em_orch_ctrl_t *m_orch;
+ 	em_dev_test_t dev_test;
++
++    struct agent_liveness_t {
++        std::chrono::steady_clock::time_point last_seen;
++        std::chrono::steady_clock::time_point probe_deadline;
++        bool probe_pending = false;
++        bool reachable = true;
++    };
++    std::mutex m_liveness_mutex;
++    std::map<std::string, agent_liveness_t> m_agent_liveness;
+ 
+ 	/**!
+ 	 * @brief Handles a bus event.
+@@ -658,6 +671,12 @@ public:
+ 	 */
+ 	em_t *find_em_for_msg_type(unsigned char *data, unsigned int len, em_t *al_em);
+ 
++    void handle_topology_change(mac_address_t source_al_mac) override;
++
++    void note_agent_activity(mac_address_t al_mac) override;
++
++    bool is_agent_reachable(mac_address_t al_mac) override;
++
+ 	/**!
+ 	* @brief Callback registered for getting colocated agent ID
+ 	*
+diff --git a/inc/em_mgr.h b/inc/em_mgr.h
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -579,6 +579,12 @@ public:
+ 	 */
+ 	virtual void update_network_topology() = 0;
+ 
++    // Controller liveness hooks.  Agent managers intentionally keep the
++    // no-op defaults because reachability is controller-owned state.
++    virtual void handle_topology_change(mac_address_t source_al_mac) { (void)source_al_mac; }
++    virtual void note_agent_activity(mac_address_t al_mac) { (void)al_mac; }
++    virtual bool is_agent_reachable(mac_address_t al_mac) { (void)al_mac; return true; }
++
+ 	/**!
+ 	 * @brief Publish the network topology.
+ 	 *
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -8306,6 +8306,17 @@ void dm_easy_mesh_ctrl_t::update_network_topology()
+     dm = get_first_dm();
+     while (dm != NULL) {
+         if (dm->is_controller() == false) {
++            if (!em_ctrl_t::get_em_ctrl_instance()->is_agent_reachable(
++                    dm->m_device.m_device_info.intf.mac)) {
++                if (g_network_topology->find_topology(dm) != NULL) {
++                    em_printfout("Suppressing unreachable agent %s from active topology",
++                        util::mac_to_string(dm->m_device.m_device_info.intf.mac).c_str());
++                    g_network_topology->remove(dm);
++                }
++                dm = get_next_dm(dm);
++                continue;
++            }
++
+             std::string dev_mac_str = util::mac_to_string(dm->m_device.m_device_info.intf.mac);
+             if (g_network_topology->find_topology(dm) == NULL) {
+                 em_printfout("New dev_mac:%s num_bss:%d added in topology.",
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -515,6 +515,99 @@ void em_ctrl_t::handle_2s_tick()
+ 
+ void em_ctrl_t::handle_1s_tick()
+ {
++    std::vector<std::string> expired;
++    const auto now = std::chrono::steady_clock::now();
++
++    {
++        std::lock_guard<std::mutex> lock(m_liveness_mutex);
++        for (auto &entry : m_agent_liveness) {
++            agent_liveness_t &state = entry.second;
++            if (state.probe_pending && now >= state.probe_deadline) {
++                state.probe_pending = false;
++                if (state.reachable) {
++                    state.reachable = false;
++                    expired.push_back(entry.first);
++                }
++            }
++        }
++    }
++
++    if (!expired.empty()) {
++        for (const auto &al_mac : expired) {
++            em_printfout("Agent reachability expired after topology-change probe: %s",
++                al_mac.c_str());
++        }
++        update_network_topology();
++        publish_network_topology();
++    }
++}
++
++void em_ctrl_t::handle_topology_change(mac_address_t source_al_mac)
++{
++    dm_network_t *network = m_data_model.get_first_network();
++    if (network != NULL && memcmp(source_al_mac,
++            network->get_colocated_agent_interface_mac(), sizeof(mac_address_t)) == 0) {
++        em_printfout("Ignoring remote-neighbor liveness probe for colocated agent %s",
++            util::mac_to_string(source_al_mac).c_str());
++        return;
++    }
++
++    std::vector<em_t *> radios;
++    const std::string key = util::mac_to_string(source_al_mac);
++    const auto now = std::chrono::steady_clock::now();
++    get_all_em_for_al_mac(source_al_mac, radios);
++    if (radios.empty()) {
++        em_printfout("Neighbor-only Topology Notification from unknown agent %s; ignoring",
++            key.c_str());
++        return;
++    }
++
++    {
++        std::lock_guard<std::mutex> lock(m_liveness_mutex);
++        agent_liveness_t &state = m_agent_liveness[key];
++        state.probe_pending = true;
++        state.probe_deadline = now + std::chrono::seconds(10);
++    }
++
++    int rc = static_cast<em_configuration_t *>(radios.front())->send_topology_query_msg();
++    em_printfout("Neighbor-only Topology Notification; liveness query agent=%s rc=%d",
++        key.c_str(), rc);
++}
++
++void em_ctrl_t::note_agent_activity(mac_address_t al_mac)
++{
++    const std::string key = util::mac_to_string(al_mac);
++    bool restored = false;
++    {
++        std::lock_guard<std::mutex> lock(m_liveness_mutex);
++        agent_liveness_t &state = m_agent_liveness[key];
++        state.last_seen = std::chrono::steady_clock::now();
++        state.probe_pending = false;
++        if (!state.reachable) {
++            state.reachable = true;
++            restored = true;
++        }
++    }
++
++    if (restored) {
++        em_printfout("Agent reachability restored: %s", key.c_str());
++        update_network_topology();
++        publish_network_topology();
++    }
++}
++
++bool em_ctrl_t::is_agent_reachable(mac_address_t al_mac)
++{
++    dm_network_t *network = m_data_model.get_first_network();
++    if (network != NULL && memcmp(al_mac,
++            network->get_colocated_agent_interface_mac(), sizeof(mac_address_t)) == 0) {
++        return true;
++    }
++
++    const std::string key = util::mac_to_string(al_mac);
++    std::lock_guard<std::mutex> lock(m_liveness_mutex);
++    const auto state = m_agent_liveness.find(key);
++    return state == m_agent_liveness.end() || state->second.reachable;
+ 
+ }
+ 
+@@ -955,6 +1020,21 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             break;
+ 
+         case em_msg_type_topo_notif:
++            if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)),
++                    len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_bss_id(&bssid) == false) {
++                em_t *candidate = static_cast<em_t *> (hash_map_get_first(m_em_map));
++                while (candidate != NULL) {
++                    if (!candidate->is_al_interface_em() &&
++                            candidate->get_service_type() == em_service_type_ctrl &&
++                            candidate->get_state() >= em_state_ctrl_topo_synchronized) {
++                        em = candidate;
++                        break;
++                    }
++                    candidate = static_cast<em_t *> (hash_map_get_next(m_em_map, candidate));
++                }
++                break;
++            }
++            /* Client-association notifications continue through the BSSID path. */
+         case em_msg_type_client_cap_rprt:
+         case em_msg_type_ap_metrics_rsp:
+         case em_msg_type_failed_conn:
+@@ -1160,6 +1239,10 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             break;
+     }
+ 
++    if (em != NULL) {
++        note_agent_activity(hdr->src);
++    }
++
+     return em;
+ }
+ 
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2017,6 +2017,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+     em_sta_info_t sta_info;
+     em_bus_event_type_client_assoc_params_t    raw;
+     bool updated_any = false;
++    bool found_assoc_event = false;
+     bool assoc_event;
+     unsigned int mld_i, aff_j, r;
+     em_assoc_sta_mld_info_t *assoc_info = NULL;
+@@ -2058,6 +2059,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+ 
+     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
+         if (tlv->type == em_tlv_type_client_assoc_event) {
++            found_assoc_event = true;
+             assoc_evt_tlv = reinterpret_cast<em_client_assoc_event_t *> (tlv->value);
+             dm_easy_mesh_t::macbytes_to_string(assoc_evt_tlv->cli_mac_address, sta_mac_str);
+             dm_easy_mesh_t::macbytes_to_string(assoc_evt_tlv->bssid, bssid_str);
+@@ -2159,6 +2161,11 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+ 		tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+     }
+ 
++    if (!found_assoc_event) {
++        em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *> (buff);
++        get_mgr()->handle_topology_change(hdr->src);
++    }
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0

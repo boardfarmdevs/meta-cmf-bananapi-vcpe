@@ -1,0 +1,58 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] ctrl: commit association before capability query
+
+An associated-client Topology Notification is the controller's authoritative
+indication that a STA moved to a BSS.  The controller instead deferred the
+STA-list update until the subsequent Client Capability Report.  STA-assoc
+commands are serialized on a radio and retry capability queries, so a burst of
+two or more notifications could leave later clients attributed to their old
+BSS for tens of seconds even though every notification was received and
+decoded successfully.
+
+Record the association delta immediately in the per-device pending STA map and
+schedule its normal table update.  The existing STA-list consolidation keeps a
+previous valid association frame when this notification-only row has no frame,
+and the capability report can enrich the same association asynchronously when
+it arrives.  Disassociation handling is unchanged.
+
+This makes topology correctness depend on the mandatory Topology Notification,
+not on the latency or success of a separate capability exchange.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2144,9 +2144,25 @@
+                             util::mac_to_string(sta_info.id).c_str());
+                 }
+             } else {
+-                em_printfout("topo notification assoc defer: sta=%s bssid=%s",
++                dm_sta_t *pending = static_cast<dm_sta_t *>(
++                        hash_map_get(dm->m_sta_assoc_map, key));
++                if (pending == NULL) {
++                    hash_map_put(dm->m_sta_assoc_map, strdup(key),
++                            new dm_sta_t(&sta_info));
++                } else {
++                    /* A capability report may already have populated this
++                     * pending row.  Update attribution without discarding its
++                     * association frame. */
++                    memcpy(pending->m_sta_info.id, sta_info.id, sizeof(mac_address_t));
++                    memcpy(pending->m_sta_info.bssid, sta_info.bssid, sizeof(mac_address_t));
++                    memcpy(pending->m_sta_info.radiomac, sta_info.radiomac,
++                            sizeof(mac_address_t));
++                    pending->m_sta_info.associated = true;
++                }
++                dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
++                em_printfout("topo notification assoc recorded: sta=%s bssid=%s key=%s",
+                         util::mac_to_string(sta_info.id).c_str(),
+-                        util::mac_to_string(sta_info.bssid).c_str());
++                        util::mac_to_string(sta_info.bssid).c_str(), key);
+             }
+ 
+             memcpy(raw.dev, dev_mac, sizeof(mac_address_t));
+-- 
+2.43.0

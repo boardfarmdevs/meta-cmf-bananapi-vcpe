@@ -1,0 +1,184 @@
+Topology Response: do not wait for, or report BSSs from, a disabled radio.
+
+An agent answers a 1905 Topology Query only after checking that every em_t
+belonging to the queried AL MAC has reached em_state_agent_onewifi_bssconfig_ind:
+
+    for (auto &em : em_radios) {
+        if ((em->get_service_type() == em_service_type_agent) &&
+            (em->get_state() < em_state_agent_onewifi_bssconfig_ind)) {
+            em_printfout("radio %s is not configured, ignoring", ...);
+            em_radios.clear();
+            return;
+        }
+    }
+
+A radio that is disabled never runs through OneWifi's VAP configuration, so its
+em_t stays at em_state_agent_unconfigured for the lifetime of the process. The
+loop above therefore returns on every single Topology Query, forever, and the
+agent never sends a Topology Response at all -- not even for the radios that are
+perfectly well configured.
+
+Observed on both agents in this container setup, where the 6GHz radio is
+disabled (see ccsp-one-wifi patch 0006):
+
+    ctrl:  40 Topology Queries sent to 02:00:00:7d:10:c0, one per second
+    agent: 40 x "radio 02:00:00:7d:10:c0 is not configured, ignoring"
+           0  x "All radios are configured ... sending topology response"
+
+and on the extender:
+
+    41 x "radio 02:00:00:d5:d9:bc is not configured, ignoring"
+
+02:00:00:d5:d9:bc is Band 3 (6GHz), vap private_ssid_6g, radio index 2, whose
+data model entry reads "RadioName": "radio3", "Enabled": false, "FreqBand": 16
+in the OneWifi JSON the agent ingests. The 2.4GHz and 5GHz radios in the same
+JSON are "Enabled": true and do reach bssconfig_ind.
+
+The consequence is not limited to topology reporting. The AP Operational BSS TLV
+rides in send_topology_response_msg(), so while this loop keeps returning early
+the controller never learns any agent's operational BSSs: BSSList comes back
+empty for every radio, no station is ever attributed to a BSS, and steer_sta
+answers Error_No_Config_Change_Detected. Client steering is unreachable until
+the Topology Response is sent.
+
+Skip radios whose data model says they are disabled instead of blocking on them.
+This is the same test the dm layer already applies when picking a backhaul BSS
+(dm_easy_mesh_t::get_backhaul_bss_info and its bsta counterpart both do
+"if (!radio->m_radio_info.enabled || ...) continue;"), so a disabled radio is
+already understood elsewhere to be something to step over rather than wait for.
+
+Disabled radios are also excluded from the em_state_agent_topo_synchronized
+assignment that follows a successful send -- they were never synchronized, and
+claiming otherwise would misreport their state.
+
+create_operational_bss_tlv_topology() needs no change: it already skips disabled
+BSSes, so a disabled radio simply contributes an entry with bss_num = 0, which
+is what the spec expects for a radio with no operational BSS.
+
+Note, not fixed here: em_capability.cpp's handle_ap_radio_basic_cap does
+"radio_info->enabled = true;" unconditionally for every radio an agent reports.
+The AP Basic Capability TLV carries no enabled bit, so there is nothing to
+derive a real value from at that point, and the controller's view of every radio
+is enabled regardless of the truth. That is a latent defect -- it can make the
+controller pick a disabled radio's BSS as a backhaul candidate via the dm checks
+mentioned above -- but it is on the controller side and is not what deadlocks
+the Topology Response. Left alone rather than papered over with an invented
+value.
+Second hunk, found by testing the first one: with the Topology Response finally
+being sent, the controller received it and still stored nothing --
+
+    handle_topology_response:2243: Failed to handle operational BSS due to
+    SSID misconfiguration.
+
+repeated once per response, and BSSList stayed at 0 rows. The cause is the same
+disabled radio. Its VAPs never received a WSC M2 (that is what configuring a
+radio does), so they still carry the image default SSID, and the agent was
+reporting them in the AP Operational BSS TLV:
+
+    print_ap_operational_bss_tlv: Radio: 02:00:00:a6:3f:ee
+    print_ap_operational_bss_tlv:   BSS:02:00:00:a6:3f:ee SSID:BPI-RDKB-MLO-AP-
+    print_ap_operational_bss_tlv:   BSS:02:00:00:17:0d:e3 SSID:mesh_backhaul
+    print_ap_operational_bss_tlv:   BSS:02:00:00:40:54:ab SSID:BPI-RDKB-MLO-AP-
+
+The controller's handle_ap_operational_bss() checks every reported SSID against
+NetworkSSIDList (private_ssid, iot_ssid, lnf_radius, mesh_backhaul, hotspot) and
+returns -2 on the first one that does not match -- aborting the entire TLV, so
+none of the BSSs from any radio are stored, not just the offending ones. The
+controller logged exactly one distinct offender, 30 times: BPI-RDKB-MLO-AP-.
+
+So report no BSSs for a disabled radio. A radio that cannot beacon has no
+operational BSS by definition, which is what the TLV is for; the radio itself
+is still listed, with bss_num = 0.
+
+Worth noting separately: the controller discarding a whole TLV because one BSS
+carries an unexpected SSID is fragile -- a single stale VAP anywhere in the mesh
+suppresses topology for every radio on that agent. Skipping the offending BSS
+would be more robust. Not changed here, because that validation drives the
+ssid_mismatch/renew flow upstream deliberately, and fixing the agent to stop
+reporting non-operational BSSs addresses the actual defect rather than making
+the controller tolerant of bad input.
+
+Upstream: unified-wifi-mesh v0.3.1 (SRCREV c0e72a3).
+
+---
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 1f534a8c..7935bf68 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -949,6 +949,17 @@ int em_configuration_t::create_operational_bss_tlv_topology(unsigned char *buff)
+         radio->bss_num = 0;
+         bss = radio->bss;
+         all_bss_len = 0;
++        // A radio that is administratively disabled has no operational BSSs. Its
++        // VAPs never beacon, and they still carry the image default SSID because
++        // no WSC M2 was ever applied to them. Reporting those makes the
++        // controller's handle_ap_operational_bss() hit an SSID that is not in
++        // NetworkSSIDList and reject the whole TLV, so no BSS from any radio is
++        // stored. Report the radio itself with bss_num = 0.
++        if (dm->get_radio_by_ref(radio_index).m_radio_info.enabled == false) {
++            radio = reinterpret_cast<em_ap_op_bss_radio_t *>(reinterpret_cast<unsigned char *>(radio) + sizeof(em_ap_op_bss_radio_t));
++            tlv_len += static_cast<short unsigned int>(sizeof(em_ap_op_bss_radio_t));
++            continue;
++        }
+         for (bss_index = 0; bss_index < dm->get_num_bss(); bss_index++) {
+             if(dm->m_bss[bss_index].m_bss_info.enabled == false) {
+                 //Skip SSIDs that are disabled for operational bss list
+@@ -5773,6 +5784,31 @@ int em_configuration_t::handle_autoconfig_renew(unsigned char *buff, unsigned in
+     return 0;
+ }
+ 
++// A radio that is administratively disabled never runs through OneWifi's VAP
++// configuration, so its em_t stays at em_state_agent_unconfigured forever.
++// Callers that wait for "all radios" must skip these or they wait forever.
++static bool is_radio_disabled(em_t *em)
++{
++    dm_easy_mesh_t *dm;
++    dm_radio_t *radio;
++
++    if (em == NULL) {
++        return false;
++    }
++
++    dm = em->get_data_model();
++    if (dm == NULL) {
++        return false;
++    }
++
++    radio = dm->get_radio(em->get_radio_interface_mac());
++    if (radio == NULL) {
++        return false;
++    }
++
++    return (radio->m_radio_info.enabled == false);
++}
++
+ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+ {
+     unsigned char *tlvs;
+@@ -5830,7 +5866,15 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+                 std::vector<em_t*> em_radios;
+                 get_mgr()->get_all_em_for_al_mac(hdr->dst, em_radios);
+                 for (auto &em : em_radios) {
+-                    if ((em->get_service_type() == em_service_type_agent) && (em->get_state() < em_state_agent_onewifi_bssconfig_ind)) {
++                    if (em->get_service_type() != em_service_type_agent) {
++                        continue;
++                    }
++                    if (is_radio_disabled(em)) {
++                        em_printfout("radio %s is disabled, not waiting for it to configure",
++                            util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                        continue;
++                    }
++                    if (em->get_state() < em_state_agent_onewifi_bssconfig_ind) {
+                         em_printfout("radio %s is not configured, ignoring", util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                         em_radios.clear();
+                         return;
+@@ -5840,6 +5884,9 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+                 len = send_topology_response_msg(data, ntohs(cmdu->id));
+                 if(len) {
+                     for(auto &em : em_radios) {
++                            if (is_radio_disabled(em)) {
++                                continue;
++                            }
+                             em->set_state(em_state_agent_topo_synchronized);
+                     }
+                     em_printfout("Sent topology response message, set state to em_state_agent_topo_synchronized");

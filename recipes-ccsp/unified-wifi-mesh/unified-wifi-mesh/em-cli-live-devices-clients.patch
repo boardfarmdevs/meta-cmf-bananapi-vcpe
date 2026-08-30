@@ -1,0 +1,193 @@
+Live /api/v1/devices and /api/v1/clients for the em_cli dashboard.
+Applies to src/rdkb-cli/main.go. The stock handlers return getDefaultDevices()
+/getSampleClients() (hardcoded demo data); this makes them build from the live
+controller tree (get_network OneWifiMesh), reusing loadTopologyFromDeviceTree's
+traversal, so the dashboard cards match the Topology tab. Controller access is
+serialized and retried, and the last live result is cached, so a transient
+get_network hiccup keeps showing real data instead of flapping to the demo set.
+---
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -2986,19 +2986,146 @@
+     }
+ 
+ }
++// buildLiveDevicesClients walks the controller's live network tree
++// (get_network OneWifiMesh) and returns the mesh devices and the associated
++// fronthaul clients, mapped onto the dashboard's Device/Client models. Same
++// traversal and STA filtering as loadTopologyFromDeviceTree, so the dashboard
++// cards and the Topology tab agree.
++// controllerMu serializes libemcli C.exec calls: concurrent connections to the
++// controller (the dashboard polls /devices and /clients together) can transiently
++// return nil, which used to flap the UI to the demo fallback.
++var controllerMu sync.Mutex
++
++// last successful live result, so a transient get_network hiccup keeps showing
++// the real data instead of dropping to empty (and never to the demo samples).
++var (
++	liveCacheMu   sync.Mutex
++	cachedDevices []Device
++	cachedClients []Client
++	haveLiveCache bool
++)
++
++func buildLiveDevicesClients() ([]Device, []Client, error) {
++	controllerMu.Lock()
++	defer controllerMu.Unlock()
++
++	cmd := C.CString("get_network OneWifiMesh")
++	defer C.free(unsafe.Pointer(cmd))
++	var tree *C.em_network_node_t
++	for attempt := 0; attempt < 3; attempt++ {
++		if tree = C.exec(cmd, C.strlen(cmd), nil); tree != nil {
++			break
++		}
++		time.Sleep(200 * time.Millisecond)
++	}
++	if tree == nil {
++		return nil, nil, fmt.Errorf("controller returned no network data")
++	}
++	rootDevice := C.get_network_tree_by_key(tree, C.CString("Device"))
++	if rootDevice == nil {
++		return nil, nil, fmt.Errorf("no Device in network tree")
++	}
++
++	var liveDevices []Device
++	var liveClients []Client
++	agentCount, extenderCount := 1, 1
++	now := time.Now()
++
++	var traverse func(deviceNode *C.em_network_node_t, depth int)
++	traverse = func(deviceNode *C.em_network_node_t, depth int) {
++		if deviceNode == nil {
++			return
++		}
++		deviceID := getTreeValue(deviceNode, "ID")
++		backhaulTree := C.get_network_tree_by_key(deviceNode, C.CString("Backhaul"))
++		if backhaulTree == nil {
++			return
++		}
++		radioList := parseRadioList(deviceNode.child[2])
++
++		role := "Controller"
++		if depth != 0 {
++			bmac := getTreeValue(backhaulTree, "MACAddress")
++			bmedia := getTreeValue(backhaulTree, "MediaType")
++			if bmac == "00:00:00:00:00:00" || bmedia == "Ethernet" {
++				role = fmt.Sprintf("Agent-%d", agentCount)
++				agentCount++
++			} else {
++				role = fmt.Sprintf("Extender-%d", extenderCount)
++				extenderCount++
++			}
++		}
++		liveDevices = append(liveDevices, Device{
++			MAC: deviceID, Role: role, Vendor: "RDK", Model: "EasyMesh R6",
++			Status: "Online", LastSeen: now,
++		})
++
++		seen := make(map[string]struct{})
++		for _, radio := range radioList {
++			for _, bss := range radio.BSSList {
++				for _, sta := range bss.STAList {
++					if !sta.Associated || sta.SSID == "" {
++						continue
++					}
++					if bss.HaulType == "Backhaul" && bss.SSID == sta.SSID {
++						continue
++					}
++					id := sta.MACAddress + "_" + sta.MLDAddr
++					if _, ok := seen[id]; ok {
++						continue
++					}
++					seen[id] = struct{}{}
++					dt := sta.ClientType
++					if dt == "" {
++						dt = "Wi-Fi Client"
++					}
++					liveClients = append(liveClients, Client{
++						MAC: sta.MACAddress, Hostname: sta.MACAddress,
++						ConnectedAP: deviceID, ConnectedBSSID: bss.BSSID,
++						DeviceType: dt, ConnectionTime: now, LastActivity: now,
++					})
++				}
++			}
++		}
++
++		childList := C.get_network_tree_by_key(backhaulTree, C.CString("Child"))
++		if childList == nil {
++			return
++		}
++		for i := 0; i < int(childList.num_children); i++ {
++			traverse(childList.child[i], depth+1)
++		}
++	}
++	traverse(rootDevice, 0)
++	return liveDevices, liveClients, nil
++}
++
+ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
+ 
++	liveDevices, liveClients, err := buildLiveDevicesClients()
++	if err != nil {
++		// Keep showing the last real data; never the demo samples.
++		log.Printf("getDevicesHandler: live fetch failed (%v), serving last-known-good", err)
++		liveCacheMu.Lock()
++		liveDevices = cachedDevices
++		liveCacheMu.Unlock()
++	} else {
++		liveCacheMu.Lock()
++		cachedDevices, cachedClients, haveLiveCache = liveDevices, liveClients, true
++		liveCacheMu.Unlock()
++	}
++
+ 	onlineCount := 0
+-	for _, device := range devices {
++	for _, device := range liveDevices {
+ 		if device.Status == "Online" {
+ 			onlineCount++
+ 		}
+ 	}
+ 
+ 	response := map[string]interface{}{
+-		"devices": devices,
+-		"total":   len(devices),
++		"devices": liveDevices,
++		"total":   len(liveDevices),
+ 		"online":  onlineCount,
+ 		"updated": time.Now(),
+ 	}
+@@ -3054,16 +3181,29 @@
+ func getClientsHandler(w http.ResponseWriter, r *http.Request) {
+ 	w.Header().Set("Content-Type", "application/json")
+ 
++	liveDevices, liveClients, err := buildLiveDevicesClients()
++	if err != nil {
++		// Keep showing the last real data; never the demo samples.
++		log.Printf("getClientsHandler: live fetch failed (%v), serving last-known-good", err)
++		liveCacheMu.Lock()
++		liveClients = cachedClients
++		liveCacheMu.Unlock()
++	} else {
++		liveCacheMu.Lock()
++		cachedDevices, cachedClients, haveLiveCache = liveDevices, liveClients, true
++		liveCacheMu.Unlock()
++	}
++
+ 	activeCount := 0
+-	for _, client := range clients {
++	for _, client := range liveClients {
+ 		if time.Since(client.LastActivity) < 5*time.Minute {
+ 			activeCount++
+ 		}
+ 	}
+ 
+ 	response := map[string]interface{}{
+-		"clients": clients,
+-		"total":   len(clients),
++		"clients": liveClients,
++		"total":   len(liveClients),
+ 		"active":  activeCount,
+ 		"updated": time.Now(),
+ 	}

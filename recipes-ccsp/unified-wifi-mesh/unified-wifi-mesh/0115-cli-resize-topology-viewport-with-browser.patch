@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 24 Aug 2026 21:30:00 -0700
+Subject: [PATCH] cli: resize topology viewport with browser
+
+The topology container follows the responsive application width, but its SVG
+keeps the pixel dimensions measured when the graph was first rendered. After
+maximizing a browser, the newly exposed area is only the white container
+background. Panning graph content into it clips the content at the stale SVG
+edge; reloading happens to hide the bug by recreating the SVG at the new size.
+
+Observe the topology element as well as window resize events and update only
+the existing SVG viewport dimensions. Preserve the current D3 transform, node
+positions and pointer interaction. Update the dormant force-center dimensions
+for a later explicit Optimize Layout operation without restarting, refitting or
+redrawing the graph during resize.
+
+Upstream-Status: Pending
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 57 +++++++++++++++++++++++++++++++++--
+ 2 files changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index f701bd1..6cf41bf 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2038,7 +2038,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=mesh-device-backhaul-signal-1"></script>
++    <script src="static/script.js?v=topology-responsive-viewport-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 94a33cb..69c4fe1 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -36,6 +36,8 @@ class EasyMeshController {
+     this.topology = {};
+     this.staPositionCache = new Map();
+     this.staMoveEffects = new Map();
++    this.topologyResizeFrame = null;
++    this.topologyResizeObserver = null;
+     this.charts = {};
+     this.refreshIntervals = {};
+     this.policyByDeviceId = {};
+@@ -459,10 +461,13 @@ class EasyMeshController {
+       });
+     })();
+ 
+-    // Window resize handler for charts
++    // Keep fixed-pixel SVG dimensions synchronized with the responsive pane.
++    // ResizeObserver also covers layout changes that do not resize the window.
+     window.addEventListener('resize', () => {
+       this.resizeCharts();
++      this.scheduleTopologyViewportResize();
+     });
++    this.observeTopologyViewport();
+   }
+ 
+   /**
+@@ -2522,6 +2527,56 @@ async handleWebSocketMessage(data) {
+     view.svg.call(view.zoom.transform, transform);
+   }
+ 
++  /** Observe the responsive topology pane without rebuilding its D3 graph. */
++  observeTopologyViewport() {
++    const container = document.getElementById('topology-visualization');
++    if (!container || typeof ResizeObserver !== 'function') return false;
++
++    this.topologyResizeObserver?.disconnect?.();
++    this.topologyResizeObserver = new ResizeObserver(() => {
++      this.scheduleTopologyViewportResize();
++    });
++    this.topologyResizeObserver.observe(container);
++    return true;
++  }
++
++  /** Coalesce window and element resize notifications into one paint frame. */
++  scheduleTopologyViewportResize() {
++    if (this.topologyResizeFrame != null) return;
++    const schedule = typeof window.requestAnimationFrame === 'function'
++      ? window.requestAnimationFrame.bind(window)
++      : callback => setTimeout(callback, 0);
++    this.topologyResizeFrame = schedule(() => {
++      this.topologyResizeFrame = null;
++      this.resizeTopologyViewport();
++    });
++  }
++
++  /**
++   * Resize only the SVG viewport. Preserve the operator's current pan/zoom,
++   * cached node positions and active pointer interaction.
++   */
++  resizeTopologyViewport() {
++    const container = document.getElementById('topology-visualization');
++    const view = this.topologyView;
++    if (!container || !view?.svg) return false;
++
++    const width = Math.floor(container.clientWidth);
++    const height = Math.floor(container.clientHeight);
++    if (width <= 0 || height <= 0 ||
++        (width === view.width && height === view.height)) return false;
++
++    view.svg.attr('width', width).attr('height', height);
++    view.width = width;
++    view.height = height;
++
++    // A later Optimize Layout should settle around the resized viewport, but
++    // resizing alone must not restart the simulation or move the graph.
++    const center = this.topologySimulation?.force?.('center');
++    if (center?.x && center?.y) center.x(width / 2).y(height / 2);
++    return true;
++  }
++
+   /**
+    * Export the current topology as structured data or as the visible diagram.
+    */
+-- 
+2.39.2

@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000102 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 12:50:00 -0700
+Subject: [PATCH] agent: resolve mesh STA radio identity from VAP index
+
+The live `mesh sta` WebConfig snapshot identifies the VAP and current BSSID
+but does not populate its EasyMesh RUID or bSTA MAC.  The agent consequently
+committed the snapshot under RUID 00:00:00:00:00:00.  No per-radio EasyMesh
+instance matched that command, so the physical link and OneWifi RBUS state
+changed while periodic Topology Responses continued advertising the previous
+parent.
+
+For a mesh-STA bus event with a missing RUID, match the stable OneWifi VAP
+index to the existing logical bSTA and retain its EasyMesh radio, device and
+local-STA identity.  Use the event type as the boundary because the decoded
+OneWifi VAP mode is not an EasyMesh enum.  The normal single-bSTA commit can
+then replace the old BSSID and the existing OneWifi callback command reaches
+the correct radio.  Normalize a connected callback to its single decoded BSS
+when the translator leaves the temporary count at zero, and ignore transient
+disconnected snapshots.  Reject ambiguous/no-match cases rather than assigning
+an unrelated radio.
+
+Upstream-Status: Pending
+---
+ src/agent/dm_easy_mesh_agent.cpp | 57 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 1111111..2222222 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -345,5 +345,7 @@ int dm_easy_mesh_agent_t::analyze_onewifi_vap_cb(em_bus_event_t *evt, em_cmd_t *
+     em_freq_band_t freq_band = em_freq_band_unknown;
+     const char *json_data = reinterpret_cast<char *> (evt->u.raw_buff);
++    em_bss_info_t *incoming_bss;
++    em_bss_info_t *current_bss;
+ 
+     webconfig_proto_easymesh_init(&ext, &dm, NULL, NULL, get_num_radios, set_num_radios,
+             get_num_op_class, set_num_op_class, get_num_bss, set_num_bss,
+@@ -359,6 +361,61 @@ int dm_easy_mesh_agent_t::analyze_onewifi_vap_cb(em_bus_event_t *evt, em_cmd_t *
+         em_printfout("Private subdoc decode fail");
+     }
+ 
++    if (evt->type == em_bus_event_type_onewifi_mesh_sta_cb) {
++        incoming_bss = dm.get_bss(index)->get_bss_info();
++        em_printfout(
++            "Mesh STA snapshot VAP index %u connected=%u BSSID=%s decoded_count=%u",
++            incoming_bss->vap_index, incoming_bss->connect_status,
++            util::mac_to_string(incoming_bss->bssid.mac).c_str(),
++            dm.get_num_bss());
++        if (!incoming_bss->connect_status ||
++                memcmp(incoming_bss->bssid.mac, ZERO_MAC_ADDR,
++                    sizeof(mac_address_t)) == 0) {
++            em_printfout("Ignoring disconnected mesh STA snapshot for VAP index %u",
++                incoming_bss->vap_index);
++            return 0;
++        }
++        if (memcmp(incoming_bss->ruid.mac, ZERO_MAC_ADDR,
++                    sizeof(mac_address_t)) == 0) {
++            current_bss = NULL;
++            for (j = 0; j < get_num_bss(); j++) {
++                em_bss_info_t *candidate = get_bss(j)->get_bss_info();
++                if (candidate->vap_mode != em_vap_mode_sta ||
++                        candidate->id.haul_type != em_haul_type_backhaul ||
++                        candidate->vap_index != incoming_bss->vap_index) {
++                    continue;
++                }
++                if (current_bss != NULL) {
++                    em_printfout(
++                        "Ambiguous mesh STA identity for VAP index %u",
++                        incoming_bss->vap_index);
++                    current_bss = NULL;
++                    break;
++                }
++                current_bss = candidate;
++            }
++            if (current_bss == NULL) {
++                em_printfout("No mesh STA identity for VAP index %u",
++                    incoming_bss->vap_index);
++                return 0;
++            }
++            memcpy(incoming_bss->ruid.mac, current_bss->ruid.mac,
++                sizeof(mac_address_t));
++            memcpy(incoming_bss->sta_mac, current_bss->sta_mac,
++                sizeof(mac_address_t));
++            memcpy(incoming_bss->id.dev_mac, current_bss->id.dev_mac,
++                sizeof(mac_address_t));
++            memcpy(incoming_bss->id.net_id, current_bss->id.net_id,
++                sizeof(incoming_bss->id.net_id));
++            em_printfout("Resolved mesh STA VAP index %u to radio %s",
++                incoming_bss->vap_index,
++                util::mac_to_string(incoming_bss->ruid.mac).c_str());
++        }
++        if (dm.get_num_bss() == 0) {
++            dm.set_num_bss(1);
++        }
++    }
++
+ 	if (dm.get_num_bss() != 0) {
+ 		dm_easy_mesh_t::macbytes_to_string(dm.get_bss(index)->get_bss_info()->ruid.mac, mac_str);
+ 		snprintf(reinterpret_cast<char *> (cm_config.params), sizeof(cm_config.params), "%s", mac_str);
+-- 
+2.43.0

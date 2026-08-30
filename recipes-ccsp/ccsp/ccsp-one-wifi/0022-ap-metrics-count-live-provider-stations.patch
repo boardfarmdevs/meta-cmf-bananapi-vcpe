@@ -1,0 +1,43 @@
+From: Codex <codex@openai.com>
+Date: Sun, 30 Aug 2026 06:10:00 -0700
+Subject: [PATCH] metrics: count stations from the live provider snapshot
+
+The AP Metrics report serialized station records from client_stats_map but
+bounded that serialization with a count from associated_devices_map.  The
+latter is event-backed history and can be empty when a station, especially a
+gateway backhaul STA, associated before OneWifi started.  The live HAL/RBUS
+provider still reports that station, but sta_cnt was forced to zero and the
+existing EasyMesh metrics-seeding path never received it.
+
+Use the live provider map as both the count and the data source.  This also
+prevents an inactive historical association from inflating the allocation or
+the advertised associated-station count.  The change is platform-independent:
+an AP Metrics snapshot must describe the provider snapshot it serializes.
+
+Upstream-Status: Pending
+---
+ source/apps/em/wifi_em.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -1928,8 +1928,13 @@ static int ap_report_push_cb(em_ap_report_callback_arg_t *args)
+             //index cannot be vap index below right for cache retrieval, have to search in the all cache for each vaps and check vap index
+             ap_metrics = &em_ap_metrics_report_cache.radio_report[radio_index].ap_data[cache_vap_index].ap_metrics;
+-            ap_metrics->num_of_assoc_stas = hash_map_count(
+-                wifi_mgr->radio_config[radio_index].vaps.rdk_vap_array[j].associated_devices_map);
+-            vap_report->sta_cnt = ap_metrics->num_of_assoc_stas;
++            /* Serialize and count the same authoritative live snapshot.  The
++             * event-backed associated_devices_map can miss a station which
++             * associated before OneWifi started, while client_stats_map is
++             * refreshed by the current HAL provider response. */
++            vap_report->sta_cnt = hash_map_count(
++                em_ap_metrics_report_cache.radio_report[radio_index]
++                    .ap_data[cache_vap_index].client_stats_map);
++            ap_metrics->num_of_assoc_stas = vap_report->sta_cnt;
+             memcpy(ap_metrics->bssid, vap_info->u.bss_info.bssid, sizeof(bssid_t));
+             memcpy(&vap_report->vap_metrics, ap_metrics, sizeof(ap_metrics_t));
+             to_mac_str(vap_info->u.bss_info.bssid, bss_str);
+-- 
+2.43.0

@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000112 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 24 Aug 2026 05:20:00 -0700
+Subject: [PATCH] agent: finish OneWifi callback at BSS configuration
+
+The OneWifi callback command changes its radio from owconfig_pending to
+onewifi_bssconfig_ind as soon as OneWifi confirms that the BSS configuration
+was applied.  The orchestration completion test nevertheless waited for the
+later topo_synchronized state.  That later transition belongs to Topology
+Query processing, not to the OneWifi callback.
+
+If no Topology Query arrived before EM_MAX_CMD_GEN_TTL, the generic command
+timeout treated the valid BSS indication as an incomplete state and reset the
+radio to unconfigured.  A live debugger trace of an intermittent tri-band
+cold start caught exactly this path for command em_cmd_type_onewifi_cb on the
+2.4 and 6 GHz radios.
+
+Complete the command when its own terminal state is reached.  The radio stays
+at onewifi_bssconfig_ind and can answer a subsequent Topology Query, whose
+existing handler advances all configured radios to topo_synchronized.  Add a
+regression test that distinguishes the terminal callback state from the
+preceding owconfig_pending state.
+
+Upstream-Status: Pending
+---
+ src/orch/em_orch_agent.cpp        | 3 ++-
+ tests/test_l1_em_orch_agent.cpp   | 22 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 3333333..4444444 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -88,7 +88,8 @@ bool em_orch_agent_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+             }
+             break;
+         case em_cmd_type_onewifi_cb:
+-            if (em->get_state() == em_state_agent_topo_synchronized) {
++            if (em->get_state() == em_state_agent_onewifi_bssconfig_ind ||
++                em->get_state() == em_state_agent_topo_synchronized) {
+                 return true;
+             }
+             break;
+diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
+index 5555555..6666666 100644
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -1277,5 +1277,28 @@ TEST_F(em_orch_agent_t_TEST, is_em_ready_for_orch_fini_dev_init_command) {
+     std::cout << "Exiting is_em_ready_for_orch_fini_dev_init_command test" << std::endl;
+ }
++
++TEST_F(em_orch_agent_t_TEST, onewifi_callback_finishes_at_bss_config_indication) {
++    em_cmd_t cmd{};
++    cmd.m_type = em_cmd_type_onewifi_cb;
++    em_interface_t ruid{};
++    strncpy(ruid.name, "radio0", sizeof(ruid.name));
++    unsigned char mac[6] = {0x1A, 0x1B, 0x2C, 0x3D, 0x4E, 0x5A};
++    memcpy(ruid.mac, mac, sizeof(mac));
++    ruid.media = em_media_type_ieee8023ab;
++    dm_easy_mesh_t dm{};
++    dm.m_colocated = true;
++    em_agent_t mgr{};
++    em_t em(&ruid, em_freq_band_5, &dm, &mgr, em_profile_type_3,
++            em_service_type_agent, false);
++
++    em.set_state(em_state_agent_owconfig_pending);
++    EXPECT_FALSE(orch->is_em_ready_for_orch_fini(&cmd, &em));
++
++    em.set_state(em_state_agent_onewifi_bssconfig_ind);
++    EXPECT_TRUE(orch->is_em_ready_for_orch_fini(&cmd, &em));
++    EXPECT_EQ(em.get_state(), em_state_agent_onewifi_bssconfig_ind);
++}
++
+ /**
+  * @brief Verify that is_em_ready_for_orch_fini returns the correct readiness state for a STA association command.
+  *
+--
+2.43.0

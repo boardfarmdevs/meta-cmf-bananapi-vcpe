@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000122 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 27 Aug 2026 07:15:00 -0700
+Subject: [PATCH] controller: reconcile authoritative client snapshots
+
+An agent's Associated Clients TLV is a full device snapshot, but the
+controller treated every Topology Response as an additive update.  After a
+client roamed, an old owner could correctly omit the station while the
+controller retained the prior row indefinitely.  The stale row then defeated
+the association-age conflict check, reverted the WebUI owner, and prevented
+metrics for the actual serving BSS from being accepted.
+
+Record every exact STA/BSSID/RUID key in the complete TLV.  Once it has been
+fully validated, delete associated rows in that reporting device model which
+the snapshot omitted.  Queue normal database deletions for those rows before
+accepting new ownership evidence.  A missing optional TLV is left unchanged;
+only a received and structurally valid full snapshot is authoritative.
+
+This complements the agent-side full-snapshot reconciliation: the agent no
+longer advertises obsolete hwsim rows and the controller no longer preserves a
+claim after the owning agent has withdrawn it.
+
+Upstream-Status: Submitted [RDKB-EM lab validation]
+---
+ src/em/config/em_configuration.cpp | 50 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2294,6 +2294,7 @@
+     const unsigned int header_len = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
+     dm_easy_mesh_t *dm = get_data_model();
+     unsigned int added = 0;
++    std::set<std::string> snapshot_keys;
+ 
+     if (dm == NULL || len < header_len + sizeof(em_tlv_t)) {
+         return -1;
+@@ -2363,6 +2364,16 @@
+                 sta_info.associated = true;
+                 sta_info.last_conn_time = assoc_time;
+ 
++                mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
++                em_long_string_t snapshot_key;
++                dm_easy_mesh_t::macbytes_to_string(sta_info.id, sta_mac_str);
++                dm_easy_mesh_t::macbytes_to_string(sta_info.bssid, bssid_str);
++                dm_easy_mesh_t::macbytes_to_string(sta_info.radiomac,
++                                                   radio_mac_str);
++                snprintf(snapshot_key, sizeof(snapshot_key), "%s@%s@%s",
++                         sta_mac_str, bssid_str, radio_mac_str);
++                snapshot_keys.insert(snapshot_key);
++
+                 /* A Topology Response is an unordered snapshot.  If two
+                  * device models claim the same STA on different BSSs, only a
+                  * known, strictly younger Association Time can order them.
+@@ -2441,11 +2452,50 @@
+                          value_remaining);
+             return -1;
+         }
++
++        /* The received Associated Clients TLV is the complete association
++         * snapshot for this reporting device.  Reconcile omissions before
++         * the pending additions are committed so a withdrawn owner cannot
++         * defeat current ownership evidence from another agent. */
++        unsigned int removed = 0;
++        dm_sta_t *sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
++        while (sta != NULL) {
++            dm_sta_t *next = static_cast<dm_sta_t *>(
++                    hash_map_get_next(dm->m_sta_map, sta));
++            mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
++            em_long_string_t key;
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bssid_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
++                                               radio_mac_str);
++            snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str, bssid_str,
++                     radio_mac_str);
++
++            if (sta->m_sta_info.associated &&
++                    snapshot_keys.find(key) == snapshot_keys.end()) {
++                em_sta_info_t removed_info = sta->m_sta_info;
++                removed_info.associated = false;
++                dm->put_sta_info(&removed_info, em_target_sta_map_disassoc);
++                dm_sta_t *old = static_cast<dm_sta_t *>(
++                        hash_map_remove(dm->m_sta_map, key));
++                delete old;
++                removed++;
++                em_printfout("Topology Response removed absent owner key=%s",
++                             key);
++            }
++            sta = next;
++        }
++
+         if (added != 0) {
+             dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
+             em_printfout("Topology Response reconciled %u client association(s)", added);
+         }
+-        return static_cast<int>(added);
++        if (removed != 0) {
++            dm->set_db_cfg_param(db_cfg_type_sta_list_delete, "");
++            em_printfout("Topology Response removed %u absent client association(s)",
++                         removed);
++        }
++        return static_cast<int>(added + removed);
+     }
+     return 0;
+ }
+-- 
+2.43.0

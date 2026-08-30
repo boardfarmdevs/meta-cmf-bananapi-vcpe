@@ -1,0 +1,102 @@
+From: Rob Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] agent: re-send M1 to recover a lost WSC M2
+
+On a multi-radio extender all radios run WSC near-simultaneously (M1s go out within tens
+of ms). The controller answers each with exactly one M2 and never retransmits, so if one
+radio's M2 is lost or arrives while that radio is momentarily not in wsc_m2_pending, it is
+dropped for good: analyze_m2ctrl_configuration is never called for that radio, its Private
+VAP subdoc is never pushed to OneWifi, OneWifi never applies a Vap_<band> doc for it, and
+wifi_hal_createVAP is never invoked -- so that radio's fronthaul VAP never beacons and the
+device onboards with a straggler radio down (observed: 3x wsc m1 send success but only 2x
+received wsc_m2 / vap create radio_index). It is random which radio loses; nothing
+self-heals it.
+
+Recover at the agent: while a radio waits in wsc_m2_pending, re-send its M1 a bounded
+number of times to solicit a fresh M2. The controller already handles a duplicate M1 by
+re-issuing M2 (Removing previous em_config command for radio ...), and this touches nothing
+but the WSC handshake (no VAP teardown, no shared timers). Self-clearing once M2 is handled.
+---
+ inc/em_configuration.h             |  8 ++++
+ src/em/config/em_configuration.cpp | 42 +++++++++++++++++++-
+ 2 files changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1597,6 +1597,14 @@ private:
+     unsigned char m_m2_encrypted_settings[em_haul_type_max][MAX_EM_BUFF_SZ];
+     unsigned int m_m2_encrypted_settings_len[em_haul_type_max];
+ 
++    // WSC M2-loss recovery (agent): a radio's M2 can be lost when several radios do
++    // WSC near-simultaneously; the controller sends M2 only once, so the radio is
++    // stranded. These count 1s ticks spent waiting in wsc_m2_pending and bound the
++    // number of M1 re-sends used to solicit a fresh M2. Reset each time a fresh M1 is
++    // sent (handle_autoconfig_resp).
++    unsigned int m_wsc_m2_wait_ticks = 0;
++    unsigned int m_wsc_m1_resends = 0;
++
+ public:
+ 
+ 	bool send_autoconf_search_ext_chirp(em_dpp_chirp_value_t *chirp, size_t hash_len);
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -5677,8 +5689,11 @@ int em_configuration_t::handle_autoconfig_resp(unsigned char *buff, unsigned int
+     }
+     em_printfout("autoconfig wsc m1 send success, len:%d", sz);
+     set_state(em_state_agent_wsc_m2_pending);
++    // Fresh M1 sent -- re-arm the M2-loss recovery window for this radio.
++    m_wsc_m2_wait_ticks = 0;
++    m_wsc_m1_resends = 0;
+ 
+-    return 0;   
++    return 0;
+ }
+ 
+ int em_configuration_t::handle_autoconfig_search(unsigned char *buff, unsigned int len)
+@@ -6024,9 +6075,45 @@ void em_configuration_t::handle_state_wsc_m1_pending()
+     assert(get_service_type() == em_service_type_ctrl);
+ }
+ 
++// WSC M2-loss recovery tunables (agent). process_agent_state ticks ~1s while the
++// dev_init/cfg_renew orch is in progress, so RESEND_TICKS is ~seconds between M1
++// re-sends and MAX_RESENDS bounds them within the orch's time-to-live.
++#define EM_AGENT_M2_RESEND_TICKS 3
++#define EM_AGENT_M2_MAX_RESENDS  4
++
+ void em_configuration_t::handle_state_wsc_m2_pending()
+ {
+     assert(get_service_type() == em_service_type_agent);
++
++    // A radio's M2 can be lost/dropped when several radios run WSC near-simultaneously
++    // -- the controller sends each M2 only once, so a lost M2 strands the radio in
++    // wsc_m2_pending forever: its VAP subdoc is never pushed and its fronthaul VAP is
++    // never created (createVAP is never called for it). Re-send M1 a bounded number of
++    // times to solicit a fresh M2; the controller re-issues M2 on a duplicate M1
++    // ("Removing previous em_config command for radio ..."). Self-clearing: once the
++    // M2 is handled the radio leaves wsc_m2_pending and this stops firing.
++    if (++m_wsc_m2_wait_ticks < EM_AGENT_M2_RESEND_TICKS) {
++        return;
++    }
++    m_wsc_m2_wait_ticks = 0;
++    if (m_wsc_m1_resends >= EM_AGENT_M2_MAX_RESENDS) {
++        return;
++    }
++
++    unsigned char msg[MAX_EM_BUFF_SZ];
++    int msg_len = create_autoconfig_wsc_m1_msg(msg, get_peer_mac());
++    if (msg_len < 0) {
++        return;
++    }
++    if (send_frame(msg, static_cast<unsigned int>(msg_len)) < 0) {
++        em_printfout("radio %s wsc_m2_pending re-send M1 failed, errno:%d",
++            util::mac_to_string(get_radio_interface_mac()).c_str(), errno);
++        return;
++    }
++    m_wsc_m1_resends++;
++    em_printfout("radio %s stuck in wsc_m2_pending -- re-sent M1 to solicit M2 (attempt %u/%d)",
++        util::mac_to_string(get_radio_interface_mac()).c_str(), m_wsc_m1_resends,
++        EM_AGENT_M2_MAX_RESENDS);
+ }
+ 
+ void em_configuration_t::fill_media_data(em_media_spec_data_t *spec, dm_bss_t *bss)

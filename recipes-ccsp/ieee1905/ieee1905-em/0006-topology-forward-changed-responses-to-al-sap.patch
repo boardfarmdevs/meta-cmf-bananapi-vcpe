@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 04:00:00 -0700
+Subject: [PATCH] topology: forward changed responses to AL-SAP
+
+The topology-response handler used its boolean result for two unrelated
+purposes: whether the IEEE1905 core processed the response and whether the
+registered higher-layer entity should receive it.  A response which changed
+the core neighbor database returned true after scheduling a Topology
+Notification, suppressing AL-SAP data indication.  An unchanged response
+returned false and was delivered.  EasyMesh therefore received periodic
+client snapshots but not the response carrying a changed wireless backhaul
+network membership.
+
+Keep the core database update and standards-defined Topology Notification,
+but return false so the normal dispatcher also delivers the original response
+to the registered EasyMesh HLE.  The two consumers maintain different state;
+successful processing by one must not hide the frame from the other.
+
+The common forwarding routine also selected a topology database using the
+remote Ethernet source and then looked up that source/interface MAC as though
+it were an AL MAC.  Select the local instance and use the same port lookup as
+the response handler so an hwsim interface MAC resolves to its remote Agent;
+otherwise even responses deliberately sent to the HLE are silently dropped.
+
+Upstream-Status: Pending
+---
+ ieee1905-core/src/cmdu_handler.rs | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ieee1905-core/src/cmdu_handler.rs b/ieee1905-core/src/cmdu_handler.rs
+index 1111111..2222222 100644
+--- a/ieee1905-core/src/cmdu_handler.rs
++++ b/ieee1905-core/src/cmdu_handler.rs
+@@ -581,7 +581,7 @@ impl CmduHandler {
+                         forwarding_interface_mac,
+                     ),
+                 );
+-                true
++                false
+             }
+             TransmissionEvent::None => {
+                 debug!(
+@@ -987,7 +987,7 @@ impl CmduHandler {
+ 
+-        let topology_db = TopologyDatabase::get_instance(source_mac, &self.interface_name);
++        let topology_db = TopologyDatabase::get_instance(self.local_al_mac, &self.interface_name);
+ 
+-        if let Some(updated_node) = topology_db.get_device(source_mac).await {
++        if let Some(updated_node) = topology_db.find_device_by_port(source_mac).await {
+             trace!("Node: {updated_node:?}");
+             if updated_node.device_data.al_mac != self.local_al_mac {
+                 debug!(
+-- 
+2.43.0

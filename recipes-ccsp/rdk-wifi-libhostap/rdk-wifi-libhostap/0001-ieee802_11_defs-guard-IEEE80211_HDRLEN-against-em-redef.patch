@@ -1,0 +1,29 @@
+Fix build: ccsp-one-wifi's EasyMesh apps-manager header
+(source/apps/em/wifi_em.h) also #defines IEEE80211_HDRLEN (as the
+literal 24, same value as sizeof(struct ieee80211_hdr) here for the
+non-QoS/no-addr4 case - a naming collision, not a behavior
+difference). wifi_em.h now guards its own definition with #ifndef, but
+that only protects the case where this header is included first; when
+wifi_monitor.c includes wifi_em.h's chain before this header (the
+actual order for ccsp-one-wifi's EasyMesh/em_extender build), this
+file's unconditional #define fires second and is treated as a hard
+error under -Werror. Guard symmetrically so whichever header is seen
+first wins, regardless of include order.
+
+---
+ source/hostap-2.11/src/common/ieee802_11_defs.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/source/hostap-2.11/src/common/ieee802_11_defs.h b/source/hostap-2.11/src/common/ieee802_11_defs.h
+--- a/source/hostap-2.11/src/common/ieee802_11_defs.h
++++ b/source/hostap-2.11/src/common/ieee802_11_defs.h
+@@ -1000,7 +1000,9 @@
+ #define IEEE80211_BSSID_FROMDS addr2
+ #define IEEE80211_SA_FROMDS addr3
+
++#ifndef IEEE80211_HDRLEN
+ #define IEEE80211_HDRLEN (sizeof(struct ieee80211_hdr))
++#endif
+
+ struct ieee80211_hdr_s1g_beacon {
+ 	le16 frame_control;

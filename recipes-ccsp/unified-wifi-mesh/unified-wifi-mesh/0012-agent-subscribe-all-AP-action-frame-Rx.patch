@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 9 Aug 2026 16:22:00 -0700
+Subject: [PATCH] agent: subscribe to action-frame Rx on every AP BSS
+
+The agent subscribed only to the first backhaul AP's RawFrame action-Rx
+event. A BTM response received on a fronthaul AP therefore never reached
+the EasyMesh agent. The active rbus backend supports the per-VAP
+subscriptions used by this loop, so retain the AP-mode guard and subscribe
+to every AP BSS.
+---
+ src/agent/em_agent.cpp | 14 --------------
+ 1 file changed, 14 deletions(-)
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -227,29 +227,15 @@ void em_agent_t::handle_dev_init(em_bus_event_t *evt)
+         auto bss_info = m_data_model.get_bss_info(bss_idx);
+         unsigned int vap_index = bss_info->vap_index; // The actual OneWifi VAP index
+ 
+-// TODO: TEMP CODE: 
+-//  Since HE-BUS can only subscribe to one index path at a time, we will only be subscribing to the backhaul BSSs
+-//  Once HE-BUS supports multiple index paths or is no-longer used, this can be removed...
+-        if (bss_info->id.haul_type != em_haul_type_backhaul) {
+-            continue; // Only subscribe for backhaul BSSs
+-        }
+-        // TODO: Will need to come back to once Mediatek supports sending off-channel action frames in STA mode
+         if (bss_info->vap_mode != em_vap_mode_ap) {
+             continue; // Only subscribe for AP mode
+         }
+-// END: TEMP CODE
+-
+-
+         std::string path = "Device.WiFi.AccessPoint." + std::to_string(vap_index + 1) + ".RawFrame.Mgmt.Action.Rx";
+         if (desc->bus_event_subs_fn(&m_bus_hdl, path.c_str(), reinterpret_cast<void *>(&em_agent_t::mgmt_action_frame_cb), NULL, 0) != 0) {
+             em_printfout("Subscription failed for path %s", path.c_str());
+             continue;
+         }
+         em_printfout("Subscribed to receive management action frames for VAP %d", vap_index);
+-
+-        // TEMP CODE:
+-        break;
+-        // END TEMP CODE
+     }
+ 
+     if (do_start_dpp_onboarding) {
+-- 
+2.53.0
+

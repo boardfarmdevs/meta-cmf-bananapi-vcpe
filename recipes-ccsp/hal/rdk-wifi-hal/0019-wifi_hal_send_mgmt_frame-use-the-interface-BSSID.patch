@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RDK-BPI EasyMesh Investigation <noreply@example.com>
+Date: Sun, 9 Aug 2026 22:30:00 +0000
+Subject: [PATCH] wifi_hal_send_mgmt_frame: use the interface BSSID
+
+wifi_hal_send_mgmt_frame() always puts ff:ff:ff:ff:ff:ff in address 3,
+including for unicast action frames sent by an AP.  cfg80211 rejects that
+frame with -EINVAL before it reaches mac80211:
+
+  nl80211: Frame command failed: ret=-22 (Invalid argument) (freq=5180)
+
+The EasyMesh steering request had already selected the correct source VAP,
+destination STA, and operating frequency, but an independent monitor capture
+contained no action frame.
+
+Use the AP interface MAC as the BSSID for AP-mode transmissions.  For a STA
+interface, use its associated backhaul BSSID.  Address 1 remains the caller's
+destination and address 2 remains the interface MAC.
+
+Upstream-Status: Pending
+---
+ wifi_hal.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/wifi_hal.c b/wifi_hal.c
+index 0f049f4..1b68868 100644
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -4680,12 +4680,10 @@ int wifi_hal_send_mgmt_frame(int apIndex,mac_address_t sta, const unsigned char
+     wifi_interface_info_t *interface;
+     u8 *buf;
+     struct ieee80211_hdr *hdr;
+-    mac_address_t bssid_buf;
+     int res = 0;
+ #ifdef HOSTAPD_2_11 // 2.11
+     int link_id = 0;
+ #endif
+-    memset(bssid_buf, 0xff, sizeof(bssid_buf));
+     
+     buf = os_zalloc(24 + data_len);
+     if (buf == NULL)
+@@ -4702,7 +4700,11 @@ int wifi_hal_send_mgmt_frame(int apIndex,mac_address_t sta, const unsigned char
+     }
+     os_memcpy(hdr->addr1, sta, ETH_ALEN);
+     os_memcpy(hdr->addr2, interface->mac, ETH_ALEN);
+-    os_memcpy(hdr->addr3, bssid_buf, ETH_ALEN);
++    if (interface->vap_info.vap_mode == wifi_vap_mode_ap) {
++        os_memcpy(hdr->addr3, interface->mac, ETH_ALEN);
++    } else {
++        os_memcpy(hdr->addr3, interface->u.sta.backhaul.bssid, ETH_ALEN);
++    }
+ 
+     
+ #ifdef HOSTAPD_2_11 // 2.11
+-- 
+2.43.0

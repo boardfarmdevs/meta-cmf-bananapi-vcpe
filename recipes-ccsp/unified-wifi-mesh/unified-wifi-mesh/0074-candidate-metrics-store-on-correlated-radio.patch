@@ -1,0 +1,68 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] metrics: store candidates on the MID-correlated radio
+
+Patch 0071 finds the controller radio whose outstanding query MID matches the
+Unassociated STA Link Metrics Response, but then parses and stores the result
+through `this`.  The frame dispatcher may invoke the handler on a different
+radio.  Live 6 GHz queries were consequently returned with the 2.4 GHz RUID,
+so an external optimizer could not map an otherwise valid measurement to the
+queried BSSID.
+
+Pass the correlated radio's data model into the TLV parser, retain receipt
+metadata there, and publish that radio's RUID.  The outstanding MID and result
+now have one identity from request through response.
+
+Upstream-Status: Pending
+---
+ inc/em_metrics.h                 | 3 ++-
+ src/em/metrics/em_metrics.cpp    | 9 ++++-----
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -572 +572,2 @@ class em_metrics_t {
+-        int handle_unassoc_sta_link_metrics_tlv(unsigned char *buff, unsigned int tlv_len);
++        int handle_unassoc_sta_link_metrics_tlv(unsigned char *buff,
++            unsigned int tlv_len, dm_easy_mesh_t *dm);
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -358,6 +358,5 @@ int em_metrics_t::handle_beacon_metrics_resp(unsigned char *buff, unsigned int
+-int em_metrics_t::handle_unassoc_sta_link_metrics_tlv(unsigned char *buff, unsigned int tlv_len)
++int em_metrics_t::handle_unassoc_sta_link_metrics_tlv(unsigned char *buff,
++    unsigned int tlv_len, dm_easy_mesh_t *dm)
+ {
+-    dm_easy_mesh_t *dm = get_data_model();
+-
+     unsigned short pos = 0;
+     mac_addr_str_t mac_str;
+@@ -438,4 +437,4 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+-    dm_easy_mesh_t *dm = get_data_model();
++    dm_easy_mesh_t *dm = matched_em->get_data_model();
+ 
+     memset(dm->m_unassoc_sta_metrics, 0, sizeof(dm->m_unassoc_sta_metrics));
+     dm->m_num_unassoc_sta_metrics = 0;
+@@ -466,4 +465,4 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+-            if (handle_unassoc_sta_link_metrics_tlv(tlv->value, tlv_len) < 0) {
++            if (handle_unassoc_sta_link_metrics_tlv(tlv->value, tlv_len, dm) < 0) {
+                 em_printfout("%s:%d Failed to parse Unassoc STA Link Metrics TLV\n", __func__, __LINE__);
+                 m_unassoc_in_progress = false;
+                 return -1;
+@@ -480,6 +479,5 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+     if (dm->m_num_unassoc_sta_metrics > 0) {
+         struct timeval received_at;
+-        em_t *em = static_cast<em_t *>(this);
+ 
+         gettimeofday(&received_at, NULL);
+         dm->m_unassoc_sta_metrics_received_ms =
+@@ -490,6 +488,6 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+             static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
+         dm->m_unassoc_sta_metrics_msg_id = response_msg_id;
+-        memcpy(dm->m_unassoc_sta_metrics_ruid, em->get_radio_interface_mac(),
++        memcpy(dm->m_unassoc_sta_metrics_ruid, matched_em->get_radio_interface_mac(),
+             sizeof(mac_address_t));
+     }
+     matched_em->clear_unassoc_sta_query_msg_id();
+-- 
+2.43.0

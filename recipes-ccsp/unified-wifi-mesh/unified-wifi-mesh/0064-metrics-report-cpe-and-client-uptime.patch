@@ -1,0 +1,773 @@
+From: Codex <codex@openai.com>
+Date: Thu, 20 Aug 2026 13:00:00 -0700
+Subject: [PATCH] metrics: report CPE and client association uptime
+
+Use an RDK vendor-specific metrics extension to carry an agent's monotonic
+boot uptime and each associated station's current-association uptime.  The
+controller converts device uptime to a stable boot epoch, persists that value
+without updating the database on every metrics interval, and exposes live
+elapsed values through the existing network and STA models.
+
+The CLI presents CPE uptime and client association uptime.  Controller uptime
+comes from local /proc/uptime; all other nodes come from the reporting agent.
+Association uptime resets on disconnect or roam.  Also label the currently
+unpopulated device signal field accurately as backhaul signal instead of
+presenting a generic N/A value as though a standard node-wide RSSI existed.
+
+This is an RDK vendor extension.  EasyMesh standard AP Metrics remain the
+source of client RCPI; no proprietary replacement is introduced for them.
+
+Upstream-Status: Pending
+
+diff --git a/inc/em_base.h b/inc/em_base.h
+index 3bf615d..7d74580 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -1209,10 +1209,15 @@ typedef struct {
+     mac_address_t sta_mac;
+     bssid_t bssid;
+     em_string_t sta_client_type;
++    unsigned int association_uptime_seconds;
+     //unsigned char num_bssids;
+     //em_assoc_vendor_link_metrics_t assoc_vendor_link_metrics[0];
+ }__attribute__((__packed__)) em_assoc_sta_vendor_link_metrics_t;
+ 
++typedef struct {
++    unsigned int uptime_seconds;
++} __attribute__((__packed__)) em_device_uptime_t;
++
+ typedef struct {
+     unsigned char num_bssids;
+     unsigned char bssid[6];
+@@ -2245,6 +2250,7 @@ typedef enum {
+     vendor_ext_attr_id_policy_alarm,    // data of type em_link_stats_alarm_cfg_t
+     vendor_ext_attr_id_policy_cfg_client_filter,    // data of type em_client_filters_cfg_t
+     vendor_ext_attr_id_link_report,     // data of type em_link_report_t
++    vendor_ext_attr_id_device_uptime,   // data of type em_device_uptime_t
+ 
+     vendor_ext_attr_id_max
+ } vendor_ext_attr_id_t;
+@@ -2487,6 +2493,10 @@ typedef struct {
+     unsigned char bstamld_maxlinks;
+     em_string_t   environment;
+ 
++    /* Controller wall-clock estimate derived from agent-reported boot uptime.
++     * Unlike a changing uptime counter this only changes when the CPE reboots. */
++    uint64_t boot_time_epoch;
++
+     em_small_string_t    primary_device_type;
+     em_small_string_t    secondary_device_type;
+     ieee_1905_security_t    sec_1905;
+@@ -2603,6 +2613,9 @@ typedef struct {
+     unsigned char   beacon_report_elem[EM_MAX_BEACON_MEASUREMENT_LEN];
+     unsigned int    delta_ms;
+ 
++    /* Agent-local runtime state.  Never serialized to the controller or DB. */
++    uint64_t        assoc_start_boottime_sec;
++
+     em_long_string_t    cap;
+     em_long_string_t    ht_cap;
+     em_long_string_t    vht_cap;
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index d70d0d8..fb2c3dc 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -244,6 +244,8 @@ class em_metrics_t {
+ 	 * @note Ensure that the buffer is properly allocated and contains valid TLV data.
+ 	 */
+ 	int handle_assoc_sta_vendor_link_metrics_tlv(unsigned char *buff, unsigned int len);
++	int handle_device_uptime_tlv(unsigned char *buff, unsigned int len);
++	int handle_metrics_vendor_tlv(unsigned char *buff, unsigned int len);
+     
+ 	/**!
+ 	 * @brief Handles the beacon metrics query.
+@@ -379,6 +381,7 @@ class em_metrics_t {
+ 	 * @note Ensure that the buffer is large enough to hold the TLV structure.
+ 	 */
+ 	short create_assoc_vendor_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta);
++	short create_device_uptime_tlv(unsigned char *buff);
+     
+ 	/**!
+ 	 * @brief Creates a beacon metrics query TLV.
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 6c73b9b..67fad6b 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -54,6 +54,7 @@
+ #include "em_cmd_ap_metrics_report.h"
+ #include "em_cmd_link_stats_report.h"
+ #include "em_cmd_unassoc_sta_result.h"
++#include <time.h>
+ 
+ #ifdef AL_SAP
+ #include "al_service_access_point.h"
+@@ -139,6 +140,22 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[]
+ 
+     dm.translate_and_decode_onewifi_subdoc(reinterpret_cast<char *>(evt->u.raw_buff),
+         webconfig_subdoc_type_associated_clients, "Assoc clients");
++
++    /* Convert OneWifi's elapsed association time into an agent-local monotonic
++     * start point.  The elapsed value is refreshed by authoritative connect
++     * snapshots and therefore resets naturally on a roam or reconnect. */
++    struct timespec now = {};
++    if (clock_gettime(CLOCK_BOOTTIME, &now) == 0) {
++        sta = static_cast<dm_sta_t *>(hash_map_get_first(dm.m_sta_assoc_map));
++        while (sta != NULL) {
++            const uint64_t elapsed = sta->m_sta_info.last_conn_time;
++            sta->m_sta_info.assoc_start_boottime_sec =
++                (elapsed <= static_cast<uint64_t>(now.tv_sec)) ?
++                static_cast<uint64_t>(now.tv_sec) - elapsed :
++                static_cast<uint64_t>(now.tv_sec);
++            sta = static_cast<dm_sta_t *>(hash_map_get_next(dm.m_sta_assoc_map, sta));
++        }
++    }
+     // Refresh global STA-MLD entries from the latest decoded snapshot.
+     for (idx = 0; idx < dm.m_num_assoc_sta_mld; idx++) {
+         memcpy(sta_mld_mac, dm.m_assoc_sta_mld[idx].m_assoc_sta_mld_info.mac_addr, sizeof(mac_address_t));
+diff --git a/src/dm/dm_device.cpp b/src/dm/dm_device.cpp
+index 5fc06dc..706b525 100644
+--- a/src/dm/dm_device.cpp
++++ b/src/dm/dm_device.cpp
+@@ -29,6 +29,7 @@
+ #include <sys/socket.h>
+ #include <sys/uio.h>
+ #include <sys/time.h>
++#include <time.h>
+ #include <unistd.h>
+ #include "dm_device.h"
+ #include "dm_easy_mesh.h"
+@@ -166,6 +167,9 @@ int dm_device_t::decode(const cJSON *obj, void *parent_id)
+     if ((tmp = cJSON_GetObjectItem(obj, "AssociatedSTAReportingInterval")) != NULL) {
+         m_device_info.assoc_sta_reporting_int = static_cast<unsigned char> (tmp->valuedouble);
+     }
++    if ((tmp = cJSON_GetObjectItem(obj, "BootTimeEpoch")) != NULL) {
++        m_device_info.boot_time_epoch = static_cast<uint64_t>(tmp->valuedouble);
++    }
+     if ((tmp = cJSON_GetObjectItem(obj, "MaxNumMLDs")) != NULL) {
+         m_device_info.max_nummlds = static_cast<unsigned char> (tmp->valuedouble);
+     }
+@@ -198,6 +202,14 @@ void dm_device_t::encode(cJSON *obj, bool summary)
+ 	}
+     cJSON_AddStringToObject(bh_obj, "MediaType", media_str);
+ 
++    const time_t now = time(NULL);
++    uint64_t uptime = 0;
++    if (m_device_info.boot_time_epoch != 0 && now > 0 &&
++            static_cast<uint64_t>(now) >= m_device_info.boot_time_epoch) {
++        uptime = static_cast<uint64_t>(now) - m_device_info.boot_time_epoch;
++    }
++    cJSON_AddNumberToObject(obj, "UptimeSeconds", static_cast<double>(uptime));
++
+     if (summary == true) {
+         return;
+     }
+@@ -292,6 +304,7 @@ void dm_device_t::operator = (const dm_device_t& obj) {
+     this->m_device_info.traffic_sep_cap = obj.m_device_info.traffic_sep_cap;
+     this->m_device_info.easy_conn_cap = obj.m_device_info.easy_conn_cap;
+     this->m_device_info.test_cap = obj.m_device_info.test_cap;
++    this->m_device_info.boot_time_epoch = obj.m_device_info.boot_time_epoch;
+     memcpy(&this->m_device_info.primary_device_type,&obj.m_device_info.primary_device_type,sizeof(em_small_string_t));
+     memcpy(&this->m_device_info.backhaul_media_type,&obj.m_device_info.secondary_device_type,sizeof(em_small_string_t));
+ }
+@@ -327,6 +340,7 @@ bool dm_device_t::operator == (const dm_device_t& obj)
+     ret += !(this->m_device_info.traffic_sep_cap == obj.m_device_info.traffic_sep_cap);
+     ret += !(this->m_device_info.easy_conn_cap == obj.m_device_info.easy_conn_cap);
+     ret += !(this->m_device_info.test_cap == obj.m_device_info.test_cap);
++    ret += !(this->m_device_info.boot_time_epoch == obj.m_device_info.boot_time_epoch);
+     ret += (memcmp(&this->m_device_info.primary_device_type,&obj.m_device_info.primary_device_type,sizeof(em_small_string_t)) != 0);;
+     ret += (memcmp(&this->m_device_info.secondary_device_type,&obj.m_device_info.secondary_device_type,sizeof(em_small_string_t)) != 0);
+ 
+diff --git a/src/dm/dm_device_list.cpp b/src/dm/dm_device_list.cpp
+index 8082be8..ac8cfcc 100644
+--- a/src/dm/dm_device_list.cpp
++++ b/src/dm/dm_device_list.cpp
+@@ -193,6 +193,7 @@ bool dm_device_list_t::operator == (const db_easy_mesh_t& obj)
+ int dm_device_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *data)
+ {
+     mac_addr_str_t mac_str, bk_mac_str, alid_str, bsta_str;
++    char boot_time_str[32];
+     const char *media_str = "802.11 n";
+     em_device_info_t *info = static_cast<em_device_info_t *> (data);
+ 	int ret = 0;
+@@ -202,6 +203,8 @@ int dm_device_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void
+ 	snprintf(key, sizeof(em_2xlong_string_t), "%s@%s@%d", info->id.net_id, mac_str, info->id.media);
+     dm_easy_mesh_t::macbytes_to_string(info->backhaul_alid.mac, alid_str);
+     dm_easy_mesh_t::macbytes_to_string(info->backhaul_sta, bsta_str);
++    snprintf(boot_time_str, sizeof(boot_time_str), "%llu",
++        static_cast<unsigned long long>(info->boot_time_epoch));
+ 
+     //printf("dm_device_list_t:%s:%d: Operation: %s\n", __func__, __LINE__, em_cmd_t::get_orch_op_str(op));
+     switch (op) {
+@@ -213,7 +216,7 @@ int dm_device_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void
+                     info->svc_prio_allowed, info->dfs_enable, info->max_unsuccessful_assoc_report_rate, info->sta_steer_state,
+                     info->coord_cac_allowed, dm_easy_mesh_t::macbytes_to_string(info->backhaul_mac.mac, bk_mac_str), media_str,
+                     alid_str, bsta_str, info->traffic_sep_cap, info->easy_conn_cap,
+-                    info->test_cap);
++                    info->test_cap, boot_time_str);
+             break;
+ 
+         case dm_orch_type_db_update:
+@@ -223,7 +226,7 @@ int dm_device_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void
+                     info->svc_prio_allowed, info->dfs_enable, info->max_unsuccessful_assoc_report_rate, info->sta_steer_state,
+                     info->coord_cac_allowed, dm_easy_mesh_t::macbytes_to_string(info->backhaul_mac.mac, bk_mac_str), media_str,
+                     alid_str, bsta_str, info->traffic_sep_cap, info->easy_conn_cap,
+-                    info->test_cap, key);
++                    info->test_cap, boot_time_str, key);
+             break;
+ 
+         case dm_orch_type_db_delete:
+@@ -301,6 +304,8 @@ int dm_device_list_t::sync_db(db_client_t& db_client, void *ctx)
+         info.traffic_sep_cap = db_client.get_number(ctx, 25);
+         info.easy_conn_cap = db_client.get_number(ctx, 26);
+         info.test_cap = static_cast<unsigned char> (db_client.get_number(ctx, 27));
++        db_client.get_string(ctx, str, 28);
++        info.boot_time_epoch = strtoull(str, NULL, 10);
+ 
+         update_list(dm_device_t(&info), dm_orch_type_db_insert);
+     }
+@@ -364,6 +369,8 @@ bool dm_device_list_t::compare_db(db_client_t& db_client, const dm_device_t& sta
+         info.traffic_sep_cap = db_client.get_number(ctx, 25);
+         info.easy_conn_cap = db_client.get_number(ctx, 26);
+         info.test_cap = static_cast<unsigned char> (db_client.get_number(ctx, 27));
++        db_client.get_string(ctx, str, 28);
++        info.boot_time_epoch = strtoull(str, NULL, 10);
+ 
+         if (memcmp(static_cast<const void*>(&sta.m_device_info), static_cast<const void*>(&info), sizeof(em_device_info_t)) == 0) {
+             while (db_client.next_result(ctx)) {}
+@@ -410,6 +417,7 @@ void dm_device_list_t::init_columns()
+     m_columns[m_num_cols++] = db_column_t("TrafficSeparationCapability", db_data_type_tinyint, 0);
+     m_columns[m_num_cols++] = db_column_t("EasyConnectCapability", db_data_type_tinyint, 0);
+     m_columns[m_num_cols++] = db_column_t("TestCapabilities", db_data_type_tinyint, 0);
++    m_columns[m_num_cols++] = db_column_t("BootTimeEpoch", db_data_type_char, 20);
+ }
+ 
+ int dm_device_list_t::init()
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 67330cf..9f732d2 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -137,17 +137,79 @@ int em_metrics_t::handle_assoc_sta_vendor_link_metrics_tlv(unsigned char *buff,
+     dm_sta_t *sta = NULL;
+     dm_easy_mesh_t  *dm;
+ 
++    if (len < sizeof(em_vendor_specific_t) + sizeof(em_vendor_data_t) +
++            sizeof(em_assoc_sta_vendor_link_metrics_t)) {
++        return -1;
++    }
++
+     dm = get_data_model();
+     sta_metrics = reinterpret_cast<em_assoc_sta_vendor_link_metrics_t *> (vendor_data->vendor_data);
+ 
+     sta = dm->find_sta(sta_metrics->sta_mac, sta_metrics->bssid);
+-    if (sta != NULL && len >= sizeof(em_assoc_sta_vendor_link_metrics_t)) {
++    if (sta != NULL) {
+         strncpy(sta->m_sta_info.sta_client_type, sta_metrics->sta_client_type, sizeof(sta->m_sta_info.sta_client_type));
++        sta->m_sta_info.last_conn_time = ntohl(sta_metrics->association_uptime_seconds);
+     }
+ 
+     return 0;
+ }
+ 
++int em_metrics_t::handle_device_uptime_tlv(unsigned char *buff, unsigned int len)
++{
++    em_vendor_specific_t *vendor_metrics = reinterpret_cast<em_vendor_specific_t *>(buff);
++    em_vendor_data_t *vendor_data = vendor_metrics->data;
++    em_device_uptime_t *uptime = reinterpret_cast<em_device_uptime_t *>(vendor_data->vendor_data);
++    const size_t required = sizeof(em_vendor_specific_t) + sizeof(em_vendor_data_t) +
++        sizeof(em_device_uptime_t);
++
++    if (len < required) {
++        return -1;
++    }
++
++    const uint64_t reported_uptime = ntohl(uptime->uptime_seconds);
++    const time_t now = time(NULL);
++    if (reported_uptime == 0 || now <= 0 || reported_uptime > static_cast<uint64_t>(now)) {
++        return -1;
++    }
++
++    dm_easy_mesh_t *dm = get_data_model();
++    const uint64_t candidate = static_cast<uint64_t>(now) - reported_uptime;
++    const uint64_t current = dm->m_device.m_device_info.boot_time_epoch;
++    const uint64_t difference = (candidate > current) ? candidate - current : current - candidate;
++
++    /* Report transit and integer rounding can move the estimate by a second.
++     * Persist only the first estimate or an actual reboot-sized change. */
++    if (current == 0 || difference > 10) {
++        dm->m_device.m_device_info.boot_time_epoch = candidate;
++        dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
++    }
++
++    return 0;
++}
++
++int em_metrics_t::handle_metrics_vendor_tlv(unsigned char *buff, unsigned int len)
++{
++    const size_t header_len = sizeof(em_vendor_specific_t) + sizeof(em_vendor_data_t);
++    if (buff == NULL || len < header_len) {
++        return -1;
++    }
++
++    em_vendor_specific_t *vendor_metrics = reinterpret_cast<em_vendor_specific_t *>(buff);
++    if (memcmp(vendor_metrics->vendor_oui, em_vendor_oui, sizeof(em_vendor_oui)) != 0 ||
++            vendor_metrics->num != 1) {
++        return 0;
++    }
++
++    switch (vendor_metrics->data->attr_id) {
++        case vendor_ext_attr_id_client_type:
++            return handle_assoc_sta_vendor_link_metrics_tlv(buff, len);
++        case vendor_ext_attr_id_device_uptime:
++            return handle_device_uptime_tlv(buff, len);
++        default:
++            return 0;
++    }
++}
++
+ int em_metrics_t::handle_associated_sta_link_metrics_query(unsigned char *buff, unsigned int len)
+ {
+     mac_address_t sta;
+@@ -234,7 +296,7 @@ int em_metrics_t::handle_associated_sta_link_metrics_resp(unsigned char *buff, u
+ 
+     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
+         if (tlv->type == em_tlv_type_vendor_specific) {
+-            handle_assoc_sta_vendor_link_metrics_tlv(tlv->value, ntohs(tlv->len));
++            handle_metrics_vendor_tlv(tlv->value, ntohs(tlv->len));
+         }
+ 
+         tmp_len -= (sizeof(em_tlv_t) + static_cast<size_t> (htons(tlv->len)));
+@@ -708,8 +770,8 @@ int em_metrics_t::handle_ap_metrics_response(unsigned char *buff, unsigned int l
+                 /* future implementation */
+                 break;
+             case em_tlv_type_vendor_specific:
+-                if (handle_assoc_sta_vendor_link_metrics_tlv(tlv->value, ntohs(tlv->len)) != 0) {
+-                    em_printfout("assoc_sta_vendor_link_metrics_tlv failed, skipping TLV");
++                if (handle_metrics_vendor_tlv(tlv->value, ntohs(tlv->len)) != 0) {
++                    em_printfout("metrics vendor TLV failed, skipping TLV");
+                 }
+                 break;
+             default:
+@@ -1198,7 +1260,8 @@ int em_metrics_t::send_ap_metrics_response()
+     const size_t num_radio_tlvs = (get_profile_type() > em_profile_type_1) ?
+         static_cast<size_t>(get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) : 0U;
+     const size_t max_tlv_value_size = MAX_EM_BUFF_SZ;
+-    const size_t max_tlv_count = num_bss_tlvs + num_sta_tlvs + num_radio_tlvs;
++    /* Reserve one vendor TLV for the reporting CPE uptime in addition to EOM. */
++    const size_t max_tlv_count = num_bss_tlvs + num_sta_tlvs + num_radio_tlvs + 1U;
+     const size_t buff_capacity = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) +
+         ((max_tlv_count + 1U) * (sizeof(em_tlv_t) + max_tlv_value_size));
+     std::vector<unsigned char> buff(buff_capacity, 0);
+@@ -1357,6 +1420,15 @@ int em_metrics_t::send_ap_metrics_response()
+         }
+     }
+ 
++    // RDK vendor extension: report the CPE's own boot uptime once per AP response.
++    tlv = reinterpret_cast<em_tlv_t *> (tmp);
++    tlv->type = em_tlv_type_vendor_specific;
++    sz = create_device_uptime_tlv(tlv->value);
++    if (!valid_tlv_size(sz, "Device Uptime")) return -1;
++    tlv->len = htons(static_cast<unsigned short>(sz));
++    tmp += sizeof(em_tlv_t) + static_cast<size_t>(sz);
++    len += sizeof(em_tlv_t) + static_cast<size_t>(sz);
++
+     // End of message
+     tlv = reinterpret_cast<em_tlv_t *> (tmp);
+     tlv->type = em_tlv_type_eom;
+@@ -1509,11 +1581,96 @@ short em_metrics_t::create_assoc_vendor_sta_link_metrics_tlv(unsigned char *buff
+ 
+             strncpy(assoc_sta_metrics->sta_client_type, sta->m_sta_info.sta_client_type, sizeof(assoc_sta_metrics->sta_client_type));
+             len += sizeof(assoc_sta_metrics->sta_client_type);
++
++            uint64_t association_uptime = sta->m_sta_info.last_conn_time;
++            struct timespec now = {};
++            if (sta->m_sta_info.assoc_start_boottime_sec != 0 &&
++                    clock_gettime(CLOCK_BOOTTIME, &now) == 0 &&
++                    static_cast<uint64_t>(now.tv_sec) >= sta->m_sta_info.assoc_start_boottime_sec) {
++                association_uptime = static_cast<uint64_t>(now.tv_sec) -
++                    sta->m_sta_info.assoc_start_boottime_sec;
++            }
++            if (association_uptime > 0xffffffffULL) {
++                association_uptime = 0xffffffffULL;
++            }
++            assoc_sta_metrics->association_uptime_seconds =
++                htonl(static_cast<unsigned int>(association_uptime));
++            len += sizeof(assoc_sta_metrics->association_uptime_seconds);
+         }
+     }
+     return static_cast<short> (len);
+ }
+ 
++short em_metrics_t::create_device_uptime_tlv(unsigned char *buff)
++{
++    em_vendor_specific_t *vendor_metrics = reinterpret_cast<em_vendor_specific_t *>(buff);
++    em_vendor_data_t *vendor_data = vendor_metrics->data;
++    em_device_uptime_t *uptime = reinterpret_cast<em_device_uptime_t *>(vendor_data->vendor_data);
++    struct timespec now = {};
++    if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec < 0) {
++        return -1;
++    }
++
++    FILE *stat_file = fopen("/proc/1/stat", "r");
++    if (stat_file == nullptr) {
++        return -1;
++    }
++    char line[2048] = {};
++    if (fgets(line, sizeof(line), stat_file) == nullptr) {
++        fclose(stat_file);
++        return -1;
++    }
++    fclose(stat_file);
++
++    /* The command name is parenthesized and may contain spaces.  Field 22,
++     * starttime, is token 19 after the final closing parenthesis. */
++    char *close_paren = strrchr(line, ')');
++    if (close_paren == nullptr) {
++        return -1;
++    }
++    char *saveptr = nullptr;
++    char *token = strtok_r(close_paren + 1, " \n", &saveptr);
++    unsigned int field = 3;
++    uint64_t start_ticks = 0;
++    while (token != nullptr) {
++        if (field == 22) {
++            char *end = nullptr;
++            start_ticks = strtoull(token, &end, 10);
++            if (end == token) {
++                return -1;
++            }
++            break;
++        }
++        field++;
++        token = strtok_r(nullptr, " \n", &saveptr);
++    }
++
++    const long ticks_per_second = sysconf(_SC_CLK_TCK);
++    if (start_ticks == 0 || ticks_per_second <= 0) {
++        return -1;
++    }
++    const uint64_t now_ticks = static_cast<uint64_t>(now.tv_sec) *
++        static_cast<uint64_t>(ticks_per_second) +
++        (static_cast<uint64_t>(now.tv_nsec) * static_cast<uint64_t>(ticks_per_second)) /
++            1000000000ULL;
++    if (now_ticks < start_ticks) {
++        return -1;
++    }
++    uint64_t seconds = (now_ticks - start_ticks) /
++        static_cast<uint64_t>(ticks_per_second);
++    if (seconds > 0xffffffffULL) {
++        seconds = 0xffffffffULL;
++    }
++
++    memcpy(vendor_metrics->vendor_oui, em_vendor_oui, sizeof(vendor_metrics->vendor_oui));
++    vendor_metrics->num = 1;
++    vendor_data->attr_id = vendor_ext_attr_id_device_uptime;
++    uptime->uptime_seconds = htonl(static_cast<unsigned int>(seconds));
++
++    return static_cast<short>(sizeof(em_vendor_specific_t) +
++        sizeof(em_vendor_data_t) + sizeof(em_device_uptime_t));
++}
++
+ short em_metrics_t::create_beacon_metrics_query_tlv(unsigned char *buff, mac_address_t sta_mac, bssid_t bssid)
+ {
+     size_t len = 0;
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 32a9d31..11f7dde 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -23,9 +23,66 @@ package main
+ #cgo CFLAGS: -I../../inc -I../../../OneWifi/include -I../../../OneWifi/source/utils -I../../../halinterface/include
+ #cgo LDFLAGS: -L../../install/lib -lemcli -lcjson -lreadline
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
+ #include <readline/readline.h>
+ #include <readline/history.h>
+ #include "em_cli_apis.h"
++
++static long long read_pid1_uptime_seconds(void)
++{
++    struct timespec now = {0};
++    if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec < 0) {
++        return 0;
++    }
++
++    FILE *stat_file = fopen("/proc/1/stat", "r");
++    if (stat_file == NULL) {
++        return 0;
++    }
++
++    char line[2048] = {0};
++    if (fgets(line, sizeof(line), stat_file) == NULL) {
++        fclose(stat_file);
++        return 0;
++    }
++    fclose(stat_file);
++
++    char *close_paren = strrchr(line, ')');
++    if (close_paren == NULL) {
++        return 0;
++    }
++
++    char *saveptr = NULL;
++    char *token = strtok_r(close_paren + 1, " \n", &saveptr);
++    unsigned int field = 3;
++    unsigned long long start_ticks = 0;
++    while (token != NULL) {
++        if (field == 22) {
++            char *end = NULL;
++            start_ticks = strtoull(token, &end, 10);
++            if (end == token) {
++                return 0;
++            }
++            break;
++        }
++        field++;
++        token = strtok_r(NULL, " \n", &saveptr);
++    }
++
++    long ticks_per_second = sysconf(_SC_CLK_TCK);
++    if (start_ticks == 0 || ticks_per_second <= 0) {
++        return 0;
++    }
++    unsigned long long now_ticks = (unsigned long long)now.tv_sec *
++        (unsigned long long)ticks_per_second +
++        ((unsigned long long)now.tv_nsec * (unsigned long long)ticks_per_second) /
++            1000000000ULL;
++    return now_ticks >= start_ticks ?
++        (long long)((now_ticks - start_ticks) / (unsigned long long)ticks_per_second) : 0;
++}
+ */
+ import "C"
+ 
+@@ -148,6 +205,8 @@ type Device struct {
+ 	Status          string         `json:"status"`
+ 	LastSeen        time.Time      `json:"last_seen"`
+ 	Uptime          string         `json:"uptime"`
++	Signal          *int           `json:"signal,omitempty"`
++	BackhaulType    string         `json:"backhaul_type,omitempty"`
+ 	Capabilities    Capability     `json:"capabilities"`
+ 	Metrics         DeviceMetrics  `json:"metrics"`
+ 	SecurityProfile SecurityProfile `json:"security_profile"`
+@@ -211,6 +270,7 @@ type ClientMetrics struct {
+         PacketLoss  float64   `json:"packet_loss_percent"`
+         Retries     int       `json:"retries"`
+         LinkQuality int       `json:"link_quality_percent"`
++	AssociationUptime int64  `json:"association_uptime_seconds"`
+ }
+ 
+ // ===== PERFORMANCE TRACKING STRUCTURES =====
+@@ -3145,6 +3205,7 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 	var inventoryClients []Client
+ 	agentCount, extenderCount := 1, 1
+ 	observedAt := time.Now()
++	localUptime := readLocalUptimeSeconds()
+ 	seenClients := make(map[string]struct{})
+ 
+ 	var traverse func(*C.em_network_node_t, int)
+@@ -3158,11 +3219,11 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 			return
+ 		}
+ 		radios := parseRadioList(deviceNode.child[2])
++		backhaulMedia := getTreeValue(backhaul, "MediaType")
+ 
+ 		role := "Controller"
+ 		if depth != 0 {
+ 			backhaulMAC := getTreeValue(backhaul, "MACAddress")
+-			backhaulMedia := getTreeValue(backhaul, "MediaType")
+ 			if backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet" {
+ 				role = fmt.Sprintf("Agent-%d", agentCount)
+ 				agentCount++
+@@ -3190,10 +3251,20 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 			}
+ 		}
+ 
++		uptimeSeconds := int64(getKeyIntValue(deviceNode, "UptimeSeconds"))
++		if depth == 0 && uptimeSeconds == 0 {
++			uptimeSeconds = localUptime
++		}
++		uptimeText := "Not reported"
++		if uptimeSeconds > 0 {
++			uptimeText = formatUptimeSeconds(uptimeSeconds)
++		}
+ 		inventoryDevices = append(inventoryDevices, Device{
+ 			MAC: deviceID, Role: role, Vendor: "RDK-B", Model: "EasyMesh node",
+-			Status: "Online", LastSeen: observedAt, Uptime: "Unknown",
++			Status: "Online", LastSeen: observedAt, Uptime: uptimeText,
++			BackhaulType: backhaulMedia,
+ 			Capabilities: Capability{SupportedBands: bands},
++			Metrics: DeviceMetrics{Uptime: uptimeSeconds, LastUpdated: observedAt},
+ 		})
+ 
+ 		for _, radio := range radios {
+@@ -3236,6 +3307,30 @@ func buildLiveInventory() ([]Device, []Client, error) {
+ 	return inventoryDevices, inventoryClients, nil
+ }
+ 
++func readLocalUptimeSeconds() int64 {
++	seconds := int64(C.read_pid1_uptime_seconds())
++	if seconds < 0 {
++		return 0
++	}
++	return seconds
++}
++
++func formatUptimeSeconds(seconds int64) string {
++	if seconds < 0 {
++		seconds = 0
++	}
++	days := seconds / 86400
++	hours := (seconds % 86400) / 3600
++	minutes := (seconds % 3600) / 60
++	if days > 0 {
++		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
++	}
++	if hours > 0 {
++		return fmt.Sprintf("%dh %dm", hours, minutes)
++	}
++	return fmt.Sprintf("%dm %ds", minutes, seconds%60)
++}
++
+ // loadLiveClientMetrics uses the detailed STA command because the topology
+ // form returned by get_network intentionally omits periodic metric fields.
+ func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
+@@ -3276,15 +3377,23 @@ func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
+ 		}
+ 		macNode := directChild(node, "MACAddress")
+ 		rcpiNode := directChild(node, "RCPI")
+-		if macNode != nil && rcpiNode != nil &&
+-			C.get_node_type(macNode) == C.em_network_node_data_type_string &&
+-			C.get_node_type(rcpiNode) == C.em_network_node_data_type_number {
++		if macNode != nil && C.get_node_type(macNode) == C.em_network_node_data_type_string {
+ 			mac := strings.ToLower(C.GoString(&macNode.value_str[0]))
+-			rcpi := int(rcpiNode.value_int)
+-			if mac != "" && rcpi > 0 && rcpi <= 220 {
+-				metricsByMAC[mac] = ClientMetrics{
+-					RCPI: rcpi, RSSI: rcpi/2 - 110, LastUpdated: observedAt,
++			if mac != "" {
++				metrics := ClientMetrics{}
++				if rcpiNode != nil && C.get_node_type(rcpiNode) == C.em_network_node_data_type_number {
++					rcpi := int(rcpiNode.value_int)
++					if rcpi > 0 && rcpi <= 220 {
++						metrics.RCPI = rcpi
++						metrics.RSSI = rcpi/2 - 110
++						metrics.LastUpdated = observedAt
++					}
+ 				}
++				uptimeNode := directChild(node, "LastConnectTime")
++				if uptimeNode != nil && C.get_node_type(uptimeNode) == C.em_network_node_data_type_number {
++					metrics.AssociationUptime = int64(uptimeNode.value_int)
++				}
++				metricsByMAC[mac] = metrics
+ 			}
+ 		}
+ 		for i := 0; i < int(node.num_children); i++ {
+@@ -3307,6 +3416,9 @@ func getLiveClientsWithMetrics() ([]Client, error) {
+ 	for i := range clientList {
+ 		if metrics, found := metricsByMAC[strings.ToLower(clientList[i].MAC)]; found {
+ 			clientList[i].ClientMetrics = metrics
++			if metrics.AssociationUptime > 0 {
++				clientList[i].ConnectionTime = time.Now().Add(-time.Duration(metrics.AssociationUptime) * time.Second)
++			}
+ 		}
+ 	}
+ 	return clientList, nil
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index c7b0fad..bcc431f 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -442,6 +442,7 @@
+                                     <tr>
+                                         <th>Device</th>
+                                         <th>Connection</th>
++                                        <th>Uptime</th>
+                                         <th>Signal</th>
+                                         <th>Speed</th>
+                                         <th>Usage</th>
+@@ -450,7 +451,7 @@
+                                 </thead>
+                                 <tbody id="clients-tbody">
+                                     <tr>
+-                                        <td colspan="6" class="loading-message">Loading clients...</td>
++                                        <td colspan="7" class="loading-message">Loading clients...</td>
+                                     </tr>
+                                 </tbody>
+                             </table>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index ee926cf..2bc658c 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2010,9 +2010,10 @@ async handleWebSocketMessage(data) {
+ 
+     const statusClass = device.status === 'Online' ? 'online' : 'offline';
+     const signalStrength = Number.isFinite(device.signal)
+-      ? this.getSignalStrengthIcon(device.signal)
+-      : 'N/A';
+-    const uptime = device.uptime || 'Unknown';
++      ? `${this.getSignalStrengthIcon(device.signal)} ${device.signal} dBm`
++      : ((device.role === 'Controller' || device.role?.startsWith('Agent-') ||
++          device.backhaul_type === 'Ethernet') ? 'Local / Ethernet' : 'Not reported');
++    const uptime = device.uptime || 'Not reported';
+ 
+     card.innerHTML = `
+       <div class="device-header">
+@@ -2032,7 +2033,7 @@ async handleWebSocketMessage(data) {
+           <div class="value">${device.role}</div>
+         </div>
+         <div class="metric-item">
+-          <div class="label">Signal</div>
++          <div class="label">Backhaul signal</div>
+           <div class="value">${signalStrength}</div>
+         </div>
+         <div class="metric-item">
+@@ -2090,6 +2091,10 @@ async handleWebSocketMessage(data) {
+       ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm${hasRCPI ? ` (RCPI ${metrics.rcpi})` : ''}</span>`
+       : '<span>N/A</span>';
+     const connectionInfo = this.getClientConnectionInfo(client);
++    const associationUptime = Number.isFinite(metrics.association_uptime_seconds) &&
++      metrics.association_uptime_seconds > 0
++      ? this.formatUptime(metrics.association_uptime_seconds)
++      : 'Not reported';
+ 
+     row.innerHTML = `
+       <td>
+@@ -2109,6 +2114,7 @@ async handleWebSocketMessage(data) {
+           <div class="connection-band">${connectionInfo.band}</div>
+         </div>
+       </td>
++      <td>${associationUptime}</td>
+       <td>
+         <div class="signal-strength">
+           ${signalDisplay}
+@@ -2143,6 +2149,17 @@ async handleWebSocketMessage(data) {
+     return row;
+   }
+ 
++  formatUptime(seconds) {
++    seconds = Math.max(0, Math.floor(Number(seconds) || 0));
++    const days = Math.floor(seconds / 86400);
++    const hours = Math.floor((seconds % 86400) / 3600);
++    const minutes = Math.floor((seconds % 3600) / 60);
++    const secs = seconds % 60;
++    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
++    if (hours > 0) return `${hours}h ${minutes}m`;
++    return `${minutes}m ${secs}s`;
++  }
++
+   /**
+    * Initialize all charts
+    */
+@@ -5131,8 +5148,10 @@ class ClientDetailsViewer {
+       this.determineBand(m.channel_width_mhz);
+     document.getElementById('client-channel').textContent = 
+       `${m.channel_width_mhz || 'N/A'} MHz`;
+-    document.getElementById('client-connection-time').textContent = 
+-      m.connection_duration || 'N/A';
++    document.getElementById('client-connection-time').textContent =
++      Number.isFinite(m.association_uptime_seconds) && m.association_uptime_seconds > 0
++        ? this.formatUptime(m.association_uptime_seconds)
++        : 'Not reported';
+     
+     // Capabilities
+     const standards = cap.wifi_standards || [];

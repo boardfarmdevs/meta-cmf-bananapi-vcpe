@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000097 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 05:00:00 -0700
+Subject: [PATCH] topology: prune stale operational AP BSS
+
+The Operational BSS TLV is a complete snapshot for each reported radio, but
+the controller only appended an unknown BSSID.  Recreating an hwsim AP VAP can
+assign a new BSSID, leaving the old AP record enabled.  Parent lookup then
+finds the stale record first and publishes an obsolete backhaul tree even
+though the current record is also present.
+
+Before merging a radio snapshot, remove enabled AP-mode BSS records for that
+RUID which are absent from the report.  Station-mode BSS records are retained;
+they describe the Agent's upstream membership rather than an operational AP.
+The normal BSS-list commit then persists the reconciled snapshot.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 5555555..6666666 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2057,9 +2057,44 @@ int em_configuration_t::handle_ap_operational_bss(unsigned char *buff, unsigned i
+     ap = reinterpret_cast<em_ap_op_bss_t *> (buff);
+     radio = const_cast<em_ap_op_bss_radio_t *> (ap->radios);
+ 
++    auto radio_reports_bssid = [](em_ap_op_bss_radio_t *reported_radio,
++            const mac_address_t candidate) {
++        em_ap_operational_bss_t *reported = reported_radio->bss;
++        for (unsigned int index = 0; index < reported_radio->bss_num; index++) {
++            if (memcmp(reported->bssid, candidate,
++                    sizeof(mac_address_t)) == 0) {
++                return true;
++            }
++            reported = reinterpret_cast<em_ap_operational_bss_t *>(
++                reinterpret_cast<unsigned char *>(reported) +
++                sizeof(em_ap_operational_bss_t) + reported->ssid_len);
++        }
++        return false;
++    };
++
+ 	util::get_date_time_rfc3399(time_date, sizeof(time_date));
+ 
+     for (i = 0; i < ap->radios_num; i++) {
++        for (unsigned int current = 0; current < dm->get_num_bss();) {
++            em_bss_info_t *current_info = dm->get_bss_info(current);
++            if (current_info != NULL && current_info->enabled &&
++                    current_info->vap_mode == em_vap_mode_ap &&
++                    memcmp(current_info->ruid.mac, radio->ruid,
++                        sizeof(mac_address_t)) == 0 &&
++                    !radio_reports_bssid(radio, current_info->bssid.mac)) {
++                em_printfout(
++                    "Removing stale operational AP BSS: ruid=%s bssid=%s",
++                    util::mac_to_string(radio->ruid).c_str(),
++                    util::mac_to_string(current_info->bssid.mac).c_str());
++                memmove(&dm->m_bss[current], &dm->m_bss[current + 1],
++                    (dm->get_num_bss() - current - 1) *
++                        sizeof(dm->m_bss[0]));
++                dm->set_num_bss(dm->get_num_bss() - 1);
++                updated_at_least_one_bss = true;
++                continue;
++            }
++            current++;
++        }
+         bss = radio->bss;
+         all_bss_len = 0;
+         for (j = 0; j < radio->bss_num; j++) {
+-- 
+2.43.0

@@ -1,0 +1,33 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] assoc: mark clients absent from the live monitor inactive
+
+The full associated-client data model can retain an authorized station after
+it silently roams to another AP.  The live monitor map is refreshed from the
+HAL and no longer contains that station, but get_sta_stats_info() returned an
+error without invalidating the cached cli_Active value.  A subsequent full
+list therefore continued to advertise the stale association as active.
+
+Mark the cached entry inactive when it has no corresponding live monitor
+entry.  Keep the entry itself so a transiently unavailable monitor cannot
+destroy association history and a later successful refresh can make it active
+again.  The full-list encoder can now distinguish a live snapshot entry from
+retained history.
+
+Upstream-Status: Pending
+---
+ source/stats/wifi_monitor.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/source/stats/wifi_monitor.c b/source/stats/wifi_monitor.c
+--- a/source/stats/wifi_monitor.c
++++ b/source/stats/wifi_monitor.c
+@@ -1508,6 +1508,7 @@ int get_sta_stats_info (assoc_dev_data_t *assoc_dev_data) {
+ 
+     sta_data = (sta_data_t *)hash_map_get(sta_map, sta_key);
+     if (sta_data == NULL) {
++        assoc_dev_data->dev_stats.cli_Active = false;
+         wifi_util_error_print(WIFI_MON, "%s:%d: NULL pointer\n", __func__, __LINE__);
+         pthread_mutex_unlock(&g_monitor_module.data_lock);
+         return -1;
+-- 
+2.43.0

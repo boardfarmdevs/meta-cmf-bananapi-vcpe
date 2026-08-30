@@ -1,0 +1,636 @@
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 systemd[1]: Starting easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[27746]: WAN provider ready after 1s
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27929]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27929]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27929]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27931]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27931]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27931]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27933]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27933]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27933]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27937]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-bananapi-vcpe/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27937]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27937]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27940]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27940]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27940]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27945]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27945]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T17:41:08+00:00 hwsim-kernel-dev-0829 sudo[27945]: pam_unix(sudo:session): session closed for user root
+2026-08-29T17:41:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[27746]: medium backend selected: userspace
+2026-08-29T17:44:57+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[27746]: Terminated
+2026-08-29T17:45:00+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Main process exited, code=killed, status=15/TERM
+2026-08-29T17:45:00+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Failed with result 'signal'.
+2026-08-29T17:45:00+00:00 hwsim-kernel-dev-0829 systemd[1]: Stopped easymesh-lab.service - EasyMesh steering laboratory runtime.
+2026-08-29T17:45:00+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Consumed 15.332s CPU time, 21.2M memory peak, 0B memory swap peak.
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 systemd[1]: Starting easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: WAN provider ready after 1s
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574966]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574966]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574966]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574968]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574968]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574968]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574970]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574970]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574970]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574974]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574974]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574974]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574977]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574977]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574977]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574980]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/wmediumd-control.sock
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574980]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574980]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574983]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/metrics/control.sock
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574983]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574983]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574986]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574986]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574986]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574991]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574991]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:08:45+00:00 hwsim-kernel-dev-0829 sudo[1574991]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:10:52+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: medium backend selected: userspace
+2026-08-29T21:16:39+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: metrics policy active on 5 devices / 15 radios
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685779]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685779]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685779]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685781]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685781]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685781]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685783]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685783]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 sudo[1685783]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:30+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> preflight radio inventory
+2026-08-29T21:21:54+00:00 hwsim-kernel-dev-0829 sudo[1691589]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:21:54+00:00 hwsim-kernel-dev-0829 sudo[1691589]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691589]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691592]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691592]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691592]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691597]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691597]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691597]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691599]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan25 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691599]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691599]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691601]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan26 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691601]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691601]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691603]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan27 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691603]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691603]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691607]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan28 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691607]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691607]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691609]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan29 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691609]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691609]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691611]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan30 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691611]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691611]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691613]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan31 down
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691613]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691613]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> generating config -> /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691616]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T21:21:55+00:00 hwsim-kernel-dev-0829 sudo[1691616]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1691616]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> self-test
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697574]:     root : PWD=/ ; USER=root ; COMMAND=/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd.patched -T
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697574]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: === wmediumd multichannel + Linux 7 rate-flags self-test ===
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS 2437 victim: +1 samefreq (S3@2437 considered), +1 crossfreq skipped (S2@5180)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS 5180 victim: +1 samefreq (S2@5180 considered), +1 crossfreq skipped (S3@2437)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS isolation: victim@6000 -> 0 applied, 2 cross skipped, offset=0 (no cross-band leak)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS frequency SNR: 5180 override=7, 2437 pair fallback=35
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS ownership: STA owned by its own radio r3 @ 5180 after roam
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS delivery: learned VIF resolves to its owning radio without ADD_MAC_ADDR replay
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS multicast: known radios match frequency; unknown radios wait for TX learning
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS invariant: ADD_MAC_ADDR RX-filter churn does not alter ownership/freq
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS scheduling: 2437 MHz ignores later 5180 MHz queue tail
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS Linux 7 rates: HT/VHT mapped to valid OFDM PER curves (ht5=4 ht24=11 vht5=7)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: PASS telemetry: bounded counters, active link, VIF and event state
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697575]: === self-test PASSED (0 failures) ===
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697574]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> starting wmediumd
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697576]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/wmediumd.log /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697576]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 sudo[1697576]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:16+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> generating Console radio identities -> /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T21:22:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1697578]: identity inventory: wrote 25 radios to /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T21:22:24+00:00 hwsim-kernel-dev-0829 sudo[1700845]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/sh -c '\'/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd.patched\' -c \'/run/meta-cmf-wmediumd/wmediumd.cfg\' -C \'/run/wmediumd-control.sock\' -R \'/run/meta-cmf-wmediumd/metrics/control.sock\' -O \'/run/meta-cmf-wmediumd/observer/telemetry.sock\' >\'/run/meta-cmf-wmediumd/wmediumd.log\' 2>&1 & echo $! > \'/run/meta-cmf-wmediumd/wmediumd.pid\''
+2026-08-29T21:22:24+00:00 hwsim-kernel-dev-0829 sudo[1700845]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:24+00:00 hwsim-kernel-dev-0829 sudo[1700845]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701213]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/kill -0 1700847
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701213]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701213]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701216]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/wmediumd-control.sock
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701216]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701216]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701218]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/wmediumd-control.sock
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701218]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701218]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701220]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0666 /run/meta-cmf-wmediumd/metrics/control.sock
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701220]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701220]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701222]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701222]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701222]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701226]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701226]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701226]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701232]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701232]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701232]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701234]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chown root:root /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701234]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701234]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701236]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0644 /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701236]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 sudo[1701236]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:22:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1685776]: >> up (pid 1700847); threads 1; affinity 0-5; log /run/meta-cmf-wmediumd/wmediumd.log; read-only metrics /run/meta-cmf-wmediumd/metrics/control.sock; telemetry /run/meta-cmf-wmediumd/observer/telemetry.sock; identities /run/meta-cmf-wmediumd/identity-inventory.json; binary manifest /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:22:48+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: metrics policy active on 5 devices / 15 radios
+2026-08-29T21:22:48+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: all 20 WLAN clients report non-zero RCPI
+2026-08-29T21:24:51+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: topology and zero-restart state held for 120 seconds
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpibroadband onewifi=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpibroadband em_agent=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpibroadband em_ctrl=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpibroadband em_cli=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap onewifi=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap em_agent=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-001 onewifi=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-001 em_agent=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-002 onewifi=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-002 em_agent=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-003 onewifi=0
+2026-08-29T21:24:53+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: bpiap-003 em_agent=0
+2026-08-29T21:25:39+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: all 20 WLAN clients reach 10.0.0.1
+2026-08-29T21:25:39+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1574758]: EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=20/20 metrics=20/20 associated=24 restarts=0
+2026-08-29T21:26:24+00:00 hwsim-kernel-dev-0829 systemd[1]: Finished easymesh-lab.service - EasyMesh steering laboratory runtime.
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 systemd[1]: Stopping easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745363]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745363]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745363]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745365]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745365]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745365]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745367]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745367]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745367]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745372]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745372]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745372]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745375]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745375]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745375]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745378]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/wmediumd-control.sock
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745378]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745378]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745381]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745381]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745381]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745387]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/kill 1700847
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745387]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745387]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745392]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745392]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745392]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745395]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745395]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745395]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745398]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/wmediumd-control.sock
+2026-08-29T21:27:38+00:00 hwsim-kernel-dev-0829 sudo[1745398]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745398]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745409]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745409]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745409]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745414]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745414]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:27:39+00:00 hwsim-kernel-dev-0829 sudo[1745414]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:29:49+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Deactivated successfully.
+2026-08-29T21:29:49+00:00 hwsim-kernel-dev-0829 systemd[1]: Stopped easymesh-lab.service - EasyMesh steering laboratory runtime.
+2026-08-29T21:29:49+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Consumed 2min 13.530s CPU time, 156.4M memory peak, 0B memory swap peak.
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 systemd[1]: Starting easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: WAN provider ready after 1s
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769303]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769303]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769303]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769305]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769305]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769305]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769307]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769307]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769307]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769311]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769311]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769311]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769314]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769314]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769314]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769319]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769319]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:31:00+00:00 hwsim-kernel-dev-0829 sudo[1769319]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:31:06+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: medium backend selected: userspace
+2026-08-29T21:36:44+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: metrics policy active on 5 devices / 15 radios
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861613]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861613]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861613]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861616]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861616]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861616]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861618]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861618]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 sudo[1861618]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:41:51+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> preflight radio inventory
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866584]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866584]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866584]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866587]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866587]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866587]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866592]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866592]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866592]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866601]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan25 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866601]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866601]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866625]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan26 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866625]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866625]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866664]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan27 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866664]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866664]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866682]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan28 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866682]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866682]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866704]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan29 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866704]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866704]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866720]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan30 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866720]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866720]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866740]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan31 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866740]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866740]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866757]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan32 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866757]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866757]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866777]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan33 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866777]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866777]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866803]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan34 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866803]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866803]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866828]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan35 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866828]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866828]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866848]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan36 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866848]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866848]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866867]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan37 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866867]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866867]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866869]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan38 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866869]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866869]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866871]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan39 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866871]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866871]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866873]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan40 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866873]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866873]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866875]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan41 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866875]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866875]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866877]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan42 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866877]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866877]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866879]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan43 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866879]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866879]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866881]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan44 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866881]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866881]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866883]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan45 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866883]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866883]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866885]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan46 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866885]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866885]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866887]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan47 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866887]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866887]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866889]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan48 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866889]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866889]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866891]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan49 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866891]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866891]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866897]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan50 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866897]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866897]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866903]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan51 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866903]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866903]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866909]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan52 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866909]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866909]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866911]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan53 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866911]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866911]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866913]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan54 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866913]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866913]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866915]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan55 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866915]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866915]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866921]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan56 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866921]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866921]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866923]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan57 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866923]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866923]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866925]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan58 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866925]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866925]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866927]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan59 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866927]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866927]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866929]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan60 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866929]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866929]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866931]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan61 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866931]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866931]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866933]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan62 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866933]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866933]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866935]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan63 down
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866935]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866935]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> generating config -> /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866938]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T21:42:08+00:00 hwsim-kernel-dev-0829 sudo[1866938]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1866938]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> self-test
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872904]:     root : PWD=/ ; USER=root ; COMMAND=/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd.patched -T
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872904]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: === wmediumd multichannel + Linux 7 rate-flags self-test ===
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS 2437 victim: +1 samefreq (S3@2437 considered), +1 crossfreq skipped (S2@5180)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS 5180 victim: +1 samefreq (S2@5180 considered), +1 crossfreq skipped (S3@2437)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS isolation: victim@6000 -> 0 applied, 2 cross skipped, offset=0 (no cross-band leak)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS frequency SNR: 5180 override=7, 2437 pair fallback=35
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS ownership: STA owned by its own radio r3 @ 5180 after roam
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS delivery: learned VIF resolves to its owning radio without ADD_MAC_ADDR replay
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS multicast: known radios match frequency; unknown radios wait for TX learning
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS invariant: ADD_MAC_ADDR RX-filter churn does not alter ownership/freq
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS scheduling: 2437 MHz ignores later 5180 MHz queue tail
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS Linux 7 rates: HT/VHT mapped to valid OFDM PER curves (ht5=4 ht24=11 vht5=7)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: PASS telemetry: bounded counters, active link, VIF and event state
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872906]: === self-test PASSED (0 failures) ===
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872904]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> starting wmediumd
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872907]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/wmediumd.log /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872907]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 sudo[1872907]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:25+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> generating Console radio identities -> /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T21:42:33+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1872910]: identity inventory: wrote 25 radios to /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T21:42:33+00:00 hwsim-kernel-dev-0829 sudo[1876276]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/sh -c '\'/home/vagrant/git/meta-cmf-kernel-medium-0829/gen/wmediumd/wmediumd.patched\' -c \'/run/meta-cmf-wmediumd/wmediumd.cfg\' -C \'/run/wmediumd-control.sock\' -R \'/run/meta-cmf-wmediumd/metrics/control.sock\' -O \'/run/meta-cmf-wmediumd/observer/telemetry.sock\' >\'/run/meta-cmf-wmediumd/wmediumd.log\' 2>&1 & echo $! > \'/run/meta-cmf-wmediumd/wmediumd.pid\''
+2026-08-29T21:42:33+00:00 hwsim-kernel-dev-0829 sudo[1876276]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:33+00:00 hwsim-kernel-dev-0829 sudo[1876276]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877325]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/kill -0 1876286
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877325]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877325]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877331]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/wmediumd-control.sock
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877331]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877331]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877333]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/wmediumd-control.sock
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877333]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877333]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877335]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0666 /run/meta-cmf-wmediumd/metrics/control.sock
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877335]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877335]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877338]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877338]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877338]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877340]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877340]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877340]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877346]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877346]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877346]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877348]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chown root:root /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877348]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877348]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877350]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0644 /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877350]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 sudo[1877350]: pam_unix(sudo:session): session closed for user root
+2026-08-29T21:42:34+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1861610]: >> up (pid 1876286); threads 1; affinity 0-5; log /run/meta-cmf-wmediumd/wmediumd.log; read-only metrics /run/meta-cmf-wmediumd/metrics/control.sock; telemetry /run/meta-cmf-wmediumd/observer/telemetry.sock; identities /run/meta-cmf-wmediumd/identity-inventory.json; binary manifest /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T21:42:57+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: metrics policy active on 5 devices / 15 radios
+2026-08-29T21:42:59+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: all 20 WLAN clients report non-zero RCPI
+2026-08-29T21:45:00+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: topology and zero-restart state held for 120 seconds
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpibroadband onewifi=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpibroadband em_agent=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpibroadband em_ctrl=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpibroadband em_cli=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap onewifi=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap em_agent=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-001 onewifi=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-001 em_agent=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-002 onewifi=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-002 em_agent=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-003 onewifi=0
+2026-08-29T21:45:01+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: bpiap-003 em_agent=0
+2026-08-29T21:45:43+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: all 20 WLAN clients reach 10.0.0.1
+2026-08-29T21:45:43+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[1769124]: EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=20/20 metrics=20/20 associated=24 restarts=0
+2026-08-29T21:46:28+00:00 hwsim-kernel-dev-0829 systemd[1]: Finished easymesh-lab.service - EasyMesh steering laboratory runtime.
+2026-08-29T22:13:01+00:00 hwsim-kernel-dev-0829 systemd[1]: Stopping easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515496]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515496]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515496]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515498]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515498]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515498]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515500]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515500]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515500]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515504]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515504]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515504]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515507]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515507]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515507]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515531]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/wmediumd-control.sock
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515531]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515531]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515707]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515707]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515707]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515898]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/kill 2479683
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515898]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515898]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515927]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515927]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2515927]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516019]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516019]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516019]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516109]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/wmediumd-control.sock
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516109]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516109]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516144]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/fuser /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516144]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516144]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516149]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516149]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:13:02+00:00 hwsim-kernel-dev-0829 sudo[2516149]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Deactivated successfully.
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 systemd[1]: Stopped easymesh-lab.service - EasyMesh steering laboratory runtime.
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 systemd[1]: easymesh-lab.service: Consumed 1min 41.016s CPU time, 143.5M memory peak, 0B memory swap peak.
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 systemd[1]: Starting easymesh-lab.service - EasyMesh steering laboratory runtime...
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: WAN provider ready after 1s
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545686]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545686]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545686]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545688]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545688]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545688]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545690]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545690]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545690]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545694]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545694]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545694]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545697]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545697]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545697]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545702]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545702]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:14:33+00:00 hwsim-kernel-dev-0829 sudo[2545702]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:14:39+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: medium backend selected: userspace
+2026-08-29T22:20:11+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: metrics policy active on 5 devices / 15 radios
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743126]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0775 -o root -g lxd /run/meta-cmf-wmediumd
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743126]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743126]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743128]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0755 -o root -g root /run/meta-cmf-wmediumd/metrics
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743128]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743128]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743130]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/install -d -m 0770 -o root -g lxd /run/meta-cmf-wmediumd/observer
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743130]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 sudo[2743130]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:32:44+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> preflight radio inventory
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757145]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd\\.patched([[:space:]]|$)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757145]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757145]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757149]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/pgrep -f ^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\\.patched[[:space:]]+-c[[:space:]]+
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757149]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757149]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757154]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757154]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757154]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757156]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan55 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757156]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757156]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757158]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan56 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757158]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757158]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757160]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan57 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757160]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757160]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757162]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan58 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757162]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757162]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757164]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan59 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757164]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757164]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757166]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan60 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757166]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757166]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757168]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan61 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757168]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757168]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757170]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan62 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757170]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757170]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757172]:     root : PWD=/ ; USER=root ; COMMAND=/usr/sbin/ip link set virt-wlan63 down
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757172]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757172]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> generating config -> /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757175]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd.cfg
+2026-08-29T22:33:15+00:00 hwsim-kernel-dev-0829 sudo[2757175]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2757175]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> self-test
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766155]:     root : PWD=/ ; USER=root ; COMMAND=/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd.patched -T
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766155]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: === wmediumd multichannel + Linux 7 rate-flags self-test ===
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS 2437 victim: +1 samefreq (S3@2437 considered), +1 crossfreq skipped (S2@5180)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS 5180 victim: +1 samefreq (S2@5180 considered), +1 crossfreq skipped (S3@2437)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS isolation: victim@6000 -> 0 applied, 2 cross skipped, offset=0 (no cross-band leak)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS frequency SNR: 5180 override=7, 2437 pair fallback=35
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS ownership: STA owned by its own radio r3 @ 5180 after roam
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS delivery: learned VIF resolves to its owning radio without ADD_MAC_ADDR replay
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS multicast: known radios match frequency; unknown radios wait for TX learning
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS invariant: ADD_MAC_ADDR RX-filter churn does not alter ownership/freq
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS scheduling: 2437 MHz ignores later 5180 MHz queue tail
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS Linux 7 rates: HT/VHT mapped to valid OFDM PER curves (ht5=4 ht24=11 vht5=7)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: PASS telemetry: bounded counters, active link, VIF and event state
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766156]: === self-test PASSED (0 failures) ===
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766155]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> starting wmediumd
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766157]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/rm -f /run/meta-cmf-wmediumd/wmediumd.pid /run/wmediumd-control.sock /run/meta-cmf-wmediumd/metrics/control.sock /run/meta-cmf-wmediumd/observer/telemetry.sock /run/meta-cmf-wmediumd/wmediumd.log /run/meta-cmf-wmediumd/identity-inventory.json /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766157]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 sudo[2766157]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:37+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> generating Console radio identities -> /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T22:33:56+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2766159]: identity inventory: wrote 55 radios to /run/meta-cmf-wmediumd/identity-inventory.json
+2026-08-29T22:33:57+00:00 hwsim-kernel-dev-0829 sudo[2776342]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/sh -c '\'/home/vagrant/git/meta-cmf-kernel-medium-0829-final/gen/wmediumd/wmediumd.patched\' -c \'/run/meta-cmf-wmediumd/wmediumd.cfg\' -C \'/run/wmediumd-control.sock\' -R \'/run/meta-cmf-wmediumd/metrics/control.sock\' -O \'/run/meta-cmf-wmediumd/observer/telemetry.sock\' >\'/run/meta-cmf-wmediumd/wmediumd.log\' 2>&1 & echo $! > \'/run/meta-cmf-wmediumd/wmediumd.pid\''
+2026-08-29T22:33:57+00:00 hwsim-kernel-dev-0829 sudo[2776342]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:57+00:00 hwsim-kernel-dev-0829 sudo[2776342]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776359]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/kill -0 2776344
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776359]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776359]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776375]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/wmediumd-control.sock
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776375]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776375]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776385]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/wmediumd-control.sock
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776385]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776385]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776396]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0666 /run/meta-cmf-wmediumd/metrics/control.sock
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776396]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776396]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776407]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chgrp lxd /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776407]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776407]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776419]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0660 /run/meta-cmf-wmediumd/observer/telemetry.sock
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776419]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776419]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776427]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/tee /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776427]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776427]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776429]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chown root:root /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776429]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776429]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776431]:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/chmod 0644 /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776431]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 sudo[2776431]: pam_unix(sudo:session): session closed for user root
+2026-08-29T22:33:58+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2743123]: >> up (pid 2776344); threads 1; affinity 0-5; log /run/meta-cmf-wmediumd/wmediumd.log; read-only metrics /run/meta-cmf-wmediumd/metrics/control.sock; telemetry /run/meta-cmf-wmediumd/observer/telemetry.sock; identities /run/meta-cmf-wmediumd/identity-inventory.json; binary manifest /run/meta-cmf-wmediumd/wmediumd-binary.sha256
+2026-08-29T22:34:20+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: metrics policy active on 5 devices / 15 radios
+2026-08-29T22:34:23+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: all 50 WLAN clients report non-zero RCPI
+2026-08-29T22:36:23+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: topology and zero-restart state held for 120 seconds
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpibroadband onewifi=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpibroadband em_agent=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpibroadband em_ctrl=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpibroadband em_cli=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap onewifi=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap em_agent=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-001 onewifi=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-001 em_agent=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-002 onewifi=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-002 em_agent=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-003 onewifi=0
+2026-08-29T22:36:24+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: bpiap-003 em_agent=0
+2026-08-29T22:38:13+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: all 50 WLAN clients reach 10.0.0.1
+2026-08-29T22:38:13+00:00 hwsim-kernel-dev-0829 easymesh-lab-runtime[2545505]: EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=50/50 metrics=50/50 associated=54 restarts=0

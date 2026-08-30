@@ -1,0 +1,372 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: make topology clients draggable and show moves
+
+Place every client evenly on the inner perimeter of its authoritative SSID
+bubble. Allow the operator to drag a client anywhere in the topology canvas
+and cache the selected offset by MAC, owner and SSID so two-second signal
+refreshes do not undo the presentation. Reset manual positions on Optimize
+Layout or a real AP owner change.
+
+Compare consecutive authoritative topology snapshots for STA owner changes.
+Pulse a moved client and draw a directional purple trail from its former AP
+that fades over six seconds. Manual diagram dragging changes presentation only
+and cannot create a steering event.
+
+Upstream-Status: Inappropriate [lab WebUI presentation]
+---
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2037,7 +2037,7 @@
+     <div id="toast-container" class="toast-container"></div>
+
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-live-signal-1"></script>
++    <script src="static/script.js?v=topology-draggable-clients-2"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -33,6 +33,8 @@
+     this.clients = [];
+     this.clientsRefreshInFlight = false;
+     this.topology = {};
++    this.staPositionCache = new Map();
++    this.staMoveEffects = new Map();
+     this.charts = {};
+     this.refreshIntervals = {};
+     this.policyByDeviceId = {};
+@@ -2432,6 +2434,7 @@
+     if (button) button.disabled = true;
+
+     this.nodePositionCache?.clear();
++    this.staPositionCache?.clear();
+     nodes.forEach(node => {
+       node.fx = null;
+       node.fy = null;
+@@ -2715,6 +2718,53 @@
+     }).sort((left, right) => left[0].localeCompare(right[0])));
+   }
+
++  topologySTAAssociations(topology) {
++    const associations = new Map();
++    for (const node of topology?.nodes || []) {
++      for (const sta of node?.STAList || []) {
++        const mac = this.normalizeMac(sta?.staMAC);
++        if (!mac) continue;
++        associations.set(mac, {
++          ownerId: String(node?.id || ''),
++          ownerName: String(node?.name || node?.id || ''),
++          ssid: String(sta?.ssid || '')
++        });
++      }
++    }
++    return associations;
++  }
++
++  recordTopologyAssociationChanges(previousTopology, nextTopology) {
++    const previous = this.topologySTAAssociations(previousTopology);
++    const next = this.topologySTAAssociations(nextTopology);
++    const now = Date.now();
++    for (const [mac, after] of next) {
++      const before = previous.get(mac);
++      if (!before || before.ownerId === after.ownerId) continue;
++      this.staMoveEffects.set(mac, {
++        fromOwnerId: before.ownerId,
++        fromOwnerName: before.ownerName,
++        toOwnerId: after.ownerId,
++        toOwnerName: after.ownerName,
++        ssid: after.ssid,
++        changedAt: now
++      });
++    }
++    for (const [mac, effect] of this.staMoveEffects) {
++      if (now - effect.changedAt > 8000 || !next.has(mac)) {
++        this.staMoveEffects.delete(mac);
++      }
++    }
++  }
++
++  topologyMoveEffectForSTA(sta, nodeId) {
++    const effect = this.staMoveEffects.get(this.normalizeMac(sta?.staMAC));
++    if (!effect || effect.toOwnerId !== String(nodeId || '')) return null;
++    const ageMs = Math.max(0, Date.now() - effect.changedAt);
++    if (ageMs > 6000) return null;
++    return { ...effect, ageMs, remainingMs: Math.max(1, 6000 - ageMs) };
++  }
++
+   topologyBandLabel(band) {
+     if (Number(band) === 0) return '2.4G';
+     if (Number(band) === 1) return '5G';
+@@ -2810,6 +2860,8 @@
+       return false;
+     }
+
++    this.recordTopologyAssociationChanges(this.topology, response);
++
+     if (this.topologySignature(response) === this.topologySignature(this.topology)) {
+       this.topologyRefreshPending = null;
+       return false;
+@@ -2887,6 +2939,12 @@
+         this.nodePositionCache.delete(key);
+       }
+     }
++    const currentSTAKeys = new Set(renderTopology.nodes.flatMap(node =>
++      (node.STAList || []).map(sta => this.normalizeMac(sta?.staMAC))
++    ));
++    for (const key of this.staPositionCache.keys()) {
++      if (!currentSTAKeys.has(key)) this.staPositionCache.delete(key);
++    }
+
+     // Clear previous content and stop a simulation owned by the old SVG.
+     if (this.topologySimulation) this.topologySimulation.stop();
+@@ -2900,6 +2958,17 @@
+     .attr('width', width)
+     .attr('height', height)
+
++    const defs = svg.append('defs');
++    defs.append('marker')
++      .attr('id', 'sta-steering-arrowhead')
++      .attr('viewBox', '0 -5 10 10')
++      .attr('refX', 9).attr('refY', 0)
++      .attr('markerWidth', 6).attr('markerHeight', 6)
++      .attr('orient', 'auto')
++      .append('path')
++      .attr('d', 'M0,-5L10,0L0,5')
++      .attr('fill', '#7c3aed');
++
+     const svgGroup = svg.append('g');
+     const zoom = d3.zoom()
+       .on('start', (event) => {
+@@ -3002,6 +3071,7 @@
+     this.topologySimulation = simulation;
+
+     const edgeGroup = svgGroup.append('g').attr('class', 'edges');
++    const steeringEffectGroup = svgGroup.append('g').attr('class', 'steering-effects');
+     const nodeGroup = svgGroup.append('g').attr('class', 'nodes');
+     const staGroup  = svgGroup.append('g').attr('class', 'sta-nodes');
+
+@@ -3105,21 +3175,33 @@
+               nodeRef: d,
+               sta,
+               signal: self.topologySignalForSTA(sta),
+-              ...self.topologySTAPlacement(sta, staList, haulGeometry)
++              ...self.topologySTAPlacement(sta, staList, haulGeometry, d.id)
+             };
+-          });
++          })
++          .style('cursor', 'grab')
++          .call(d3.drag()
++            .subject((_event, dragData) => ({
++              x: (dragData.nodeRef.fx ?? dragData.nodeRef.x ?? 0) + dragData.to.x,
++              y: (dragData.nodeRef.fy ?? dragData.nodeRef.y ?? 0) + dragData.to.y
++            }))
++            .on('start', staDragStarted)
++            .on('drag', staDragged)
++            .on('end', staDragEnded));
+
+           const data = staElement.datum();
++          const moveEffect = self.topologyMoveEffectForSTA(sta, d.id);
+
+           const from = data.from;
+           const to = data.to;
+           const staWaveLength = bandWavelengths[sta.band] || bandWavelengths['default'];
++          data.waveLength = staWaveLength;
+           const sinePathData = self.generateSineWavePath(from, to, {
+             amplitude: 5,
+             wavelength: staWaveLength
+           });
+
+           staElement.append('path')
++            .attr('class', 'sta-link')
+             .attr('d', sinePathData.path)
+             .attr('fill', 'none')
+             .attr('stroke', '#141313ff')
+@@ -3141,7 +3223,47 @@
+             .attr('stroke-dasharray', data.signal.available ? null : '3 3')
+             .style('pointer-events', 'none');
+
++          if (moveEffect) {
++            const pulse = staElement.append('circle')
++              .attr('class', 'sta-steer-pulse')
++              .attr('cx', to.x).attr('cy', to.y)
++              .attr('r', data.iconSize / 2 + 7)
++              .attr('fill', 'none')
++              .attr('stroke', '#7c3aed')
++              .attr('stroke-width', 4)
++              .style('pointer-events', 'none');
++            pulse.append('animate')
++              .attr('attributeName', 'r')
++              .attr('values', `${data.iconSize / 2 + 7};${data.iconSize / 2 + 20}`)
++              .attr('dur', '0.9s').attr('repeatCount', '4');
++            pulse.append('animate')
++              .attr('attributeName', 'opacity')
++              .attr('values', '1;0').attr('dur', '0.9s').attr('repeatCount', '4');
++
++            const sourceNode = renderTopology.nodes.find(nodeItem =>
++              String(nodeItem.id) === moveEffect.fromOwnerId);
++            if (sourceNode) {
++              const trail = steeringEffectGroup.append('path')
++                .datum({ sourceNode, targetNode: d, staData: data })
++                .attr('class', 'sta-steering-trail')
++                .attr('fill', 'none')
++                .attr('stroke', '#7c3aed')
++                .attr('stroke-width', 4)
++                .attr('stroke-dasharray', '9 7')
++                .attr('marker-end', 'url(#sta-steering-arrowhead)')
++                .attr('opacity', Math.max(0.15, 1 - moveEffect.ageMs / 6000))
++                .style('pointer-events', 'none');
++              trail.append('animate')
++                .attr('attributeName', 'opacity')
++                .attr('from', Math.max(0.15, 1 - moveEffect.ageMs / 6000))
++                .attr('to', 0)
++                .attr('dur', `${moveEffect.remainingMs}ms`)
++                .attr('fill', 'freeze');
++            }
++          }
++
+           staElement.append('image')
++           .attr('class', 'sta-icon')
+            .attr('xlink:href', iconUrl)
+            .attr('x', to.x - data.iconSize / 2)
+            .attr('y', to.y - data.iconSize / 2)
+@@ -3170,6 +3292,7 @@
+             });
+
+           staElement.append('text')
++            .attr('class', 'sta-identity-label')
+             .attr('x', to.x)
+             .attr('y', to.y + data.iconSize / 2 + 11)
+             .attr('text-anchor', 'middle')
+@@ -3306,6 +3429,17 @@
+
+       staGroup.selectAll('.sta-node')
+        .attr('transform', d => `translate(${d.nodeRef.fx ?? d.nodeRef.x}, ${d.nodeRef.fy ?? d.nodeRef.y})`);
++
++      steeringEffectGroup.selectAll('.sta-steering-trail')
++        .attr('d', effect => {
++          const sourceX = effect.sourceNode.fx ?? effect.sourceNode.x;
++          const sourceY = effect.sourceNode.fy ?? effect.sourceNode.y;
++          const targetX = (effect.targetNode.fx ?? effect.targetNode.x) + effect.staData.to.x;
++          const targetY = (effect.targetNode.fy ?? effect.targetNode.y) + effect.staData.to.y;
++          const midX = (sourceX + targetX) / 2;
++          const midY = (sourceY + targetY) / 2 - 35;
++          return `M${sourceX},${sourceY} Q${midX},${midY} ${targetX},${targetY}`;
++        });
+     });
+
+     function dragstarted(event, d) {
+@@ -3313,6 +3447,54 @@
+       if (!event.active) simulation.alphaTarget(0.3).restart();
+     }
+
++    function updateSTAVisual(selection, d) {
++      const sinePathData = self.generateSineWavePath(d.from, d.to, {
++        amplitude: 5,
++        wavelength: d.waveLength
++      });
++      selection.select('path.sta-link').attr('d', sinePathData.path);
++      selection.select('circle.sta-signal-ring')
++        .attr('cx', d.to.x).attr('cy', d.to.y);
++      selection.select('circle.sta-steer-pulse')
++        .attr('cx', d.to.x).attr('cy', d.to.y);
++      selection.select('image.sta-icon')
++        .attr('x', d.to.x - d.iconSize / 2)
++        .attr('y', d.to.y - d.iconSize / 2);
++      selection.select('text.sta-identity-label')
++        .attr('x', d.to.x)
++        .attr('y', d.to.y + d.iconSize / 2 + 11);
++      selection.select('text.sta-signal-label')
++        .attr('x', d.to.x)
++        .attr('y', d.to.y + d.iconSize / 2 + 23);
++    }
++
++    function staDragStarted(event) {
++      self.beginTopologyInteraction();
++      if (event.sourceEvent) event.sourceEvent.stopPropagation();
++      d3.select(this).raise().style('cursor', 'grabbing');
++    }
++
++    function staDragged(event, d) {
++      const nodeX = d.nodeRef.fx ?? d.nodeRef.x ?? 0;
++      const nodeY = d.nodeRef.fy ?? d.nodeRef.y ?? 0;
++      d.to = {
++        x: event.x - nodeX,
++        y: event.y - nodeY
++      };
++      updateSTAVisual(d3.select(this), d);
++    }
++
++    function staDragEnded(_event, d) {
++      self.staPositionCache.set(d.cacheKey, {
++        ownerId: d.ownerId,
++        ssid: d.ssid,
++        x: d.to.x,
++        y: d.to.y
++      });
++      d3.select(this).style('cursor', 'grab');
++      self.endTopologyInteraction();
++    }
++
+     function dragged(event, d) {
+       d.fx = event.x;
+       d.fy = event.y;
+@@ -3371,11 +3556,13 @@
+     ), 80);
+   }
+
+-  /** Place one station inside its authoritative SSID bubble. */
+-  topologySTAPlacement(sta, staList, haulGeometry) {
++  /** Place one station on the inner edge of its authoritative SSID bubble. */
++  topologySTAPlacement(sta, staList, haulGeometry, nodeId = '') {
+     const ssid = String(sta?.ssid || '');
+     const stations = (Array.isArray(staList) ? staList : [])
+-      .filter(item => String(item?.ssid || '') === ssid);
++      .filter(item => String(item?.ssid || '') === ssid)
++      .sort((left, right) => this.normalizeMac(left?.staMAC)
++        .localeCompare(this.normalizeMac(right?.staMAC)));
+     const cohortIndex = Math.max(0, stations.indexOf(sta));
+     const cohortCount = Math.max(1, stations.length);
+     const target = (Array.isArray(haulGeometry) ? haulGeometry : [])
+@@ -3383,18 +3570,29 @@
+         offset: { x: 0, y: 0 }, radius: 80
+       };
+     const iconSize = Math.max(26, 44 - Math.max(0, cohortCount - 8));
+-    const usableRadius = Math.max(0, target.radius - iconSize / 2 - 42);
+-    const radial = cohortCount === 1
+-      ? 0
+-      : usableRadius * Math.sqrt((cohortIndex + 0.5) / cohortCount);
+-    const angle = cohortIndex * Math.PI * (3 - Math.sqrt(5)) - Math.PI / 2;
++    const edgeRadius = Math.max(0, target.radius - iconSize / 2 - 5);
++    const cacheKey = this.normalizeMac(sta?.staMAC);
++    const ownerId = String(nodeId || '');
++    const cached = this.staPositionCache.get(cacheKey);
++    const angle = -Math.PI / 2 + (2 * Math.PI * cohortIndex) / cohortCount;
++    let to = {
++      x: target.offset.x + edgeRadius * Math.cos(angle),
++      y: target.offset.y + edgeRadius * Math.sin(angle)
++    };
++    if (cached && cached.ownerId === ownerId && cached.ssid === ssid &&
++        Number.isFinite(cached.x) && Number.isFinite(cached.y)) {
++      to = { x: cached.x, y: cached.y };
++    } else if (cached) {
++      this.staPositionCache.delete(cacheKey);
++    }
+
+     return {
+       iconSize,
++      cacheKey,
++      ownerId,
++      ssid,
++      edgeRadius,
+       from: { x: target.offset.x, y: target.offset.y },
+-      to: {
+-        x: target.offset.x + radial * Math.cos(angle),
+-        y: target.offset.y + radial * Math.sin(angle)
+-      }
++      to
+     };
+   }
+--
+2.43.0

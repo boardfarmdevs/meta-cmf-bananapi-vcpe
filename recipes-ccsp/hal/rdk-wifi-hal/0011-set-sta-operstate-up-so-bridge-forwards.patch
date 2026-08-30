@@ -1,0 +1,129 @@
+Set IF_OPER_UP on a connected station so the Linux bridge will forward on it.
+
+This is the last blocker for the EasyMesh backhaul *data* path. After the link
+was fully established -- associated, WPA2 4-way handshake complete
+("authorized: yes / authenticated: yes / associated: yes" on the controller,
+"EAPOL: Supplicant port status: Authorized" on the extender) -- and after
+wifi_hal_configure_sta_4addr_to_bridge() had correctly enslaved the station
+into brlan0 ("Sta wifi1.3 interface added successfully to bridge:brlan0"),
+absolutely no traffic crossed the link:
+
+    extender  wifi1.3       tx_packets = 2
+    controller wifi1.1.sta1 rx_packets = 0
+    ping -I brlan0 10.0.0.1 -> 100% packet loss
+
+Cause: the station netdev is left in IF_OPER_DORMANT forever, and the Linux
+bridge holds a dormant port in the "disabled" (non-forwarding) state:
+
+    14: wifi1.3: <NO-CARRIER,...> master brlan0 state disabled
+        operstate=dormant  carrier=1
+
+Upstream wpa_supplicant clears this from its nl80211 driver's .set_operstate
+op (wpa_driver_nl80211_set_operstate -> netlink_send_oper_ifla(..., IF_OPER_UP)),
+called once the 4-way handshake completes. This HAL, however, repurposed the
+.set_operstate hook entirely: wifi_drv_set_operstate() does VAP configuration
+(management-frame registration, ->vap_configured/->bridge_configured) and never
+touches the operational state at all. Worse, once ->vap_configured is true it
+returns at its very first branch. So IF_OPER_UP is never sent by anyone.
+
+Confirmed the port state is genuinely what blocks forwarding: the kernel even
+refuses an explicit `bridge link set dev wifi1.3 state 3` with "Network is
+down" while the interface is dormant.
+
+Add a small RTM_SETLINK/IFLA_OPERSTATE helper (both <net/if.h> and
+<linux/rtnetlink.h> are already included by this file) and call it from
+wifi_hal_configure_sta_4addr_to_bridge()'s add path -- which already runs on
+WPA_COMPLETED and already does the bridge enslavement, so it is exactly the
+point at which the port should become operational.
+
+Not gated behind HWSIM_RADIO: the missing operstate is a real, universal gap in
+this HAL, not a simulated-radio quirk.
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -9049,6 +9049,72 @@
+     interface->mgmt_frames_registered = 0;
+ }
+ 
++/* IF_OPER_* live in <linux/if.h>, which cannot be included alongside glibc's
++ * <net/if.h> without conflicts. Define the two values we need locally. */
++#ifndef IF_OPER_DORMANT
++#define IF_OPER_DORMANT 5
++#endif
++#ifndef IF_OPER_UP
++#define IF_OPER_UP 6
++#endif
++
++/* Set an interface's RFC2863 operational state via RTM_SETLINK/IFLA_OPERSTATE.
++ *
++ * Upstream wpa_supplicant does this from its nl80211 driver's .set_operstate op
++ * (netlink_send_oper_ifla), but this HAL repurposed .set_operstate into a
++ * VAP-configuration callback and dropped the operstate handling entirely -- so a
++ * connected station is left in IF_OPER_DORMANT forever. The Linux bridge keeps a
++ * dormant port in the "disabled" (non-forwarding) state, which silently breaks all
++ * bridged traffic over a 4-address/WDS backhaul link. */
++static int nl80211_set_iface_operstate(const char *ifname, unsigned char operstate)
++{
++    struct {
++        struct nlmsghdr nh;
++        struct ifinfomsg ifi;
++        char attrbuf[64];
++    } req;
++    struct rtattr *rta;
++    unsigned int ifindex;
++    int fd, ret;
++
++    if ((ifindex = if_nametoindex(ifname)) == 0) {
++        wifi_hal_error_print("%s:%d: unknown interface %s\n", __func__, __LINE__, ifname);
++        return -1;
++    }
++
++    if ((fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE)) < 0) {
++        wifi_hal_error_print("%s:%d: netlink route socket failed for %s: %s\n", __func__,
++            __LINE__, ifname, strerror(errno));
++        return -1;
++    }
++
++    memset(&req, 0, sizeof(req));
++    req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
++    req.nh.nlmsg_type = RTM_SETLINK;
++    req.nh.nlmsg_flags = NLM_F_REQUEST;
++    req.ifi.ifi_family = AF_UNSPEC;
++    req.ifi.ifi_index = ifindex;
++
++    rta = (struct rtattr *)((char *)&req + NLMSG_ALIGN(req.nh.nlmsg_len));
++    rta->rta_type = IFLA_OPERSTATE;
++    rta->rta_len = RTA_LENGTH(sizeof(operstate));
++    memcpy(RTA_DATA(rta), &operstate, sizeof(operstate));
++    req.nh.nlmsg_len = NLMSG_ALIGN(req.nh.nlmsg_len) + RTA_LENGTH(sizeof(operstate));
++
++    ret = send(fd, &req, req.nh.nlmsg_len, 0);
++    close(fd);
++
++    if (ret < 0) {
++        wifi_hal_error_print("%s:%d: failed to set operstate %u on %s: %s\n", __func__, __LINE__,
++            operstate, ifname, strerror(errno));
++        return -1;
++    }
++
++    wifi_hal_info_print("%s:%d: interface %s operstate set to %u\n", __func__, __LINE__, ifname,
++        operstate);
++    return 0;
++}
++
+ int wifi_hal_configure_sta_4addr_to_bridge(wifi_interface_info_t *interface, int add)
+ {
+     int ret = 0;
+@@ -9075,6 +9141,12 @@
+             wifi_hal_error_print("%s:%d: interface:%s failed to set bridge %s with ret:%d\n",
+                 __func__, __LINE__, interface->name, get_vap_bridge_name(vap), ret);
+         }
++
++        /* The station has completed association + 4-way handshake and has just been
++         * enslaved to the bridge; mark it operationally up so the bridge actually
++         * forwards on this port (see nl80211_set_iface_operstate() for why nothing
++         * else does this). */
++        nl80211_set_iface_operstate(interface->name, IF_OPER_UP);
+     } else {
+         wifi_hal_info_print("%s:%d: interface:%s remove from bridge:%s\n", __func__, __LINE__,
+             interface->name, get_vap_bridge_name(vap));

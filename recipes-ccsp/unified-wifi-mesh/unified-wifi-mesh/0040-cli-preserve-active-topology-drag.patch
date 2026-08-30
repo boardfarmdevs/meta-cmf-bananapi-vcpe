@@ -1,0 +1,161 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: preserve active topology drag
+
+The two-second live topology poll can replace the complete SVG while an
+operator is panning the canvas or dragging a node.  The pointer remains down
+but its D3 gesture target no longer exists, so movement stops until the next
+drag.
+
+Track both zoom and node-drag interactions, retain the latest changed snapshot
+while an interaction is active, and apply it after release.  Also reject an
+empty snapshot when a valid controller topology is already displayed.  The
+controller itself must always be present, and runtime sampling showed these
+empty responses to be transient provider delivery misses followed by the full
+topology.
+
+---
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2032,7 +2032,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-sta-identity-1"></script>
++    <script src="static/script.js?v=topology-drag-safe-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2596,6 +2596,61 @@
+     setTimeout(() => URL.revokeObjectURL(url), 1000);
+   }
+ 
++  topologySignature(value) {
++    return JSON.stringify(value || {}, (key, item) =>
++      ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
++        ? undefined : item
++    );
++  }
++
++  /**
++   * Apply a live topology snapshot without interrupting an operator gesture.
++   * A running controller must always be present, so an empty snapshot after a
++   * valid one is a transient provider miss rather than a real topology.
++   */
++  applyTopologyRefresh(response) {
++    const currentHasNodes = Array.isArray(this.topology?.nodes) && this.topology.nodes.length > 0;
++    const responseHasNodes = Array.isArray(response?.nodes) && response.nodes.length > 0;
++
++    if (currentHasNodes && !responseHasNodes) {
++      console.warn('Ignoring transient empty topology refresh');
++      return false;
++    }
++
++    if (this.topologySignature(response) === this.topologySignature(this.topology)) {
++      this.topologyRefreshPending = null;
++      return false;
++    }
++
++    if ((this.topologyInteractionDepth || 0) > 0) {
++      this.topologyRefreshPending = response;
++      return false;
++    }
++
++    this.topology = response;
++    this.updateTopologyVisualization();
++    return true;
++  }
++
++  beginTopologyInteraction() {
++    this.topologyInteractionDepth = (this.topologyInteractionDepth || 0) + 1;
++  }
++
++  endTopologyInteraction() {
++    this.topologyInteractionDepth = Math.max(0, (this.topologyInteractionDepth || 0) - 1);
++    if (this.topologyInteractionDepth > 0) return;
++
++    const pending = this.topologyRefreshPending;
++    const renderPending = this.topologyRenderPending;
++    this.topologyRefreshPending = null;
++    this.topologyRenderPending = false;
++    const refreshed = pending ? this.applyTopologyRefresh(pending) : false;
++
++    if (!refreshed && renderPending && !this.topologyLayoutInProgress) {
++      this.updateTopologyVisualization();
++    }
++  }
++
+   /**
+    * Update topology visualization
+    */
+@@ -2610,6 +2665,11 @@
+     this.nodePositionCache = this.nodePositionCache || new Map();
+     this.zoomTransformCache = this.zoomTransformCache || d3.zoomIdentity;
+ 
++    if ((this.topologyInteractionDepth || 0) > 0) {
++      this.topologyRenderPending = true;
++      return;
++    }
++
+     // WebSocket and polling updates can arrive while the force layout is
+     // running. Keep the current SVG alive until its positions are committed,
+     // then render the newest topology once using that position cache.
+@@ -2647,11 +2707,18 @@
+     .attr('height', height)
+ 
+     const svgGroup = svg.append('g');
+-    const zoom = d3.zoom().on('zoom', (event) => {
+-      svgGroup.attr('transform', event.transform);
+-      // Save zoom state
+-      this.zoomTransformCache = event.transform;
+-    });
++    const zoom = d3.zoom()
++      .on('start', (event) => {
++        if (event.sourceEvent) this.beginTopologyInteraction();
++      })
++      .on('zoom', (event) => {
++        svgGroup.attr('transform', event.transform);
++        // Save zoom state
++        this.zoomTransformCache = event.transform;
++      })
++      .on('end', (event) => {
++        if (event.sourceEvent) this.endTopologyInteraction();
++      });
+ 
+     svg.call(zoom);
+     svg.call(zoom.transform, this.zoomTransformCache);
+@@ -3050,6 +3117,7 @@
+     });
+ 
+     function dragstarted(event, d) {
++      self.beginTopologyInteraction();
+       if (!event.active) simulation.alphaTarget(0.3).restart();
+     }
+ 
+@@ -3068,6 +3136,7 @@
+       // Lock at new position
+       d.x = d.fx;
+       d.y = d.fy;
++      self.endTopologyInteraction();
+     }
+   }
+ 
+@@ -3703,16 +3772,7 @@
+         this.topologyRefreshInFlight = true;
+         try {
+           const response = await this.apiCall('/topology');
+-          const signature = value => JSON.stringify(value || {}, (key, item) =>
+-            ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
+-              ? undefined : item
+-          );
+-          const previous = signature(this.topology);
+-          const current = signature(response);
+-          if (current !== previous) {
+-            this.topology = response;
+-            this.updateTopologyVisualization();
+-          }
++          this.applyTopologyRefresh(response);
+         } catch (error) {
+           console.error('Failed to refresh topology:', error);
+           this.showNotification('Failed to refresh topology', 'error');

@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000099 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 03:26:00 -0700
+Subject: [PATCH] capability: report the actual backhaul STA association
+
+The Backhaul STA Capability Report populated its Client Info TLV through
+get_backhaul_bss_info(), whose documented and implemented purpose is to
+return an AP-mode backhaul BSS.  On a tri-band Agent this selected the first
+mesh-backhaul AP, supplied an all-zero STA MAC, and let the Controller replace
+the Agent's upstream parent with the Agent's own 2.4 GHz AP BSSID.
+
+Use the existing get_bsta_bss_info() selector.  It requires STA mode,
+backhaul haul type and an enabled radio/BSS, and returns the local bSTA MAC
+and its actual upstream AP BSSID.
+
+Upstream-Status: Pending
+---
+ src/em/capability/em_capability.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/em/capability/em_capability.cpp b/src/em/capability/em_capability.cpp
+index 3333333..4444444 100644
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -697,7 +697,7 @@ int em_capability_t::create_bsta_cap_report_msg(unsigned char *buff, unsigned sh
+     tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+     len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+ 
+-    em_bss_info_t* bss_info = dm->get_backhaul_bss_info();
++    em_bss_info_t* bss_info = dm->get_bsta_bss_info();
+     if (bss_info != NULL)
+     {
+         // 17.2.18 Client Info TLV
+-- 
+2.43.0

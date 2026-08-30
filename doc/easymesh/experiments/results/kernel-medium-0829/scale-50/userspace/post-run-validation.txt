@@ -1,0 +1,18 @@
+Read-only audit after the systemd-owned userspace cold reconstruction reached active/exited.
+
+address_rows=50
+unique_addresses=50
+multi_address_clients=none
+
+memory:
+               total        used        free      shared  buff/cache   available
+Mem:           7.7Gi       3.4Gi       393Mi       141Mi       4.4Gi       4.4Gi
+Swap:             0B          0B          0B
+
+wmediumd:
+PID=2776344
+threads=1
+cpu_percent=16.7
+rss_kib=3736
+vsz_kib=6380
+elapsed=00:06:34

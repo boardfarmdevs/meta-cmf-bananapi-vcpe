@@ -1,0 +1,106 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: forward local change notification to AL-SAP
+
+The expired-neighbor worker sends its normal multicast Topology Notification
+on the network, but a locally generated frame is not received again by the
+same IEEE1905 instance.  Its registered higher-layer entity therefore never
+sees the change and cannot reconcile the controller topology.
+
+After transmitting the standard multicast notification, deliver an equivalent
+Topology Notification SDU through the normal AL-SAP data-indication primitive.
+It contains the same AL MAC, Comcast query tag and end-of-message TLVs.  Its
+AL-SAP endpoint metadata identifies the expired neighbor so the controller can
+probe exactly that agent; the multicast frame remains standard and does not
+expose any private TLV or event.  The controller must still use standard
+Topology Query/Response behavior to determine reachability.
+
+The lag-recovery notification no longer has the identity of each skipped
+event, so it remains a multicast convergence signal and does not speculate in
+the local metadata.
+
+Upstream-Status: Pending
+---
+ ieee1905-core/src/cmdu_proxy.rs | 56 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 55 insertions(+), 1 deletion(-)
+
+diff --git a/ieee1905-core/src/cmdu_proxy.rs b/ieee1905-core/src/cmdu_proxy.rs
+--- a/ieee1905-core/src/cmdu_proxy.rs
++++ b/ieee1905-core/src/cmdu_proxy.rs
+@@ -17,7 +17,7 @@
+  * limitations under the License.
+ */
+ use crate::SDU;
+-use crate::al_sap::AlServiceAccessPoint;
++use crate::al_sap::{AlServiceAccessPoint, service_access_point_data_indication};
+ use crate::artifact_exchange_service::server::ArtifactExchangeServer;
+ use crate::cmdu::TLV;
+ use crate::cmdu_codec::*;
+@@ -514,6 +514,55 @@ pub async fn cmdu_topology_notification_transmission(
+     }
+ }
+ 
++async fn indicate_local_topology_change(
++    message_id_generator: &Arc<MessageIdGenerator>,
++    local_al_mac_address: MacAddr,
++    expired_al_mac_address: MacAddr,
++) {
++    if !AlServiceAccessPoint::is_connected_and_enabled().await {
++        return info!("AL-SAP is not active; local topology-change indication skipped");
++    }
++
++    let message_id = message_id_generator.next_id();
++    let payload = [
++        TLV::from(AlMacAddress {
++            al_mac_address: local_al_mac_address,
++        }),
++        TLV::from(VendorSpecificInfo {
++            oui: COMCAST_OUI,
++            vendor_data: COMCAST_QUERY_TAG,
++        }),
++        TLV::from(EndOfMessage),
++    ];
++    let cmdu = CMDU {
++        message_version: MessageVersion::Version2013.to_u8(),
++        reserved: 0,
++        message_type: CMDUType::TopologyNotification.to_u16(),
++        message_id,
++        fragment: 0,
++        flags: 0x80,
++        payload: payload.iter().flat_map(TLV::serialize).collect(),
++    };
++    let sdu = SDU {
++        // AL-SAP data indications place the local destination first and the
++        // remote/source AL second.  The endpoint metadata carries the expired
++        // neighbor so the local HLE probes only the affected agent.  This is
++        // not transmitted on Ethernet and does not add a private TLV.
++        source_al_mac_address: local_al_mac_address,
++        destination_al_mac_address: expired_al_mac_address,
++        is_fragment: 0,
++        is_last_fragment: 1,
++        fragment_id: 0,
++        payload: cmdu.serialize(),
++    };
++
++    if let Err(error) = service_access_point_data_indication(&sdu).await {
++        error!(message_id, %error, "Failed to deliver local topology-change indication");
++    } else {
++        info!(message_id, "Delivered local topology-change indication through AL-SAP");
++    }
++}
++
+ #[instrument(skip_all, name = "topology_change_notification_worker", fields(task = next_task_id()))]
+ pub async fn cmdu_topology_change_notification_worker(
+     interface: String,
+@@ -540,5 +589,10 @@ pub async fn cmdu_topology_change_notification_worker(
+                 )
+                 .await;
++                indicate_local_topology_change(
++                    &message_id_generator,
++                    local_al_mac_address,
++                    al_mac,
++                ).await;
+             }
+             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                 warn!(
+-- 
+2.43.0

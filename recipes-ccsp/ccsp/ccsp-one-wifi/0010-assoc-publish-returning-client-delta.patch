@@ -1,0 +1,60 @@
+Subject: [PATCH] wifi_ctrl: publish association delta when a client returns
+
+A client steered to another EasyMesh agent can disappear from the kernel
+station table without sending a disassociation frame to its old AP.  OneWifi
+therefore retains that AP's associated_devices_map entry.  If the client is
+later steered back, assoc_dev_event() finds the old entry and does nothing: the
+radio completes reassociation and the four-way handshake, but no associated
+clients delta is published to the EasyMesh translator.  The controller and
+WebUI remain attributed to the previous AP indefinitely.
+
+Runtime reproduction with five agents and ten hwsim clients:
+
+  AP-A -> AP-B: radio, controller DB, and API all update
+  AP-B -> AP-A: radio reaches AP-A; controller DB and API remain on AP-B
+
+The AP-A logs show the second authentication, reassociation, EAPOL M1..M4, and
+monitor_connect, but omit assoc_dev_event's "Device ... associated" line.  Its
+old map entry is the only condition that distinguishes the failed return.
+
+Treat every connect indication as an association delta.  For an existing map
+entry refresh the stored data, mark it connected, add/update the diff map, and
+set the existing webconfig pending bit.  Counts and new-client notifications
+remain unchanged.  This is idempotent for duplicate connect indications and
+lets the controller's single-association handling replace the former owner.
+
+Upstream-Status: Pending
+---
+ source/core/wifi_ctrl_queue_handlers.c | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/source/core/wifi_ctrl_queue_handlers.c b/source/core/wifi_ctrl_queue_handlers.c
+index 4afb906..888c0bc 100644
+--- a/source/core/wifi_ctrl_queue_handlers.c
++++ b/source/core/wifi_ctrl_queue_handlers.c
+@@ -2512,2 +2512,22 @@ static void assoc_dev_event(assoc_dev_data_t *assoc_data)
+         }
+-    }
++    } else {
++        /* A roam does not guarantee that the old AP receives a disassociation
++         * frame.  Its map can therefore still contain this client when the
++         * client later returns.  A connect indication is authoritative: refresh
++         * the entry and publish an associated delta even when the key exists. */
++        memcpy(tmp_assoc_dev_data, assoc_data, sizeof(assoc_dev_data_t));
++        tmp_assoc_dev_data->client_state = client_state_connected;
++        if (add_client_diff_assoclist(&rdk_vap_info->associated_devices_diff_map,
++                mac_str, tmp_assoc_dev_data) == RETURN_ERR) {
++            pthread_mutex_unlock(rdk_vap_info->associated_devices_lock);
++            wifi_util_error_print(WIFI_CTRL,
++                "%s:%d Failed to refresh diff assoclist for vap %d mac_str : %s\n",
++                __func__, __LINE__, rdk_vap_info->vap_index, mac_str);
++            return;
++        }
++        p_wifi_mgr->ctrl.webconfig_state |=
++            ctrl_webconfig_state_associated_clients_cfg_rsp_pending;
++        wifi_util_info_print(WIFI_CTRL,
++            "%s:%d Device %s re-associated with vapindex %d; publishing refreshed delta\n",
++            __func__, __LINE__, mac_str, rdk_vap_info->vap_index);
++    }
+-- 
+2.34.1

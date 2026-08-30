@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 20 Aug 2026 19:01:00 -0700
+Subject: [PATCH] controller: replay explicitly submitted policy
+
+The controller reduced SetPolicy input to database differences and returned
+no-change when desired state already matched.  Agent policy state is partly
+volatile: in particular, periodic metrics reporting timers disappear on an
+agent restart.  An explicit policy application therefore could not restore
+runtime state from the controller's still-correct database.
+
+Filtering individual policy records was also unsafe for compound EasyMesh
+TLVs.  Changing only the AP reporting interval could omit the unchanged
+per-radio records from the Metric Reporting Policy TLV and disable their STA
+metrics flags at the agent.
+
+Treat an accepted SetPolicy request as an idempotent deployment.  Retain the
+complete policy supplied for the target device, log whether this is a replay
+or a database change, and submit the command in either case.  This preserves
+the atomic compound policy and repairs volatile agent state without changing
+the desired configuration.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/ctrl/dm_easy_mesh_ctrl.cpp | 57 +++++++++++++-----------------------------
+ 1 file changed, 15 insertions(+), 42 deletions(-)
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -2757,45 +2757,30 @@ int dm_easy_mesh_ctrl_t::analyze_set_policy(em_bus_event_t *evt, em_cmd_t *pcmd[
+                 // Don't break — there may be broadcast entries of both types
+             }
+ 
+-            // Compare each incoming policy by type against the existing dm.
+-            // Compact dm.m_policy[] in-place to only keep changed/new entries so
+-            // that the command carries only what actually changed
+-            unsigned int write_idx = 0;
++            // Determine whether desired state changes for diagnostics, but
++            // retain the complete submitted policy in the command data model.
++            // EasyMesh policy TLVs are compound: filtering unchanged records
++            // can turn a complete Metric Reporting or Steering Policy TLV into
++            // an incomplete one.  Explicit application is also an intentional
++            // replay mechanism for volatile Agent state after a restart.
+             for (unsigned int k = 0; k < dm.get_num_policy(); k++) {
+-                // Use full equality (operator== does memcmp on em_policy_t) so this works
+-                // generically for all policy types, including multi-entry types like
+-                // backhaul_bss_config and radio metrics that are keyed by BSSID/radio MAC.
+                 bool changed = true;
+                 for (unsigned int j = 0; j < dev_dm->get_num_policy(); j++) {
+                     if (dev_dm->m_policy[j] == dm.m_policy[k]) {
+                         changed = false;
+                         break;
+                     }
+                 }
+                 if (changed) {
+-                    if (write_idx != k) {
+-                        dm.m_policy[write_idx] = dm.m_policy[k];
+-                    }
+-                    write_idx++;
+                     policy_changed++;
+                 }
+             }
+-            dm.set_num_policy(write_idx);
+-            if (write_idx > 0) {
+-                static const char * const s_policy_type_names[] = {
+-                    "steering_local", "steering_btm", "steering_param",
+-                    "ap_metrics_rep", "radio_metrics_rep", "default_8021q_settings",
+-                    "traffic_separation", "channel_scan", "unsuccess_assoc",
+-                    "backhaul_bss_config", "qos_mgt", "alarm_threshold",
+-                    "client_filters", "unknown"
+-                };
+-                em_printfout("Changed policies for device %s (%u):", mac_str, write_idx);
+-                for (unsigned int p = 0; p < write_idx; p++) {
+-                    em_policy_id_type_t t = dm.m_policy[p].m_policy.id.type;
+-                    unsigned int ti = (static_cast<unsigned int>(t) < static_cast<unsigned int>(em_policy_id_type_unknown))
+-                                      ? static_cast<unsigned int>(t) : static_cast<unsigned int>(em_policy_id_type_unknown);
+-                    em_printfout("  [%u] %s", p, s_policy_type_names[ti]);
+-                }
++            if (policy_changed > 0) {
++                em_printfout("SetPolicy changes desired state for device %s (%d of %u records differ)",
++                    mac_str, policy_changed, dm.get_num_policy());
++            } else {
++                em_printfout("SetPolicy replays %u policy records for device %s",
++                    dm.get_num_policy(), mac_str);
+             }
+         } else {
+             em_printfout("Device with MAC: %s not found in data model, so considering as policy changed", mac_str);
+@@ -2800,12 +2785,12 @@ int dm_easy_mesh_ctrl_t::analyze_set_policy(em_bus_event_t *evt, em_cmd_t *pcmd[
+             continue;
+         }
+ 
+-        if (policy_changed == 0) {
+-            em_printfout("No Policy change detected for device with MAC: %s", mac_str);
++        if (dm.get_num_policy() == 0) {
++            em_printfout("No policy records supplied for device with MAC: %s", mac_str);
+             i++;
+             continue;
+         } else {
+-            em_printfout("Policy change detected for device with MAC: %s", mac_str);
++            em_printfout("Deploying policy for device with MAC: %s", mac_str);
+         }
+         radio = m_data_model_list.get_first_radio(dm.m_network.m_net_info.id, dm.m_device.m_device_info.intf.mac);
+         while (radio != NULL) {
+-- 
+2.43.0

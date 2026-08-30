@@ -1,0 +1,213 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Tue, 25 Aug 2026 14:10:00 -0700
+Subject: [PATCH] agent: release command data-model station objects
+
+Every periodic AP/STA metrics event is decoded into a temporary data model and
+then copied into one or more commands.  The copy operation allocates a
+dm_sta_t for every station.  dm_easy_mesh_t::deinit() removed those objects
+from the maps but never deleted them, so the agent retained every command's
+station snapshot.  On a live five-client extender this grew agent PSS by about
+62 MiB/hour.
+
+Give every cloned map its own station objects, delete owned station and scan
+objects during deinit, and clear the map pointers after destruction.  Release
+the temporary decoder models once their commands own their copies.  Decode
+link metrics before constructing the command so the command receives the
+current report directly and no longer needs the unsafe pointer-sharing clone.
+
+Upstream-Status: Pending
+---
+ src/agent/dm_easy_mesh_agent.cpp | 10 ++++++----
+ src/dm/dm_easy_mesh.cpp          | 18 +++++++++++++-----
+ tests/test_l1_dm_easy_mesh.cpp   | 48 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 67 insertions(+), 9 deletions(-)
+
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 3c22625..f0a42fb 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -244,6 +244,7 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[]
+         }
+     }
+ 
++    dm.deinit();
+     return static_cast<int> (num);
+ }
+ 
+@@ -851,12 +852,11 @@ int dm_easy_mesh_agent_t::analyze_sta_link_metrics(em_bus_event_t *evt, em_cmd_t
+ 
+     dm.init();
+     dm = *this;
++    dm.translate_and_decode_onewifi_subdoc(reinterpret_cast<char *> (evt->u.raw_buff), webconfig_subdoc_type_em_sta_link_metrics,
++        "Link Metrics");
+ 
+     pcmd[num] = new em_cmd_sta_link_metrics_t(dm);
+-    dm.translate_and_decode_onewifi_subdoc(reinterpret_cast<char *> (evt->u.raw_buff), webconfig_subdoc_type_em_sta_link_metrics,
+-        "Link Metrics");
+     pcmd[num]->m_svc = em_service_type_agent;
+-    dm.clone_hash_maps(pcmd[num]->m_data_model);
+ 
+     tmp = pcmd[num];
+     num++;
+@@ -865,6 +865,7 @@ int dm_easy_mesh_agent_t::analyze_sta_link_metrics(em_bus_event_t *evt, em_cmd_t
+         num++;
+     }
+ 
++    dm.deinit();
+     return num;
+ }
+ 
+@@ -1200,6 +1201,7 @@ int dm_easy_mesh_agent_t::analyze_beacon_report(em_bus_event_t *evt, em_cmd_t *p
+         num++;
+     }
+ 
++    dm.deinit();
+     return static_cast<int>(num);
+ }
+ 
+@@ -1326,6 +1328,7 @@ int dm_easy_mesh_agent_t::analyze_link_report(em_bus_event_t *evt, em_cmd_t *pcm
+         num++;
+     }
+ 
++    dm.deinit();
+     return static_cast<int>(num);
+ }
+ 
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index f555935..0a18d3d 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -3066,7 +3066,7 @@ void dm_easy_mesh_t::clone_hash_maps(dm_easy_mesh_t& obj)
+         macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
+         macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+-        hash_map_put(obj.m_sta_map, strdup(key),sta);
++        hash_map_put(obj.m_sta_map, strdup(key), new dm_sta_t(*sta));
+         sta = static_cast<dm_sta_t *> (hash_map_get_next(m_sta_map, sta));
+     }
+ 
+@@ -3076,7 +3076,7 @@ void dm_easy_mesh_t::clone_hash_maps(dm_easy_mesh_t& obj)
+         macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
+         macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+-        hash_map_put(obj.m_sta_assoc_map, strdup(key),sta);
++        hash_map_put(obj.m_sta_assoc_map, strdup(key), new dm_sta_t(*sta));
+         sta = static_cast<dm_sta_t *> (hash_map_get_next(m_sta_assoc_map, sta));
+     }
+ 
+@@ -3086,7 +3086,7 @@ void dm_easy_mesh_t::clone_hash_maps(dm_easy_mesh_t& obj)
+         macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
+         macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+-        hash_map_put(obj.m_sta_dassoc_map, strdup(key),sta);
++        hash_map_put(obj.m_sta_dassoc_map, strdup(key), new dm_sta_t(*sta));
+         sta = static_cast<dm_sta_t *> (hash_map_get_next(m_sta_dassoc_map, sta));
+     }
+ }
+@@ -3111,9 +3111,11 @@ void dm_easy_mesh_t::deinit()
+ 		snprintf(key, sizeof(em_2xlong_string_t), "%s@%s@%s@%d@%d@%d", tmp_res->m_scan_result.id.net_id, dev_mac_str, scanner_mac_str,
+ 					tmp_res->m_scan_result.id.op_class, tmp_res->m_scan_result.id.channel, tmp_res->m_scan_result.id.scanner_type);
+ 		hash_map_remove(m_scan_result_map, key);
++        delete tmp_res;
+ 	}
+ 
+-	hash_map_destroy(m_scan_result_map);	
++	hash_map_destroy(m_scan_result_map);
++    m_scan_result_map = NULL;
+ 
+     //destroy elements of m_sta_map
+     sta = static_cast<dm_sta_t *> (hash_map_get_first(m_sta_map));
+@@ -3127,8 +3129,10 @@ void dm_easy_mesh_t::deinit()
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+ 
+         hash_map_remove(m_sta_map, key);
++        delete tmp_sta;
+     }
+     hash_map_destroy(m_sta_map);
++    m_sta_map = NULL;
+     sta = NULL;
+ 
+     sta = static_cast<dm_sta_t *> (hash_map_get_first(m_sta_assoc_map));
+@@ -3142,8 +3146,10 @@ void dm_easy_mesh_t::deinit()
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+ 
+         hash_map_remove(m_sta_assoc_map, key);
++        delete tmp_sta;
+     }
+ 	hash_map_destroy(m_sta_assoc_map);
++    m_sta_assoc_map = NULL;
+     sta = NULL;
+ 
+     sta = static_cast<dm_sta_t *> (hash_map_get_first(m_sta_dassoc_map));
+@@ -3158,8 +3164,10 @@ void dm_easy_mesh_t::deinit()
+         snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bss_mac_str, radio_mac_str);
+ 
+         hash_map_remove(m_sta_dassoc_map, key);
++        delete tmp_sta;
+     }
+ 	hash_map_destroy(m_sta_dassoc_map);
++    m_sta_dassoc_map = NULL;
+ 	if (m_wifi_data != nullptr) {
+         free(m_wifi_data);
+         m_wifi_data = nullptr;
+diff --git a/tests/test_l1_dm_easy_mesh.cpp b/tests/test_l1_dm_easy_mesh.cpp
+index b4eafc1..07dcdad 100644
+--- a/tests/test_l1_dm_easy_mesh.cpp
++++ b/tests/test_l1_dm_easy_mesh.cpp
+@@ -92,6 +92,54 @@ static em_sta_info_t create_sta_info(const mac_address_t sta,
+     return info;
+ }
+ 
++TEST(dm_easy_mesh_t, cloned_hash_maps_own_their_station_objects)
++{
++    dm_easy_mesh_t source;
++    dm_easy_mesh_t clone;
++    mac_address_t sta = {0x02, 0x00, 0x00, 0x00, 0x00, 0x11};
++    mac_address_t bssid = {0x02, 0x00, 0x00, 0x00, 0x00, 0x22};
++    mac_address_t radio = {0x02, 0x00, 0x00, 0x00, 0x00, 0x33};
++    em_sta_info_t info = create_sta_info(sta, bssid, radio);
++
++    source.init();
++    clone.init();
++    source.put_sta_info(&info, em_target_sta_map_consolidated);
++    source.put_sta_info(&info, em_target_sta_map_assoc);
++    source.put_sta_info(&info, em_target_sta_map_disassoc);
++    source.clone_hash_maps(clone);
++
++    dm_sta_t *source_consolidated =
++        static_cast<dm_sta_t *>(hash_map_get_first(source.m_sta_map));
++    dm_sta_t *clone_consolidated =
++        static_cast<dm_sta_t *>(hash_map_get_first(clone.m_sta_map));
++    dm_sta_t *source_assoc =
++        static_cast<dm_sta_t *>(hash_map_get_first(source.m_sta_assoc_map));
++    dm_sta_t *clone_assoc =
++        static_cast<dm_sta_t *>(hash_map_get_first(clone.m_sta_assoc_map));
++    dm_sta_t *source_disassoc =
++        static_cast<dm_sta_t *>(hash_map_get_first(source.m_sta_dassoc_map));
++    dm_sta_t *clone_disassoc =
++        static_cast<dm_sta_t *>(hash_map_get_first(clone.m_sta_dassoc_map));
++
++    ASSERT_NE(source_consolidated, nullptr);
++    ASSERT_NE(clone_consolidated, nullptr);
++    ASSERT_NE(source_assoc, nullptr);
++    ASSERT_NE(clone_assoc, nullptr);
++    ASSERT_NE(source_disassoc, nullptr);
++    ASSERT_NE(clone_disassoc, nullptr);
++    EXPECT_NE(source_consolidated, clone_consolidated);
++    EXPECT_NE(source_assoc, clone_assoc);
++    EXPECT_NE(source_disassoc, clone_disassoc);
++
++    source.deinit();
++    EXPECT_EQ(memcmp(clone_consolidated->m_sta_info.id, sta,
++        sizeof(mac_address_t)), 0);
++    clone.deinit();
++    EXPECT_EQ(clone.m_sta_map, nullptr);
++    EXPECT_EQ(clone.m_sta_assoc_map, nullptr);
++    EXPECT_EQ(clone.m_sta_dassoc_map, nullptr);
++}
++
+ 
+ static void add_sta(
+     dm_easy_mesh_t &mesh,
+-- 
+2.43.0

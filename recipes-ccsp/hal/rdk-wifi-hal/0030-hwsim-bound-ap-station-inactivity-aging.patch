@@ -1,0 +1,39 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: bound AP station inactivity aging
+
+mac80211_hwsim can retain an authorized AP station after that station has
+reassociated to another virtual AP.  Embedded hostapd eventually probes and
+removes the stale peer, but its normal five-minute timeout is long enough to
+hide the next authorization edge when a steering test returns to an AP.  The
+HAL and EasyMesh agent then report contradictory owners during that interval.
+
+Use a 30-second AP inactivity interval for HWSIM_RADIO builds.  Hostapd still
+probes before removing a peer, so a legitimately associated idle station
+answers and remains connected; only a station that has actually left the AP
+ages out.  Physical targets retain the platform default.
+
+Upstream-Status: Pending
+---
+ wifi_hal_hostapd.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/wifi_hal_hostapd.c b/wifi_hal_hostapd.c
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
+@@ -219,7 +219,13 @@ void init_hostap_bss(wifi_interface_info_t *interface)
+    // conf->radius->radius_max_retry_wait = RADIUS_CLIENT_MAX_WAIT;
+     conf->eap_sim_db_timeout = 1;
+     conf->eap_sim_id = 3;
+-    conf->ap_max_inactivity = AP_MAX_INACTIVITY;
++#ifdef HWSIM_RADIO
++    /* Keep hwsim's historical AP peer rows from masking a later
++     * reassociation edge while retaining hostapd's normal liveness probe. */
++    conf->ap_max_inactivity = 30;
++#else
++    conf->ap_max_inactivity = AP_MAX_INACTIVITY;
++#endif
+     conf->eapol_version = EAPOL_VERSION;
+ 
+     conf->max_listen_interval = 65535;
+-- 
+2.43.0

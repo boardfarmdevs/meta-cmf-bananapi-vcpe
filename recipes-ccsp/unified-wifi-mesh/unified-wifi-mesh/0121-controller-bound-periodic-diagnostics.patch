@@ -1,0 +1,154 @@
+From: RDK-B EasyMesh lab maintainers
+Subject: [PATCH] controller: bound periodic topology diagnostics
+
+The controller regenerates topology subdocuments and consumes operational-BSS
+TLVs as part of its normal maintenance cycle.  Those paths printed the complete
+topology JSON and every radio/BSS/key on every pass.  With several tri-band
+agents and clients this produced thousands of journal records per cycle, made
+journald/syslogd CPU-bound and obscured actionable errors.
+
+Keep the wire/database behavior unchanged, serialize the internal subdocument
+compactly, and remove only successful per-object diagnostics.  Error paths are
+unchanged.
+
+---
+ src/ctrl/dm_easy_mesh_ctrl.cpp       |  3 +--
+ src/ctrl/em_network_topo.cpp         |  3 ---
+ src/dm/dm_bss_list.cpp               |  1 -
+ src/em/config/em_configuration.cpp   | 48 +++++------------------------------
+ 4 files changed, 8 insertions(+), 47 deletions(-)
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4028,8 +4028,7 @@ void dm_easy_mesh_ctrl_t::encode_config(em_subdoc_info_t *subdoc,
+         em_printfout("Unknown Subdoc Name: %s\n", subdoc->name);
+     }
+ 
+-    tmp = cJSON_Print(parent);
+-    em_printfout("Subdoc: %s", tmp);
++    tmp = cJSON_PrintUnformatted(parent);
+     strncpy(subdoc->buff, tmp, strlen(tmp) + 1);
+     cJSON_free(tmp);
+     cJSON_Delete(parent);
+@@ -4247,7 +4246,6 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+ 			dm_easy_mesh_t::macbytes_to_string(bss.m_bss_info.bssid.mac, bssid_str);
+ 			snprintf(parent, sizeof(em_2xlong_string_t), "%s@%s@%s@%s@%d", dm->m_network.m_net_info.id, 
+ 					dev_mac_str, radio_mac_str, bssid_str, bss.m_bss_info.id.haul_type);
+-            em_printfout("BSS[%d] Parent ID: %s\n", i, parent);
+ 			criteria = dm->db_cfg_type_get_criteria(db_cfg_type_bss_list_update);
+             if (dm_bss_list_t::set_config(m_db_client, bss, parent) != 0) {
+                 at_least_one_failed = true;
+diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -56,9 +56,6 @@ void em_network_topo_t::encode(cJSON *parent)
+ 			if ((memcmp(op_class_info->id.ruid, m_data_model->m_radio[i].get_radio_interface_mac(), sizeof(mac_address_t)) == 0) &&
+ 				(op_class_info->id.type == em_op_class_type_current)) {
+ 				cJSON_AddNumberToObject(radio_obj, "Class", op_class_info->op_class);
+ 				cJSON_AddNumberToObject(radio_obj, "Channel", op_class_info->channel);
+-				em_printfout("Radio %s Current Operating Class: %d Channel: %d",
+-					util::mac_to_string(m_data_model->m_radio[i].get_radio_interface_mac()).c_str(),
+-					op_class_info->op_class, op_class_info->channel);
+ 			}
+ 		}
+ 		cJSON_AddItemToArray(radio_list_obj, radio_obj);
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -281,7 +281,6 @@ void dm_bss_list_t::update_list(const dm_bss_t& bss, dm_orch_type_t op)
+ 
+ 	snprintf(key, sizeof(em_2xlong_string_t), "%s@%s@%s@%s@%d", bss.m_bss_info.id.net_id, dev_mac_str, 
+ 					radio_mac_str, bss_mac_str, bss.m_bss_info.id.haul_type);
+-    em_printfout("key:%s", key);
+ 
+     switch (op) {
+         case dm_orch_type_db_insert:
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1297,29 +1297,8 @@ short unsigned int em_configuration_t::create_ap_vendor_operational_bss_tlv(unsi
+ 
+ void em_configuration_t::print_ap_vendor_operational_bss_tlv(unsigned char *value, unsigned int len)
+ {
+-	mac_addr_str_t	rd_mac_str, bss_mac_str;
+-	em_ap_vendor_op_bss_radio_t		   *radio;
+-	em_ap_vendor_operational_bss_t *bss;
+-	em_ap_vendor_op_bss_t *ap;
+-	unsigned int i, j, all_bss_len = 0;
+-
+-	ap = reinterpret_cast<em_ap_vendor_op_bss_t *> (value);
+-	radio = ap->radios;
+-	em_printfout("Number of radios: %d", ap->radios_num);
+-	for (i = 0; i < ap->radios_num; i++) {
+-		dm_easy_mesh_t::macbytes_to_string(radio->ruid, rd_mac_str);
+-		em_printfout("Radio: %s", rd_mac_str);
+-		bss = radio->bss;
+-		em_printfout("Number of bss: %d", radio->bss_num);
+-		for (j = 0; j < radio->bss_num; j++) {
+-			dm_easy_mesh_t::macbytes_to_string(bss->bssid, bss_mac_str);
+-			em_printfout("BSSID=%s haul type=%d vap_mode:%d", bss_mac_str, bss->haultype, bss->vap_mode);
+-			bss = reinterpret_cast<em_ap_vendor_operational_bss_t *> (reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_vendor_operational_bss_t));
+-			all_bss_len += sizeof(em_ap_vendor_operational_bss_t);
+-		}
+-		radio = reinterpret_cast<em_ap_vendor_op_bss_radio_t *> (reinterpret_cast<unsigned char *> (radio) + sizeof(em_ap_vendor_op_bss_radio_t) + all_bss_len);
+-		all_bss_len = 0;
+-	}
++	(void)value;
++	(void)len;
+ }
+ 
+ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len)
+@@ -1334,15 +1314,11 @@ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value,
+ 	dm = get_data_model();
+ 	ap = reinterpret_cast<em_ap_vendor_op_bss_t *> (value);
+ 	radio = ap->radios;
+-	em_printfout("Number of radios: %d", ap->radios_num);
+ 	for (i = 0; i < ap->radios_num; i++) {
+ 		dm_easy_mesh_t::macbytes_to_string(radio->ruid, rd_mac_str);
+-		em_printfout("Radio: %s", rd_mac_str);
+ 		bss = radio->bss;
+-		em_printfout("Number of bss: %d", radio->bss_num);
+ 		for (j = 0; j < radio->bss_num; j++) {
+ 			dm_easy_mesh_t::macbytes_to_string(bss->bssid, bss_mac_str);
+-			em_printfout("BSSID=%s haul type=%d vap_mode:%d", bss_mac_str, bss->haultype, bss->vap_mode);
+ 			dm_bss = dm->get_bss(radio->ruid, bss->bssid);
+ 			if (dm_bss == NULL) {
+ 				dm_bss = &dm->m_bss[dm->m_num_bss];
+@@ -1947,32 +1923,8 @@ short unsigned int em_configuration_t::create_ap_operational_bss_tlv(unsigned ch
+ 
+ void em_configuration_t::print_ap_operational_bss_tlv(unsigned char *value, unsigned int len)
+ {
+-	mac_addr_str_t	rd_mac_str, bss_mac_str;
+-	em_ap_op_bss_t	*ap;
+-	em_ap_op_bss_radio_t	*radio;
+-	em_ap_operational_bss_t	*bss;
+-	unsigned int i, j, all_bss_len = 0;
+-	
+-	ap = reinterpret_cast<em_ap_op_bss_t *> (value);
+-	radio = ap->radios;
+-	printf("%s:%d Number of radios: %d\n", __func__, __LINE__, ap->radios_num);
+-	for (i = 0; i < ap->radios_num; i++) {
+-		dm_easy_mesh_t::macbytes_to_string(radio->ruid, rd_mac_str);
+-		printf("%s:%d: Radio: %s\n", __func__, __LINE__, rd_mac_str);
+-		bss = radio->bss;
+-		all_bss_len = 0;
+-		printf("%s:%d Number of bss: %d\n", __func__, __LINE__, radio->bss_num);
+-		for (j = 0; j < radio->bss_num; j++) {
+-			dm_easy_mesh_t::macbytes_to_string(bss->bssid, bss_mac_str);
+-			printf("%s:%d: BSS:%s SSID:%s, SSID Length: %d\n", __func__, __LINE__, bss_mac_str, bss->ssid, bss->ssid_len);
+-
+-			all_bss_len += static_cast<unsigned int> (sizeof(em_ap_operational_bss_t) + bss->ssid_len);
+-			//printf("%s:%d: All BSS Len: %d\n", __func__, __LINE__, all_bss_len);
+-			bss = reinterpret_cast<em_ap_operational_bss_t *> (reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_operational_bss_t) + bss->ssid_len);
+-		}		
+-
+-		radio = reinterpret_cast<em_ap_op_bss_radio_t *> (reinterpret_cast<unsigned char *> (radio) + sizeof(em_ap_op_bss_radio_t) + all_bss_len);
+-	}
++	(void)value;
++	(void)len;
+ }
+ 
+ int em_configuration_t::handle_bss_configuration_report(unsigned char *buff, unsigned int len)
+-- 
+2.43.0

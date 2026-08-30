@@ -1,0 +1,50 @@
+wifi_hal_nl80211: single-phy -- let START_AP set each radio channel
+
+Issue F: on a FEATURE_SINGLE_PHY device (one physical wiphy projected as
+wifi0/wifi1/wifi2), wifi_hal_setRadioOperatingParameters() -> nl80211_update_wiphy()
+issues a standalone NL80211_CMD_SET_WIPHY + NL80211_ATTR_WIPHY_FREQ channel-set per
+logical radio. On Linux 7.0 that request returns -EINVAL for the 2nd/3rd radio once a
+sibling radio AP on the same phy is already beaconing (captured by nlmon: radio0/2437
+OK, radio1/5180 and radio2/6135 -> -EINVAL, each with its own correct per-VIF IFINDEX;
+the message carries no MLO/EHT/tx-power/antenna attrs -- it is the channel op itself).
+The subsequent START_AP then fails -ENETDOWN downstream, so only 2.4 GHz beacons.
+
+The kernel is not the limitation: a clean host-hwsim test (one phy, two AP VIFs)
+brings up tst0@2437 and tst1@5180 to AP-ENABLED concurrently on 7.0 -- because the
+AP-start (NL80211_CMD_NEW_BEACON) path carries each VIF chandef (nl80211_fill_chandef)
+and gets its own channel context. Only the *standalone* pre-START_AP channel-set fails
+while a sibling AP is active (6.8 tolerated it; 7.0 rejects it).
+
+Fix: under FEATURE_SINGLE_PHY, skip the standalone SET_WIPHY channel-set in
+nl80211_update_wiphy() and let START_AP carry each radio channel. txpower is already
+set above via wifi_drv_set_txpower(); the Exit path (retry-limit/QAM/offload and BSS
+re-enable) still runs. Scoped to FEATURE_SINGLE_PHY, so real multi-radio hardware is
+unaffected.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -8384,6 +8384,18 @@
+     wifi_hal_dbg_print("%s:%d: update transmitPower:%d\n", __func__, __LINE__, radio->oper_param.transmitPower);
+     wifi_drv_set_txpower(interface, radio->oper_param.transmitPower);
+ 
++#if defined(FEATURE_SINGLE_PHY)
++    /* Issue F (Linux 7.0): the standalone SET_WIPHY channel-set below returns
++     * -EINVAL once a sibling logical-radio AP on the same physical wiphy is already
++     * beaconing (nlmon: radio1/radio2 SET_WIPHY -> -EINVAL while radio0 is up). The
++     * AP-start (NEW_BEACON) path already carries each VIF's chandef and establishes
++     * its own channel context -- proven on 7.0: two APs on two channels on one phy
++     * come up via START_AP. So under FEATURE_SINGLE_PHY skip the pre-START_AP wiphy
++     * channel-set here and let START_AP set each radio channel. (6.8 tolerated the
++     * standalone set, so this only changes behaviour on 7.0.) */
++    goto Exit;
++#endif
++
+     msg = nl80211_drv_cmd_msg(g_wifi_hal.nl80211_id, NULL, 0, NL80211_CMD_SET_WIPHY);
+     if (msg == NULL) {
+         return -1;

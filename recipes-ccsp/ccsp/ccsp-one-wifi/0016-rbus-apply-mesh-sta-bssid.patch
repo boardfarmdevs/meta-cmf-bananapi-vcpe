@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000016 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 22:30:00 -0700
+Subject: [PATCH] rbus: apply mesh STA BSSID writes
+
+Device.WiFi.STA.{i}.Bssid is registered as a writable RBUS property, and the
+extender connection state machine already contains the complete same-band
+BSSID-change path.  However, set_sta_attribs() ignored both the property name
+and the supplied value and returned success.  A controller or lab tool could
+therefore appear to select a backhaul parent while the extender remained on
+its existing BSSID.
+
+Validate the write, resolve the radio's mesh STA VAP, copy the requested BSSID
+into a temporary VAP configuration, and deliver the existing
+wifi_event_webconfig_set_data_sta_bssid event to the mesh-extender service.
+The live connection event remains responsible for updating the authoritative
+VAP state with the BSSID that actually connected.
+
+The change is generic: it completes the contract of an already writable RBUS
+property and does not contain hwsim-specific selection policy.
+
+Upstream-Status: Pending
+---
+ source/core/wifi_ctrl_rbus_handlers.c | 101 +++++++++++++++++++++++++++++++--
+ 1 file changed, 94 insertions(+), 7 deletions(-)
+
+diff --git a/source/core/wifi_ctrl_rbus_handlers.c b/source/core/wifi_ctrl_rbus_handlers.c
+index 1111111..2222222 100644
+--- a/source/core/wifi_ctrl_rbus_handlers.c
++++ b/source/core/wifi_ctrl_rbus_handlers.c
+@@ -3028,17 +3028,104 @@ bus_error_t get_sta_attribs(char *name, raw_data_t *p_data, bus_user_data_t *use
+ bus_error_t set_sta_attribs(char *name, raw_data_t *p_data, bus_user_data_t *user_data)
+ {
+     (void)user_data;
+-    UNREFERENCED_PARAMETER(p_data);
++    unsigned int index = 0;
++    unsigned int vap_index;
++    unsigned int i;
++    unsigned int octet[6];
++    char extension[64] = { 0 };
++    char printable_bssid[13] = { 0 };
++    mac_address_t requested_bssid;
++    wifi_mgr_t *mgr = (wifi_mgr_t *)get_wifimgr_obj();
++    wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
++    wifi_vap_info_map_t *vap_map;
++    wifi_vap_info_t requested_vap;
++    vap_svc_t *ext_svc;
++    bool found = false;
+ 
+-    if (name == NULL) {
+-        wifi_util_error_print(WIFI_CTRL, "%s:%d property name is not found\r\n", __FUNCTION__,
+-            __LINE__);
++    if (name == NULL || p_data == NULL || mgr == NULL || ctrl == NULL) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d invalid input or controller state\n", __func__,
++            __LINE__);
+         return bus_error_invalid_input;
+     }
+ 
+-    wifi_util_dbg_print(WIFI_CTRL, "%s:%d handler\r\n", __FUNCTION__, __LINE__);
+-    wifi_util_dbg_print(WIFI_CTRL, "%s:%d: setHandler1 called: property=%s\n", __func__, __LINE__,
+-        name);
++    if (sscanf(name, "Device.WiFi.STA.%u.%63s", &index, extension) != 2 || index == 0 ||
++        index > getNumberRadios() || strcmp(extension, "Bssid") != 0) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d unsupported STA property: %s\n", __func__,
++            __LINE__, name);
++        return bus_error_invalid_operation;
++    }
++
++    if (p_data->data_type != bus_data_type_bytes || p_data->raw_data.bytes == NULL) {
++        wifi_util_error_print(WIFI_CTRL,
++            "%s:%d BSSID requires byte data (type:%d len:%u)\n", __func__, __LINE__,
++            p_data->data_type, p_data->raw_data_len);
++        return bus_error_invalid_input;
++    }
++
++    if (p_data->raw_data_len == sizeof(mac_address_t)) {
++        memcpy(requested_bssid, p_data->raw_data.bytes, sizeof(requested_bssid));
++    } else if (p_data->raw_data_len == 12) {
++        memcpy(printable_bssid, p_data->raw_data.bytes, 12);
++        if (sscanf(printable_bssid, "%2x%2x%2x%2x%2x%2x", &octet[0], &octet[1],
++                &octet[2], &octet[3], &octet[4], &octet[5]) != 6) {
++            wifi_util_error_print(WIFI_CTRL, "%s:%d malformed printable BSSID\n", __func__,
++                __LINE__);
++            return bus_error_invalid_input;
++        }
++        for (i = 0; i < sizeof(requested_bssid); i++) {
++            requested_bssid[i] = (unsigned char)octet[i];
++        }
++    } else {
++        wifi_util_error_print(WIFI_CTRL,
++            "%s:%d BSSID requires 6 binary or 12 printable hex bytes (len:%u)\n", __func__,
++            __LINE__, p_data->raw_data_len);
++        return bus_error_invalid_input;
++    }
++
++    if (!is_bssid_valid(requested_bssid)) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d invalid BSSID supplied for %s\n", __func__,
++            __LINE__, name);
++        return bus_error_invalid_input;
++    }
++
++    vap_map = &mgr->radio_config[index - 1].vaps.vap_map;
++    vap_index = get_sta_vap_index_for_radio(&mgr->hal_cap.wifi_prop, index - 1);
++    for (i = 0; i < vap_map->num_vaps; i++) {
++        if (vap_map->vap_array[i].vap_index == vap_index) {
++            memcpy(&requested_vap, &vap_map->vap_array[i], sizeof(requested_vap));
++            found = true;
++            break;
++        }
++    }
++
++    if (!found || !isVapSTAMesh(vap_index)) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d no mesh STA for radio instance %u\n", __func__,
++            __LINE__, index);
++        return bus_error_invalid_operation;
++    }
++
++    if (memcmp(requested_vap.u.sta_info.bssid, requested_bssid,
++            sizeof(mac_address_t)) == 0) {
++        wifi_util_info_print(WIFI_CTRL, "%s:%d mesh STA already uses requested BSSID\n", __func__,
++            __LINE__);
++        return bus_error_success;
++    }
++
++    ext_svc = get_svc_by_type(ctrl, vap_svc_type_mesh_ext);
++    if ((ctrl->network_mode != rdk_dev_mode_type_ext &&
++            ctrl->network_mode != rdk_dev_mode_type_em_node) ||
++        ext_svc == NULL || ext_svc->event_fn == NULL) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d mesh extender service is unavailable\n",
++            __func__, __LINE__);
++        return bus_error_invalid_operation;
++    }
++
++    memcpy(requested_vap.u.sta_info.bssid, requested_bssid, sizeof(mac_address_t));
++    wifi_util_info_print(WIFI_CTRL, "%s:%d applying requested BSSID to %s\n", __func__,
++        __LINE__, requested_vap.vap_name);
++    ext_svc->event_fn(ext_svc, wifi_event_type_webconfig,
++        wifi_event_webconfig_set_data_sta_bssid, vap_svc_event_none, &requested_vap);
++
+     return bus_error_success;
+ }
+ 
+-- 
+2.43.0

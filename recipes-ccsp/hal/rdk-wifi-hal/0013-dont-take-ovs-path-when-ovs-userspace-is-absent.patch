@@ -1,0 +1,90 @@
+nl80211_create_bridge(): don't take the OVS path when OVS userspace
+isn't there, and don't report success when creating the OVS bridge
+failed.
+
+Two problems, one of which silently breaks every VAP-to-bridge
+enslavement on this platform.
+
+1. The OVS branch is gated on access(OVS_MODULE, F_OK), i.e. on
+   /sys/module/openvswitch existing -- the *kernel module*. That says
+   nothing about whether this system's bridges are OVS bridges, and
+   inside an LXD container it isn't even this system's property: /sys is
+   the host's, so a module the host loaded for something else entirely
+   makes every container take the OVS path. On the lab host rev150
+   openvswitch is loaded (lsmod shows 6 users, none of them ours) and
+   both RDK-B containers therefore saw /sys/module/openvswitch despite
+   shipping no running ovsdb-server. Also require ovs-vsctl's own
+   compiled-in default socket to exist, which is what it will actually
+   try to connect to; when OVS genuinely is in use both are true and
+   behavior is unchanged.
+
+2. In the branch that creates the bridge, ovs_add_br() failing is not
+   handled at all:
+
+       if (ovs_add_br(br_name) == 0) {
+           if (ovs_br_add_if(br_name, if_name) != 0) { ...; return -1; }
+       }
+       /* falls through */
+       wifi_hal_dbg_print("... ovs bridge mapping ... is created\n");
+       return 0;
+
+   so a failed ovs_add_br() skips the inner block, falls through to the
+   "is created" log and returns success having done nothing. Every other
+   failure in this function returns -1; this one is the exception.
+
+Together these produced a completely silent failure. wifi_hal logged
+
+  nl80211_create_bridge:4400 ovs bridge mapping for bridge:brlan0, interface:wifi1.3 is created
+  wifi_hal_configure_sta_4addr_to_bridge:9137: Sta wifi1.3 interface added successfully to bridge:brlan0
+
+while /sys/class/net/brlan0/brif/ contained only eth1_virt_end -- the
+mesh backhaul STA was never enslaved, so the EasyMesh leaf had no data
+path to the controller at all. Its AP-Autoconfiguration Search frames
+left the STA (33 seen on the leaf's own interface) and died on the
+isolated bridge; zero arrived at the controller, which therefore never
+answered and no fronthaul VAP was ever configured. Fixing the gate lets
+control reach the existing Linux-bridge netlink path further down, which
+is what this platform actually needs; fixing the fall-through means a
+real OVS failure is reported instead of masked.
+
+Not hwsim-specific -- the fall-through is a plain bug, and the module
+-vs-userspace confusion affects any containerized or module-loaded-but
+-unused system -- so neither part is gated.
+
+---
+ wifi_hal_nl80211.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -84,6 +84,9 @@
+ 
+ #define AP_UNABLE_TO_HANDLE_ADDITIONAL_ASSOCIATIONS 17
+ #define OVS_MODULE "/sys/module/openvswitch"
++/* ovs-vsctl's compiled-in default database socket. Presence of the kernel module
++ * alone does not mean this system's bridges are OVS bridges -- see nl80211_create_bridge(). */
++#define OVS_DB_SOCK "/var/run/openvswitch/db.sock"
+ #define ONEWIFI_TESTSUITE_TMPFILE "/tmp/onewifi_testsuite_configured"
+ #define KEY_MGMT_SAE_EXT 67108864
+ #define MAX_MBSSID_INTERFACES 8
+@@ -4373,7 +4376,8 @@
+         br_name, if_name, is_hotspot_interface, is_lnf_psk_interface, is_mdu_enabled,
+         (vap_cfg != NULL)? vap_cfg->vap_name: "NULL");
+ 
+-    if (access(OVS_MODULE, F_OK) == 0 && !is_hotspot_interface && !(is_lnf_psk_interface && is_mdu_enabled)) {
++    if (access(OVS_MODULE, F_OK) == 0 && access(OVS_DB_SOCK, F_OK) == 0 &&
++        !is_hotspot_interface && !(is_lnf_psk_interface && is_mdu_enabled)) {
+         if (ovs_if_get_br(ovs_brname, if_name) == 0) {
+             if (strcmp(br_name, ovs_brname) != 0) {
+                 wifi_hal_dbg_print("%s:%d mismatch\n",  __func__, __LINE__);
+@@ -4394,6 +4398,9 @@
+                         wifi_hal_error_print("%s:%d adding interface:%s to bridge:%s failed\n",  __func__, __LINE__, if_name, br_name);
+                         return -1;
+                     }
++                } else {
++                    wifi_hal_error_print("%s:%d creating ovs bridge:%s for interface:%s failed\n",  __func__, __LINE__, br_name, if_name);
++                    return -1;
+                 }
+             }
+         }

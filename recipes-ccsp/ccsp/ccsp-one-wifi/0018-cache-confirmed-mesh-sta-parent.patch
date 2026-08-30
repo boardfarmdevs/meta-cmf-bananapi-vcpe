@@ -1,0 +1,74 @@
+From 85d7a819fe482f1e8222a7c5ab65d71ca098ea87 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 23:55:00 -0700
+Subject: [PATCH] mesh-ext: cache a confirmed parent while already connected
+
+The mesh-ext connection-status handler only copied the HAL-confirmed BSSID
+into OneWifi's VAP cache while its connection state was one of the three
+"connection in progress" states.  A deliberate BSSID change while the mesh
+STA was already connected therefore did associate in the kernel, but the
+subsequent mesh_sta WebConfig publication still contained the previous
+parent.
+
+The connection-status event is authoritative for both initial association
+and reparenting.  Refresh the selected BSS, connected VAP, radio band and VAP
+BSSID for every connected event.  Keep the existing state transition and
+self-heal setup limited to initial connection establishment.
+
+This is not hwsim-specific: any live backhaul re-selection can report a new
+connected BSSID while the service-level state remains connected.
+---
+ source/core/services/vap_svc_mesh_ext.c | 26 ++++++++++++++------------
+ 1 file changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/source/core/services/vap_svc_mesh_ext.c b/source/core/services/vap_svc_mesh_ext.c
+index 2cdceac4..a7d75981 100644
+--- a/source/core/services/vap_svc_mesh_ext.c
++++ b/source/core/services/vap_svc_mesh_ext.c
+@@ -2076,26 +2076,27 @@ int process_ext_sta_conn_status(vap_svc_t *svc, void *arg)
+     }
+ 
+     if (sta_data->stats.connect_status == wifi_connection_status_connected) {
++        int radio_freq_band = 0;
++
++        /* A connected event is authoritative even when this is a live
++         * reparent and the service state was already connected. */
++        memset(&ext->last_connected_bss, 0, sizeof(bss_candidate_t));
++        memcpy(&ext->last_connected_bss.external_ap, &sta_data->bss_info,
++            sizeof(wifi_bss_info_t));
++        ext->connected_vap_index = sta_data->stats.vap_index;
++        if (!ext->new_bss_delayed) {
++            memset(&ext->new_bss, 0, sizeof(bss_candidate_t));
++        }
++        convert_radio_index_to_freq_band(svc->prop, index, &radio_freq_band);
++        ext->last_connected_bss.radio_freq_band = (wifi_freq_bands_t)radio_freq_band;
++        memcpy(temp_vap_info->u.sta_info.bssid, sta_data->bss_info.bssid,
++            sizeof(temp_vap_info->u.sta_info.bssid));
++        wifi_util_dbg_print(WIFI_CTRL, "%s:%d - connected radio_band:%d\r\n", __func__,
++            __LINE__, ext->last_connected_bss.radio_freq_band);
++
+         if ((ext->conn_state == connection_state_connection_in_progress) ||
+             (ext->conn_state == connection_state_connection_to_lcb_in_progress) ||
+             (ext->conn_state == connection_state_connection_to_nb_in_progress)) {
+-            int radio_freq_band = 0;
+-            // copy the bss info to lcb
+-            memset(&ext->last_connected_bss, 0, sizeof(bss_candidate_t));
+-            memcpy(&ext->last_connected_bss.external_ap, &sta_data->bss_info, sizeof(wifi_bss_info_t));
+-            ext->connected_vap_index = sta_data->stats.vap_index;
+-
+-            if (!ext->new_bss_delayed) {
+-                // clear new bssid since it is not used for reconnection
+-                memset(&ext->new_bss, 0, sizeof(bss_candidate_t));
+-            }
+-            convert_radio_index_to_freq_band(svc->prop, index, &radio_freq_band);
+-            ext->last_connected_bss.radio_freq_band = (wifi_freq_bands_t)radio_freq_band;
+-            wifi_util_dbg_print(WIFI_CTRL,"%s:%d - connected radio_band:%d\r\n", __func__, __LINE__, ext->last_connected_bss.radio_freq_band);
+-
+-            // copy the bss bssid info to global chache
+-            memcpy (temp_vap_info->u.sta_info.bssid, sta_data->bss_info.bssid, sizeof(temp_vap_info->u.sta_info.bssid));
+-
+             // change the state
+             ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
+             if (ctrl->rf_status_down == true) {
+-- 
+2.43.0

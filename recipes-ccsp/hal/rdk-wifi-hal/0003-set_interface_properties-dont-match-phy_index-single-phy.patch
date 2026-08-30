@@ -1,0 +1,46 @@
+Fix EasyMesh/hwsim container crash: set_interface_properties() has the
+same bug already fixed in get_rdk_radio_indices() (see
+0002-get_rdk_radio_indices-...patch) -- both its lookup loops require
+the real, kernel-reported phy_index (netlink NL80211_ATTR_WIPHY, e.g.
+40 under mac80211_hwsim in a container) to equal InterfaceMap.json's
+hardcoded "phy_index": 0. Under FEATURE_SINGLE_PHY that comparison is
+redundant (there's only ever one phy), so every interface fails to
+match, vap_index/vap_name/vap_mode are never set for any interface,
+and set_interface_properties() returns -1 for every interface
+processed by interface_info_handler(). The immediate caller handles
+that failure gracefully (interface_free + NL_SKIP), but the net effect
+is radio->interface_map ends up completely empty for every radio --
+and something downstream in the startup sequence assumes at least one
+interface exists per radio and dereferences it, producing the actual
+observed crash (segfault in librdk_wifihal.so shortly after
+init_nl80211() completes; the OneWifi service log shows nothing past
+the interface dump, and dmesg shows a repeating write-fault segfault
+at the same relative offset on every Restart=always cycle).
+
+---
+ wifi_hal_nl80211_utils.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/wifi_hal_nl80211_utils.c b/wifi_hal_nl80211_utils.c
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -2207,8 +2207,7 @@ int set_interface_properties(unsigned int phy_index, wifi_interface_info_t *in
+     /* Set interface properties for VAP interfaces */
+     for (i = 0; i < get_sizeof_interfaces_index_map(); i++) {
+         map = &interface_index_map[i];
+-        if ((strcmp(interface->name, map->interface_name) == 0) &&
+-            (phy_index == map->phy_index)) {
++        if (strcmp(interface->name, map->interface_name) == 0) {
+             vap->radio_index = map->rdk_radio_index;
+             vap->vap_index = map->index;
+             strcpy(vap->vap_name, map->vap_name);
+@@ -2220,8 +2219,7 @@ int set_interface_properties(unsigned int phy_index, wifi_interface_info_t *in
+     /* Set interface properties for radio interfaces */
+     for (i = 0; i < get_sizeof_radio_interfaces_map(); i++) {
+         radio_map = &l_radio_interface_map[i];
+-        if ((strcmp(interface->name, radio_map->interface_name) == 0) &&
+-            (phy_index == radio_map->phy_index)) {
++        if (strcmp(interface->name, radio_map->interface_name) == 0) {
+             vap->radio_index = radio_map->radio_index;
+             vap->vap_index = -1;
+             return 0;

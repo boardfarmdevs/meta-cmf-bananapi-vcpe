@@ -1,0 +1,76 @@
+init_radio_config_default's sibling VAP-default function (same file) sets
+private_ssid_2g/5g's default security.mode to wifi_security_mode_wpa3_personal
+(SAE/WPA3) whenever _PLATFORM_BANANAPI_R4_ is defined -- true for this
+container too, but mac80211_hwsim rejects it.
+
+Root-caused via a raw netlink capture (strace -x on the exact
+NL80211_CMD_START_AP/NEW_BEACON sendmsg for wifi0, decoded attribute-by-
+attribute against linux/nl80211.h's enum nl80211_attrs): the request carries
+NL80211_ATTR_SAE_PWE (attribute 298), which hostapd's driver_nl80211.c only
+ever sends when wpa_key_mgmt_sae(key_mgmt_suites) is true (see
+nl80211_put_sae_pwe's call site, source/drivers/driver_nl80211.c). The kernel
+ACKs the whole START_AP request with a plain -EOPNOTSUPP (no extended-ack
+text) as soon as that attribute is present -- confirmed this is genuinely
+SAE-specific, not the 802.11ax/be/spectrum-mgmt defaults already disabled
+under HWSIM_RADIO (0004 here, 0006 in rdk-wifi-hal): the failure persisted
+identically after those, and the SSID/beacon-interval/DTIM/cipher-suite/IE
+attributes decoded around it are all unremarkable, standard values.
+
+Gated behind the same HWSIM_RADIO macro as this recipe's other hwsim-only
+default overrides, falling back to the existing non-BananaPi-R4 branch
+(WPA2-PSK, no SAE) -- real BananaPi R4 hardware is unaffected.
+
+Capability gate (review P1 #3): 6 GHz mandates SAE-H2E + PMF, so the blanket
+"HWSIM_RADIO => WPA2" override is wrong once wifi2 participates. On a 7.0 host
+SAE works on hwsim (proven, doc/easymesh/Linux-7.0-hwsim-6GHz-VLP-AP-results.md),
+so the override is additionally gated on !defined(HWSIM_6GHZ_CAPABLE): the WPA2
+forcing applies only when HWSIM_RADIO && !HWSIM_6GHZ_CAPABLE. Building with
+-DHWSIM_6GHZ_CAPABLE (the same flag that keeps 6 GHz enabled, patch 0006)
+restores the WPA3/SAE/MFP-required defaults so a capable host can bring up a
+standards-correct tri-band VAP. Default (flag off) is byte-for-byte the old
+behaviour. A finer band-scoped split (WPA2 on 2.4/5, SAE on 6) is a possible
+future refinement; capability-gating already satisfies the 6 GHz requirement.
+
+---
+ source/db/wifi_db.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/source/db/wifi_db.c b/source/db/wifi_db.c
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -502,7 +502,7 @@
+                 cfg.u.bss_info.security.encr = wifi_encryption_aes;
+ #endif /* CONFIG_IEEE80211BE */
+             } else {
+-#if defined(_PLATFORM_BANANAPI_R4_)
++#if defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO)
+                 cfg.u.bss_info.security.mode = wifi_security_mode_wpa3_personal;
+                 cfg.u.bss_info.security.wpa3_transition_disable = false;
+                 cfg.u.bss_info.security.mfp = wifi_mfp_cfg_required;
+@@ -515,7 +515,7 @@
+ #else
+                 cfg.u.bss_info.security.mode = wifi_security_mode_wpa2_personal;
+                 cfg.u.bss_info.security.encr = wifi_encryption_aes;
+-#endif // _PLATFORM_BANANAPI_R4_
++#endif // _PLATFORM_BANANAPI_R4_ && !HWSIM_RADIO
+             }
+             cfg.u.bss_info.bssHotspot = false;
+         } else  {
+@@ -530,7 +530,7 @@
+                 cfg.u.bss_info.security.encr = wifi_encryption_aes;
+ #endif /* CONFIG_IEEE80211BE */
+             } else {
+-#if defined(_PLATFORM_BANANAPI_R4_)
++#if defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO)
+                 cfg.u.bss_info.security.mode = wifi_security_mode_wpa3_personal;
+                 cfg.u.bss_info.security.wpa3_transition_disable = false;
+                 cfg.u.bss_info.security.mfp = wifi_mfp_cfg_required;
+@@ -543,7 +543,7 @@
+ #else
+                 cfg.u.bss_info.security.mode = wifi_security_mode_wpa2_personal;
+                 cfg.u.bss_info.security.encr = wifi_encryption_aes;
+-#endif //_PLATFORM_BANANAPI_R4_
++#endif //_PLATFORM_BANANAPI_R4_ && !HWSIM_RADIO
+             }
+             cfg.u.bss_info.bssHotspot = false;
+             cfg.u.bss_info.mbo_enabled = false;

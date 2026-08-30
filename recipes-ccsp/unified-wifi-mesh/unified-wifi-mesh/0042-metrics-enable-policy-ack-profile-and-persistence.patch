@@ -1,0 +1,290 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Tue, 18 Aug 2026 13:50:00 -0700
+Subject: [PATCH] metrics: complete policy activation and report persistence
+
+Metrics policy was exposed by the WebUI but could not become active.  Three
+independent defects were observed in the running multi-agent lab:
+
+* the 1905 ACK dispatcher introduced for steering only considered steering
+  MIDs, so it dropped Policy Configuration ACKs before the policy state
+  machine could complete and commit PolicyList;
+* the controller discarded the Multi-AP Profile from autoconfiguration search
+  when creating/updating a device.  Radio nodes were consequently created with
+  the database's reserved profile 0 and rejected valid Profile-2/3 AP Extended
+  and Radio Metrics TLVs as forbidden;
+* the AP Metrics Response receiver ignored AP Extended and Radio Metrics and
+  persisted only STA rows.
+
+Route policy ACKs by their outstanding MID, retain and persist the peer profile,
+decode all report classes emitted by send_ap_metrics_response(), and request
+STA/BSS/radio database updates.  Also give automatically-created per-radio
+policies the owning device identity; previously their zero device MAC made them
+invisible in get_policy and left the WebUI's radio-policy array empty.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ inc/em_metrics.h                    |  4 +-
+ src/ctrl/em_ctrl.cpp                | 21 ++++++--
+ src/dm/dm_easy_mesh_list.cpp        |  7 ++-
+ src/em/metrics/em_metrics.cpp       | 92 ++++++++++++++++++++++++++++++-------
+ 4 files changed, 101 insertions(+), 23 deletions(-)
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index 10f1481..d70d0d8 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -320,7 +320,9 @@ class em_metrics_t {
+ 	 *
+ 	 * @note Ensure that the buffer is properly allocated.
+ 	 */
+-	int handle_ap_metrics_tlv(unsigned char *buff, bssid_t bssid);
++	int handle_ap_metrics_tlv(unsigned char *buff, unsigned int tlv_len, bssid_t bssid);
++	int handle_ap_ext_metrics_tlv(unsigned char *buff, unsigned int tlv_len);
++	int handle_radio_metrics_tlv(unsigned char *buff, unsigned int tlv_len);
+ 
+ 	int handle_link_stats_alarm_rprt_tlv(unsigned char *buff, size_t len);
+ 
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 7c8451e..8eddee9 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -867,21 +867,28 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                 return NULL;
+             }
+ 
++            if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)),
++                    len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_profile(&profile) == false) {
++                profile = em_profile_type_1;
++            }
++
+             dm_easy_mesh_t::macbytes_to_string(intf.mac, mac_str1);
+             em_printfout("[%s] Received autoconfig search from agent al mac: %s\n", __func__, mac_str1);
+             if ((dm = get_data_model(GLOBAL_NET_ID, const_cast<const unsigned char *> (intf.mac))) == NULL) {
+-                if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)), len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_profile(&profile) == false) {
+-                    profile = em_profile_type_1;
+-                }
+                 //dm = create_data_model(GLOBAL_NET_ID, const_cast<const em_interface_t *> (&intf), profile);
+                 memcpy(dm_commit.mac, intf.mac, sizeof(mac_addr_t));
+                 strncpy(dm_commit.net_id, GLOBAL_NET_ID, sizeof(dm_commit.net_id));
+                 io_process(em_bus_event_type_dm_commit, reinterpret_cast<unsigned char *> (&dm_commit), sizeof(em_commit_info_t));
++                dm = get_data_model(GLOBAL_NET_ID, const_cast<const unsigned char *> (intf.mac));
+                 em_printfout("[%s] Creating data model for mac: %s net: %s\n", __func__, mac_str1, GLOBAL_NET_ID);
+             } else {
+                 dm_easy_mesh_t::macbytes_to_string(dm->get_agent_al_interface_mac(), mac_str1);
+                 em_printfout("[%s] Found existing data model for mac: %s net: %s\n", __func__, mac_str1, GLOBAL_NET_ID);
+             }
++            if (dm != NULL && dm->get_device()->m_device_info.profile != profile) {
++                dm->get_device()->m_device_info.profile = profile;
++                dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
++            }
+             em = al_em;
+             break;
+ 
+@@ -1070,11 +1077,16 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                     em = radio_em;
+                     break;
+                 }
++                if ((radio_em->get_state() == em_state_ctrl_set_policy_pending) &&
++                    (radio_em->m_policy_req_msg_id == response_msg_id)) {
++                    em = radio_em;
++                    break;
++                }
+             }
+ 
+             if (em == NULL) {
+-                /* No radio has a steering op outstanding for this ACK's MID, so
+-                 * the ACK is not for steering. Do NOT misroute it to an arbitrary
++                /* No radio has a steering or policy op outstanding for this ACK's
++                 * MID. Do NOT misroute it to an arbitrary
+                  * (first non-AL) radio -- that arbitrary fallback was the very
+                  * defect this patch fixes. Leaving em == NULL makes the caller
+                  * drop the frame; a genuine non-steering ACK has no per-radio
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index 5ebc149..3a99189 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -383,7 +383,8 @@ void dm_easy_mesh_list_t::put_radio(const char *key, const dm_radio_t *radio)
+         }
+         if (!has_radio_metrics) {
+             em_policy_t rm_default = {};
+-            strncpy(rm_default.id.net_id, "OneWifiMesh", sizeof(rm_default.id.net_id) - 1);
++            strncpy(rm_default.id.net_id, pradio->m_radio_info.id.net_id, sizeof(rm_default.id.net_id) - 1);
++            memcpy(rm_default.id.dev_mac, pradio->m_radio_info.id.dev_mac, sizeof(mac_address_t));
+             rm_default.id.type = em_policy_id_type_radio_metrics_rep;
+             rm_default.policy = em_steering_policy_type_disallowed;
+             rm_default.util_threshold = 60;
+@@ -397,7 +398,8 @@ void dm_easy_mesh_list_t::put_radio(const char *key, const dm_radio_t *radio)
+         }
+         if (!has_steering_param) {
+             em_policy_t sp_default = {};
+-            strncpy(sp_default.id.net_id, "OneWifiMesh", sizeof(sp_default.id.net_id) - 1);
++            strncpy(sp_default.id.net_id, pradio->m_radio_info.id.net_id, sizeof(sp_default.id.net_id) - 1);
++            memcpy(sp_default.id.dev_mac, pradio->m_radio_info.id.dev_mac, sizeof(mac_address_t));
+             sp_default.id.type = em_policy_id_type_steering_param;
+             sp_default.policy = em_steering_policy_type_rcpi_allowed;
+             sp_default.util_threshold = 60;
+@@ -406,6 +408,7 @@ void dm_easy_mesh_list_t::put_radio(const char *key, const dm_radio_t *radio)
+             memcpy(sp.m_policy.id.radio_mac, pradio->m_radio_info.intf.mac, sizeof(mac_address_t));
+             dm->set_policy(sp);
+         }
++        dm->set_db_cfg_param(db_cfg_type_policy_list_update, "");
+     }
+ 
+     em_printfout("Radio dev_id is:%s", util::mac_to_string(pradio->m_radio_info.id.dev_mac).c_str());
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 8796a66..67330cf 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -436,15 +436,32 @@ int em_metrics_t::handle_beacon_metrics_response(unsigned char *buff, unsigned i
+     return 0;
+ }
+ 
+-int em_metrics_t::handle_ap_metrics_tlv(unsigned char *buff, bssid_t get_bssid)
++int em_metrics_t::handle_ap_metrics_tlv(unsigned char *buff, unsigned int tlv_len, bssid_t get_bssid)
+ {
+-    em_ap_metric_t *ap_metrics = reinterpret_cast<em_ap_metric_t *> (buff);
+-    em_bss_info_t *bss = get_data_model()->get_bss_info_with_mac(ap_metrics->bssid);
++    em_ap_metric_t *ap_metrics;
++    em_bss_info_t *bss;
+     mac_addr_str_t bss_str;
++    mac_address_t zero_bssid = {0};
++
++    if (buff == NULL || tlv_len < sizeof(em_ap_metric_t)) {
++        return -1;
++    }
++
++    ap_metrics = reinterpret_cast<em_ap_metric_t *> (buff);
++    if (memcmp(ap_metrics->bssid, zero_bssid, sizeof(mac_address_t)) == 0) {
++        return 0;
++    }
++
++    bss = get_data_model()->get_bss_info_with_mac(ap_metrics->bssid);
+ 
+     memcpy(get_bssid, ap_metrics->bssid, sizeof(mac_addr_t));
+     if (bss != NULL) {
+         bss->numberofsta = htons(ap_metrics->num_sta);
++        bss->channel_util = ap_metrics->channel_util;
++        dm_radio_t *radio = get_data_model()->get_radio(bss->ruid.mac);
++        if (radio != NULL) {
++            radio->m_radio_info.utilization = ap_metrics->channel_util;
++        }
+         dm_easy_mesh_t::macbytes_to_string(ap_metrics->bssid, bss_str);
+     } else {
+         dm_easy_mesh_t::macbytes_to_string(ap_metrics->bssid, bss_str);
+@@ -454,6 +471,63 @@ int em_metrics_t::handle_ap_metrics_tlv(unsigned char *buff, bssid_t get_bssid)
+     return 0;
+ }
+ 
++int em_metrics_t::handle_ap_ext_metrics_tlv(unsigned char *buff, unsigned int tlv_len)
++{
++    em_ap_ext_metric_t *metrics;
++    em_bss_info_t *bss;
++    uint32_t bytes;
++
++    if (buff == NULL || tlv_len < sizeof(em_ap_ext_metric_t)) {
++        return -1;
++    }
++
++    metrics = reinterpret_cast<em_ap_ext_metric_t *> (buff);
++    bss = get_data_model()->get_bss_info_with_mac(metrics->bssid);
++    if (bss == NULL) {
++        em_printfout("AP Extended Metrics BSS not found: %s",
++            util::mac_to_string(metrics->bssid).c_str());
++        return -1;
++    }
++
++    memcpy(&bytes, metrics->uni_bytes_sent, sizeof(bytes));
++    bss->unicast_bytes_sent = ntohl(bytes);
++    memcpy(&bytes, metrics->uni_bytes_recv, sizeof(bytes));
++    bss->unicast_bytes_rcvd = ntohl(bytes);
++    memcpy(&bytes, metrics->multi_bytes_sent, sizeof(bytes));
++    bss->multicast_bytes_sent = ntohl(bytes);
++    memcpy(&bytes, metrics->multi_bytes_recv, sizeof(bytes));
++    bss->multicast_bytes_rcvd = ntohl(bytes);
++    memcpy(&bytes, metrics->bcast_bytes_sent, sizeof(bytes));
++    bss->broadcast_bytes_sent = ntohl(bytes);
++    memcpy(&bytes, metrics->bcast_bytes_recv, sizeof(bytes));
++    bss->broadcast_bytes_rcvd = ntohl(bytes);
++    return 0;
++}
++
++int em_metrics_t::handle_radio_metrics_tlv(unsigned char *buff, unsigned int tlv_len)
++{
++    em_radio_metric_t *metrics;
++    dm_radio_t *radio;
++
++    if (buff == NULL || tlv_len < sizeof(em_radio_metric_t)) {
++        return -1;
++    }
++
++    metrics = reinterpret_cast<em_radio_metric_t *> (buff);
++    radio = get_data_model()->get_radio(metrics->ruid);
++    if (radio == NULL) {
++        em_printfout("Radio Metrics RUID not found: %s",
++            util::mac_to_string(metrics->ruid).c_str());
++        return -1;
++    }
++
++    radio->m_radio_info.noise = metrics->noise;
++    radio->m_radio_info.transmit = metrics->transmit;
++    radio->m_radio_info.receive_self = metrics->rece_self;
++    radio->m_radio_info.receive_other = metrics->rece_other;
++    return 0;
++}
++
+ int em_metrics_t::handle_assoc_sta_traffic_stats(unsigned char *buff, bssid_t bssid)
+ {
+     em_assoc_sta_traffic_stats_t	*sta_metrics;
+@@ -592,17 +666,28 @@ int em_metrics_t::handle_ap_metrics_response(unsigned char *buff, unsigned int l
+     tlv = tlv_start;
+     tmp_len = base_len;
+ 
+-    while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
++    while ((tmp_len >= sizeof(em_tlv_t)) && (tlv->type != em_tlv_type_eom)) {
++        size_t tlv_total = sizeof(em_tlv_t) + static_cast<size_t>(ntohs(tlv->len));
++        if (tmp_len < tlv_total) {
++            em_printfout("Truncated AP metrics TLV, stopping");
++            break;
++        }
+         switch (tlv->type) {
+             case em_tlv_type_ap_metrics:
+                 // Update current BSSID context; subsequent per-STA TLVs use this value.
+-                handle_ap_metrics_tlv(tlv->value, bssid);
++                if (handle_ap_metrics_tlv(tlv->value, ntohs(tlv->len), bssid) != 0) {
++                    em_printfout("ap_metrics_tlv failed, skipping TLV");
++                }
+                 break;
+             case em_tlv_type_ap_ext_metric:
+-                /* future implementation */
++                if (handle_ap_ext_metrics_tlv(tlv->value, ntohs(tlv->len)) != 0) {
++                    em_printfout("ap_ext_metrics_tlv failed, skipping TLV");
++                }
+                 break;
+             case em_tlv_type_radio_metric:
+-                /* future implementation */
++                if (handle_radio_metrics_tlv(tlv->value, ntohs(tlv->len)) != 0) {
++                    em_printfout("radio_metrics_tlv failed, skipping TLV");
++                }
+                 break;
+             case em_tlv_type_assoc_sta_traffic_sts:
+                 if (handle_assoc_sta_traffic_stats(tlv->value, bssid) != 0) {
+@@ -630,11 +715,13 @@ int em_metrics_t::handle_ap_metrics_response(unsigned char *buff, unsigned int l
+             default:
+                 break;
+         }
+-        tmp_len -= (sizeof(em_tlv_t) + static_cast<size_t> (ntohs(tlv->len)));
+-        tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + ntohs(tlv->len));
++        tmp_len -= tlv_total;
++        tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + tlv_total);
+     }
+ 
+     dm->set_db_cfg_param(db_cfg_type_sta_metrics_update, "");
++    dm->set_db_cfg_param(db_cfg_type_radio_list_update, "");
++    dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
+ 
+     return 0;
+ }
+-- 
+2.43.0

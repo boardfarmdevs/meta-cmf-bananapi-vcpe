@@ -1,0 +1,142 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: reconcile live associated-client snapshots
+
+An inter-device roam under mac80211_hwsim can leave an authorized station
+object on the old AP.  The HAL correctly omits the inactive object from its
+live diagnostic snapshot, but OneWifi's event-backed associated_devices_map
+can still contain it.  This is especially visible after a process restart:
+the retained kernel object is learned as a fresh association, and the old AP
+then defeats the actual owner's older-but-valid EasyMesh Association Time.
+
+Use each successful EasyMesh monitor response as an authoritative live
+snapshot for that VAP.  Mark active cache rows absent from the response
+inactive and publish one full associated-client update when anything changes.
+The existing full-list encoder excludes inactive history, allowing the
+EasyMesh agent and controller to withdraw the stale owner through their normal
+snapshot path.  Accept an empty response as valid evidence; the old early
+return made the most important withdrawal case impossible.  Bound the copied
+array before writing the fixed per-BSS cache.
+
+Keep the reconciliation under HWSIM_RADIO.  Physical products retain their
+native driver event and inactivity behavior.
+
+Upstream-Status: Pending
+---
+ source/apps/em/wifi_em.c | 85 ++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 80 insertions(+), 5 deletions(-)
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -613,6 +613,73 @@ static int em_stop_metrics_report(int radio_index, wifi_app_t *app)
+     }
+ }
+ 
++#ifdef HWSIM_RADIO
++static bool em_live_snapshot_contains(const wifi_provider_response_t *response,
++    const mac_address_t mac)
++{
++    const sta_data_t *stats = response->stat_pointer;
++
++    for (unsigned int i = 0; i < response->stat_array_size; i++) {
++        if (memcmp(stats[i].sta_mac, mac, sizeof(mac_address_t)) == 0 ||
++            memcmp(stats[i].dev_stats.cli_MACAddress, mac,
++                sizeof(mac_address_t)) == 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
++/* mac80211_hwsim can retain an authorized station object on the old AP after
++ * an inter-device roam.  The HAL's live diagnostic snapshot filters that
++ * inactive row, but OneWifi's event-backed associated_devices_map otherwise
++ * continues to advertise it.  Reconcile only entries that the successful
++ * live provider response omitted, then publish one authoritative full update
++ * so EasyMesh can withdraw the old owner. */
++static void em_reconcile_live_assoc_snapshot(wifi_mgr_t *wifi_mgr,
++    unsigned int vap_index, const wifi_provider_response_t *response)
++{
++    rdk_wifi_vap_info_t *vap = get_wifidb_rdk_vap_info(vap_index);
++    assoc_dev_data_t *entry;
++    bool changed = false;
++
++    if (vap == NULL || vap->associated_devices_lock == NULL) {
++        return;
++    }
++
++    pthread_mutex_lock(vap->associated_devices_lock);
++    if (vap->associated_devices_map == NULL) {
++        pthread_mutex_unlock(vap->associated_devices_lock);
++        return;
++    }
++    entry = hash_map_get_first(vap->associated_devices_map);
++    while (entry != NULL) {
++        if (entry->dev_stats.cli_Active &&
++            !em_live_snapshot_contains(response,
++                entry->dev_stats.cli_MACAddress)) {
++            mac_addr_str_t mac_str;
++            entry->dev_stats.cli_Active = false;
++            changed = true;
++            to_mac_str(entry->dev_stats.cli_MACAddress, mac_str);
++            wifi_util_info_print(WIFI_EM,
++                "%s:%d: live snapshot withdrew stale client %s from vap %u\n",
++                __func__, __LINE__, mac_str, vap_index);
++        }
++        entry = hash_map_get_next(vap->associated_devices_map, entry);
++    }
++    pthread_mutex_unlock(vap->associated_devices_lock);
++
++    if (changed) {
++        wifi_mgr->ctrl.webconfig_state |=
++            ctrl_webconfig_state_associated_clients_full_cfg_rsp_pending;
++        if (webconfig_send_full_associate_status(&wifi_mgr->ctrl) != RETURN_OK) {
++            wifi_util_error_print(WIFI_EM,
++                "%s:%d: failed to publish reconciled associated-client snapshot\n",
++                __func__, __LINE__);
++        }
++    }
++}
++#endif
++
+ int assoc_client_response(wifi_app_t *app, wifi_provider_response_t *provider_response)
+ {
+     unsigned int radio_index = 0;
+@@ -626,8 +693,13 @@ int assoc_client_response(wifi_app_t *app, wifi_provider_response_t *provider_re
+     wifi_util_info_print(WIFI_EM, "%s:%d: provider_response is for radio index: %d and vap index: %d\n",
+          __func__, __LINE__, radio_index, vap_index);
+ 
+-    if (provider_response->stat_array_size <= 0) {
+-        wifi_util_error_print(WIFI_EM, "%s:%d: provider_response is NULL\n", __func__, __LINE__);
++    if (provider_response->stat_array_size > BSS_MAX_NUM_STATIONS ||
++        (provider_response->stat_array_size > 0 &&
++            provider_response->stat_pointer == NULL)) {
++        wifi_util_error_print(WIFI_EM,
++            "%s:%d: invalid provider response size %u pointer %p\n",
++            __func__, __LINE__, provider_response->stat_array_size,
++            provider_response->stat_pointer);
+         return RETURN_ERR;
+     }
+ 
+@@ -646,10 +718,17 @@ int assoc_client_response(wifi_app_t *app, wifi_provider_response_t *provider_re
+         return RETURN_ERR;
+     }
+ 
++#ifdef HWSIM_RADIO
++    em_reconcile_live_assoc_snapshot(wifi_mgr, vap_index, provider_response);
++#endif
++
+     memset(client_assoc_stats[radio_index].client_assoc_data[vap_array_index].assoc_stats, 0,
+         sizeof(client_assoc_stats[radio_index].client_assoc_data[vap_array_index].assoc_stats));
+-    memcpy(client_assoc_stats[radio_index].client_assoc_data[vap_array_index].assoc_stats,
+-        provider_response->stat_pointer, (sizeof(sta_data_t) * provider_response->stat_array_size));
++    if (provider_response->stat_array_size > 0) {
++        memcpy(client_assoc_stats[radio_index].client_assoc_data[vap_array_index].assoc_stats,
++            provider_response->stat_pointer,
++            sizeof(sta_data_t) * provider_response->stat_array_size);
++    }
+     client_assoc_stats[radio_index].client_assoc_data[vap_array_index].stat_array_size =
+         provider_response->stat_array_size;
+     client_assoc_stats[radio_index].assoc_stats_vap_presence_mask |= (1 << vap_index);
+-- 
+2.43.0

@@ -1,0 +1,12 @@
+[Unit]
+Description=Name the persistent mac80211_hwsim pool for LXD
+After=systemd-modules-load.service
+Before=snap.lxd.daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easymesh-hwsim-pool
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

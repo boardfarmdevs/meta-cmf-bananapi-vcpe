@@ -1,0 +1,16 @@
+[Unit]
+Description=Reconstruct and verify Boardfarm Docker lab
+Wants=network-online.target
+After=network-online.target docker.service snap.lxd.daemon.service
+Requires=docker.service snap.lxd.daemon.service
+Before=easymesh-lxd-docker-forward.service easymesh-lab.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/boardfarm-lab
+ExecStart=/usr/local/sbin/boardfarm-lab-rebuild
+RemainAfterExit=yes
+TimeoutStartSec=1200
+
+[Install]
+WantedBy=multi-user.target

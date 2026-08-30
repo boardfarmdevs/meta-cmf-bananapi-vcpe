@@ -1,0 +1,116 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] cli: bound the controller command transport
+
+The WebUI calls the controller through a blocking TLS command socket.  A
+controller abort or a peer that connects without completing TLS can leave an
+SSL operation blocked indefinitely.  The Go API serializes native calls, so
+one stuck request then prevents every topology, client and policy request.
+
+Apply a 30-second send/receive timeout to command client sockets before the
+TLS handshake and to accepted controller sockets.  If the controller cannot
+read a complete request, close that TLS session and continue accepting instead
+of dispatching the previous event buffer.  The caller gets an error and
+releases the serialization lock, allowing a later request to reconnect to a
+restarted controller.
+
+Upstream-Status: Pending
+---
+ src/cmd/em_cmd_exec.cpp  | 22 ++++++++++++++++++++++
+ src/ctrl/em_cmd_ctrl.cpp | 16 ++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/src/cmd/em_cmd_exec.cpp b/src/cmd/em_cmd_exec.cpp
+--- a/src/cmd/em_cmd_exec.cpp
++++ b/src/cmd/em_cmd_exec.cpp
+@@ -222,6 +222,7 @@ SSL *em_cmd_exec_t::get_ep_for_dst_svc(SSL_CTX *ctx, em_service_type_t svc)
+     int sock, ret;
+     int do_reuse_sock = 1;
+ 	unsigned int sz = sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN;
++    struct timeval io_timeout = {30, 0};
+ 
+     if ((sock = socket(domain, SOCK_STREAM, 0)) < 0) {
+         printf("%s:%d: Could not create socket\n", __func__, __LINE__);
+@@ -229,6 +230,15 @@ SSL *em_cmd_exec_t::get_ep_for_dst_svc(SSL_CTX *ctx, em_service_type_t svc)
+     }
+ 
+     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &do_reuse_sock, sizeof(do_reuse_sock)); // Reuse address 
++    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &io_timeout,
++            sizeof(io_timeout)) != 0 ||
++            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &io_timeout,
++            sizeof(io_timeout)) != 0) {
++        printf("%s:%d: Could not set command socket timeout, err:%d\n",
++                __func__, __LINE__, errno);
++        close(sock);
++        return NULL;
++    }
+ 
+ #ifdef LOCAL_CLI
+     if (get_path_from_dst_service(svc, sock_path) == NULL) {
+@@ -301,6 +310,7 @@ int em_cmd_exec_t::send_cmd(em_service_type_t to_svc, unsigned char *in, unsigne
+     ssize_t ret;
+     unsigned int sz = sizeof(em_event_t);
+     int do_reuse_sock = 1;
++    struct timeval io_timeout = {30, 0};
+ 
+ #ifdef LOCAL_CLI
+     if (get_path_from_dst_service(to_svc, sock_path) == NULL) {
+@@ -316,6 +326,17 @@ int em_cmd_exec_t::send_cmd(em_service_type_t to_svc, unsigned char *in, unsigne
+     setsockopt(dsock, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)); // Send buffer 1K
+     setsockopt(dsock, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz)); // Receive buffer 1K
+     setsockopt(dsock, SOL_SOCKET, SO_REUSEADDR, &do_reuse_sock, sizeof(do_reuse_sock)); // Reuse address 
++    if (setsockopt(dsock, SOL_SOCKET, SO_SNDTIMEO, &io_timeout,
++            sizeof(io_timeout)) != 0 ||
++            setsockopt(dsock, SOL_SOCKET, SO_RCVTIMEO, &io_timeout,
++            sizeof(io_timeout)) != 0) {
++        if (out != NULL) {
++            snprintf(out, out_len, "%s:%d: timeout setup failed, err:%d\n",
++                    __func__, __LINE__, errno);
++        }
++        close(dsock);
++        return -1;
++    }
+ 
+     memset(&addr, 0, sizeof(addr));
+ #ifdef LOCAL_CLI 
+diff --git a/src/ctrl/em_cmd_ctrl.cpp b/src/ctrl/em_cmd_ctrl.cpp
+--- a/src/ctrl/em_cmd_ctrl.cpp
++++ b/src/ctrl/em_cmd_ctrl.cpp
+@@ -47,6 +47,7 @@ int em_cmd_ctrl_t::execute(char *result)
+     unsigned char *tmp;
+     bool wait = false;
+     em_ctrl_t *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
++    struct timeval io_timeout = {30, 0};
+ 
+     m_cmd.reset();
+ 
+@@ -78,6 +79,15 @@ int em_cmd_ctrl_t::execute(char *result)
+ 
+         setsockopt(dsock, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)); // Send buffer EM_MAX_EVENT_DATA_LEN
+         setsockopt(dsock, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz)); // Receive buffer EM_MAX_EVENT_DATA_LEN
++        if (setsockopt(dsock, SOL_SOCKET, SO_SNDTIMEO, &io_timeout,
++                sizeof(io_timeout)) != 0 ||
++                setsockopt(dsock, SOL_SOCKET, SO_RCVTIMEO, &io_timeout,
++                sizeof(io_timeout)) != 0) {
++            printf("%s:%d: command socket timeout setup failed, err:%d\n",
++                    __func__, __LINE__, errno);
++            close(dsock);
++            continue;
++        }
+ 
+         //printf("%s:%d: Connection accepted from client\n", __func__, __LINE__);
+ 
+@@ -93,6 +103,12 @@ int em_cmd_ctrl_t::execute(char *result)
+ 
+ 		if ((ret = SSL_read(m_ssl, tmp, sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN)) <= 0) {
+ 			printf("%s:%d: listen error on socket, err:%d\n", __func__, __LINE__, errno);
++            SSL_shutdown(m_ssl);
++            SSL_free(m_ssl);
++            m_ssl = NULL;
++            close(dsock);
++            m_cmd.reset();
++            continue;
+ 		}
+ 
+         //printf("%s:%d: Read bytes: %d Size: %d Name: %s Buff: %s\n", __func__, __LINE__, ret, 
+-- 
+2.43.0

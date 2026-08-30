@@ -1,0 +1,203 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] rdkb-cli: place clients inside expanded SSID bubbles
+
+The topology drew every STA on a ring around the whole EasyMesh device.  With
+separate private and IoT cohorts this made the SSID color bubbles decorative:
+the viewer still had to follow a line or open a tooltip to learn which cohort
+owned a client.
+
+Make private_ssid and iot_ssid circles larger and space all haul circles a bit
+further apart.  Place every station deterministically inside the circle whose
+SSID matches its authoritative topology record.  A golden-angle disk layout
+uses the available area more evenly than one perimeter ring and reduces icon
+size gradually for future larger cohorts.  Use the resulting node extent for
+D3 collision spacing so expanded groups do not overlap adjacent Agents.
+
+Upstream-Status: Inappropriate [lab WebUI presentation]
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 96 ++++++++++++++++++++++++-----------
+ 2 files changed, 68 insertions(+), 30 deletions(-)
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2037,7 +2037,7 @@
+     <div id="toast-container" class="toast-container"></div>
+
+     <!-- Scripts -->
+-    <script src="static/script.js?v=mixed-client-cohorts-1"></script>
++    <script src="static/script.js?v=topology-ssid-cohorts-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2895,9 +2895,9 @@
+
+     // Create simulation
+     const simulation = d3.forceSimulation(renderTopology.nodes)
+-    .force('link', d3.forceLink(edges).id(d => d.id).distance(390).strength(0.12))
++    .force('link', d3.forceLink(edges).id(d => d.id).distance(520).strength(0.12))
+     .force('charge', d3.forceManyBody().strength(-1600))
+-    .force('collision', d3.forceCollide().radius(175).strength(1).iterations(2))
++    .force('collision', d3.forceCollide().radius(d => self.topologyNodeExtent(d) + 15).strength(1).iterations(2))
+     .force('center', d3.forceCenter(width / 2, height / 2))
+     .alphaDecay(0.08);
+     this.topologySimulation = simulation;
+@@ -2920,21 +2920,14 @@
+     node.each(function(d) {
+       const g = d3.select(this);
+       const haulTypes = d.haulTypes || [];
+-      const count = haulTypes.length;
++      const staList = Array.isArray(d.STAList) ? d.STAList : [];
++      const haulGeometry = self.topologyHaulGeometry(haulTypes, staList);
+
+-      const circleRadius = 80;
+-      const layoutRadius = circleRadius * 0.9;
+-
+-      haulTypes.forEach((haul, i) => {
++      haulGeometry.forEach(item => {
++        const { haul, offset, radius: circleRadius } = item;
+         // Skip invalid entries safely
+         if (!haul || typeof haul !== 'object') return;
+
+-        const angle = (2 * Math.PI / count) * i;
+-        const offset = {
+-          x: layoutRadius * Math.cos(angle),
+-          y: layoutRadius * Math.sin(angle)
+-        };
+-
+         // SSID heading inside the each circle
+         const type = haul.name || 'Unknown';
+         const ssid = haul?.ssid || 'SSID N/A';
+@@ -3004,50 +2997,22 @@
+
+       // STA Placement
+       if (Array.isArray(d.STAList) && d.STAList.length > 0) {
+-        const staList = d.STAList;
+-        // Leave room for the enlarged client icon and its stable identity label.
+-        const baseRadius = circleRadius + 30;
+-        const angleStep = (2 * Math.PI) / staList.length;
+-        const nodeRadius = 20;
+-        const maxSize = 30;
+-        const minSize = 15;
+-
+-        staList.forEach((sta, i) => {
++        staList.forEach(sta => {
+           const staElement = staGroup
+           .append('g')
+           .attr('class', 'sta-node')
+           .datum(() => {
+-            const seed = i + (sta.staMAC || '').length;
+-            let angle = angleStep * i;
+-            // small jitter for few STAs (computed once)
+-            if (staList.length < 5) {
+-              angle += (self.seededRandom(seed) * 2 - 0.5) * 0.5;
+-            }
+-
+-            const radius = baseRadius + self.seededRandom(seed + 2) * 50;
+-            const iconSize = 2 * Math.max(minSize, maxSize - staList.length);
+             return {
+               nodeRef: d,
+               sta,
+-              angle,
+-              radius,
+-              iconSize,
+-              nodeRadius
++              ...self.topologySTAPlacement(sta, staList, haulGeometry)
+             };
+           });
+
+           const data = staElement.datum();
+
+-          // Compute local positions (relative to the node center)
+-          const angleFromCenter = data.angle;
+-          const from = {
+-            x: data.nodeRadius * Math.cos(angleFromCenter),
+-            y: data.nodeRadius * Math.sin(angleFromCenter)
+-          };
+-          const to = {
+-            x: data.radius * Math.cos(angleFromCenter),
+-            y: data.radius * Math.sin(angleFromCenter)
+-          };
++          const from = data.from;
++          const to = data.to;
+           const staWaveLength = bandWavelengths[sta.band] || bandWavelengths['default'];
+           const sinePathData = self.generateSineWavePath(from, to, {
+             amplitude: 5,
+@@ -3237,6 +3202,73 @@
+   }
+
+   /**
++   * Return the local center and radius of each SSID bubble. Private and IoT
++   * groups are deliberately larger than infrastructure-only haul groups.
++   */
++  topologyHaulGeometry(haulTypes, staList = []) {
++    const items = Array.isArray(haulTypes) ? haulTypes : [];
++    const stations = Array.isArray(staList) ? staList : [];
++    const layoutRadius = items.length > 1 ? 140 : 0;
++
++    return items.map((haul, index) => {
++      const ssid = String(haul?.ssid || '');
++      const stationCount = stations.filter(sta => String(sta?.ssid || '') === ssid).length;
++      const isClientCohort = ssid === 'private_ssid' || ssid === 'iot_ssid';
++      // Preserve a clear current-lab minimum and grow gently for denser future
++      // cohorts without letting one group consume the entire graph.
++      const radius = isClientCohort
++        ? Math.min(145, Math.max(110, 100 + stationCount * 2))
++        : 80;
++      const angle = items.length > 0 ? (2 * Math.PI / items.length) * index : 0;
++      return {
++        haul,
++        ssid,
++        radius,
++        offset: {
++          x: layoutRadius * Math.cos(angle),
++          y: layoutRadius * Math.sin(angle)
++        }
++      };
++    });
++  }
++
++  topologyNodeExtent(node) {
++    const geometry = this.topologyHaulGeometry(node?.haulTypes, node?.STAList);
++    return geometry.reduce((extent, item) => Math.max(
++      extent,
++      Math.hypot(item.offset.x, item.offset.y) + item.radius
++    ), 80);
++  }
++
++  /** Place one station inside its authoritative SSID bubble. */
++  topologySTAPlacement(sta, staList, haulGeometry) {
++    const ssid = String(sta?.ssid || '');
++    const stations = (Array.isArray(staList) ? staList : [])
++      .filter(item => String(item?.ssid || '') === ssid);
++    const cohortIndex = Math.max(0, stations.indexOf(sta));
++    const cohortCount = Math.max(1, stations.length);
++    const target = (Array.isArray(haulGeometry) ? haulGeometry : [])
++      .find(item => item.ssid === ssid) || {
++        offset: { x: 0, y: 0 }, radius: 80
++      };
++    const iconSize = Math.max(26, 44 - Math.max(0, cohortCount - 8));
++    const usableRadius = Math.max(0, target.radius - iconSize / 2 - 28);
++    const radial = cohortCount === 1
++      ? 0
++      : usableRadius * Math.sqrt((cohortIndex + 0.5) / cohortCount);
++    const angle = cohortIndex * Math.PI * (3 - Math.sqrt(5)) - Math.PI / 2;
++
++    return {
++      iconSize,
++      from: { x: target.offset.x, y: target.offset.y },
++      to: {
++        x: target.offset.x + radial * Math.cos(angle),
++        y: target.offset.y + radial * Math.sin(angle)
++      }
++    };
++  }
++
++  /**
+    * generate the sign wave connecting to node and STA
+    */
+   generateSineWavePath(from, to, options = {}) {
+--
+2.43.0

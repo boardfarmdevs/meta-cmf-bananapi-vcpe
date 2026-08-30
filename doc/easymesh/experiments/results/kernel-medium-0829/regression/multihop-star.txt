@@ -1,0 +1,30 @@
+apply_profile=star
+select_parent child=bpiap-003 parent=bpibroadband bssid=02:00:00:3b:7f:56
+link_ready child=bpiap-003 parent=bpibroadband bssid=02:00:00:3b:7f:56 authenticated=true stable_checks=3 elapsed_s=3
+select_parent child=bpiap-002 parent=bpibroadband bssid=02:00:00:3b:7f:56
+link_ready child=bpiap-002 parent=bpibroadband bssid=02:00:00:3b:7f:56 authenticated=true stable_checks=3 elapsed_s=9
+select_parent child=bpiap-001 parent=bpibroadband bssid=02:00:00:3b:7f:56
+link_ready child=bpiap-001 parent=bpibroadband bssid=02:00:00:3b:7f:56 authenticated=true stable_checks=3 elapsed_s=9
+select_parent child=bpiap parent=bpibroadband bssid=02:00:00:3b:7f:56
+link_ready child=bpiap parent=bpibroadband bssid=02:00:00:3b:7f:56 authenticated=true stable_checks=3 elapsed_s=9
+metrics_reporting_ready interval_s=5 devices=5 radios=15
+verify_profile=star gateway_bssid=02:00:00:3b:7f:56
+parent_station_ready parent=bpibroadband child=bpiap-003 sta=02:00:00:61:f3:f6
+forwarding_ready child=bpiap-003 parent=bpibroadband
+model_ready parent=bpibroadband child=bpiap-003 upstream_bssid=02:00:00:3b:7f:56 elapsed_s=0
+signal_ready parent=bpibroadband child=bpiap-003 rssi_dbm=-50 rcpi=120
+parent_station_ready parent=bpibroadband child=bpiap-002 sta=02:00:00:8e:9a:d2
+forwarding_ready child=bpiap-002 parent=bpibroadband
+model_ready parent=bpibroadband child=bpiap-002 upstream_bssid=02:00:00:3b:7f:56 elapsed_s=0
+signal_ready parent=bpibroadband child=bpiap-002 rssi_dbm=-50 rcpi=120
+parent_station_ready parent=bpibroadband child=bpiap-001 sta=02:00:00:ed:9e:de
+forwarding_ready child=bpiap-001 parent=bpibroadband
+model_ready parent=bpibroadband child=bpiap-001 upstream_bssid=02:00:00:3b:7f:56 elapsed_s=0
+signal_ready parent=bpibroadband child=bpiap-001 rssi_dbm=-50 rcpi=120
+parent_station_ready parent=bpibroadband child=bpiap sta=02:00:00:44:12:8f
+forwarding_ready child=bpiap parent=bpibroadband
+model_ready parent=bpibroadband child=bpiap upstream_bssid=02:00:00:3b:7f:56 elapsed_s=0
+signal_ready parent=bpibroadband child=bpiap rssi_dbm=-50 rcpi=120
+client_forwarding_failed client=wlan-client-003
+client_acceptance running=20 associated=20 gateway_reachable=19
+FAIL: client acceptance reported 1 failure(s)

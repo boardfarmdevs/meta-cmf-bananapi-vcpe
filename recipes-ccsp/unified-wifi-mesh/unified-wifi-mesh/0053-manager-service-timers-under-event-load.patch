@@ -1,0 +1,96 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] manager: service timers while event queue is busy
+
+The manager advanced its 250 ms timer only when pthread_cond_timedwait expired.
+Under sustained metrics, topology, or bus traffic the event queue could remain
+non-empty, so no timed wait occurred and all orchestration and periodic timers
+were starved indefinitely.
+
+Track the next deadline with a monotonic clock and service due ticks after each
+event as well as after an idle wait. Bound catch-up to one second of ticks so a
+long handler cannot cause an unbounded burst, then resume cadence from the
+current time.
+
+This restores the intended timer contract without adding a second thread or
+allowing timer handlers to race event handlers.
+
+Upstream-Status: Pending
+---
+ src/em/em_mgr.cpp | 44 ++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 36 insertions(+), 8 deletions(-)
+
+--- a/src/em/em_mgr.cpp
++++ b/src/em/em_mgr.cpp
+@@ -37,6 +37,7 @@
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <assert.h>
++#include <chrono>
+ #include <openssl/bio.h> /* BasicInput/Output streams */
+ #include <openssl/err.h> /* errors */
+ #include <openssl/ssl.h> /* core library */
+@@ -526,6 +527,39 @@
+     struct timespec time_to_wait;
+     struct timeval tm;
+ 	bool started = false;
++	using steady_clock = std::chrono::steady_clock;
++	const auto timeout_interval = std::chrono::milliseconds(m_queue.timeout);
++	auto next_timeout = steady_clock::now() + timeout_interval;
++
++	// The event queue can remain continuously non-empty under normal metrics
++	// traffic. Service elapsed ticks between events as well as after an idle
++	// timed wait, otherwise every orchestration and periodic timer can starve.
++	auto run_due_timeouts = [&]() {
++		auto now = steady_clock::now();
++		if (now < next_timeout) {
++			return;
++		}
++		if (is_data_model_initialized() == false) {
++			next_timeout = now + timeout_interval;
++			return;
++		}
++		if (started == false) {
++			start_complete();
++			started = true;
++		}
++
++		unsigned int catch_up = 0;
++		do {
++			handle_timeout();
++			next_timeout += timeout_interval;
++			catch_up++;
++		} while (now >= next_timeout && catch_up < EM_1_TOUT_MULT);
++		if (now >= next_timeout) {
++			// Bound catch-up after an unusually long handler; resume cadence from now.
++			next_timeout = now + timeout_interval;
++		}
++	};
++
+     input_listen();
+     nodes_listen();
+     pthread_mutex_lock(&m_queue.lock);
+@@ -557,18 +591,12 @@
+                     handle_event(evt);
+                 }
+                 free(evt);
++				run_due_timeouts();
+                 pthread_mutex_lock(&m_queue.lock);
+             }
+         } else if (rc == ETIMEDOUT) {
+             pthread_mutex_unlock(&m_queue.lock);
+-            //printf("%s:%d: Timeout secs: %d\n", __func__, __LINE__, time_to_wait.tv_sec);
+-            if (is_data_model_initialized() == true) {
+-				if (started == false) {
+-					start_complete();
+-					started = true;
+-				}
+-                handle_timeout();
+-            }
++			run_due_timeouts();
+             pthread_mutex_lock(&m_queue.lock);
+         } else {
+             printf("%s:%d em exited with rc - %d\n",__func__,__LINE__, rc);
+
+-- 
+2.43.0
+

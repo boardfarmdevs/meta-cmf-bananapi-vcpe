@@ -1,0 +1,279 @@
+From 0000000000000000000000000000000000000120 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Wed, 26 Aug 2026 21:30:00 -0700
+Subject: [PATCH] cli: bound live observability query load
+
+Each WebUI session independently refreshed live topology every two seconds.
+One topology response expanded into repeated get_network and get_sta commands,
+and parallel browser sessions multiplied that work. The controller and CLI
+also printed every command, station lookup, and complete topology payload to
+both journald and syslog. On a 20-client lab this made logging consume more CPU
+than the EasyMesh processes themselves.
+
+Cache successful live projections for less than one UI refresh interval, make
+the authoritative STA query stand on its own instead of issuing an unused
+topology availability query, and share topology responses across observers.
+Retain the last-successful device fallback while never inventing a successful
+STA response. Remove hot-path debug and payload dumps, use compact JSON for
+published events, and retain all failure diagnostics.
+
+The cache is presentation-only and bounded to 1.5 seconds. It does not alter
+controller state, metrics collection, steering, or protocol timing.
+
+Upstream-Status: Pending
+---
+ src/ctrl/em_ctrl.cpp       | 14 ++++------
+ src/dm/dm_easy_mesh.cpp    | 14 ----------
+ src/rdkb-cli/em_cli.cpp    |  1 -
+ src/rdkb-cli/main.go       | 70 ++++++++++++++++++++++++++++++++++++++++-------
+ 4 files changed, 65 insertions(+), 34 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -791,8 +791,17 @@
+         liveDevices        []Device
+         liveClients        []Client
+         haveLiveInventory  bool
++        liveInventoryUpdatedAt time.Time
++        detailedClientsMutex sync.RWMutex
++        detailedClients      []Client
++        detailedClientsUpdatedAt time.Time
++        topologyResponseMutex sync.RWMutex
++        topologyResponse      []byte
++        topologyResponseUpdatedAt time.Time
+ )
+ 
++const liveQueryCacheTTL = 1500 * time.Millisecond
++
+ // ===== INITIALIZATION =====
+ 
+ func init() {
+@@ -3588,13 +3597,25 @@
+ }
+ 
+ func getLiveClientsWithMetrics() ([]Client, error) {
+-	// Keep get_network as a device/topology availability gate, but never use
+-	// its optional STA projection as the association authority.
+-	_, _, err := getLiveInventory()
++	now := time.Now()
++	detailedClientsMutex.RLock()
++	if !detailedClientsUpdatedAt.IsZero() &&
++		now.Sub(detailedClientsUpdatedAt) < liveQueryCacheTTL {
++		cached := append([]Client(nil), detailedClients...)
++		detailedClientsMutex.RUnlock()
++		return cached, nil
++	}
++	detailedClientsMutex.RUnlock()
++
++	clients, err := loadDetailedLiveClients()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return loadDetailedLiveClients()
++	detailedClientsMutex.Lock()
++	detailedClients = append([]Client(nil), clients...)
++	detailedClientsUpdatedAt = time.Now()
++	detailedClientsMutex.Unlock()
++	return clients, nil
+ }
+ 
+ // loadLiveBSSInventory exposes target identities without turning simulator or
+@@ -3686,12 +3707,23 @@
+ 
+ // getLiveInventory falls back only to the last successful live snapshot.
+ func getLiveInventory() ([]Device, []Client, error) {
++	now := time.Now()
++	liveInventoryMutex.RLock()
++	if haveLiveInventory && now.Sub(liveInventoryUpdatedAt) < liveQueryCacheTTL {
++		cachedDevices := append([]Device(nil), liveDevices...)
++		cachedClients := append([]Client(nil), liveClients...)
++		liveInventoryMutex.RUnlock()
++		return cachedDevices, cachedClients, nil
++	}
++	liveInventoryMutex.RUnlock()
++
+ 	inventoryDevices, inventoryClients, err := buildLiveInventory()
+ 	if err == nil {
+ 		liveInventoryMutex.Lock()
+ 		liveDevices = append([]Device(nil), inventoryDevices...)
+ 		liveClients = append([]Client(nil), inventoryClients...)
+ 		haveLiveInventory = true
++		liveInventoryUpdatedAt = time.Now()
+ 		liveInventoryMutex.Unlock()
+ 		return inventoryDevices, inventoryClients, nil
+ 	}
+@@ -4809,6 +4841,16 @@
+ }
+ 
+ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
++	topologyResponseMutex.RLock()
++	if len(topologyResponse) != 0 &&
++		time.Since(topologyResponseUpdatedAt) < liveQueryCacheTTL {
++		cached := append([]byte(nil), topologyResponse...)
++		topologyResponseMutex.RUnlock()
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write(cached)
++		return
++	}
++	topologyResponseMutex.RUnlock()
+ 
+     agentCount := 1
+     extenderCount := 1
+@@ -5016,12 +5058,21 @@
+ 	resolveTopologyWirelessParents(edges, topologyAPOwnersFromInventory(radioInventory))
+     overlayLiveTopologyClients(nodes)
+ 
+-    // Send the response to frontend
+-    w.Header().Set("Content-Type", "application/json")
+-    json.NewEncoder(w).Encode(map[string]interface{}{
++    payload, err := json.Marshal(map[string]interface{}{
+         "nodes": nodes,
+         "edges": edges,
+     })
++    if err != nil {
++        http.Error(w, "Failed to encode controller topology", http.StatusInternalServerError)
++        return
++    }
++    topologyResponseMutex.Lock()
++    topologyResponse = append(topologyResponse[:0], payload...)
++    topologyResponseUpdatedAt = time.Now()
++    topologyResponseMutex.Unlock()
++
++    w.Header().Set("Content-Type", "application/json")
++    _, _ = w.Write(payload)
+ }
+ 
+ func loadTopologyFromStaticJSON(w http.ResponseWriter) {
+diff --git a/src/rdkb-cli/em_cli.cpp b/src/rdkb-cli/em_cli.cpp
+--- a/src/rdkb-cli/em_cli.cpp
++++ b/src/rdkb-cli/em_cli.cpp
+@@ -220,7 +220,6 @@
+     em_cmd_cli_t *cli_cmd;
+ 
+     snprintf(cmd, sizeof(cmd),  "%s", in);
+-	printf("%s:%d: Command: %s\n", __func__, __LINE__, cmd);
+     cli_cmd = new em_cmd_cli_t(get_command(cmd, sz, node), m_params.user_data.addr);
+ 
+     if (cli_cmd->init() != 0) {
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -491,16 +491,14 @@
+         return;
+     }
+ 
+-    str = cJSON_Print(parent);
+-    em_printfout("Publishing Link Report Json:\n%s",str);
++    str = cJSON_PrintUnformatted(parent);
+ 
+ 	raw.data_type    = bus_data_type_string;
+     raw.raw_data.bytes = reinterpret_cast<unsigned char *> (str);
+     raw.raw_data_len = static_cast<unsigned int> (strlen(str));
+ 
+-    if (desc->bus_event_publish_fn(m_data_model.get_bus_hdl(), DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_LINKSTATS_ALARM, &raw)== 0) {
+-        em_printfout("Link Stats Alarm published successfull");
+-    } else {
++    if (desc->bus_event_publish_fn(m_data_model.get_bus_hdl(),
++            DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_LINKSTATS_ALARM, &raw) != 0) {
+         em_printfout("Link Stats Alarm publish fail");
+     }
+ 
+@@ -839,16 +837,14 @@
+     dm_ctrl = reinterpret_cast<dm_easy_mesh_ctrl_t *>(get_data_model(GLOBAL_NET_ID));
+     dm_ctrl->get_network_config(parent, const_cast<char*>(GLOBAL_NET_ID));
+ 
+-    str = cJSON_Print(parent);
+-    em_printfout("    ===============Publish Network Topology Json:\n%s\n===============\n",str);
++    str = cJSON_PrintUnformatted(parent);
+ 
+ 	raw.data_type    = bus_data_type_string;
+     raw.raw_data.bytes = reinterpret_cast<unsigned char *> (str);
+     raw.raw_data_len = static_cast<unsigned int> (strlen(str));
+ 
+-    if (desc->bus_event_publish_fn(m_data_model.get_bus_hdl(), const_cast<char*>(DEVICE_WIFI_DATAELEMENTS_NETWORK_TOPOLOGY), &raw)== 0) {
+-        printf("%s:%d Topology published successfull\n",__func__, __LINE__);
+-    } else {
++    if (desc->bus_event_publish_fn(m_data_model.get_bus_hdl(),
++            const_cast<char*>(DEVICE_WIFI_DATAELEMENTS_NETWORK_TOPOLOGY), &raw) != 0) {
+         printf("%s:%d Topology publish fail\n",__func__, __LINE__);
+     }
+ 
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -2974,19 +2974,15 @@
+ {
+     hash_map_t *map;
+     dm_sta_t *sta = NULL;
+-    const char	*map_str;
+     mac_addr_str_t radio_str, bss_str, sta_str;
+     em_long_string_t key = {0};
+ 
+     if (target == em_target_sta_map_assoc) {
+         map = m_sta_assoc_map;
+-        map_str = "Assoc Map";
+     } else if (target == em_target_sta_map_disassoc) {
+         map = m_sta_dassoc_map;
+-        map_str = "Disssoc Map";
+     } else {
+         map = m_sta_map;
+-        map_str = "Consolidated Map";
+     }
+ 
+     dm_easy_mesh_t::macbytes_to_string(sta_mac, sta_str);
+@@ -2994,38 +2990,30 @@
+     dm_easy_mesh_t::macbytes_to_string(ruid, radio_str);
+ 
+     snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_str, bss_str, radio_str);
+-    printf("%s:%d: key=%s\n", __func__, __LINE__,key);
+     sta = static_cast<dm_sta_t *> (hash_map_get(map, key));
+     if (sta == NULL) {
+-        printf("%s:%d: sta: %s not found in %s\n", __func__, __LINE__, sta_str, map_str);
+         return NULL;
+     }
+ 
+-    printf("%s:%d: sta: %s found in %s\n", __func__, __LINE__, sta_str, map_str);
+     return &sta->m_sta_info;
+ }
+ 
+ void dm_easy_mesh_t::put_sta_info(em_sta_info_t *sta_info, em_target_sta_map_t target)
+ {
+     hash_map_t *map;
+-    const char	*map_str;
+     mac_addr_str_t radio_str, bss_str, sta_str;
+     em_2xlong_string_t key;
+ 
+     if (target == em_target_sta_map_assoc) {
+         map = m_sta_assoc_map;
+-        map_str = "Assoc Map";
+     } else if (target == em_target_sta_map_disassoc) {
+         map = m_sta_dassoc_map;
+-        map_str = "Disssoc Map";
+     } else {
+         map = m_sta_map;
+-        map_str = "Consolidated Map";
+     }
+ 
+     dm_easy_mesh_t::macbytes_to_string(sta_info->id, sta_str);
+     if (get_sta_info(sta_info->id, sta_info->bssid, sta_info->radiomac, target) != NULL) {
+-        printf("%s:%d: sta: %s already exists in %s\n", __func__, __LINE__, sta_str, map_str);
+         return;
+     }
+ 
+@@ -3033,8 +3021,6 @@
+     dm_easy_mesh_t::macbytes_to_string(sta_info->radiomac, radio_str);
+ 
+     snprintf(key, sizeof(em_2xlong_string_t), "%s@%s@%s", sta_str, bss_str, radio_str);
+-    printf("%s:%d: Put sta key=%s\n", __func__, __LINE__,key);
+-
+     hash_map_put(map, strdup(key), new dm_sta_t(sta_info));
+ }
+ 
+@@ -3764,4 +3750,3 @@
+ 
+ }
+ 
+-
+
+

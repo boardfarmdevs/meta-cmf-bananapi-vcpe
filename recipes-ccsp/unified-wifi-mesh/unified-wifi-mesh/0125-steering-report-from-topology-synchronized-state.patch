@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000125 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Thu, 27 Aug 2026 10:35:00 -0700
+Subject: [PATCH] steering: report BTM outcomes from synchronized agents
+
+An Agent radio normally returns to topology-synchronized state after answering
+the controller's periodic topology query.  The BTM response callback builds the
+correct radio candidate in that state, but btm_report orchestration admits only
+configured radios.  The command consequently waits for ten seconds and expires
+without sending the station's BTM outcome to the controller.
+
+Treat configured and topology-synchronized as operational source states for a
+BTM report.  Save that state while the report/ACK transaction is pending and
+restore it after the matching ACK, rather than changing every reporting radio
+to configured.  Completion accepts either restored operational state.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ inc/em_steering.h                  | 3 +++
+ src/em/em.cpp                      | 1 +
+ src/em/steering/em_steering.cpp   | 10 +++++++++-
+ src/orch/em_orch_agent.cpp         | 6 ++++--
+ 4 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/inc/em_steering.h b/inc/em_steering.h
+--- a/inc/em_steering.h
++++ b/inc/em_steering.h
+@@ -26,6 +26,7 @@ class em_steering_t {
+     unsigned int m_client_steering_req_tx_cnt;
+     unsigned short m_client_steering_req_msg_id;
+     unsigned short m_btm_report_msg_id;
++    em_state_t m_btm_report_prev_state;
+     em_state_t m_client_steering_prev_state;
+     unsigned int m_client_assoc_ctrl_req_tx_cnt;
+ 
+@@ -333,6 +334,8 @@ public:
+ 	unsigned short get_client_steering_req_msg_id() { return m_client_steering_req_msg_id; }
+ 	void set_btm_report_msg_id(unsigned short msg_id) { m_btm_report_msg_id = msg_id; }
+ 	unsigned short get_btm_report_msg_id() { return m_btm_report_msg_id; }
++	void set_btm_report_prev_state(em_state_t state) { m_btm_report_prev_state = state; }
++	em_state_t get_btm_report_prev_state() { return m_btm_report_prev_state; }
+ 	void set_client_steering_prev_state(em_state_t state) { m_client_steering_prev_state = state; }
+ 	em_state_t get_client_steering_prev_state() { return m_client_steering_prev_state; }
+     
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -233,6 +233,7 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+             break;
+ 
+         case em_cmd_type_btm_report:
++            set_btm_report_prev_state(m_sm.get_state());
+             m_sm.set_state(em_state_agent_steer_btm_res_pending);
+             break;
+ 
+diff --git a/src/em/steering/em_steering.cpp b/src/em/steering/em_steering.cpp
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -559,7 +559,14 @@ int em_steering_t::handle_ack_msg(unsigned char *buff, unsigned int len)
+             return -1;
+         }
+         m_btm_report_msg_id = 0;
+-        set_state(em_state_agent_configured);
++        em_state_t previous = m_btm_report_prev_state;
++        m_btm_report_prev_state = em_state_agent_unconfigured;
++        if ((previous == em_state_agent_configured) ||
++            (previous == em_state_agent_topo_synchronized)) {
++            set_state(previous);
++        } else {
++            set_state(em_state_agent_configured);
++        }
+         return 0;
+     }
+ 
+@@ -669,6 +676,7 @@ em_steering_t::em_steering_t()
+     m_client_steering_req_tx_cnt = 0;
+     m_client_steering_req_msg_id = 0;
+     m_btm_report_msg_id = 0;
++    m_btm_report_prev_state = em_state_agent_unconfigured;
+     m_client_steering_prev_state = em_state_ctrl_unconfigured;
+     m_client_assoc_ctrl_req_tx_cnt = 0;
+ }
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -130,7 +130,8 @@ bool em_orch_agent_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+             break;
+ 
+         case em_cmd_type_btm_report:
+-            if (em->get_state() == em_state_agent_configured) {
++            if ((em->get_state() == em_state_agent_configured) ||
++                (em->get_state() == em_state_agent_topo_synchronized)) {
+                 return true;
+             }
+             break;
+@@ -186,7 +187,8 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+     } else if (pcmd->m_type == em_cmd_type_op_channel_report) {
+         return true;
+     } else if (pcmd->m_type == em_cmd_type_btm_report) {
+-		if (em->get_state() == em_state_agent_configured) {
++		if ((em->get_state() == em_state_agent_configured) ||
++			(em->get_state() == em_state_agent_topo_synchronized)) {
+ 			return true;
+ 		}
+     } else if (pcmd->m_type == em_cmd_type_sta_list) {
+-- 
+2.43.0

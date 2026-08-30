@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000007 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 09:35:00 -0700
+Subject: [PATCH] webconfig: seed missed stations from AP metrics
+
+An association can complete before the colocated EasyMesh agent subscribes to
+OneWifi. This is common for the gateway AP and the anchor extender backhaul
+STA during cold onboarding. The periodic AP Metrics Report still contains the
+live station and its RCPI, but the translator only updates a pre-existing
+consolidated station row. It silently discards metrics when that initial row
+is absent.
+
+Treat an associated station in the periodic AP Metrics Report as current
+positive ownership evidence. Seed a missing consolidated row with its station,
+BSSID and radio identity, then populate it through the same metrics path used
+for an existing row. This makes cold-start metrics converge without forcing a
+backhaul reconnect or synthesizing an association event.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_easymesh_translator.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/source/webconfig/wifi_easymesh_translator.c b/source/webconfig/wifi_easymesh_translator.c
+index 1111111..2222222 100644
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -1688,6 +1688,8 @@ webconfig_error_t translate_ap_metrics_report_to_easy_mesh_bss_info(webconfig_s
+     radio_metrics_t *radio_metrics = NULL;
+     mac_addr_str_t bss_str;
+     uint32_t v;
++    em_sta_info_t seeded_sta;
++    bool seed_sta;
+ 
+     wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: translate_ap_metrics_report_to_easy_mesh_bss_info enter\n", __func__, __LINE__);
+     decoded_params = &data->u.decoded;
+@@ -1811,6 +1813,16 @@ webconfig_error_t translate_ap_metrics_report_to_easy_mesh_bss_info(webconfig_s
+                     em_bss_info->bssid.mac, radio_info->intf.mac, em_target_sta_map_consolidated);
+                 // Update the consolidated map
+                 // Link metrics and Extended Link metrics
++                seed_sta = false;
++                if (em_sta_dev_info == NULL) {
++                    memset(&seeded_sta, 0, sizeof(seeded_sta));
++                    memcpy(seeded_sta.id, sta_stats->sta_mac, sizeof(mac_address_t));
++                    memcpy(seeded_sta.bssid, em_bss_info->bssid.mac, sizeof(mac_address_t));
++                    memcpy(seeded_sta.radiomac, radio_info->intf.mac, sizeof(mac_address_t));
++                    seeded_sta.associated = true;
++                    em_sta_dev_info = &seeded_sta;
++                    seed_sta = true;
++                }
+                 if (em_sta_dev_info != NULL) {
+                     if (ap_metrics->is_sta_link_metrics_enabled == true) {
+                         snprintf(em_sta_dev_info->sta_client_type, sizeof(em_sta_dev_info->sta_client_type), "%s", sta_stats->client_type);
+@@ -1838,6 +1850,11 @@ webconfig_error_t translate_ap_metrics_report_to_easy_mesh_bss_info(webconfig_s
+                         em_sta_dev_info->errors_rx                = ap_metrics->sta_traffic_stats[count].rx_packtes_errs;
+                         em_sta_dev_info->retrans_count            = ap_metrics->sta_traffic_stats[count].retrans_cnt;
+                     }
++
++                    if (seed_sta == true) {
++                        proto->put_sta_info(proto->data_model, em_sta_dev_info,
++                            em_target_sta_map_consolidated);
++                    }
+                 }
+             }
+         }
+-- 
+2.43.0

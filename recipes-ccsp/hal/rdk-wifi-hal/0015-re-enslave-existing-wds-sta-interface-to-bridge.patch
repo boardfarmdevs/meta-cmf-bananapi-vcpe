@@ -1,0 +1,68 @@
+wifi_drv_set_wds_sta(): re-enslave an already-existing WDS STA
+interface into the bridge.
+
+The AP_VLAN netdev that carries a 4-address/WDS station's traffic
+(<vap>.sta<aid>, e.g. wifi1.1.sta1) is only added to the bridge in the
+branch that creates it:
+
+    if (!if_nametoindex(name)) {
+        ... wlan_nl80211_create_interface(...) ...
+        if (bridge_ifname && nl80211_create_bridge(name, bridge_ifname) != 0) { ... }
+        ...
+    } else {
+        wifi_hal_dbg_print("Re-Enabling interface:%s - wds:%d\n", ...);
+        nl80211_interface_enable(name, true);      /* no enslavement */
+    }
+
+So whenever the interface still exists from an earlier association, it
+is brought up but never becomes a bridge port again, and the station
+associates to an AP that cannot pass any of its traffic.
+
+The teardown path does normally delete the interface
+(nl80211_remove_from_bridge() + nl80211_delete_interface() when val==0),
+which is why this is invisible in the common case. It stops being the
+common case as soon as the AP side goes away without running that path
+-- a OneWifi restart, a crash, or, in the containerised setup here, the
+whole container being recreated: the mac80211_hwsim phy is passed
+through to the container, so interfaces created on it outlive the
+container's lifetime and the AP_VLAN netdev is still present when the
+next association arrives.
+
+Observed exactly that on the EasyMesh controller: wifi1.1.sta1 present,
+absent from /sys/class/net/brlan0/brif, and "iw dev wifi1.1 station
+dump" empty because the leaf had given up. The leaf associated, the
+4-Way Handshake completed, and then AP-Autoconfiguration timed out with
+no reply -- its 1905 frames had nowhere to go. Enslaving the interface
+by hand made the leaf receive WSC M2 immediately (analyze_m2ctrl count
+0 -> 7) and bring its fronthaul VAPs up, which is what identified this.
+
+Failure is logged rather than returned, unlike the creation branch: at
+this point the station is already associated and nl80211_set_sta_vlan()
+below still needs to run, so aborting here would leave things in a worse
+state than continuing with a diagnosable error.
+
+Note this also picks up the operstate handling in nl80211_create_bridge()
+(see 0014), so the re-added port is left forwarding rather than dormant.
+
+---
+ wifi_hal_nl80211.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -14687,6 +14687,14 @@
+             wifi_hal_dbg_print("%s:%d:Re-Enabling interface:%s - wds:%d\n",
+                 __func__, __LINE__, name, interface->u.ap.conf.wds_sta);
+             nl80211_interface_enable(name, true);
++            /* The AP_VLAN netdev survived from an earlier association, but its bridge
++             * membership did not necessarily survive with it -- so re-assert it here.
++             * Enslaving only in the creation branch above leaves a re-associating station
++             * with no data path at all. */
++            if (bridge_ifname && nl80211_create_bridge(name, bridge_ifname) != 0) {
++                wifi_hal_error_print("%s:%d: interface:%s failed to re-add to bridge:%s\n",
++                    __func__, __LINE__, name, bridge_ifname);
++            }
+         }
+         return nl80211_set_sta_vlan(radio, interface, addr, name, 0, link_id);
+     } else {

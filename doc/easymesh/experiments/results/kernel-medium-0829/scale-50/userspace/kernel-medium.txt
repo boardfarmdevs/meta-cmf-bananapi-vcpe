@@ -1,0 +1,5 @@
+kernel_medium=N
+kernel_medium_cutoff=-95
+kernel_medium_loss_pct=0
+kernel_medium_bank=0
+kernel_medium_generation=0

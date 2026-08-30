@@ -1,0 +1,110 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Subject: [PATCH] controller: preserve profile through asynchronous DM commit
+
+An AP-Autoconfiguration Search supplies the agent's negotiated EasyMesh
+profile, but the controller discarded it when it queued a data-model commit.
+The commit handler consequently created the device with the reserved profile
+value.  Radio controller objects inherited that value and later rejected valid
+Profile-3 AP Metrics Responses as containing forbidden Profile-2/3 TLVs.
+
+Carry the profile in the internal commit event and persist it with the new
+device.  Also repair reserved profiles while loading older controller
+databases; reserved is not a valid negotiated profile, and this implementation
+advertises Profile 3.  This makes the migration deterministic without changing
+valid Profile-1, Profile-2, or Profile-3 records.
+
+---
+ inc/em_base.h                  |  1 +
+ src/ctrl/em_ctrl.cpp           | 10 +++++++++-
+ src/dm/dm_easy_mesh_list.cpp   | 10 ++++++++--
+ 3 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/inc/em_base.h b/inc/em_base.h
+index 5df09f0..ed460ee 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -3075,6 +3075,7 @@ typedef struct {
+     mac_address_t	mac;
+     em_long_string_t	net_id;
+     int sz;
++    em_profile_type_t profile;
+ } __attribute__((__packed__)) em_commit_info_t;
+ 
+ typedef enum {
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 3492658..a39c829 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -81,6 +81,7 @@ void em_ctrl_t::handle_dm_commit(em_bus_event_t *evt)
+         memcpy(new_dm.m_device.m_device_info.id.dev_mac, info->mac, sizeof(mac_addr_t));
+         memcpy(new_dm.m_device.m_device_info.intf.mac, info->mac, sizeof(mac_addr_t));
+         strncpy(new_dm.m_device.m_device_info.id.net_id, info->net_id, strlen(info->net_id) + 1);
++        new_dm.m_device.m_device_info.profile = info->profile;
+         em_printfout("data model dev mac: %s and int.mac: %s\n", util::mac_to_string(new_dm.m_device.m_device_info.id.dev_mac).c_str(),
+             util::mac_to_string(new_dm.m_device.m_device_info.intf.mac).c_str());
+ 
+@@ -105,6 +106,12 @@ void em_ctrl_t::handle_dm_commit(em_bus_event_t *evt)
+         new_dm.set_db_cfg_param(db_cfg_type_device_list_update, "");
+         m_data_model.set_config(&new_dm);
+     }
++    else if (info->profile != em_profile_type_reserved &&
++            dm->get_device()->m_device_info.profile != info->profile) {
++        dm->get_device()->m_device_info.profile = info->profile;
++        dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
++        m_data_model.set_config(dm);
++    }
+ }
+ 
+ // Non-positive analyze_*() result: 0/NO_CHANGE is a no-op, any other negative is an error.
+@@ -997,8 +1004,10 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             em_printfout("[%s] Received autoconfig search from agent al mac: %s\n", __func__, mac_str1);
+             if ((dm = get_data_model(GLOBAL_NET_ID, const_cast<const unsigned char *> (intf.mac))) == NULL) {
+                 //dm = create_data_model(GLOBAL_NET_ID, const_cast<const em_interface_t *> (&intf), profile);
++                memset(&dm_commit, 0, sizeof(dm_commit));
+                 memcpy(dm_commit.mac, intf.mac, sizeof(mac_addr_t));
+                 strncpy(dm_commit.net_id, GLOBAL_NET_ID, sizeof(dm_commit.net_id));
++                dm_commit.profile = profile;
+                 io_process(em_bus_event_type_dm_commit, reinterpret_cast<unsigned char *> (&dm_commit), sizeof(em_commit_info_t));
+                 dm = get_data_model(GLOBAL_NET_ID, const_cast<const unsigned char *> (intf.mac));
+                 em_printfout("[%s] Creating data model for mac: %s net: %s\n", __func__, mac_str1, GLOBAL_NET_ID);
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index 9da39cb..2fecc37 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -217,6 +217,7 @@ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
+     dm_easy_mesh_t *dm;
+     dm_device_t *pdev;
+     mac_addr_str_t mac_str;
++    em_profile_type_t profile;
+ 	em_device_id_t	id;
+ 
+ 	dm_device_t::parse_device_id_from_key(key, &id);
+@@ -224,10 +225,15 @@ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
+ 
+     if ((pdev = get_device(key)) == NULL) {
+         em_printfout("device at key: %s not found\n", key);
+-	    dm = create_data_model(dev->m_device_info.id.net_id, &dev->m_device_info.intf, dev->m_device_info.profile);
++        profile = dev->m_device_info.profile == em_profile_type_reserved ?
++            em_profile_type_3 : dev->m_device_info.profile;
++	    dm = create_data_model(dev->m_device_info.id.net_id, &dev->m_device_info.intf, profile);
+         pdev = dm->get_device();
+     }
+     *pdev = *dev;
++    if (pdev->m_device_info.profile == em_profile_type_reserved) {
++        pdev->m_device_info.profile = em_profile_type_3;
++    }
+ 	
+ 	if ((dm = get_data_model(id.net_id, id.dev_mac)) == NULL) {
+ 		printf("%s:%d: Could not find data model for network: %s, mac: %s\n", __func__, __LINE__, id.net_id, mac_str);
+@@ -236,6 +242,9 @@ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
+ 	} else {
+ 		printf("%s:%d: Device:%s inserted in network:%s\n", __func__, __LINE__, mac_str, id.net_id);
+ 		dm->m_network.m_net_info.num_of_devices++;
++        if (dev->m_device_info.profile == em_profile_type_reserved) {
++            dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
++        }
+ 	}
+ }
+ 
+-- 
+2.34.1

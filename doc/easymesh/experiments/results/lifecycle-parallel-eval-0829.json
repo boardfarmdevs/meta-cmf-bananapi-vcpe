@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-29",
+  "host": "rev140",
+  "baseline": "installed serial lifecycle runtime",
+  "implementation": "bounded parallel lifecycle runtime",
+  "profiles": [
+    {
+      "name": "small-userspace",
+      "vm": "easymesh-lab-0828",
+      "medium_backend": "userspace",
+      "mesh_nodes": 5,
+      "clients": 20,
+      "containers": 25,
+      "baseline": {
+        "start_elapsed_ms": 917571,
+        "stop_elapsed_ms": 126842
+      },
+      "final": {
+        "start_elapsed_ms": 381152,
+        "stop_elapsed_ms": 31729,
+        "start_reduction_percent": 58.5,
+        "stop_reduction_percent": 75.0,
+        "phases": {
+          "infrastructure": 174,
+          "quiesce_and_radio_reset": 2064,
+          "controller": 74924,
+          "extenders": 60313,
+          "initial_metrics_policy": 20278,
+          "clients": 28470,
+          "medium": 37000,
+          "convergence_and_acceptance": 150177,
+          "evidence_capture": 7511
+        }
+      },
+      "acceptance": {
+        "model": "5/15/50/24",
+        "client_rcpi": "20/20",
+        "client_traffic": "20/20",
+        "service_restarts": 0,
+        "result": "PASS"
+      }
+    },
+    {
+      "name": "medium-kernel",
+      "vm": "hwsim-kernel-dev-0829",
+      "medium_backend": "kernel",
+      "mesh_nodes": 5,
+      "clients": 50,
+      "containers": 55,
+      "baseline": {
+        "start_elapsed_ms": 1568294,
+        "stop_elapsed_ms": 94974
+      },
+      "final": {
+        "start_elapsed_ms": 409642,
+        "stop_elapsed_ms": 42737,
+        "start_reduction_percent": 73.9,
+        "stop_reduction_percent": 55.0,
+        "phases": {
+          "infrastructure": 193,
+          "quiesce_and_radio_reset": 4683,
+          "controller": 73162,
+          "extenders": 60085,
+          "initial_metrics_policy": 20309,
+          "clients": 59398,
+          "medium": 17935,
+          "convergence_and_acceptance": 160760,
+          "evidence_capture": 12868
+        }
+      },
+      "acceptance": {
+        "model": "5/15/50/54",
+        "client_rcpi": "50/50",
+        "client_traffic": "50/50",
+        "service_restarts": 0,
+        "result": "PASS"
+      }
+    }
+  ],
+  "limitations": [
+    "Point measurements, not percentile statistics",
+    "The 55-container timing comparison used the optional kernel medium",
+    "A separate 50-client userspace-wmediumd bounded cold reconstruction passed but was not remeasured after this lifecycle change",
+    "No long-duration soak claim"
+  ]
+}

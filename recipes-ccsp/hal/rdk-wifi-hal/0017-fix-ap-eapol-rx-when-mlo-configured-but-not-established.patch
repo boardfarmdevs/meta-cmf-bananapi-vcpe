@@ -1,0 +1,103 @@
+Fix AP EAPOL receive path when MLO is configured but not established.
+
+THE root cause of every client WPA2 4-Way Handshake failing against every AP
+VAP, on both the controller and the extender: the AP sends M1, the client
+answers M2, the AP never acts on it, retries M1 four times and deauths the
+client with reason 15. No client could ever associate to a fronthaul.
+
+recv_data_frame() chose which address to match an EAPOL frame against with:
+
+    interface_mac = (wifi_hal_is_mld_enabled(interface) &&
+                     vap_mode == wifi_vap_mode_ap) ?
+                    wifi_hal_get_mld_mac_address(interface) : interface->mac;
+
+and silently returned when neither dest nor src matched it. wifi_hal_is_mld_
+enabled() reflects static configuration, not runtime state. On this platform
+MLO bring-up fails outright:
+
+    setup_mlo_vap:6670: MLD interface is enabled, but interface name is unset
+                        - skipping
+    platform_pre_create_vap:437: Failed to setup link for MLD ID 0 with VAP idx 0
+    platform_pre_create_vap:437: Failed to setup link for MLD ID 0 with VAP idx 1
+
+so the MLD address is unusable while clients keep addressing the VAP's own
+MAC. Every M2 was therefore discarded before it reached hostapd, which never
+sent M3.
+
+Match the VAP's own MAC, and additionally the MLD MAC once one actually
+exists. This is the same "enabled vs actually established" distinction the
+hapd->mld guards elsewhere in this HAL already make (see patch 0005), and it
+keeps the receive path correct under partial MLO bring-up rather than trusting
+configuration state.
+
+Localised with kernel kprobes (host 6.8, BTF offsets) after the userspace
+explanations were exhausted -- the frames were provably fine all the way to
+the HAL:
+  * ieee80211_deliver_skb() fires once per M2 on wifi1
+  * packet_rcv() receives them: 8 of 8, et=0x8e88, dst=the VAP MAC
+    02:00:00:85:11:f6, src=the client 02:00:00:00:0d:00
+  * the packet_type servicing them is owned by sk=0xffff8b6096ab0800, which is
+    the HAL's own socket on ifindex 11 per /proc/net/packet, and
+    sock_def_readable() fired 8 times for that exact sk -- so the BPF filter
+    ACCEPTED and the HAL was woken
+  * recv_data_frame() then dropped them at the comparison above
+
+Note the drop precedes the existing "version:%d type:%d length:%d" debug
+print, so that print is not a measure of function entry -- it counts frames
+that survived the MAC check. The mesh backhaul STA was unaffected throughout
+because the MLD branch is guarded by vap_mode == wifi_vap_mode_ap.
+
+Not gated behind HWSIM_RADIO: nothing here is hwsim-specific. Any platform
+whose MLO setup fails after config enables it hits the same silent drop.
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -3120,19 +3120,42 @@
+     }
+ 
+ #if defined(CONFIG_GENERIC_MLO) && defined(CONFIG_IEEE80211BE)
+-    interface_mac = (wifi_hal_is_mld_enabled(interface) &&
+-                     (interface->vap_info.vap_mode == wifi_vap_mode_ap)) ?
+-                    wifi_hal_get_mld_mac_address(interface) : interface->mac;
+-    if (memcmp(eth_hdr->dest, interface_mac, sizeof(mac_address_t)) == 0) {
++    /* Accept a frame addressed to (or sent from) the VAP's own MAC, and also
++     * the MLD MAC once one has actually been established. Keying this off
++     * wifi_hal_is_mld_enabled() alone is wrong: it reflects static
++     * configuration, not runtime state. When MLO bring-up fails -- "MLD
++     * interface is enabled, but interface name is unset - skipping" -- the MLD
++     * address is unusable, while clients still address the VAP's own MAC, so
++     * every EAPOL frame was silently dropped here. Same "enabled vs actually
++     * established" distinction the hapd->mld guards elsewhere make. */
++    interface_mac = NULL;
++    if (wifi_hal_is_mld_enabled(interface) &&
++        (interface->vap_info.vap_mode == wifi_vap_mode_ap)) {
++        interface_mac = wifi_hal_get_mld_mac_address(interface);
++        if ((interface_mac != NULL) && is_zero_ether_addr(interface_mac)) {
++            interface_mac = NULL;
++        }
++    }
++    if ((memcmp(eth_hdr->dest, interface->mac, sizeof(mac_address_t)) == 0) ||
++        ((interface_mac != NULL) &&
++         (memcmp(eth_hdr->dest, interface_mac, sizeof(mac_address_t)) == 0))) {
+         // received frame
+         // dir = wifi_direction_uplink;
+         memcpy(sta, eth_hdr->src, sizeof(mac_address_t));
+-    } else if (memcmp(eth_hdr->src, interface_mac, sizeof(mac_address_t)) == 0) {
++    } else if ((memcmp(eth_hdr->src, interface->mac, sizeof(mac_address_t)) == 0) ||
++               ((interface_mac != NULL) &&
++                (memcmp(eth_hdr->src, interface_mac, sizeof(mac_address_t)) == 0))) {
+         // transmitted frame
+         // dir = wifi_direction_downlink;
+         memcpy(sta, eth_hdr->dest, sizeof(mac_address_t));
+     } else {
+-        // drop
++        wifi_hal_dbg_print("%s:%d: %s dropping eapol, dst %02x:%02x:%02x:%02x:%02x:%02x "
++            "src %02x:%02x:%02x:%02x:%02x:%02x matches neither vap mac nor mld mac\n",
++            __func__, __LINE__, interface->name,
++            eth_hdr->dest[0], eth_hdr->dest[1], eth_hdr->dest[2],
++            eth_hdr->dest[3], eth_hdr->dest[4], eth_hdr->dest[5],
++            eth_hdr->src[0], eth_hdr->src[1], eth_hdr->src[2],
++            eth_hdr->src[3], eth_hdr->src[4], eth_hdr->src[5]);
+         return;
+     }
+ #else

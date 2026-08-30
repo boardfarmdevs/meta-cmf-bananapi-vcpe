@@ -1,0 +1,54 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] easymesh: use full client list only to seed unknown rows
+
+The full associated-clients fallback added for startup discovery republishes
+every full-map entry as a fresh association whenever the delta map is empty.
+That is not snapshot reconciliation.  A client that roams without sending a
+deauthentication frame can remain in an hwsim AP's station/full map while the
+destination AP also reports it.  Replaying the stale entry makes the
+controller alternate ownership on every refresh.
+
+Use the full map only for its intended bootstrap purpose: seed a client that
+the local EasyMesh Agent has not learned yet.  Once a same-STA/BSS/radio row is
+in the Agent's consolidated map, only a real OneWifi association delta may
+republish it.  Normal disassociation deltas and the returning-client refresh
+path remain unchanged.
+
+This preserves clients already present when EasyMesh starts without converting
+a possibly stale platform inventory into recurring association events.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_easymesh_translator.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/source/webconfig/wifi_easymesh_translator.c b/source/webconfig/wifi_easymesh_translator.c
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -1460,6 +1460,24 @@ webconfig_error_t translate_associated_clients_to_easymesh_sta_info(webconfig_su
+                     proto->set_num_radio(proto->data_model, decoded_params->num_radios);
+                     proto->set_num_bss(proto->data_model, radio->vaps.num_vaps);
+                     printf("%s:%d: client_state: %d\n", __func__, __LINE__, assoc_dev_data->client_state);
++
++                    /* A full map is a bootstrap snapshot, not a sequence of
++                     * association deltas.  mac80211 may retain an AP station
++                     * when a roam-away is silent; replaying that entry forever
++                     * fights the destination AP's real association event. */
++                    if (em_using_full_list && vap->vap_mode == wifi_vap_mode_ap &&
++                            proto->get_sta_info(proto->data_model,
++                                assoc_dev_data->dev_stats.cli_MACAddress,
++                                vap->u.bss_info.bssid, radio_info->intf.mac,
++                                em_target_sta_map_consolidated) != NULL) {
++                        wifi_util_dbg_print(WIFI_WEBCONFIG,
++                            "%s:%d: skipping already-seeded full-list STA on vap '%s'\n",
++                            __func__, __LINE__, rdk_vap_info->vap_name);
++                        free(em_sta_dev_info);
++                        assoc_dev_data = hash_map_get_next(em_assoc_src,
++                            assoc_dev_data);
++                        continue;
++                    }
+ 
+                     memcpy(em_sta_dev_info->id, assoc_dev_data->dev_stats.cli_MACAddress, sizeof(mac_address_t));
+                     if (vap->vap_mode == wifi_vap_mode_ap) {
+-- 
+2.43.0

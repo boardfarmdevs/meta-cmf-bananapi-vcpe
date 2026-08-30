@@ -1,0 +1,67 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] assoc: report only live clients in a full snapshot
+
+The associated_devices_map is both association history and the source of the
+full associated-clients WebConfig snapshot.  A station that roams without a
+disassociation exchange can remain in that map on the old AP.  OneWifi's live
+monitor refresh marks such a retained entry inactive; do not encode it as a
+current association in a full snapshot.
+
+Delta add/remove behavior remains driven by client_state and is unchanged.
+Apply the same live filter to MLO links so both encodings have snapshot
+semantics.
+
+Upstream-Status: Pending
+---
+ source/webconfig/wifi_encoder.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/source/webconfig/wifi_encoder.c b/source/webconfig/wifi_encoder.c
+--- a/source/webconfig/wifi_encoder.c
++++ b/source/webconfig/wifi_encoder.c
+@@ -1892,10 +1892,11 @@ void encode_assoc_dev_stats(cJSON *obj, assoc_dev_data_t *dev)
+     cJSON_AddNumberToObject(obj, "LastConnectTime", dev->last_connect_time);
+ }
+ 
+-bool should_print_assoc_client(assoclist_type_t type, client_state_t state)
++bool should_print_assoc_client(assoclist_type_t type, client_state_t state,
++    bool active)
+ {
+     if (type == assoclist_type_full) {
+-        return true;
++        return active;
+     }
+     if (type == assoclist_type_add && state == client_state_connected) {
+         return true;
+@@ -1975,7 +1976,8 @@ webconfig_error_t encode_vap_assoc_clients(rdk_wifi_vap_info_t *rdk_vap_info,
+                 continue;
+             }
+ 
+-            print_assoc_client = should_print_assoc_client(assoclist_type, assoc_dev_data->client_state);
++            print_assoc_client = should_print_assoc_client(assoclist_type,
++                assoc_dev_data->client_state, assoc_dev_data->dev_stats.cli_Active);
+             include_frame_data = should_include_frame_data(assoclist_type, assoc_dev_data->client_state);
+ 
+             if (print_assoc_client == true) {
+@@ -2040,7 +2042,8 @@ void encode_mlo_assoc_clients(webconfig_subdoc_decoded_data_t *params, wifi_mld_
+             unsigned int num_matching = 0;
+ 
+             for (li = 0; li < cl->num_links; li++) {
+-                if (should_print_assoc_client(assoclist_type, cl->links[li].client_state)) {
++                if (should_print_assoc_client(assoclist_type, cl->links[li].client_state,
++                        cl->links[li].dev_stats.cli_Active)) {
+                     num_matching++;
+                 }
+             }
+@@ -2065,7 +2068,8 @@ void encode_mlo_assoc_clients(webconfig_subdoc_decoded_data_t *params, wifi_mld_
+                 const char *band = "";
+                 const char *band_str = NULL;
+ 
+-                if (!should_print_assoc_client(assoclist_type, link->client_state)) {
++                if (!should_print_assoc_client(assoclist_type, link->client_state,
++                        link->dev_stats.cli_Active)) {
+                     continue;
+                 }
+ 
+-- 
+2.43.0

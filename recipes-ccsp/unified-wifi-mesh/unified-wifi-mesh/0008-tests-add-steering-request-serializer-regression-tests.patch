@@ -1,0 +1,257 @@
+From: Rene Vogelaar <revogelaar@gmail.com>
+Subject: [PATCH] tests: add Steering Request TLV serializer regression tests
+
+There was no direct test of the production Steering Request builder.
+test_l1_em_cmd_sta_steer.cpp proves the source BSSID survives command
+construction, and validation_test.cpp builds its own TLVs -- neither one goes
+through the production serializer, so neither could catch it reading the BSSID
+from data-model slot zero.
+
+Add seven cases against em_steering_t::build_steering_request_tlv(), using a
+deliberate slot-zero sentinel (02:00:00:00:00:24) distinct from the requested
+source (02:00:00:00:00:50) so the old behaviour cannot pass by accident:
+
+    SourceBssidComesFromParamsNotDataModel   defect A
+    StaAndTargetSurviveSerialization         adjacent fields and flag bits
+    TwoOctetFieldsUseNetworkByteOrder        both 2-octet fields, raw octets
+    RequestModeControlsOpportunityWindow     mandate suppresses the window
+    ReservedBitsAreZeroed                    reserved nibble, 0xff prefill
+    OutputIsIndependentOfInitialBufferContents  0x00 vs 0xff prefill identical
+    RejectsBadArguments                      null buff/params, short capacity
+
+Buffers are prefilled with 0xa5/0xff rather than zero, so a serializer that
+relies on the caller having zeroed the object fails instead of passing.
+
+The suite was run against the built binary; each defect was then reintroduced
+one at a time to confirm the corresponding case fails. The test target stays
+behind EM_UNITTEST, which remains false for shipped images -- this only adds
+the source and wires it into the controller test target.
+
+Upstream-Status: Pending
+---
+diff --git a/src/ctrl/Makefile.am b/src/ctrl/Makefile.am
+index b25e95ff..54d4524a 100644
+--- a/src/ctrl/Makefile.am
++++ b/src/ctrl/Makefile.am
+@@ -167,6 +167,7 @@ onewifi_em_ctrl_test_SOURCES = $(onewifi_em_ctrl_SOURCES) \
+ 	$(top_srcdir)/tests/test_l1_dm_ieee_1905_security.cpp \
+ 	$(top_srcdir)/tests/test_l1_dm_policy.cpp \
+ 	$(top_srcdir)/tests/test_l1_em_sm.cpp \
++	$(top_srcdir)/tests/test_l1_em_steering.cpp \
+ 	$(top_srcdir)/tests/test_l1_al_service_registration_request.cpp \
+ 	$(top_srcdir)/tests/test_l1_al_service_registration_response.cpp \
+ 	$(top_srcdir)/tests/test_l1_dm_radio.cpp \
+diff --git a/tests/test_l1_em_steering.cpp b/tests/test_l1_em_steering.cpp
+new file mode 100644
+index 00000000..fb9bf273
+--- /dev/null
++++ b/tests/test_l1_em_steering.cpp
+@@ -0,0 +1,208 @@
++/**
++ * Regression tests for em_steering_t::build_steering_request_tlv().
++ *
++ * The production serializer used to take the Steering Request's source BSSID
++ * from get_data_model()->m_bss[0] instead of the command's parameters, so the
++ * BSS the controller asked to steer FROM was silently replaced by whichever
++ * BSS happened to occupy slot zero. These tests pin the wire object down as
++ * being entirely parameter-driven, and entirely deterministic: nothing in the
++ * emitted bytes may depend on what the caller's buffer contained beforehand.
++ */
++
++#include <gtest/gtest.h>
++
++#include <arpa/inet.h>
++#include <string.h>
++
++// em_steering.h is not self-contained: it refers to em_mgr_t, dm_easy_mesh_t
++// and em_cmd_t through its pure-virtual accessors. Pull in the command header
++// first, as the sibling steering tests do, so those names are declared.
++#include "em_cmd_sta_steer.h"
++#include "em_steering.h"
++
++namespace {
++
++// Deliberately distinct addresses. The sentinel is what the old code would
++// have emitted; no test may ever see it in the source field.
++const mac_address_t kDataModelBss0 = {0x02, 0x00, 0x00, 0x00, 0x00, 0x24};
++const mac_address_t kSourceBssid   = {0x02, 0x00, 0x00, 0x00, 0x00, 0x50};
++const mac_address_t kStaMac        = {0x02, 0x00, 0x00, 0x00, 0x01, 0x01};
++const mac_address_t kTargetBssid   = {0x02, 0x00, 0x00, 0x00, 0x02, 0x50};
++
++void fill_params(em_cmd_steer_params_t *params)
++{
++    memset(params, 0, sizeof(*params));
++
++    memcpy(params->source,  kSourceBssid, sizeof(mac_address_t));
++    memcpy(params->sta_mac, kStaMac,      sizeof(mac_address_t));
++    memcpy(params->target,  kTargetBssid, sizeof(mac_address_t));
++
++    params->request_mode             = em_steering_req_mode_opportunity;
++    params->disassoc_imminent        = 1;
++    params->btm_abridged             = 1;
++    params->link_removal_imminent    = 0;
++    params->steer_opportunity_win    = 7;
++    params->btm_disassociation_timer = 5;
++    params->target_op_class          = 115;
++    params->target_channel           = 36;
++}
++
++// The four named flag bits live in one octet with a four-bit reserved field.
++// Reading that octet back lets the tests assert the reserved nibble directly
++// rather than trusting the bitfield accessors.
++unsigned char flags_octet(const unsigned char *buff)
++{
++    return buff[sizeof(bssid_t)];
++}
++
++}  // namespace
++
++// Defect A: the source BSSID on the wire must come from the command
++// parameters, never from data-model BSS slot zero.
++TEST(EmSteeringSerializer, SourceBssidComesFromParamsNotDataModel)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    memset(buff, 0xa5, sizeof(buff));
++
++    short len = em_steering_t::build_steering_request_tlv(buff, sizeof(buff), &params);
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)), len);
++
++    const em_steering_req_t *req = reinterpret_cast<const em_steering_req_t *> (buff);
++
++    EXPECT_EQ(0, memcmp(req->bssid, kSourceBssid, sizeof(bssid_t)));
++    EXPECT_NE(0, memcmp(req->bssid, kDataModelBss0, sizeof(bssid_t)));
++}
++
++TEST(EmSteeringSerializer, StaAndTargetSurviveSerialization)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    memset(buff, 0xa5, sizeof(buff));
++
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(buff, sizeof(buff), &params));
++
++    const em_steering_req_t *req = reinterpret_cast<const em_steering_req_t *> (buff);
++
++    EXPECT_EQ(1, req->sta_list_count);
++    EXPECT_EQ(0, memcmp(req->sta_mac_addr, kStaMac, sizeof(mac_address_t)));
++    EXPECT_EQ(1, req->target_bssid_list_count);
++    EXPECT_EQ(0, memcmp(req->target_bssids, kTargetBssid, sizeof(bssid_t)));
++    EXPECT_EQ(115, req->target_bss_op_class);
++    EXPECT_EQ(36, req->target_bss_channel_num);
++
++    EXPECT_EQ(0, req->req_mode);
++    EXPECT_EQ(1, req->btm_dissoc_imminent);
++    EXPECT_EQ(1, req->btm_abridged);
++    EXPECT_EQ(0, req->btm_link_removal_imminent);
++}
++
++// Both two-octet fields in this TLV are 1905 wire integers and must get the
++// same explicit byte-order treatment. The timer was already htons()'d while
++// the opportunity window was written in host order.
++TEST(EmSteeringSerializer, TwoOctetFieldsUseNetworkByteOrder)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    memset(buff, 0xa5, sizeof(buff));
++
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(buff, sizeof(buff), &params));
++
++    const em_steering_req_t *req = reinterpret_cast<const em_steering_req_t *> (buff);
++
++    EXPECT_EQ(7, ntohs(req->steering_opportunity_window));
++    EXPECT_EQ(5, ntohs(req->btm_dissoc_timer));
++
++    // And assert the raw octets, so the test cannot be satisfied by a
++    // host-order write that ntohs() happens to undo symmetrically.
++    const unsigned char *win = buff + sizeof(bssid_t) + 1;
++    EXPECT_EQ(0x00, win[0]);
++    EXPECT_EQ(0x07, win[1]);
++    EXPECT_EQ(0x00, win[2]);
++    EXPECT_EQ(0x05, win[3]);
++}
++
++TEST(EmSteeringSerializer, RequestModeControlsOpportunityWindow)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    params.request_mode = em_steering_req_mode_mandate;
++    memset(buff, 0xa5, sizeof(buff));
++
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(buff, sizeof(buff), &params));
++
++    const em_steering_req_t *req = reinterpret_cast<const em_steering_req_t *> (buff);
++
++    EXPECT_EQ(1, req->req_mode);
++    // A Steering Mandate carries no opportunity window.
++    EXPECT_EQ(0, req->steering_opportunity_window);
++
++    // The timer is unaffected by the mode.
++    EXPECT_EQ(5, ntohs(req->btm_dissoc_timer));
++}
++
++// The reserved nibble shares an octet with the flag bits. If the serializer
++// does not clear the object, that nibble carries whatever the caller's buffer
++// held, and identical parameters produce different wire bytes.
++TEST(EmSteeringSerializer, ReservedBitsAreZeroed)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    memset(buff, 0xff, sizeof(buff));
++
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(buff, sizeof(buff), &params));
++
++    const em_steering_req_t *req = reinterpret_cast<const em_steering_req_t *> (buff);
++
++    EXPECT_EQ(0, req->reserved);
++
++    // req_mode=0, dissoc_imminent=1, abridged=1, link_removal=0, reserved=0.
++    // Whatever the bit order of the packed field, exactly two bits may be set.
++    EXPECT_EQ(2, __builtin_popcount(flags_octet(buff)));
++}
++
++// The whole emitted object must be a function of the parameters alone.
++TEST(EmSteeringSerializer, OutputIsIndependentOfInitialBufferContents)
++{
++    em_cmd_steer_params_t params;
++    unsigned char zeros[sizeof(em_steering_req_t)];
++    unsigned char ones[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++    memset(zeros, 0x00, sizeof(zeros));
++    memset(ones,  0xff, sizeof(ones));
++
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(zeros, sizeof(zeros), &params));
++    ASSERT_EQ(static_cast<short> (sizeof(em_steering_req_t)),
++        em_steering_t::build_steering_request_tlv(ones, sizeof(ones), &params));
++
++    EXPECT_EQ(0, memcmp(zeros, ones, sizeof(em_steering_req_t)));
++}
++
++TEST(EmSteeringSerializer, RejectsBadArguments)
++{
++    em_cmd_steer_params_t params;
++    unsigned char buff[sizeof(em_steering_req_t)];
++
++    fill_params(&params);
++
++    EXPECT_EQ(0, em_steering_t::build_steering_request_tlv(NULL, sizeof(buff), &params));
++    EXPECT_EQ(0, em_steering_t::build_steering_request_tlv(buff, sizeof(buff), NULL));
++    EXPECT_EQ(0, em_steering_t::build_steering_request_tlv(buff,
++        sizeof(em_steering_req_t) - 1, &params));
++}

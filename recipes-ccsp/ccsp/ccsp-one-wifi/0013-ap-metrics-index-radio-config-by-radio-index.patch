@@ -1,0 +1,34 @@
+From: Codex <codex@openai.com>
+Date: Thu, 20 Aug 2026 12:00:00 -0700
+Subject: [PATCH] wifi_em: index AP-metrics radio config by radio index
+
+AP Metrics requests do not have to list radios in platform array order.  The
+callback correctly maps each requested RUID to radio_index, but then stores
+that radio's configuration in radios[i], where i is only the request-array
+position.
+
+The webconfig encoder later looks up radios[radio_report->radio_index].  When
+the request order differs from platform order, it therefore searches the
+wrong radio's VAP array for each BSSID and emits an empty "Vap Info" array.
+That drops all per-STA link and traffic metrics from the periodic report and
+leaves controller RCPI values absent or stale.
+
+Store the configuration at the same physical-radio index consumed by the
+encoder.  This is independent of hwsim and fixes any platform/controller that
+requests AP metrics in a non-native radio order.
+
+Upstream-Status: Pending
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+index 6f78fc2..7c2abfe 100644
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -1993,7 +1993,7 @@ static int ap_report_push_cb(void *arg)
+         rad_met->receive_self = em_ap_metrics_report_cache.radio_report[radio_index].radio_metrics.receive_self;
+         rad_met->receive_other = em_ap_metrics_report_cache.radio_report[radio_index].radio_metrics.receive_other;
+ 
+-        data->u.decoded.radios[i] = wifi_mgr->radio_config[radio_index];
++        data->u.decoded.radios[radio_index] = wifi_mgr->radio_config[radio_index];
+     }
+ 
+     data->u.decoded.hal_cap = wifi_mgr->hal_cap;

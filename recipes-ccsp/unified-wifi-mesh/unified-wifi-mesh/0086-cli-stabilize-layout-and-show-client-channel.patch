@@ -1,0 +1,385 @@
+From afa6617faa6aca48da00e9e25ff5f46911d2f0ca Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 19:30:00 -0700
+Subject: [PATCH] cli: stabilize layout and show client channel
+
+Settle topology optimization synchronously so its final fit does not look like
+a delayed two-second polling redraw. Keep the colocated controller and Agent
+close while giving wireless extender links more room.
+
+Publish each client's authoritative radio band and operating channel through
+the clients and topology APIs. Show band and channel in the client table and
+topology, and include channel and serving BSSID in client hover details.
+
+After the Agent's first successful topology synchronization, reconcile its
+cached current operating classes with OneWifi's live per-radio RBUS channels
+and send one unsolicited standard Operating Channel Report per radio. This
+closes the startup subscription race and seeds the Controller even when no
+Channel Selection Request was needed during onboarding.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+---
+ inc/em_agent.h                 |   3 +
+ src/agent/em_agent.cpp         | 110 ++++++++++++++++++++++++++++++++-
+ src/rdkb-cli/main.go           |  10 ++-
+ src/rdkb-cli/static/index.html |   5 +-
+ src/rdkb-cli/static/script.js  |  70 +++++++++++++--------
+ 5 files changed, 169 insertions(+), 29 deletions(-)
+
+diff --git a/inc/em_agent.h b/inc/em_agent.h
+index f974a26..e9d592c 100644
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -45,6 +45,9 @@ class em_agent_t : public em_mgr_t {
+     em_short_string_t   m_data_model_path;
+     em_cmd_agent_t  *m_agent_cmd;
+ 	em_simulator_t	m_simulator;
++    bool m_initial_op_channel_report_sent = false;
++
++    bool publish_initial_operating_channels();
+ 
+ 	
+ 	/**!
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index ce24f89..d3eb5f4 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1373,9 +1373,117 @@ void em_agent_t::handle_5s_tick()
+ #endif
+ }
+ 
+-void em_agent_t::handle_2s_tick()
++bool em_agent_t::publish_initial_operating_channels()
+ {
++    wifi_bus_desc_t *desc = get_bus_descriptor();
++    if (desc == NULL) {
++        em_printfout("Cannot publish initial operating channels: bus descriptor is null");
++        return false;
++    }
++
++    unsigned int radio_nodes = 0;
++    em_t *em = static_cast<em_t *>(hash_map_get_first(m_em_map));
++    while (em != NULL) {
++        if (!em->is_al_interface_em() &&
++            em->get_service_type() == em_service_type_agent) {
++            radio_nodes++;
++            if (em->get_state() < em_state_agent_topo_synchronized) {
++                return false;
++            }
++        }
++        em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
++    }
+ 
++    if (radio_nodes == 0 || radio_nodes != m_data_model.get_num_radios()) {
++        return false;
++    }
++
++    for (unsigned int radio_index = 0;
++         radio_index < m_data_model.get_num_radios(); radio_index++) {
++        raw_data_t channel_data = {};
++        char channel_path[64];
++        snprintf(channel_path, sizeof(channel_path),
++            "Device.WiFi.Radio.%u.Channel", radio_index + 1);
++
++        bus_error_t result = desc->bus_data_get_fn(
++            &m_bus_hdl, channel_path, &channel_data);
++        if (result != bus_error_success) {
++            em_printfout("Cannot read live channel from %s: error %d",
++                channel_path, result);
++            return false;
++        }
++
++        unsigned int channel = 0;
++        switch (channel_data.data_type) {
++            case bus_data_type_uint8:
++                channel = channel_data.raw_data.u8;
++                break;
++            case bus_data_type_uint16:
++                channel = channel_data.raw_data.u16;
++                break;
++            case bus_data_type_uint32:
++                channel = channel_data.raw_data.u32;
++                break;
++            case bus_data_type_int8:
++                channel = static_cast<unsigned int>(channel_data.raw_data.i8);
++                break;
++            case bus_data_type_int16:
++                channel = static_cast<unsigned int>(channel_data.raw_data.i16);
++                break;
++            case bus_data_type_int32:
++                channel = static_cast<unsigned int>(channel_data.raw_data.i32);
++                break;
++            default:
++                break;
++        }
++        desc->bus_data_free_fn(&channel_data);
++
++        dm_radio_t *radio = m_data_model.get_radio(radio_index);
++        em_op_class_info_t *current = NULL;
++        for (unsigned int i = 0; i < m_data_model.get_num_op_class(); i++) {
++            em_op_class_info_t *candidate =
++                m_data_model.get_op_class_info(i);
++            if (candidate->id.type == em_op_class_type_current &&
++                memcmp(candidate->id.ruid, radio->get_radio_interface_mac(),
++                    sizeof(mac_address_t)) == 0) {
++                current = candidate;
++                break;
++            }
++        }
++        if (channel == 0 || current == NULL) {
++            em_printfout("Cannot reconcile initial channel for radio %s",
++                util::mac_to_string(radio->get_radio_interface_mac()).c_str());
++            return false;
++        }
++
++        if (current->channel != channel) {
++            em_printfout("Reconciled radio %s channel from %u to %u",
++                util::mac_to_string(radio->get_radio_interface_mac()).c_str(),
++                current->channel, channel);
++            current->channel = channel;
++        }
++    }
++
++    unsigned int reports_sent = 0;
++    em = static_cast<em_t *>(hash_map_get_first(m_em_map));
++    while (em != NULL) {
++        if (!em->is_al_interface_em() &&
++            em->get_service_type() == em_service_type_agent &&
++            em->send_operating_channel_report_msg() > 0) {
++            reports_sent++;
++        }
++        em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
++    }
++    em_printfout("Initial operating channel reports sent: %u/%u",
++        reports_sent, radio_nodes);
++    return reports_sent == radio_nodes;
++}
++
++void em_agent_t::handle_2s_tick()
++{
++    if (!m_initial_op_channel_report_sent) {
++        m_initial_op_channel_report_sent = publish_initial_operating_channels();
++    }
+ }
+ 
+ void em_agent_t::handle_1s_tick()
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 3f00278..015a380 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -264,6 +264,8 @@ type Client struct {
+ 	IPAddress      string        `json:"ip_address"`
+ 	ConnectedAP    string        `json:"connected_ap_mac"`
+ 	ConnectedBSSID string        `json:"connected_bssid"`
++	Band           int           `json:"band"`
++	Channel        int           `json:"channel"`
+ 	ConnectionTime time.Time     `json:"connection_time"`
+ 	DeviceType     string        `json:"device_type"`
+ 	Manufacturer   string        `json:"manufacturer"`
+@@ -272,6 +274,7 @@ type Client struct {
+ 	Location       ClientLocation `json:"location"`
+ 	// These fields are used by the topology overlay but are not API fields.
+ 	TopologyBand    int           `json:"-"`
++	TopologyChannel int           `json:"-"`
+ 	TopologySSID    string        `json:"-"`
+ 	TopologyMLDAddr string        `json:"-"`
+ }
+@@ -3454,6 +3457,7 @@ func loadDetailedLiveClients() ([]Client, error) {
+ 				continue
+ 			}
+ 			band := getKeyIntValue(radio, "Band")
++			channel := getKeyIntValue(radio, "Channel")
+ 			bssList := getNetworkTreeByKey(radio, "BSSList")
+ 			if bssList == nil {
+ 				continue
+@@ -3508,10 +3512,12 @@ func loadDetailedLiveClients() ([]Client, error) {
+ 					clients = append(clients, Client{
+ 						MAC: mac, Hostname: mac,
+ 						ConnectedAP: deviceID, ConnectedBSSID: bssid,
++						Band: band, Channel: channel,
+ 						ConnectionTime: connectionTime,
+ 						DeviceType: "Wi-Fi Client", LastActivity: observedAt,
+ 						ClientMetrics: metrics,
+-						TopologyBand: band, TopologySSID: ssid,
++						TopologyBand: band, TopologyChannel: channel,
++						TopologySSID: ssid,
+ 						TopologyMLDAddr: mld,
+ 					})
+ 				}
+@@ -3657,6 +3663,8 @@ func overlayLiveTopologyClients(nodes []map[string]interface{}) {
+ 				"clientType": client.DeviceType,
+ 				"MLDAddr":    client.TopologyMLDAddr,
+ 				"band":       client.TopologyBand,
++				"channel":    client.TopologyChannel,
++				"bssid":      client.ConnectedBSSID,
+ 				"ssid":       client.TopologySSID,
+ 			},
+ 		)
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 1d6e87a..c9d7f40 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -442,6 +442,7 @@
+                                     <tr>
+                                         <th>Device</th>
+                                         <th>Connection</th>
++                                        <th>Channel</th>
+                                         <th>Uptime</th>
+                                         <th>Signal</th>
+                                         <th>Speed</th>
+@@ -451,7 +452,7 @@
+                                 </thead>
+                                 <tbody id="clients-tbody">
+                                     <tr>
+-                                        <td colspan="7" class="loading-message">Loading clients...</td>
++                                        <td colspan="8" class="loading-message">Loading clients...</td>
+                                     </tr>
+                                 </tbody>
+                             </table>
+@@ -2037,7 +2038,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-exact-backhaul-1"></script>
++    <script src="static/script.js?v=topology-stable-channel-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 9b18962..ddb858f 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2092,6 +2092,9 @@ async handleWebSocketMessage(data) {
+       ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm${hasRCPI ? ` (RCPI ${metrics.rcpi})` : ''}</span>`
+       : '<span>N/A</span>';
+     const connectionInfo = this.getClientConnectionInfo(client);
++    const channelDisplay = Number(client.channel) > 0
++      ? `${this.topologyBandLabel(client.band)} ch ${client.channel}`
++      : 'N/A';
+     const associationUptime = Number.isFinite(metrics.association_uptime_seconds) &&
+       metrics.association_uptime_seconds > 0
+       ? this.formatUptime(metrics.association_uptime_seconds)
+@@ -2115,6 +2118,7 @@ async handleWebSocketMessage(data) {
+           <div class="connection-band">${connectionInfo.band}</div>
+         </div>
+       </td>
++      <td>${channelDisplay}</td>
+       <td>${associationUptime}</td>
+       <td>
+         <div class="signal-strength">
+@@ -2427,8 +2431,7 @@ async handleWebSocketMessage(data) {
+     }
+ 
+     const button = document.getElementById('optimize-topology');
+-    const generation = (this.topologyLayoutGeneration || 0) + 1;
+-    this.topologyLayoutGeneration = generation;
++    this.topologyLayoutGeneration = (this.topologyLayoutGeneration || 0) + 1;
+     this.topologyLayoutInProgress = true;
+     this.topologyRenderPending = false;
+     if (button) button.disabled = true;
+@@ -2443,29 +2446,23 @@ async handleWebSocketMessage(data) {
+     });
+ 
+     this.showNotification('Arranging the topology diagram…', 'info');
+-    simulation.on('end.autoLayout', () => {
+-      if (generation !== this.topologyLayoutGeneration) return;
+-
+-      nodes.forEach(node => {
+-        if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+-        node.fx = node.x;
+-        node.fy = node.y;
+-        this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
+-      });
++    const paint = simulation.on('tick');
++    simulation.stop().alpha(1).alphaTarget(0);
++    for (let tick = 0; tick < 180; tick += 1) simulation.tick();
++    if (typeof paint === 'function') paint();
+ 
+-      this.topologyLayoutInProgress = false;
+-      const renderPending = this.topologyRenderPending;
+-      this.topologyRenderPending = false;
+-      // Fit the simulation that just completed. If a two-second API refresh
+-      // was deferred, redraw it afterwards using these cached positions and
+-      // zoom rather than fitting an SVG whose first tick has not run yet.
+-      this.fitTopologyToView();
+-      if (renderPending) this.updateTopologyVisualization();
+-      if (button) button.disabled = false;
+-      this.showNotification('Topology diagram arranged', 'success');
++    nodes.forEach(node => {
++      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
++      node.fx = node.x;
++      node.fy = node.y;
++      this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
+     });
+ 
+-    simulation.alpha(1).alphaTarget(0).restart();
++    this.topologyLayoutInProgress = false;
++    this.topologyRenderPending = false;
++    this.fitTopologyToView();
++    if (button) button.disabled = false;
++    this.showNotification('Topology diagram arranged', 'success');
+   }
+ 
+   /**
+@@ -3111,8 +3108,10 @@ async handleWebSocketMessage(data) {
+ 
+     // Create simulation
+     const simulation = d3.forceSimulation(renderTopology.nodes)
+-    .force('link', d3.forceLink(edges).id(d => d.id).distance(520).strength(0.12))
+-    .force('charge', d3.forceManyBody().strength(-1600))
++    .force('link', d3.forceLink(edges).id(d => d.id)
++      .distance(d => String(d.band) === '-1' ? 220 : 700)
++      .strength(d => String(d.band) === '-1' ? 0.45 : 0.16))
++    .force('charge', d3.forceManyBody().strength(-2200))
+     .force('collision', d3.forceCollide().radius(d => self.topologyNodeExtent(d) + 15).strength(1).iterations(2))
+     .force('center', d3.forceCenter(width / 2, height / 2))
+     .alphaDecay(0.08);
+@@ -3329,9 +3328,12 @@ async handleWebSocketMessage(data) {
+               const signalInfo = data.signal.available
+                 ? `${data.signal.rssi} dBm${data.signal.rcpi !== null ? ` (RCPI ${data.signal.rcpi})` : ''}${freshnessInfo}`
+                 : (data.signal.stale ? 'Stale metrics' : 'N/A');
++              const channelInfo = Number(sta.channel) > 0
++                ? `${self.topologyBandLabel(sta.band)} channel ${sta.channel}`
++                : 'N/A';
+               tooltip.style('display', 'block')
+               .html(`<b>${staIdentity}</b><br>Type: ${sta.ssid === 'iot_ssid' ?
+-                'IoT device' : (sta.clientType || 'Unknown')}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}<br>Band: ${data.signal.band}<br>Signal: ${signalInfo}`);
++                'IoT device' : (sta.clientType || 'Unknown')}<br>MAC: ${sta.staMAC}${mldInfo}<br>SSID: ${sta.ssid}<br>Band: ${data.signal.band}<br>Channel: ${channelInfo}<br>BSSID: ${sta.bssid || 'N/A'}<br>Signal: ${signalInfo}`);
+             })
+            .on('mousemove', function(event) {
+               self.positionTooltip(event, tooltip);
+@@ -3354,6 +3356,21 @@ async handleWebSocketMessage(data) {
+             .style('pointer-events', 'none')
+             .text(staIdentity);
+ 
++          staElement.append('text')
++            .attr('class', 'sta-channel-label')
++            .attr('x', to.x)
++            .attr('y', to.y + data.iconSize / 2 + 23)
++            .attr('text-anchor', 'middle')
++            .attr('font-size', '9px')
++            .attr('font-weight', '600')
++            .attr('fill', '#475569')
++            .attr('stroke', '#fff')
++            .attr('stroke-width', 3)
++            .attr('paint-order', 'stroke')
++            .style('pointer-events', 'none')
++            .text(Number(sta.channel) > 0
++              ? `${self.topologyBandLabel(sta.band)} ch ${sta.channel}` : '');
++
+         });
+ 
+       }
+@@ -3530,6 +3547,9 @@ async handleWebSocketMessage(data) {
+       selection.select('text.sta-identity-label')
+         .attr('x', d.to.x)
+         .attr('y', d.to.y + d.iconSize / 2 + 11);
++      selection.select('text.sta-channel-label')
++        .attr('x', d.to.x)
++        .attr('y', d.to.y + d.iconSize / 2 + 23);
+     }
+ 
+     function staDragStarted(event) {
+-- 
+2.53.0
+

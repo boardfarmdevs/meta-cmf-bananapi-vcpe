@@ -1,0 +1,174 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: resolve duplicate STA claims by association age
+
+A silent hwsim roam can leave the old AP's kernel station entry authorized
+while the STA is already associated to another AP.  If the destination
+association notification is missed, both Agents subsequently include the STA
+in their Associated Clients TLV.  Patch 0055 correctly refuses to let an
+unordered snapshot replace an existing owner, but the Agent currently writes
+zero into every Association Time field.  The controller therefore has no
+standard evidence with which to repair the missed event and can retain the old
+owner indefinitely.
+
+Publish the EasyMesh Association Time from the Agent's monotonic association
+start point.  Use one as the minimum encoded value so zero remains the
+backward-compatible "unavailable" sentinel, and saturate at 65535 seconds.  On
+the controller, refresh the current owner's in-memory age on each periodic
+snapshot; otherwise its age remains frozen at insertion and every later roam
+looks older.  Retain that owner unless every conflicting live claim has a
+known, strictly older association.  A younger incoming claim is then queued
+through the normal STA-list update path, whose non-MLO single-association
+invariant removes the former owner.  Equal, saturated or unknown ages remain
+ambiguous and cannot move ownership.
+
+This makes the periodic Topology Response a bounded repair path for a missed
+Client Association Event without allowing an old AP snapshot to reverse a
+newer notification-owned association.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 77 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 67 insertions(+), 10 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1647,7 +1647,24 @@ int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
+                            sizeof(bssid_t)) == 0) {
+                 memcpy(tmp, sta->m_sta_info.id, sizeof(mac_address_t));
+                 tmp += sizeof(mac_address_t);
+-                uint16_t assoc_time_be = 0;
++                /* EasyMesh Association Time is seconds since association.
++                 * Reserve zero for peers that do not publish the field and
++                 * saturate rather than wrap after roughly 18 hours. */
++                uint64_t assoc_time = sta->m_sta_info.last_conn_time;
++                struct timespec now = {};
++                if (sta->m_sta_info.assoc_start_boottime_sec != 0 &&
++                        clock_gettime(CLOCK_BOOTTIME, &now) == 0 &&
++                        static_cast<uint64_t>(now.tv_sec) >=
++                            sta->m_sta_info.assoc_start_boottime_sec) {
++                    assoc_time = static_cast<uint64_t>(now.tv_sec) -
++                        sta->m_sta_info.assoc_start_boottime_sec;
++                }
++                if (assoc_time == 0) {
++                    assoc_time = 1;
++                } else if (assoc_time > 65535) {
++                    assoc_time = 65535;
++                }
++                uint16_t assoc_time_be = htons(static_cast<uint16_t>(assoc_time));
+                 memcpy(tmp, &assoc_time_be, sizeof(assoc_time_be));
+                 tmp += sizeof(assoc_time_be);
+             }
+@@ -2313,8 +2330,12 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+ 
+                 em_sta_info_t sta_info = {};
+                 memcpy(sta_info.id, value, sizeof(mac_address_t));
+-                value += sizeof(mac_address_t) + sizeof(uint16_t);
+-                value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
++                value += sizeof(mac_address_t);
++                uint16_t assoc_time_be;
++                memcpy(&assoc_time_be, value, sizeof(assoc_time_be));
++                value += sizeof(uint16_t);
++                value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
++                const unsigned int assoc_time = ntohs(assoc_time_be);
+                 if (bss_info == NULL) {
+                     continue;
+                 }
+@@ -2323,14 +2344,17 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                 memcpy(sta_info.bssid, bssid, sizeof(bssid_t));
+                 memcpy(sta_info.radiomac, bss_info->ruid.mac, sizeof(mac_address_t));
+                 sta_info.associated = true;
++                sta_info.last_conn_time = assoc_time;
+ 
+                 /* A Topology Response is an unordered snapshot.  If two
+-                 * device models claim the same STA on different BSSs, it
+-                 * cannot establish which association happened last.  Do not
+-                 * let a rejoining Agent's stale driver row reverse the
+-                 * authoritative Client Association Event from the current
+-                 * owner. */
++                 * device models claim the same STA on different BSSs, only a
++                 * known, strictly younger Association Time can order them.
++                 * Unknown, equal and saturated ages remain ambiguous.  This
++                 * prevents an old snapshot from reversing an association
++                 * event while allowing a newer snapshot to repair a missed
++                 * event. */
+                 bool conflicting_claim = false;
++                bool incoming_is_newer = assoc_time != 0;
+                 dm_easy_mesh_t *claim_dm = get_mgr()->get_first_dm();
+-                while (claim_dm != NULL && !conflicting_claim) {
++                while (claim_dm != NULL) {
+                     if (claim_dm != dm) {
+@@ -2338,7 +2362,22 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                                            sta_info.bssid,
+                                            sizeof(bssid_t)) != 0) {
+                                 conflicting_claim = true;
++                                const unsigned int claim_time =
++                                        claim->m_sta_info.last_conn_time;
++                                if (claim_time == 0 || assoc_time == 65535 ||
++                                        claim_time == 65535 ||
++                                        assoc_time >= claim_time) {
++                                    incoming_is_newer = false;
++                                }
++                                em_printfout(
++                                        "Topology Response owner evidence sta=%s incoming_age=%u existing_age=%u newer=%d",
++                                        util::mac_to_string(sta_info.id).c_str(),
++                                        assoc_time, claim_time,
++                                        incoming_is_newer ? 1 : 0);
++                                /* Check every conflicting claim before
++                                 * accepting the incoming association. */
++                                claim = claim_dm->get_next_sta(sta_info.id, claim);
++                                continue;
+-                                break;
+                             }
+                             claim = claim_dm->get_next_sta(sta_info.id, claim);
+                         }
+@@ -2346,27 +2385,33 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                     claim_dm = get_mgr()->get_next_dm(claim_dm);
+                 }
+-                if (conflicting_claim) {
++                if (conflicting_claim && !incoming_is_newer) {
+                     em_printfout(
+-                            "Skipping ambiguous Topology Response owner for sta=%s bssid=%s",
++                            "Skipping older or ambiguous Topology Response owner for sta=%s bssid=%s age=%u",
+                             util::mac_to_string(sta_info.id).c_str(),
+-                            util::mac_to_string(sta_info.bssid).c_str());
++                            util::mac_to_string(sta_info.bssid).c_str(),
++                            assoc_time);
+                     continue;
+                 }
+ 
+-                if (dm->get_sta_info(sta_info.id, sta_info.bssid, sta_info.radiomac,
+-                                     em_target_sta_map_consolidated) != NULL) {
++                em_sta_info_t *existing = dm->get_sta_info(
++                        sta_info.id, sta_info.bssid, sta_info.radiomac,
++                        em_target_sta_map_consolidated);
++                if (!conflicting_claim && existing != NULL &&
++                        existing->associated) {
++                    /* Keep the comparison clock live without scheduling a
++                     * database write for every periodic snapshot. */
++                    existing->last_conn_time = assoc_time;
+                     continue;
+                 }
+ 
+-                mac_addr_str_t sta_str, bss_str, radio_str;
+-                em_2xlong_string_t key;
+-                dm_easy_mesh_t::macbytes_to_string(sta_info.id, sta_str);
+-                dm_easy_mesh_t::macbytes_to_string(sta_info.bssid, bss_str);
+-                dm_easy_mesh_t::macbytes_to_string(sta_info.radiomac, radio_str);
+-                snprintf(key, sizeof(key), "%s@%s@%s", sta_str, bss_str, radio_str);
+-                if (hash_map_get(dm->m_sta_assoc_map, key) == NULL) {
+-                    hash_map_put(dm->m_sta_assoc_map, strdup(key), new dm_sta_t(&sta_info));
+-                    added++;
++                update_sta_map_assoc_row(dm->m_sta_assoc_map, &sta_info);
++                added++;
++                if (conflicting_claim) {
++                    em_printfout(
++                            "Topology Response selected newer owner sta=%s bssid=%s age=%u",
++                            util::mac_to_string(sta_info.id).c_str(),
++                            util::mac_to_string(sta_info.bssid).c_str(),
++                            assoc_time);
+                 }
+             }
+         }
+-- 
+2.43.0

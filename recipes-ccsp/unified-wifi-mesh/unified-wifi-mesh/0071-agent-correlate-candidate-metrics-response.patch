@@ -1,0 +1,349 @@
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Subject: [PATCH] metrics: correlate and deliver candidate RCPI response
+
+An agent normally rests in topo_synchronized, not configured.  The
+Unassociated STA result orchestrator only accepted configured, selected an
+arbitrary first radio, and read the response entries from that radio's data
+model instead of the command snapshot populated by the asynchronous OneWifi
+callback.  Consequently every valid HAL result remained pending until the
+command TTL expired.
+
+Route a single-radio query and its asynchronous result by operating class,
+preserve the parsed result explicitly when constructing the command snapshot,
+allow the stable topo_synchronized state, serialize the response entries from
+that snapshot, and send the fire-and-forget response synchronously while
+preserving the radio's stable state.  Keep one query MID outstanding until the
+metrics response arrives: an ACK accepts the request but does not complete the
+measurement, and a timeout clears the transaction so it cannot poison later
+queries.  A client-capability exchange may leave a controller radio in the
+confirmed state, which is also a valid starting point for this independent
+measurement transaction.
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -641,2 +641,3 @@ class em_metrics_t {
+         */
+         unsigned short m_unassoc_sta_query_msg_id = 0;
++public:
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -2296,15 +2296,53 @@ em_t *em_agent_t::find_em_for_msg_type(unsigned char *data, unsigned int len,
+            }
+            break;
+ 
+-        case em_msg_type_unassoc_sta_link_metrics_query:
+-           em = (em_t *)hash_map_get_first(m_em_map);
+-           while (em != NULL) {
+-                if ((em->is_al_interface_em() == false)) {
+-                    break;
+-                }
+-                em = (em_t *)hash_map_get_next(m_em_map, em);
+-            }
+-            break;
++        case em_msg_type_unassoc_sta_link_metrics_query: {
++            unsigned char requested_opclass = 0;
++            unsigned char *tlv_ptr = data + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++            unsigned char *frame_end = data + len;
++
++            while (tlv_ptr + sizeof(em_tlv_t) <= frame_end) {
++                em_tlv_t *query_tlv = reinterpret_cast<em_tlv_t *>(tlv_ptr);
++                unsigned short query_tlv_len = ntohs(query_tlv->len);
++                if (tlv_ptr + sizeof(em_tlv_t) + query_tlv_len > frame_end) {
++                    break;
++                }
++                if (query_tlv->type == em_tlv_type_unassoc_sta_link_metric_query &&
++                    query_tlv_len >= 2) {
++                    requested_opclass = query_tlv->value[0];
++                    break;
++                }
++                if (query_tlv->type == em_tlv_type_eom) {
++                    break;
++                }
++                tlv_ptr += sizeof(em_tlv_t) + query_tlv_len;
++            }
++
++            em = static_cast<em_t *>(hash_map_get_first(m_em_map));
++            while (em != NULL) {
++                bool matches = false;
++                if (!em->is_al_interface_em() && requested_opclass != 0) {
++                    dm_easy_mesh_t *radio_dm = em->get_data_model();
++                    for (unsigned int idx = 0; idx < radio_dm->get_num_op_class(); idx++) {
++                        em_op_class_info_t *op = radio_dm->get_op_class_info(idx);
++                        if (op != NULL && op->op_class == requested_opclass &&
++                            memcmp(op->id.ruid, em->get_radio_interface_mac(),
++                                sizeof(mac_address_t)) == 0) {
++                            matches = true;
++                            break;
++                        }
++                    }
++                }
++                if (matches) {
++                    em_printfout("Unassociated STA query routed to radio %s for operating class %u",
++                        util::mac_to_string(em->get_radio_interface_mac()).c_str(),
++                        requested_opclass);
++                    break;
++                }
++                em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
++            }
++            break;
++        }
+ 
+         case em_msg_type_unassoc_sta_link_metrics_rsp:
+            printf("%s:%d: Sending Unassoc STA Link Metrics response\n", __func__, __LINE__);
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -267,14 +267,22 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+         case em_cmd_type_get_link_quality_report:
+             m_sm.set_state(em_state_agent_link_quality_report_pending);
+             break;
+ 
++        case em_cmd_type_unassoc_sta_result: {
++            /* The OneWifi callback is an asynchronous continuation of the
++             * already acknowledged query.  Send its 1905 result once without
++             * perturbing the radio's stable topology state. */
++            em_state_t saved_state = m_sm.get_state();
++            m_sm.set_state(em_state_agent_unassoc_sta_metrics_report_pending);
++            em_metrics_t::process_agent_state();
++            m_sm.set_state(saved_state);
++            m_orch_state = em_orch_state_fini;
++            break;
++        }
++
+         case em_cmd_type_unassoc_sta_query:
+             m_sm.set_state(em_state_ctrl_unassoc_sta_link_metrics_pending);
+             break;
+ 
+-        case em_cmd_type_unassoc_sta_result:
+-            m_sm.set_state(em_state_agent_unassoc_sta_metrics_report_pending);
+-            break;
+-        
+ 	default:
+             break;
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -403,6 +403,28 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+         return -1;
+     }
+ 
++    em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *>(buff);
++    em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
++    unsigned short response_msg_id = ntohs(cmdu->id);
++    std::vector<em_t *> em_radios;
++    em_t *matched_em = nullptr;
++
++    get_mgr()->get_all_em_for_al_mac(hdr->src, em_radios);
++    for (auto &radio : em_radios) {
++        if (radio->get_state() == em_state_ctrl_unassoc_sta_link_metrics_pending &&
++            radio->get_unassoc_sta_query_msg_id() == response_msg_id) {
++            matched_em = radio;
++            break;
++        }
++    }
++
++    if (matched_em == nullptr) {
++        em_printfout("Ignoring uncorrelated Unassoc STA response MID %u",
++            response_msg_id);
++        m_unassoc_in_progress = false;
++        return -1;
++    }
++
+     dm_easy_mesh_t *dm = get_data_model();
+ 
+     memset(dm->m_unassoc_sta_metrics, 0, sizeof(dm->m_unassoc_sta_metrics));
+@@ -440,16 +462,18 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+     if (dm->m_num_unassoc_sta_metrics > 0) {
+         struct timeval received_at;
+-        em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
+         em_t *em = static_cast<em_t *>(this);
+ 
+         gettimeofday(&received_at, NULL);
+         dm->m_unassoc_sta_metrics_received_ms =
+             static_cast<uint64_t>(received_at.tv_sec) * 1000ULL +
+             static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
+-        dm->m_unassoc_sta_metrics_msg_id = ntohs(cmdu->id);
++        dm->m_unassoc_sta_metrics_msg_id = response_msg_id;
+         memcpy(dm->m_unassoc_sta_metrics_ruid, em->get_radio_interface_mac(),
+             sizeof(mac_address_t));
+     }
++    matched_em->clear_unassoc_sta_query_msg_id();
++    matched_em->set_state(em_state_ctrl_configured);
++    em_printfout("Completed candidate metrics transaction MID %u", response_msg_id);
+ 
+     m_unassoc_in_progress = false;
+     return 0;
+@@ -2091,7 +2115,6 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+             (response_msg_id == em->get_unassoc_sta_query_msg_id()))
+         {
+             matched_em = em;
+-	    em->clear_unassoc_sta_query_msg_id();
+             break;
+         }
+     }
+@@ -2099,7 +2122,8 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+     }
+ 
+     if (matched_em != nullptr) {
+-        matched_em->set_state(em_state_ctrl_configured);
++        em_printfout("Unassociated STA query MID %u accepted; awaiting metrics response",
++            response_msg_id);
+     }
+ 
+     em_radios.clear();
+@@ -2400,6 +2424,12 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+         return -1;
+     }
+ 
++    em_t *em = static_cast<em_t *>(this);
++    if (em->get_unassoc_sta_query_msg_id() != 0) {
++        /* One outstanding MID is retried by command timeout, not replaced. */
++        return 0;
++    }
++
+     em_cmd_unassoc_sta_query_t *cmd = static_cast<em_cmd_unassoc_sta_query_t *>(get_current_cmd());
+     if (cmd == NULL) {
+         return -1;
+@@ -2494,7 +2524,6 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+ 
+     em_printfout("%s:%d: Unassoc Query sent to Agent successfully", __func__, __LINE__);
+ 
+-    em_t *em = static_cast<em_t *>(this);
+     em->m_unassoc_sta_query_msg_id = ntohs(cmdu->id);
+     em_printfout("%s:%d Stored query msg_id=%u", 
+              __func__, __LINE__, em->m_unassoc_sta_query_msg_id);
+@@ -2605,7 +2634,16 @@ void em_metrics_t::send_unassoc_sta_link_metrics_resp_msg()
+ 
+     dm_easy_mesh_t *dm = get_data_model();
+     unsigned short msg_id = dm->get_msg_id();
+-    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
++    em_cmd_t *cmd = get_current_cmd();
++    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
++    if (cmd != NULL && cmd->get_type() == em_cmd_type_unassoc_sta_result) {
++        /* analyze_unassoc_sta_result() populates the immutable command
++         * snapshot, not the selected radio's persistent data model. */
++        rsp = &cmd->get_data_model()->m_unassoc_sta_metrics_rsp;
++    }
++
++    em_printfout("Sending %u candidate metrics with query MID %u",
++        rsp->num_entries, msg_id);
+ 
+    memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
+    tmp += sizeof(mac_address_t);
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -1022 +1022,6 @@ int dm_easy_mesh_agent_t::analyze_unassoc_sta_result(em_bus_event_t *evt, em_cmd
+-    pcmd[num] = new em_cmd_unassoc_sta_result_t(evt->params, *this);
++    auto *result_cmd = new em_cmd_unassoc_sta_result_t(evt->params, *this);
++    /* dm_easy_mesh_t::operator= intentionally copies the persistent model,
++     * but not this transient callback result.  Preserve it explicitly in the
++     * immutable command snapshot consumed by the selected radio. */
++    result_cmd->get_data_model()->m_unassoc_sta_metrics_rsp = *rsp;
++    pcmd[num] = result_cmd;
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -199,8 +199,9 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+             return true;
+         }
+     } else if (pcmd->m_type == em_cmd_type_unassoc_sta_result) {
+-        if ((em->get_state() == em_state_agent_configured) ||
+-            ((em->get_state() ==em_state_agent_unassoc_sta_metrics_report_pending))) {
++        if ((em->get_state() == em_state_agent_topo_synchronized) ||
++            (em->get_state() == em_state_agent_configured) ||
++            (em->get_state() == em_state_agent_unassoc_sta_metrics_report_pending)) {
+             return true;
+         }
+     }
+@@ -529,12 +530,34 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
+                 break;
+ 
+             case em_cmd_type_unassoc_sta_result:
+-                // Unassociated STA metrics response is processed only once.
+-                // Select the first non-AL EM instance as the candidate and
+-                // avoid queuing additional EMs for the same response.		
+-                if (!(em->is_al_interface_em()) && (count == 0)) {
+-                    queue_push(pcmd->m_em_candidates, em);
+-                    count++;
++                if (!em->is_al_interface_em() && count == 0) {
++                    em_unassoc_sta_metrics_rsp_t *rsp =
++                        &pcmd->get_data_model()->m_unassoc_sta_metrics_rsp;
++                    dm_easy_mesh_t *radio_dm = em->get_data_model();
++                    bool radio_matches_result = false;
++
++                    for (unsigned int result_idx = 0;
++                         result_idx < rsp->num_entries && !radio_matches_result;
++                         result_idx++) {
++                        for (unsigned int op_idx = 0;
++                             op_idx < radio_dm->get_num_op_class(); op_idx++) {
++                            em_op_class_info_t *op = radio_dm->get_op_class_info(op_idx);
++                            if (op != NULL &&
++                                op->op_class == rsp->entry[result_idx].op_class &&
++                                memcmp(op->id.ruid, em->get_radio_interface_mac(),
++                                    sizeof(mac_address_t)) == 0) {
++                                radio_matches_result = true;
++                                break;
++                            }
++                        }
++                    }
++
++                    if (radio_matches_result) {
++                        queue_push(pcmd->m_em_candidates, em);
++                        count++;
++                        em_printfout("Candidate metrics result selected radio %s",
++                            util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                    }
+                 }
+                 break;
+ 
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -369,13 +369,25 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+         case em_cmd_type_scan_channel:
+         case em_cmd_type_set_policy:
+         case em_cmd_type_bsta_cap:
+-	case em_cmd_type_unassoc_sta_query:
+             if ((em->get_state() == em_state_ctrl_configured) ||
+                 (em->get_state() == em_state_ctrl_topo_synchronized) ||
+                 (em->get_state() == em_state_ctrl_channel_selected)) {
+                 return true;
+             }
+             break;
++        case em_cmd_type_unassoc_sta_query:
++            /* Candidate measurements are read-only and remain valid in the
++             * stable states reached before/after channel orchestration. */
++            if ((em->get_state() == em_state_ctrl_configured) ||
++                (em->get_state() == em_state_ctrl_topo_synchronized) ||
++                (em->get_state() == em_state_ctrl_ap_cap_report_received) ||
++                (em->get_state() == em_state_ctrl_sta_cap_confirmed) ||
++                (em->get_state() == em_state_ctrl_channel_queried) ||
++                (em->get_state() == em_state_ctrl_channel_selected) ||
++                (em->get_state() == em_state_ctrl_misconfigured)) {
++                return true;
++            }
++            break;
+         default:
+             break;
+     }
+@@ -449,6 +460,17 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+             break;
+         }
+ 
++        case em_cmd_type_unassoc_sta_query:
++            if (em->get_unassoc_sta_query_msg_id() != 0) {
++                em_printfout("Candidate metrics query timed out after transmit; clearing outstanding MID");
++                em->clear_unassoc_sta_query_msg_id();
++                em->set_state(em_state_ctrl_configured);
++            } else {
++                em_printfout("Candidate metrics query timed out before transmit in state %s",
++                    em_t::state_2_str(em->get_state()));
++            }
++            break;
++
+         default:
+             break;
+ 	}

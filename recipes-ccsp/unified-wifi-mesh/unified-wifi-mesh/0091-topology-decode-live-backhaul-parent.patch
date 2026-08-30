@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000091 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 01:05:00 -0700
+Subject: [PATCH] topology: decode live backhaul parent
+
+IEEE 1905 Device Information carries media-specific network membership for
+each local Wi-Fi interface. For a station interface that field is the BSSID
+of its network. The agent incorrectly repeated its local STA MAC there, and
+the controller did not decode the field, so a periodic Topology Response
+could not update a changed backhaul parent.
+
+Publish the live upstream BSSID as station network membership, decode the
+variable-length local-interface records into the controller's existing bSTA
+model by local interface MAC, and persist a change. Build the topology against
+that upstream BSSID rather than the local model key. This keeps dynamic parent
+convergence on the normal IEEE 1905 Topology Query/Response path and accepts
+ordinary Ethernet interface records that carry no media-specific data.
+
+Upstream-Status: Pending
+---
+ src/ctrl/em_network_topo.cpp        |  6 +--
+ src/em/config/em_configuration.cpp | 97 ++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 99 insertions(+), 4 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 1111111..2222222 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2481,6 +2481,99 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+     uint8_t *src_al_mac = hdr->src;
+     
+ 	dm = get_data_model();
++    if (dm == NULL || len < sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) + sizeof(em_tlv_t)) {
++        em_printfout("Topology Response too short for Device Information: len=%u", len);
++        return -1;
++    }
++
++    /* IEEE 1905 Device Information carries the media-specific network
++     * membership for each local Wi-Fi interface.  For a station interface
++     * that value is the upstream AP BSSID, so it is the authoritative live
++     * backhaul-parent observation in every Topology Response. */
++    unsigned char *device_cursor = buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++    unsigned int device_remaining = len -
++        static_cast<unsigned int>(sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
++    while (device_remaining >= sizeof(em_tlv_t)) {
++        em_tlv_t *device_tlv = reinterpret_cast<em_tlv_t *>(device_cursor);
++        unsigned int value_len = ntohs(device_tlv->len);
++        unsigned int total_len = sizeof(em_tlv_t) + value_len;
++        if (total_len > device_remaining) {
++            em_printfout("Malformed Topology Response while decoding Device Information");
++            return -1;
++        }
++        if (device_tlv->type == em_tlv_type_eom) {
++            break;
++        }
++        if (device_tlv->type == em_tlv_type_device_info) {
++            if (value_len < sizeof(em_device_info_type_t)) {
++                em_printfout("Truncated Device Information TLV: len=%u", value_len);
++                return -1;
++            }
++            em_device_info_type_t *device_info =
++                reinterpret_cast<em_device_info_type_t *>(device_tlv->value);
++            unsigned char *interface_cursor =
++                reinterpret_cast<unsigned char *>(device_info->local_interface);
++            unsigned int interface_remaining =
++                value_len - sizeof(em_device_info_type_t);
++            for (unsigned int intf_idx = 0;
++                    intf_idx < device_info->local_interface_num; intf_idx++) {
++                /* IEEE 1905 local-interface entries are variable length:
++                 * MAC(6), media type(2), media-info length(1), then the media
++                 * data. Ethernet entries legitimately carry zero data. */
++                const unsigned int fixed_len = sizeof(mac_address_t) +
++                    sizeof(unsigned short) + sizeof(unsigned char);
++                if (interface_remaining < fixed_len) {
++                    em_printfout("Truncated Device Information interface=%u remaining=%u",
++                        intf_idx, interface_remaining);
++                    break;
++                }
++                mac_address_t local_mac;
++                memcpy(local_mac, interface_cursor, sizeof(local_mac));
++                unsigned int media_len = interface_cursor[sizeof(mac_address_t) +
++                    sizeof(unsigned short)];
++                unsigned int entry_len = fixed_len + media_len;
++                if (entry_len > interface_remaining) {
++                    em_printfout("Invalid Device Information media length=%u interface=%u",
++                        media_len, intf_idx);
++                    break;
++                }
++
++                unsigned char *media = interface_cursor + fixed_len;
++                if (media_len >= sizeof(mac_address_t) + 2 &&
++                        media[sizeof(mac_address_t)] == EM_MEDIA_WIFI_ROLE_STA &&
++                        memcmp(media, ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) {
++                    mac_address_t upstream_bssid;
++                    memcpy(upstream_bssid, media, sizeof(upstream_bssid));
++                    for (unsigned int bss_idx = 0;
++                            bss_idx < dm->get_num_bss(); bss_idx++) {
++                        em_bss_info_t *bsta = dm->get_bss_info(bss_idx);
++                        if (bsta == NULL || bsta->vap_mode != em_vap_mode_sta ||
++                                memcmp(bsta->sta_mac, local_mac,
++                                    sizeof(mac_address_t)) != 0) {
++                            continue;
++                        }
++                        if (memcmp(bsta->bssid.mac, upstream_bssid,
++                                sizeof(mac_address_t)) != 0) {
++                            em_printfout(
++                                "Backhaul parent update: sta=%s old_bssid=%s new_bssid=%s",
++                                util::mac_to_string(local_mac).c_str(),
++                                util::mac_to_string(bsta->bssid.mac).c_str(),
++                                util::mac_to_string(upstream_bssid).c_str());
++                            memcpy(bsta->bssid.mac, upstream_bssid,
++                                sizeof(mac_address_t));
++                            dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++                        }
++                        break;
++                    }
++                }
++                interface_cursor += entry_len;
++                interface_remaining -= entry_len;
++            }
++            break;
++        }
++        device_cursor += total_len;
++        device_remaining -= total_len;
++    }
+ 
+     tlv =  reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+     tmp_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+@@ -6474,7 +6567,10 @@ void em_configuration_t::fill_media_data(em_media_spec_data_t *spec, dm_bss_t *b
+         memcpy(spec->network_memb, bss_info->bssid.mac, sizeof(mac_address_t));
+         spec->role = EM_MEDIA_WIFI_ROLE_AP;
+     } else {
+-        memcpy(spec->network_memb, bss_info->sta_mac, sizeof(mac_address_t));
++        /* IEEE 1905 media-specific information defines network membership as
++         * the BSSID for a Wi-Fi interface.  The local interface field already
++         * carries sta_mac; repeating it here loses the live upstream parent. */
++        memcpy(spec->network_memb, bss_info->bssid.mac, sizeof(mac_address_t));
+         spec->role = EM_MEDIA_WIFI_ROLE_STA;
+     }
+     radio = dm->get_radio(bss_info->ruid.mac);
+diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
+index 3333333..4444444 100644
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -144,10 +144,10 @@ em_network_topo_t *em_network_topo_t::find_topology_by_bh_associated(dm_easy_mes
+ 	}
+ 	// From the bss info obtained, find the appropriate em_network_topo_t containing this bss
+ 	// and return that topology object.
+-	// bss->id.bssid  = local bSTA interface MAC (used to locate the parent topology node)
+-	// bss->bssid.mac = upstream AP BSSID the bSTA is associated to (shown in Backhaul.MACAddress)
++	// bss->id.bssid is the local model key; bss->bssid.mac is the upstream AP
++	// BSSID reported as the station interface's IEEE 1905 network membership.
+ 	mac_address_t bss_mac;
+-	memcpy(bss_mac, bss->id.bssid, sizeof(mac_address_t));
++	memcpy(bss_mac, bss->bssid.mac, sizeof(mac_address_t));
+ 	if (dm->is_controller() == false) {
+ 		// Set BackhaulMACAddress to the upstream AP BSSID, not the local bSTA MAC
+ 		memcpy(dm->m_device.m_device_info.backhaul_mac.mac, bss->bssid.mac, sizeof(mac_address_t));
+-- 
+2.43.0

@@ -1,0 +1,293 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: notify when an expired neighbor is removed
+
+The topology garbage collector removed neighbors after 60 seconds without
+publishing the topology-change event required by ADR-0014.  Consequently no
+Topology Notification was sent and other IEEE 1905 nodes had no protocol
+signal that the local neighbor view had changed.
+
+Publish a typed NeighborExpired event after removing the node and releasing
+the topology database write lock.  A dedicated consumer feeds that event into
+the existing Topology Notification transmitter, preserving its multicast
+format, message-ID allocation and notification-sent state transition.  If the
+event receiver ever lags, send one convergence notification rather than
+silently losing the topology change.
+
+Do not publish for incomplete nodes removed from a temporary convergence
+state: those nodes never became established topology neighbors.  Add a unit
+test for the expiry, removal and event-publication boundary.
+
+---
+ ieee1905-core/src/cmdu_proxy.rs       | 48 +++++++++++++++++++-
+ ieee1905-core/src/main.rs             | 16 ++++++-
+ ieee1905-core/src/topology_manager.rs | 85 +++++++++++++++++++++++++++++++++--
+ 3 files changed, 143 insertions(+), 6 deletions(-)
+
+diff --git a/ieee1905-core/src/cmdu_proxy.rs b/ieee1905-core/src/cmdu_proxy.rs
+index 161d1b4..9c19720 100644
+--- a/ieee1905-core/src/cmdu_proxy.rs
++++ b/ieee1905-core/src/cmdu_proxy.rs
+@@ -24,7 +24,9 @@ use crate::cmdu_codec::*;
+ use crate::ethernet_subject_transmission::EthernetSender;
+ use crate::interface_manager::get_mac_address_by_interface;
+ use crate::tlv_cmdu_codec::TLVTrait;
+-use crate::topology_manager::{Ieee1905Node, Role, TopologyDatabase, UpdateType};
++use crate::topology_manager::{
++    Ieee1905Node, Role, TopologyChangeEvent, TopologyDatabase, UpdateType,
++};
+ use crate::{MessageIdGenerator, next_task_id};
+ use pnet::datalink::MacAddr;
+ use std::collections::HashMap;
+@@ -512,6 +514,50 @@ pub async fn cmdu_topology_notification_transmission(
+     }
+ }
+ 
++#[instrument(skip_all, name = "topology_change_notification_worker", fields(task = next_task_id()))]
++pub async fn cmdu_topology_change_notification_worker(
++    interface: String,
++    sender: Arc<EthernetSender>,
++    message_id_generator: Arc<MessageIdGenerator>,
++    local_al_mac_address: MacAddr,
++    forwarding_interface_mac: MacAddr,
++    mut topology_change_rx: tokio::sync::broadcast::Receiver<TopologyChangeEvent>,
++) {
++    loop {
++        match topology_change_rx.recv().await {
++            Ok(TopologyChangeEvent::NeighborExpired { al_mac }) => {
++                info!(
++                    expired_al_mac = %al_mac,
++                    "Sending Topology Notification for expired neighbor"
++                );
++                cmdu_topology_notification_transmission(
++                    interface.clone(),
++                    sender.clone(),
++                    message_id_generator.clone(),
++                    local_al_mac_address,
++                    forwarding_interface_mac,
++                )
++                .await;
++            }
++            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
++                warn!(
++                    skipped,
++                    "Topology-change receiver lagged; sending convergence notification"
++                );
++                cmdu_topology_notification_transmission(
++                    interface.clone(),
++                    sender.clone(),
++                    message_id_generator.clone(),
++                    local_al_mac_address,
++                    forwarding_interface_mac,
++                )
++                .await;
++            }
++            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
++        }
++    }
++}
++
+ #[instrument(
+     skip_all,
+     name = "cmdu_link_metric_query_transmission",
+diff --git a/ieee1905-core/src/main.rs b/ieee1905-core/src/main.rs
+index c63d9a9..470994f 100644
+--- a/ieee1905-core/src/main.rs
++++ b/ieee1905-core/src/main.rs
+@@ -27,7 +27,9 @@ use ieee1905::artifact_exchange_service::client::ArtifactExchangeClientFactory;
+ use ieee1905::artifact_exchange_service::server::ArtifactExchangeServer;
+ use ieee1905::cmdu_handler::*;
+ use ieee1905::cmdu_message_id_generator::get_message_id_generator;
+-use ieee1905::cmdu_proxy::cmdu_topology_discovery_transmission_worker;
++use ieee1905::cmdu_proxy::{
++    cmdu_topology_change_notification_worker, cmdu_topology_discovery_transmission_worker,
++};
+ use ieee1905::ethernet_subject_reception::EthernetReceiver;
+ use ieee1905::ethernet_subject_transmission::EthernetSender;
+ use ieee1905::interface_manager::*;
+@@ -268,6 +270,18 @@ async fn main() -> anyhow::Result<()> {
+         ),
+     );
+ 
++    spawn_named(
++        "proxy_topo_change_notification",
++        cmdu_topology_change_notification_worker(
++            forwarding_interface.clone(),
++            sender.clone(),
++            message_id_generator.clone(),
++            al_mac,
++            forwarding_mac,
++            topology_db.subscribe_topology_changes(),
++        ),
++    );
++
+     let mut signal_terminate = signal(SignalKind::terminate())?;
+     let mut signal_interrupt = signal(SignalKind::interrupt())?;
+ 
+diff --git a/ieee1905-core/src/topology_manager.rs b/ieee1905-core/src/topology_manager.rs
+index e076a6e..588a617 100644
+--- a/ieee1905-core/src/topology_manager.rs
++++ b/ieee1905-core/src/topology_manager.rs
+@@ -57,7 +57,7 @@ use ratatui::{
+ use std::net::Ipv6Addr;
+ use std::ops::Deref;
+ use std::sync::{Arc, OnceLock};
+-use tokio::sync::{RwLockMappedWriteGuard, RwLockWriteGuard};
++use tokio::sync::{RwLockMappedWriteGuard, RwLockWriteGuard, broadcast};
+ use tokio::{
+     sync::RwLock,
+     task::yield_now,
+@@ -101,6 +101,11 @@ pub enum TransmissionEvent {
+     None,
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum TopologyChangeEvent {
++    NeighborExpired { al_mac: MacAddr },
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct Ieee1905LocalInterface {
+     pub name: String,
+@@ -506,6 +511,7 @@ pub struct TopologyDatabase {
+     pub local_interface_list: Arc<RwLock<Option<Vec<Ieee1905LocalInterface>>>>,
+     pub nodes: Arc<RwLock<IndexMap<MacAddr, Ieee1905NodeInternal>>>,
+     pub local_role: Arc<RwLock<Option<Role>>>,
++    topology_change_tx: broadcast::Sender<TopologyChangeEvent>,
+     artifact_exchange_client_factory: Mutex<Option<ArtifactExchangeClientFactory>>,
+     artifact_exchange_server_ip_address: Mutex<Option<Ipv6Addr>>,
+ }
+@@ -522,6 +528,7 @@ impl TopologyDatabase {
+         // Get local MAC address from forwarding interface
+         let local_mac = get_forwarding_interface_mac(&interface_name);
+ 
++        let (topology_change_tx, _) = broadcast::channel(32);
+         let this = Arc::new(Self {
+             al_mac_address,
+             interface_name,
+@@ -529,6 +536,7 @@ impl TopologyDatabase {
+             local_interface_list: Arc::new(RwLock::new(None)),
+             nodes: Arc::new(RwLock::new(IndexMap::new())),
+             local_role: Arc::new(RwLock::new(None)),
++            topology_change_tx,
+             artifact_exchange_client_factory: Default::default(),
+             artifact_exchange_server_ip_address: Default::default(),
+         });
+@@ -644,6 +652,10 @@ impl TopologyDatabase {
+         ))
+     }
+ 
++    pub fn subscribe_topology_changes(&self) -> broadcast::Receiver<TopologyChangeEvent> {
++        self.topology_change_tx.subscribe()
++    }
++
+     fn update_local_neighbours_ieee1905_compatibility(
+         interfaces: &mut [Ieee1905LocalInterface],
+         ieee1905_nodes: &IndexMap<MacAddr, Ieee1905NodeInternal>,
+@@ -673,8 +685,15 @@ impl TopologyDatabase {
+ 
+         loop {
+             ticker.tick().await; // Wait for the next tick
++            self.garbage_collect_topology(Instant::now()).await;
++        }
++    }
++
++    async fn garbage_collect_topology(&self, now: Instant) {
++        let mut expired_neighbors = Vec::new();
++
++        {
+             let mut nodes = self.nodes.write().await;
+-            let now = Instant::now();
+ 
+             nodes.retain(|al_mac, node| {
+                 // Remove nodes stuck in ConvergingLocal state
+@@ -704,7 +723,12 @@ impl TopologyDatabase {
+                 // Remove nodes that have been inactive
+                 let elapsed = now.duration_since(node.metadata.last_seen);
+                 if elapsed >= Duration::from_secs(60) {
+-                    tracing::debug!(al_mac = ?al_mac, "Removing node due to timeout");
++                    info!(
++                        al_mac = %al_mac,
++                        elapsed_time = elapsed.as_secs_f64(),
++                        "Removing expired neighbor from topology"
++                    );
++                    expired_neighbors.push(*al_mac);
+                     return false; // Remove from database
+                 }
+ 
+@@ -720,6 +744,15 @@ impl TopologyDatabase {
+                 debug!("No nodes in the topology, waiting for updates...");
+             }
+         }
++
++        // Publish only after releasing the database write lock. Consumers may
++        // immediately build a Topology Response from the new local snapshot.
++        for al_mac in expired_neighbors {
++            let event = TopologyChangeEvent::NeighborExpired { al_mac };
++            if self.topology_change_tx.send(event).is_err() {
++                debug!(%al_mac, "No subscriber for expired-neighbor event");
++            }
++        }
+     }
+ 
+     #[instrument(skip_all, name = "topo_db_refresh_interfaces", fields(task = next_task_id()))]
+@@ -1323,8 +1356,11 @@ impl TopologyDatabase {
+ mod tests {
+     use crate::TopologyDatabase;
+     use crate::cmdu_codec::MediaType;
+-    use crate::topology_manager::{Ieee1905DeviceData, Ieee1905InterfaceData, UpdateType};
++    use crate::topology_manager::{
++        Ieee1905DeviceData, Ieee1905InterfaceData, TopologyChangeEvent, UpdateType,
++    };
+     use pnet::datalink::MacAddr;
++    use tokio::time::{Duration, Instant};
+ 
+     #[tokio::test]
+     async fn test_remote_controller_won() {
+@@ -1373,4 +1409,45 @@ mod tests {
+                 .is_none()
+         );
+     }
++
++    #[tokio::test]
++    async fn expired_neighbor_is_removed_and_published() {
++        let db = TopologyDatabase::new(MacAddr::new(0, 0, 0, 0, 0, 0), "en1".to_string());
++        let mut topology_changes = db.subscribe_topology_changes();
++        let al_mac = MacAddr::new(0, 0, 0, 0, 0, 2);
++
++        let device = Ieee1905DeviceData::new(
++            al_mac,
++            al_mac,
++            None,
++            *db.local_mac.read().await,
++            None,
++            None,
++        );
++        db.update_ieee1905_topology(
++            device,
++            UpdateType::DiscoveryReceived,
++            None,
++            None,
++            None,
++        )
++        .await;
++
++        let now = Instant::now();
++        db.nodes
++            .write()
++            .await
++            .get_mut(&al_mac)
++            .unwrap()
++            .metadata
++            .last_seen = now - Duration::from_secs(61);
++
++        db.garbage_collect_topology(now).await;
++
++        assert!(db.get_device(al_mac).await.is_none());
++        assert_eq!(
++            topology_changes.try_recv().unwrap(),
++            TopologyChangeEvent::NeighborExpired { al_mac }
++        );
++    }
+ }
+-- 
+2.43.0

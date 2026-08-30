@@ -1,0 +1,56 @@
+{
+  "configurations": [
+    {
+      "fixed_legacy_rate_mbps": 11,
+      "kernel_counters": {
+        "phy74": {
+          "considered": 141,
+          "delivered": 91,
+          "dropped": 50
+        },
+        "phy75": {
+          "considered": 2758,
+          "delivered": 1931,
+          "dropped": 827
+        }
+      },
+      "kernel_generation": 2,
+      "kernel_link_state": {
+        "phy74": "rate stats considered 141 dropped 50 last_signal -84 last_snr 7 required_snr 8 rate_loss_pct 30 effective_loss_pct 30 rate_idx 3 encoding 0 nss 0 bw 0",
+        "phy75": "rate stats considered 2758 dropped 827 last_signal -84 last_snr 7 required_snr 8 rate_loss_pct 30 effective_loss_pct 30 rate_idx 3 encoding 0 nss 0 bw 0"
+      },
+      "kernel_medium_enabled": true,
+      "matrix_override": true,
+      "matrix_snr_db": 7,
+      "name": "kernel-rate-per-margin",
+      "ping": {
+        "loss_percent": 100.0,
+        "rtt_avg_ms": -1.0,
+        "rtt_pseudo_max_ms": -1.0
+      },
+      "rate_per_enabled": true,
+      "traffic": {
+        "duration_seconds": 7.512,
+        "guest_cpu": {
+          "capacity_percent": 16.845,
+          "equivalent_core_percent": 101.072,
+          "softirq_percent": 0.067,
+          "steal_percent": 0.089,
+          "system_percent": 3.954
+        },
+        "jitter_ms": 0.0249,
+        "lost_packets": 766,
+        "lost_percent": 29.416,
+        "packets": 2604,
+        "received_mbps": 4.999,
+        "requested_rate": "5M"
+      },
+      "userspace_wmediumd_registered": false
+    }
+  ],
+  "duration_seconds": 5,
+  "kernel": "7.0.0-30-generic",
+  "rate": "5M",
+  "schema": "hwsim-medium-evaluation.v2",
+  "vcpus": 6
+}

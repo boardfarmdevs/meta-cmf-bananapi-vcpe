@@ -1,0 +1,92 @@
+From 6c40191093637026078a8b8f7e65500ab29670bb Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 30 Aug 2026 22:10:00 -0700
+Subject: [PATCH] controller: keep em-config stage clones lightweight
+
+Every autoconfiguration M2 expands into nine orchestration commands.  The
+generic clone path initialises and copies a complete dm_easy_mesh_t into each
+one even though em_config carries only the radio and agent identifiers in its
+parameters and performs its work against the manager-owned live model.
+
+On a five-device tri-band mesh this creates roughly 135 command objects.  A
+dm_easy_mesh_t is about 2.45 MiB in this build, so controller restart can
+commit hundreds of MiB while the onboarding stages queue.
+
+Construct em_config without initialising the unused local model and override
+clone_for_next() so subsequent stages remain lightweight.  Retain the local
+command context required by the existing orchestration API.
+
+Upstream-Status: Pending
+---
+ inc/em_cmd_em_config.h         | 10 ++++++++++
+ src/cmd/em_cmd_em_config.cpp   | 26 +++++++++++++++++++++++---
+ 2 files changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/inc/em_cmd_em_config.h b/inc/em_cmd_em_config.h
+index 0105935..771d88e 100644
+--- a/inc/em_cmd_em_config.h
++++ b/inc/em_cmd_em_config.h
+@@ -37,6 +37,16 @@ public:
+ 	 * @note Ensure that the dm structure is properly initialized before calling this function.
+ 	 */
+ 	em_cmd_em_config_t(em_cmd_params_t param, dm_easy_mesh_t& dm);
++
++	/**!
++	 * @brief Clone the next onboarding orchestration stage without copying the
++	 *        complete EasyMesh data model.
++	 *
++	 * The M2 event carries only stable radio/agent identifiers.  Every stage
++	 * operates on the manager-owned live data model, so cloning the multi-MiB
++	 * command-local model is both unnecessary and very expensive at scale.
++	 */
++	em_cmd_t *clone_for_next() override;
+ };
+ 
+ #endif
+diff --git a/src/cmd/em_cmd_em_config.cpp b/src/cmd/em_cmd_em_config.cpp
+index ee4bff6..4d6a642 100644
+--- a/src/cmd/em_cmd_em_config.cpp
++++ b/src/cmd/em_cmd_em_config.cpp
+@@ -36,11 +36,16 @@
+ #include "em_cmd_em_config.h"
+ 
+ em_cmd_em_config_t::em_cmd_em_config_t(em_cmd_params_t param, dm_easy_mesh_t& dm)
++    : em_cmd_t(em_cmd_type_em_config, param)
+ {
+     em_cmd_ctx_t ctx;;
+ 
+-    m_type = em_cmd_type_em_config;
+-    memcpy(&m_param, &param, sizeof(em_cmd_params_t));
++    (void)dm;
++
++    // em_config is generated from an M2 event whose payload is represented by
++    // m_param.  Its orchestration stages use the manager-owned live data model;
++    // do not initialise/copy the 2.4 MiB command-local model for every stage.
++    m_em_candidates = queue_create();
+ 
+     memset(reinterpret_cast<unsigned char *> (&m_orch_desc[0]), 0, EM_MAX_CMD*sizeof(em_orch_desc_t));
+ 
+@@ -75,3 +80,20 @@ em_cmd_em_config_t::em_cmd_em_config_t(em_cmd_params_t param, dm_easy_mesh_t& dm
+     m_data_model.set_cmd_ctx(&ctx);
+ }
+ 
++em_cmd_t *em_cmd_em_config_t::clone_for_next()
++{
++    em_cmd_ctx_t ctx;
++
++    if (m_orch_op_idx == (m_num_orch_desc - 1)) {
++        return NULL;
++    }
++
++    em_cmd_em_config_t *out = new em_cmd_em_config_t(m_param, m_data_model);
++    out->set_orch_op_index(m_orch_op_idx + 1);
++
++    memset(&ctx, 0, sizeof(em_cmd_ctx_t));
++    ctx.type = out->get_orch_op();
++    out->m_data_model.set_cmd_ctx(&ctx);
++
++    return out;
++}
+-- 
+2.43.0
+

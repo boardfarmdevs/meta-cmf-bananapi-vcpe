@@ -1,0 +1,60 @@
+THE final blocker for the EasyMesh backhaul link. After 0009 (backhaul SSID)
+and ccsp-one-wifi 0007 (STA security suites) got the extender all the way to a
+*successful* 802.11 authentication --
+
+    wifi1.3 (phy #17): auth 02:00:00:e1:16:33 -> 02:00:00:d8:b7:19
+                       status: 0: Successful
+
+-- the link still never progressed to association, and the connect state
+machine just looped auth -> del station -> new station -> auth forever.
+
+Root cause chain, confirmed end to end from the logs:
+
+  1. nl80211_register_mgmt_frames() for a STA-mode VAP iterates stypes_sta[],
+     which on this build is { ACTION, BEACON } -- BEACON being added only when
+     EASY_MESH_NODE && _PLATFORM_BANANAPI_R4_, both of which we define.
+  2. ACTION (frame type 208) registers fine. BEACON (frame type 128) then
+     fails: NL80211_CMD_REGISTER_FRAME returns -EINVAL, because cfg80211 /
+     mac80211_hwsim does not permit registering to receive beacon *management*
+     frames on a managed (station) interface:
+
+       nl80211_register_mgmt_frames:8984: Mgmt frames have been registered
+           for wifi1.3 frame type 208
+       nl80211_register_mgmt_frames:8994: Error registering for management
+           frames on interface wifi1.3 error: -22 (Invalid argument)
+
+  3. That hits `goto error`, so nl80211_register_mgmt_frames() returns -1 and
+     wifi_drv_set_operstate() bails at its "Failed to register for management
+     frames" branch -- *before* reaching `interface->vap_configured = true`.
+  4. With vap_configured stuck false, the global event dispatcher's final
+     catch-all in wifi_hal_nl80211_events.c:
+
+         if (interface != NULL && interface->vap_configured) {
+             do_process_drv_event(interface, gnlh->cmd, tb);
+         }
+
+     silently drops *every* driver event for wifi1.3 -- including
+     NL80211_CMD_AUTHENTICATE. Confirmed: nl80211_authenticate_event()'s entry
+     debug print never appears even once, while `iw event` shows the kernel
+     emitting the successful auth. So wpa_supplicant's SME never receives
+     EVENT_AUTH, never calls sme_send_association(), and the connection attempt
+     just times out and retries forever.
+
+Gate the BEACON entry behind !HWSIM_RADIO so STA-mode registration stops at
+ACTION (which is all the legacy/non-EasyMesh path ever registered anyway, per
+the two commented-out entries just above it). Real BananaPi R4 hardware keeps
+beacon registration and is unaffected.
+
+---
+diff --git a/wifi_hal_nl80211.c b/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -8878,7 +8878,7 @@
+         /*WLAN_FC_STYPE_AUTH,*/ // Uneeded and requires extra info
+         /*WLAN_FC_STYPE_PROBE_REQ,*/ // Unneeded 
+         WLAN_FC_STYPE_ACTION,
+-#if defined(EASY_MESH_NODE) && defined(_PLATFORM_BANANAPI_R4_)
++#if defined(EASY_MESH_NODE) && defined(_PLATFORM_BANANAPI_R4_) && !defined(HWSIM_RADIO)
+         WLAN_FC_STYPE_BEACON,
+ #endif
+     };

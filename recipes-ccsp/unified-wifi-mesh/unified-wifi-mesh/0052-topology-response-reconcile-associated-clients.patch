@@ -1,0 +1,332 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] topology: reconcile clients from topology responses
+
+EasyMesh Topology Notifications are multicast and unacknowledged. The agent
+used them as the only source of client placement, even though the standard
+Associated Clients TLV is explicitly allowed in a Topology Response. A lost
+notification therefore left the controller's STA parent stale indefinitely.
+
+Emit the Associated Clients TLV from the agent's consolidated STA model and
+consume it on every controller Topology Response, not only during initial
+topology synchronization. Reported associations are inserted through the
+normal pending STA update path; its single-association enforcement removes a
+previous BSS attribution and preserves an existing capability frame.
+
+Poll synchronized agents every 15 seconds. The notification remains the
+low-latency path while this standard query/response exchange is the bounded
+repair path. The optional TLV is bounded by both one standard message buffer
+and the exact capacity left in the two-buffer response after all mandatory
+and implementation-specific TLVs have been generated.
+
+Upstream-Status: Pending
+---
+ inc/em_configuration.h             |   2 ++
+ src/ctrl/em_ctrl.cpp                |  30 +++++++++++++++++++++++++++++-
+ src/em/config/em_configuration.cpp | 204 +++++++++++++++++++++++++++++++++++-
+ 3 files changed, 233 insertions(+), 3 deletions(-)
+
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -458,6 +458,7 @@
+ 	 * @note Ensure that the destination address is valid before calling this function.
+ 	 */
+ 	int send_topology_response_msg(unsigned char *dst, unsigned short msg_id);
++	int create_associated_clients_tlv(unsigned char *buff, unsigned int capacity);
+     
+ 	/**!
+ 	 * @brief Sends a topology notification by client.
+@@ -825,6 +826,7 @@
+ 	 * @note Ensure the buffer is properly allocated and the length is correct before calling this function.
+ 	 */
+ 	int handle_topology_response(unsigned char *buff, unsigned int len);
++	int handle_topology_response_clients(unsigned char *buff, unsigned int len);
+     
+ 	/**!
+ 	 * @brief Handles topology notifications.
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -37,6 +37,8 @@
+ #include <sys/time.h>
+ #include <unistd.h>
+ #include <pthread.h>
++#include <algorithm>
++#include <set>
+ #include <cjson/cJSON.h>
+ #include "em.h"
+ #include "em_msg.h"
+@@ -506,7 +508,33 @@
+ 
+ void em_ctrl_t::handle_5s_tick()
+ {
+-	//handle_client_metrics_req();
++	// A Topology Notification is multicast and has no acknowledgement.  Poll
++	// each synchronized agent every 15 seconds so an Associated Clients TLV can
++	// repair a notification lost anywhere on the controller receive path.
++	static unsigned int reconciliation_tick = 0;
++	if (++reconciliation_tick % 3 != 0) {
++		return;
++	}
++
++	std::set<std::string> queried_agents;
++	dm_easy_mesh_t *dm = m_data_model.get_first_dm();
++	while (dm != NULL) {
++		const std::string al_mac = util::mac_to_string(
++				dm->get_agent_al_interface_mac());
++		if (queried_agents.insert(al_mac).second) {
++			std::vector<em_t *> radios;
++			get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), radios);
++			auto query_radio = std::find_if(radios.begin(), radios.end(),
++					[](em_t *radio) {
++						return radio->get_service_type() == em_service_type_ctrl &&
++							radio->get_state() >= em_state_ctrl_topo_synchronized;
++					});
++			if (query_radio != radios.end()) {
++				static_cast<em_configuration_t *>(*query_radio)->send_topology_query_msg();
++			}
++		}
++		dm = m_data_model.get_next_dm(dm);
++	}
+ }
+ 
+ void em_ctrl_t::handle_2s_tick()
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1549,6 +1549,15 @@
+ 	tmp += (sizeof(em_tlv_t) + tlv_len);
+ 	len += static_cast<unsigned int> (sizeof(em_tlv_t) + tlv_len);
+ 
++    // Zero or one Associated Clients TLV, EasyMesh 17.2.5.  Keep space for
++    // the EOM and bound this optional TLV to the response buffer that remains.
++    unsigned int remaining = sizeof(buff) - len - sizeof(em_tlv_t);
++    tlv_len = static_cast<unsigned short>(create_associated_clients_tlv(tmp, remaining));
++    if (tlv_len != 0) {
++        tmp += tlv_len;
++        len += tlv_len;
++    }
++
+     // End of message
+     tlv = reinterpret_cast<em_tlv_t *> (tmp);
+     tlv->type = em_tlv_type_eom;
+@@ -1574,6 +1583,93 @@
+     return static_cast<int> (len);
+ }
+ 
++int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
++                                                       unsigned int capacity)
++{
++    dm_easy_mesh_t *dm = get_data_model();
++    em_tlv_t *tlv = reinterpret_cast<em_tlv_t *>(buff);
++    unsigned char *value = tlv->value;
++    unsigned char *tmp = value + 1;
++    unsigned int payload_len = 1;
++    unsigned int bss_count = 0;
++
++    if (dm == NULL || capacity < sizeof(em_tlv_t) + payload_len) {
++        return 0;
++    }
++
++    // Bound the optional data independently as well as by the actual space
++    // left in the response.  If the complete current set cannot be reported,
++    // omit the TLV rather than send a misleading partial association set.
++    const unsigned int max_payload = std::min(
++            static_cast<unsigned int>(MAX_EM_BUFF_SZ),
++            capacity - static_cast<unsigned int>(sizeof(em_tlv_t)));
++
++    for (unsigned int i = 0; i < dm->get_num_bss(); i++) {
++        em_bss_info_t *bss = dm->get_bss_info(i);
++        unsigned int sta_count = 0;
++        dm_sta_t *sta;
++
++        if (bss == NULL || bss->vap_mode != em_vap_mode_ap || !bss->enabled) {
++            continue;
++        }
++
++        sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
++        while (sta != NULL) {
++            if (sta->m_sta_info.associated &&
++                    memcmp(sta->m_sta_info.bssid, bss->bssid.mac,
++                           sizeof(bssid_t)) == 0) {
++                sta_count++;
++            }
++            sta = static_cast<dm_sta_t *>(hash_map_get_next(dm->m_sta_map, sta));
++        }
++
++        if (sta_count == 0) {
++            continue;
++        }
++
++        const unsigned int bss_len = sizeof(bssid_t) + sizeof(uint16_t) +
++                sta_count * (sizeof(mac_address_t) + sizeof(uint16_t));
++        if (payload_len + bss_len > max_payload || bss_count >= 255) {
++            em_printfout("Associated Clients TLV exceeds bounded payload; omitting TLV");
++            return 0;
++        }
++
++        memcpy(tmp, bss->bssid.mac, sizeof(bssid_t));
++        tmp += sizeof(bssid_t);
++        uint16_t count_be = htons(static_cast<uint16_t>(sta_count));
++        memcpy(tmp, &count_be, sizeof(count_be));
++        tmp += sizeof(count_be);
++
++        sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
++        while (sta != NULL) {
++            if (sta->m_sta_info.associated &&
++                    memcmp(sta->m_sta_info.bssid, bss->bssid.mac,
++                           sizeof(bssid_t)) == 0) {
++                memcpy(tmp, sta->m_sta_info.id, sizeof(mac_address_t));
++                tmp += sizeof(mac_address_t);
++                uint16_t assoc_time_be = 0;
++                memcpy(tmp, &assoc_time_be, sizeof(assoc_time_be));
++                tmp += sizeof(assoc_time_be);
++            }
++            sta = static_cast<dm_sta_t *>(hash_map_get_next(dm->m_sta_map, sta));
++        }
++
++        payload_len += bss_len;
++        bss_count++;
++    }
++
++    if (bss_count == 0) {
++        return 0;
++    }
++
++    value[0] = static_cast<unsigned char>(bss_count);
++    tlv->type = em_tlv_type_associated_clients;
++    tlv->len = htons(static_cast<uint16_t>(payload_len));
++    em_printfout("Created Associated Clients TLV: bss=%u bytes=%u",
++                 bss_count, payload_len);
++    return static_cast<int>(sizeof(em_tlv_t) + payload_len);
++}
++
+ int em_configuration_t::send_ap_mld_config_req_msg()
+ {
+     unsigned char buff[MAX_EM_BUFF_SZ];
+@@ -2189,6 +2285,107 @@
+ 	return 0;
+ }
+ 
++int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
++                                                          unsigned int len)
++{
++    const unsigned int header_len = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++    dm_easy_mesh_t *dm = get_data_model();
++    unsigned int added = 0;
++
++    if (dm == NULL || len < header_len + sizeof(em_tlv_t)) {
++        return -1;
++    }
++
++    unsigned char *cursor = buff + header_len;
++    unsigned int remaining = len - header_len;
++    while (remaining >= sizeof(em_tlv_t)) {
++        em_tlv_t *tlv = reinterpret_cast<em_tlv_t *>(cursor);
++        unsigned int value_len = ntohs(tlv->len);
++        unsigned int total_len = sizeof(em_tlv_t) + value_len;
++
++        if (total_len > remaining) {
++            em_printfout("Malformed Topology Response TLV while reconciling clients");
++            return -1;
++        }
++        if (tlv->type == em_tlv_type_eom) {
++            break;
++        }
++        if (tlv->type != em_tlv_type_associated_clients) {
++            cursor += total_len;
++            remaining -= total_len;
++            continue;
++        }
++        if (value_len < 1) {
++            return -1;
++        }
++
++        unsigned char *value = tlv->value;
++        unsigned int value_remaining = value_len - 1;
++        unsigned int bss_count = value[0];
++        value++;
++        for (unsigned int b = 0; b < bss_count; b++) {
++            if (value_remaining < sizeof(bssid_t) + sizeof(uint16_t)) {
++                return -1;
++            }
++
++            bssid_t bssid;
++            memcpy(bssid, value, sizeof(bssid));
++            value += sizeof(bssid);
++            uint16_t sta_count_be;
++            memcpy(&sta_count_be, value, sizeof(sta_count_be));
++            value += sizeof(sta_count_be);
++            value_remaining -= sizeof(bssid_t) + sizeof(uint16_t);
++            unsigned int sta_count = ntohs(sta_count_be);
++
++            em_bss_info_t *bss_info = dm->get_bss_info_with_mac(bssid);
++            for (unsigned int s = 0; s < sta_count; s++) {
++                if (value_remaining < sizeof(mac_address_t) + sizeof(uint16_t)) {
++                    return -1;
++                }
++
++                em_sta_info_t sta_info = {};
++                memcpy(sta_info.id, value, sizeof(mac_address_t));
++                value += sizeof(mac_address_t) + sizeof(uint16_t);
++                value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
++                if (bss_info == NULL) {
++                    continue;
++                }
++
++                memcpy(sta_info.bssid, bssid, sizeof(bssid_t));
++                memcpy(sta_info.radiomac, bss_info->ruid.mac, sizeof(mac_address_t));
++                sta_info.associated = true;
++                if (dm->get_sta_info(sta_info.id, sta_info.bssid, sta_info.radiomac,
++                                     em_target_sta_map_consolidated) != NULL) {
++                    continue;
++                }
++
++                mac_addr_str_t sta_str, bss_str, radio_str;
++                em_2xlong_string_t key;
++                dm_easy_mesh_t::macbytes_to_string(sta_info.id, sta_str);
++                dm_easy_mesh_t::macbytes_to_string(sta_info.bssid, bss_str);
++                dm_easy_mesh_t::macbytes_to_string(sta_info.radiomac, radio_str);
++                snprintf(key, sizeof(key), "%s@%s@%s", sta_str, bss_str, radio_str);
++                if (hash_map_get(dm->m_sta_assoc_map, key) == NULL) {
++                    hash_map_put(dm->m_sta_assoc_map, strdup(key), new dm_sta_t(&sta_info));
++                    added++;
++                }
++            }
++        }
++
++        if (value_remaining != 0) {
++            em_printfout("Malformed Associated Clients TLV trailing bytes=%u",
++                         value_remaining);
++            return -1;
++        }
++        if (added != 0) {
++            dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
++            em_printfout("Topology Response reconciled %u client association(s)", added);
++        }
++        return static_cast<int>(added);
++    }
++    return 0;
++}
++
+ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
+ {
+     em_tlv_t *tlv;
+@@ -5958,6 +6155,11 @@
+                 } else {
+                     printf("%s:%d em_msg_type_topo_resp handle failed \n", __func__, __LINE__);
+                 }
++                handle_topology_response_clients(data, len);
++            } else if ((get_service_type() == em_service_type_ctrl) &&
++                       (get_state() >= em_state_ctrl_topo_synchronized)) {
++                // Periodic Topology Responses repair a missed multicast notification.
++                handle_topology_response_clients(data, len);
+             }
+             break;
+ 
+@@ -6302,5 +6504,3 @@
+ {
+ 
+ }
+-
+-
+
+-- 
+2.43.0

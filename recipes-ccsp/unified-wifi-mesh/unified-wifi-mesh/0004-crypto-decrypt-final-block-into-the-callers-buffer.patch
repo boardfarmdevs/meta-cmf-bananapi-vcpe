@@ -1,0 +1,96 @@
+em_crypto: write the final decrypted block into the caller's buffer.
+
+platform_cipher_decrypt() throws away the last block of every decryption and
+reports it to the caller as valid plaintext.
+
+    uint8_t buf[AES_BLOCK_SIZE];              /* local scratch */
+    ...
+    plen = data_len;
+    EVP_DecryptUpdate(ctx, data, &plen, data, data_len);   /* in-place */
+
+    len = sizeof(buf);
+    EVP_DecryptFinal_ex(ctx, buf, &len);      /* final block -> local, discarded */
+    plen += len;                              /* ...but still counted */
+
+For AES-128-CBC the callers pass disable_padding = false, so PKCS#7 padding is
+enabled and EVP_DecryptUpdate deliberately holds the last block back until
+EVP_DecryptFinal_ex can strip the padding. That final block's plaintext is
+written into the local `buf`, which is never read and goes out of scope. The
+decryption is in-place, so the corresponding bytes of the caller's buffer are
+never written and still contain the raw CIPHERTEXT -- while `plen` is
+incremented by their length, telling the caller they are valid plaintext.
+
+Result: every decryption silently returns correct plaintext up to the last
+block boundary, followed by ciphertext bytes presented as plaintext.
+
+Found via the EasyMesh WSC M2 encrypted settings, where it corrupted the
+fronthaul radio identity. Dumping the plaintext at both ends and diffing:
+
+    haul 0: tx 95B  rx 95B   differing byte offsets: 80..94
+    haul 1: tx 95B  rx 95B   differing byte offsets: 80..94
+    haul 2: tx 90B  rx 90B   differing byte offsets: 80..89
+
+Byte 80 is exactly 5 x AES_BLOCK_SIZE. Everything before the last block
+boundary is correct in every case; everything after it is ciphertext.
+
+Why that produced the symptom it did: in the M2 encrypted settings the WSC MAC
+Address attribute is the LAST attribute written, and its value spans bytes
+77-82 -- straddling the 80-byte boundary. Bytes 77-79 survive, 80-82 do not, so
+the agent decoded MACs whose first three bytes were right and last three were
+ciphertext. Every one of them therefore began 02:00:00 (the hwsim OUI, from the
+surviving half) and matched no interface. They looked like plausible but
+unknown MACs rather than garbage, which is exactly what made this hard to
+place.
+
+It also explains the apparent "positional" pattern -- hauls 0 and 1 wrong,
+haul 2 right. That was never positional. It is a LENGTH effect: iot_ssid is
+shorter than private_ssid and mesh_backhaul, so in that blob every attribute
+sits earlier and the MAC value lands at 72-77, entirely inside the last good
+block. Same code, same path, different SSID length.
+
+And it explains why nothing else looked wrong: SSID, auth type, encryption type
+and network key all sit before byte 80. The MAC was simply the only field far
+enough into the buffer to be hit -- not the only field at risk.
+
+Fix: pass `data + plen` to EVP_DecryptFinal_ex so the final block lands where it
+belongs. Safe unconditionally -- plaintext is never longer than the ciphertext
+the caller supplied, so the buffer always has room.
+
+Verified on a controller and its colocated agent. Before, no received plaintext
+matched what was transmitted and the decoded radio MACs matched no interface.
+After, all 14 received plaintexts match a transmitted plaintext byte for byte,
+and every decoded MAC is a real radio:
+
+    ##mac address[0..2]: 02:00:00:c9:61:4e    = wifi0
+    ##mac address[0..2]: 02:00:00:a3:c9:eb    = wifi2
+    ##mac address[0..3]: 02:00:00:41:21:c4    = wifi1
+
+Not gated behind HWSIM_RADIO, and not specific to EasyMesh: this is a generic
+defect in a shared crypto helper, on every platform, for every caller that
+decrypts with padding enabled. WSC M2 is simply where it happened to be
+noticed.
+
+Upstream: unified-wifi-mesh v0.3.1 (SRCREV c0e72a3).
+
+---
+diff --git a/src/em/crypto/em_crypto.cpp b/src/em/crypto/em_crypto.cpp
+index b0a14d08..0709cd39 100644
+--- a/src/em/crypto/em_crypto.cpp
++++ b/src/em/crypto/em_crypto.cpp
+@@ -576,8 +576,14 @@ uint32_t em_crypto_t::platform_cipher_decrypt(const EVP_CIPHER *cipher_type, uin
+         return 0;
+     }
+ 
+-    len = sizeof(buf);
+-    if (EVP_DecryptFinal_ex(ctx, buf, &len) != 1) {
++    // The final block's plaintext must land in the caller's buffer, immediately
++    // after what DecryptUpdate produced. Writing it to a local scratch buffer
++    // discards it: with padding enabled DecryptUpdate holds the last block back,
++    // so data[plen..] would keep the raw ciphertext while plen below still counts
++    // those bytes as valid plaintext. Safe because the plaintext is never longer
++    // than the ciphertext the caller supplied.
++    len = static_cast<int> (sizeof(buf));
++    if (EVP_DecryptFinal_ex(ctx, data + plen, &len) != 1) {
+         unsigned long err = ERR_get_error();
+         char err_buf[256];
+         ERR_error_string_n(err, err_buf, sizeof(err_buf));

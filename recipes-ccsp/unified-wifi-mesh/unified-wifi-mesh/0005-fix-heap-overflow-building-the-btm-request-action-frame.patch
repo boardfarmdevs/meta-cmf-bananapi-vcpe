@@ -1,0 +1,121 @@
+Fix a 24-byte heap overflow that crashes the agent on every client steer.
+
+THE SYMPTOM: EasyMesh client steering never worked. The controller sent a
+Client Steering Request, the agent received it, acknowledged it, and no 802.11
+BTM Request ever reached the client. It looked like a protocol or an RF problem
+and was chased as both. It is neither -- the agent aborts.
+
+    systemctl show em_agent -p NRestarts   ->  NRestarts=1
+    /minidumps/onewifi_em_agen_*.dmp       (one per steer attempt)
+
+    Crash reason: SIGABRT
+    #2  em_agent_t::handle_btm_request_action_frame  em_agent.cpp:453
+    #3  em_mgr_t::start                              em_mgr.cpp:557
+    #4  main                                         em_agent.cpp:2501
+
+    (analyze_btm_request_action_frame is inlined into its only caller.)
+
+THE DEFECT: the buffer is used two different ways and is sized for the smaller.
+
+'len' is the action payload -- category + bss_tm_req + one neighbour report --
+which is what frame_len reports and what is memcpy'd down to frame_data at the
+end of the function. But the payload is BUILT through an ieee80211_mgmt overlay
+placed at frame_data, and u.action sits 24 bytes into that struct, after the
+802.11 header (frame_control, duration, da, sa, bssid, seq_ctrl). Writing the
+candidate list through the overlay therefore touches
+offsetof(u.action.u.bss_tm_req.variable) + sizeof(em_80211_neighbor_report_t)
+bytes, not 'len' bytes.
+
+Measured on the target rather than derived by eye -- instrumentation printing
+every size, offset and the resulting bound:
+
+    sizes:   action_frame_params_t=22  ieee80211_mgmt=40  category=1
+             bss_tm_req=6  neighbor_report=15  btm_req_var=0
+    offsets: u.action.category=24  u.action.u.bss_tm_req=25
+             u.action.u.bss_tm_req.variable=31
+    ALLOC=44   LAST BYTE WRITTEN AT OFFSET=68   OVERFLOW=24
+
+The 24-byte shortfall is exactly offsetof(u.action.category), i.e. the 802.11
+header the allocation never accounted for.
+
+WHY IT ABORTS RATHER THAN FAULTS: the overrun corrupts heap metadata past the
+end of the chunk, which glibc does not notice until its next allocation. That
+happens inside the very next em_printfout in the function, so the process dies
+AT that log line -- which is why "STA MAC for BTM request" never appeared, and
+why its absence was initially misread as the function never being entered.
+SIGABRT, not SIGSEGV, for the same reason.
+
+THE FIX: size the allocation for the overlay, taking the larger of the two uses.
+'len', frame_len, the memcpy and raw_data_len are all left alone -- they are
+correct for the frame that is actually transmitted. Raising 'len' instead would
+have produced a malformed 46-byte action frame.
+
+VERIFIED on a controller and its extender, one steer per deployment (steering is
+one-shot per em_t, see doc/easymesh):
+
+                                   before      after
+    NRestarts                        1           0
+    minidumps                        1           0
+    "STA MAC for BTM request"        0           5
+    "Frame subdoc send successfull"  0           5
+    steering requests received       1           5
+
+The receive count is the clearest tell: before the fix the agent crashed on the
+first request and restarted, so the controller's four retries arrived at a dead
+process. After it, all five are received and all five produce a frame pushed to
+Device.WiFi.AccessPoint.1.RawFrame.Mgmt.Action.Tx.
+
+Not gated behind HWSIM_RADIO. The arithmetic is platform-independent -- any
+build on which u.action is offset into ieee80211_mgmt (i.e. all of them)
+under-allocates by the header size and corrupts the heap on the first client
+steer. Nothing about this is specific to mac80211_hwsim or to containers.
+
+Upstream: unified-wifi-mesh v0.3.1 (SRCREV c0e72a3).
+
+---
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 3b14bee0..6df95b48 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -38,6 +38,7 @@
+ #include <unordered_map>
+ #include <string>
+ #include "em_cmd_dev_init.h"
++#include <stddef.h>
+ #include "dm_easy_mesh_agent.h"
+ #include <cjson/cJSON.h>
+ #include "ieee80211.h"
+@@ -800,12 +801,32 @@ int dm_easy_mesh_agent_t::analyze_btm_request_action_frame(em_bus_event_t *evt,
+     action_frame_params_t *aframe;
+     raw_data_t l_bus_data;
+     int len = 0;
++    size_t scratch_len = 0, alloc_len = 0;
+     mac_addr_str_t mac_str;
+     em_steering_req_t *steer_req = reinterpret_cast<em_steering_req_t *> (&evt->u.raw_buff);
+ 
+     len = sizeof(ieeeframe->u.action.category) + sizeof(ieeeframe->u.action.u.bss_tm_req) \
+         + sizeof(em_80211_neighbor_report_t);
+-    aframe = static_cast<action_frame_params_t *> (malloc(sizeof(action_frame_params_t) + static_cast<size_t>(len)));
++    // The buffer is used two different ways and must be sized for the LARGER.
++    //
++    // 'len' is the action payload -- category + bss_tm_req + one neighbour report
++    // -- which is what frame_len reports and what is memcpy'd down to frame_data
++    // at the end. But the code below builds that payload through an
++    // ieee80211_mgmt overlay placed at frame_data, and u.action sits 24 bytes
++    // into that struct, after the 802.11 header (frame_control, duration, da,
++    // sa, bssid, seq_ctrl). Writing the candidate list through the overlay
++    // therefore touches offsetof(u.action.u.bss_tm_req.variable) + 15 bytes,
++    // NOT len bytes.
++    //
++    // Sizing on len alone under-allocates by exactly the 24-byte header and
++    // corrupts the heap; glibc then aborts the whole agent at its next
++    // allocation, which is why no BTM Request was ever transmitted. Measured
++    // before this fix: ALLOC=44, last byte written at offset 68, OVERFLOW=24.
++    scratch_len = offsetof(struct ieee80211_mgmt, u.action.u.bss_tm_req.variable)
++        + sizeof(em_80211_neighbor_report_t);
++    alloc_len = sizeof(action_frame_params_t)
++        + ((static_cast<size_t>(len) > scratch_len) ? static_cast<size_t>(len) : scratch_len);
++    aframe = static_cast<action_frame_params_t *> (malloc(alloc_len));
+     if (aframe == NULL) {
+         em_printfout("Error: Failed to allocate action frame");
+         return -1;

@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000085 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sat, 22 Aug 2026 17:55:00 -0700
+Subject: [PATCH] cli: show the exact wireless backhaul parent
+
+The topology hierarchy already follows the Controller's authoritative parent
+tree, but the HTTP model discarded the upstream AP BSSID which justified each
+parent-child relationship.  It also inferred the link band from the child's
+bSTA radio even when the exact parent BSS was available.
+
+Carry the upstream BSSID and media type into both nodes and edges.  Resolve the
+band and channel against the matching BSS on the parent, with the existing
+bSTA-radio path retained as a bounded fallback.  Render wireless edges as
+directed uplinks and expose child, parent, upstream BSSID, band and channel in
+the hover details.  A multi-hop reassociation therefore moves the edge to the
+new parent and identifies the exact BSS used for that hop.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+---
+ src/rdkb-cli/main.go           | 51 ++++++++++++++++++++++++++++++++++++-----
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 42 ++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 86 insertions(+), 9 deletions(-)
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 86e0a2c..65acba1 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4832,8 +4832,10 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+             "fixed":  map[string]bool{"x": true, "y": true},
+             "STAList": createSTAList(x, y, radioList),
++            "upstreamBSSID": strings.ToLower(backhaulMacAddr),
++            "backhaulMedia": backhaulMediaType,
+         })
+
+         childList := getNetworkTreeByKey(backhaulTree, "Child")
+         if childList == nil {
+             return
+         }
+@@ -4850,18 +4852,35 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+
+             band := -1
+             channel := 0
++            upstreamBSSID := ""
++            mediaType := ""
++            childBackhaul := getNetworkTreeByKey(child, "Backhaul")
++            if childBackhaul != nil {
++                upstreamBSSID = strings.ToLower(getTreeValue(childBackhaul, "MACAddress"))
++                mediaType = getTreeValue(childBackhaul, "MediaType")
++            }
+
+-            // parse the band with extender connected
++            // The topology hierarchy says which device is the parent.  Match
++            // the child's reported upstream BSSID against that parent's BSS
++            // inventory so the displayed link identifies the exact AP radio.
++            band, channel = getBandAndChannelForBSSID(radioList, upstreamBSSID)
++
++            // Retain the bSTA radio as a bounded fallback during the short
++            // interval before the parent BSS inventory becomes complete.
+             childRadios := radioInventory[strings.ToLower(childID)]
+-            band, channel = getBandAndChannelFromRadios(childRadios)
++            if band == -1 {
++                band, channel = getBandAndChannelFromRadios(childRadios)
++            }
+             channel = resolveTopologyBackhaulChannel(deviceName == "Agent-1",
+                 band, channel, localRadioChannels)
+
+            edges = append(edges, map[string]interface{}{
+-                "from":     deviceID,
+-                "to":       childID,
+-                "band":     band,
+-                "channel":  channel,
++                "from":          deviceID,
++                "to":            childID,
++                "band":          band,
++                "channel":       channel,
++                "upstreamBSSID": upstreamBSSID,
++                "mediaType":     mediaType,
+             })
+             traverse(child, x, y, childAngle, depth+1)
+         }
+@@ -5172,6 +5191,26 @@ func getBandAndChannelFromRadios(radios []Radio) (int, int) {
+     return -1, 0
+ }
+
++// getBandAndChannelForBSSID resolves a wireless hop at its authoritative
++// endpoint: the AP BSSID on the parent node.  This remains correct when an
++// extender re-parents through another extender on a different radio.
++func getBandAndChannelForBSSID(radios []Radio, bssid string) (int, int) {
++    wanted := strings.ToLower(strings.TrimSpace(bssid))
++    if wanted == "" || wanted == "00:00:00:00:00:00" {
++        return -1, 0
++    }
++
++    for _, radio := range radios {
++        for _, bss := range radio.BSSList {
++            if strings.ToLower(strings.TrimSpace(bss.BSSID)) == wanted {
++                return radio.Band, radio.Channel
++            }
++        }
++    }
++
++    return -1, 0
++}
++
+ // loadLocalRadioChannels reads the colocated Agent's actual kernel radio
+ // state. EasyMesh Operating Channel Reports remain the primary source; this
+ // bounded cache fills the startup gap before the Controller has received one.
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 78026b2..5cc0a2d 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2037,7 +2037,7 @@
+     <div id="toast-container" class="toast-container"></div>
+
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-signal-arcs-1"></script>
++    <script src="static/script.js?v=topology-exact-backhaul-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 181ba15..5d93553 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2996,6 +2996,16 @@ async handleWebSocketMessage(data) {
+       .attr('d', 'M0,-5L10,0L0,5')
+       .attr('fill', '#7c3aed');
+
++    defs.append('marker')
++      .attr('id', 'backhaul-uplink-arrowhead')
++      .attr('viewBox', '0 -5 10 10')
++      .attr('refX', 9).attr('refY', 0)
++      .attr('markerWidth', 6).attr('markerHeight', 6)
++      .attr('orient', 'auto-start-reverse')
++      .append('path')
++      .attr('d', 'M0,-5L10,0L0,5')
++      .attr('fill', '#334155');
++
+     const svgGroup = svg.append('g');
+     const zoom = d3.zoom()
+       .on('start', (event) => {
+@@ -3358,8 +3368,20 @@ async handleWebSocketMessage(data) {
+         .attr('width', isController ? 50 : 35)
+         .attr('height', isController ? 50 : 35)
+         .on('mouseover', function(event) {
++          const incoming = edges.find(item => String(item.to) === String(d.id));
++          const parent = incoming?.source?.name || incoming?.source?.id || '';
++          const upstreamBSSID = d.upstreamBSSID || incoming?.upstreamBSSID || '';
++          const wireless = upstreamBSSID && upstreamBSSID !== '00:00:00:00:00:00';
++          const backhaul = incoming
++            ? `<br><b>Backhaul parent:</b> ${parent}` +
++              `<br>Media: ${d.backhaulMedia || incoming.mediaType || 'Unknown'}` +
++              (wireless ? `<br>Upstream BSSID: ${upstreamBSSID}` : '') +
++              (String(incoming.band) !== '-1'
++                ? `<br>Link: ${self.topologyBandLabel(incoming.band)} · ch ${Number(incoming.channel) > 0 ? incoming.channel : '?'}`
++                : '')
++            : '';
+           tooltip.style('display', 'block')
+-          .html(`<b>${d.name || d.id}</b><br>MAC Address: ${d.id}`);
++          .html(`<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}`);
+         })
+         .on('mousemove', function(event) {
+           self.positionTooltip(event, tooltip);
+@@ -3388,10 +3410,26 @@ async handleWebSocketMessage(data) {
+     const edge = edgeGroup.selectAll('path')
+     .data(edges)
+     .enter()
+     .append('path')
++    .attr('class', 'backhaul-link')
+     .attr('fill', 'none')
+     .attr('stroke-width', 2)
+-    .attr('stroke', d => bandColors[d.band] || '#000');
++    .attr('stroke', d => bandColors[d.band] || '#000')
++    // Paths are encoded parent -> child; marker-start with auto-start-reverse
++    // points from the child back toward its actual upstream parent.
++    .attr('marker-start', d => String(d.band) === '-1' ? null : 'url(#backhaul-uplink-arrowhead)')
++    .style('pointer-events', 'stroke')
++    .style('cursor', 'help')
++    .on('mouseover', function(event, d) {
++      const parent = d.source?.name || d.source?.id || d.from;
++      const child = d.target?.name || d.target?.id || d.to;
++      const bssid = d.upstreamBSSID && d.upstreamBSSID !== '00:00:00:00:00:00'
++        ? `<br>Upstream BSSID: ${d.upstreamBSSID}` : '';
++      tooltip.style('display', 'block')
++        .html(`<b>${child} uplink &rarr; ${parent}</b><br>${self.topologyBandLabel(d.band)} · ch ${Number(d.channel) > 0 ? d.channel : '?'}${bssid}`);
++    })
++    .on('mousemove', event => self.positionTooltip(event, tooltip))
++    .on('mouseout', () => tooltip.style('display', 'none'));
+
+     const channelLabels = edgeGroup.selectAll('g.channel-label')
+     .data(edges.filter(d => String(d.band) !== '-1')) // Only for non -1 bands
+--
+2.43.0

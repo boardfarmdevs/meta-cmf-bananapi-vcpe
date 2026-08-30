@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Thu, 20 Aug 2026 11:20:00 -0700
+Subject: [PATCH] cli: render topology without mutating model
+
+The topology renderer supplies an IEEE label when the controller's BSS field
+is empty.  It currently writes that presentation fallback into the live API
+object.  All 50 BSS records in the accepted lab have an empty IEEE field, so
+the next unmodified API response differs from the renderer-mutated object.
+The two-second poll consequently destroys and rebuilds an unchanged graph,
+undoing the operator's freshly optimized viewport.
+
+Move the fallback into a pure formatting helper and leave the controller
+snapshot untouched.  A semantically unchanged refresh then compares equal and
+does not redraw.  Bump the asset revision so browsers cannot retain the
+mutating renderer after deployment.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 18 +++++++++---------
+ 2 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 647c76f..9207c14 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2032,7 +2032,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-label-size-1"></script>
++    <script src="static/script.js?v=topology-layout-stable-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index c4374ea..c173d43 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2596,6 +2596,13 @@ class EasyMeshController {
+     setTimeout(() => URL.revokeObjectURL(url), 1000);
+   }
+ 
++  topologyBssIEEELabel(bss) {
++    if (bss?.IEEE) return bss.IEEE;
++    return bss?.Band === 0 || bss?.Band === 1
++      ? '802.11ax'
++      : '802.11be';
++  }
++
+   topologySignature(value) {
+     return JSON.stringify(value || {}, (key, item) =>
+       ['x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', 'fixed'].includes(key)
+@@ -2859,15 +2866,8 @@ class EasyMeshController {
+               mldMap.get(bss.MLDAddr).add(bandLabel);
+             }
+ 
+-            if (bss.IEEE == "" ) {
+-              if (bss.Band == 0 || bss.Band == 1) {
+-                bss.IEEE= "802.11ax"
+-              } else {
+-                bss.IEEE= "802.11be"
+-              }
+-            }
+-
+-            return `${bss.BSSID} - (${bandLabel}) - ${bss.IEEE}`;
++            const ieee = self.topologyBssIEEELabel(bss);
++            return `${bss.BSSID} - (${bandLabel}) - ${ieee}`;
+           });
+ 
+           const mldSummary = Array.from(mldMap.entries()).map(([addr, bands]) => {
+-- 
+2.43.0

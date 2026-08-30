@@ -1,0 +1,75 @@
+wifi_db: clamp channelWidth to 20MHz + set lab country under HWSIM_RADIO (single-phy tri-band)
+
+init_radio_config_default() defaults the 5GHz radio to 80MHz and the 6GHz radio to
+160MHz. On FEATURE_SINGLE_PHY (one mac80211_hwsim wiphy projected as wifi0/wifi1/wifi2),
+Linux 7.0 brings up two concurrent AP channel contexts on one phy at 20MHz, but rejects
+a 2nd/3rd context at 80/160MHz (-EINVAL when START_AP sets the channel). Proven with a
+clean host-hwsim test: tst0@2437 + tst1@5180 both reach AP-ENABLED at 20MHz, but the
+80MHz VIF does not. So the wide defaults make wifi1 (5GHz/80) and wifi2 (6GHz/160) fail
+to beacon while wifi0 (2.4GHz/20) is up.
+
+Clamp channelWidth to 20MHz under HWSIM_RADIO so the concurrent contexts fit and tri-band
+comes up. For 6GHz that is not sufficient by itself: the operating class encodes the
+width (131=20, 132=40, 133=80, 134=160), and the default 134 (160MHz) left with a 20MHz
+width is an inconsistent chandef that makes the 6GHz START_AP -EINVAL. Also set the 6GHz
+operating class to 131 (20MHz) so width and op-class agree. (5GHz came up with its
+class-128 default because that band's chandef derives the width from channelWidth.)
+Pairs with the rdk-wifi-hal FEATURE_SINGLE_PHY fix (0022) that drops the pre-START_AP
+standalone SET_WIPHY channel-set. Real BananaPi R4 hardware keeps its wide-channel
+defaults (this is hwsim-only).
+
+Third: set the default country to a 6GHz-IR lab domain (GB) under HWSIM_RADIO. The code
+here first tries wifi_hal_get_default_country_code(); in this hwsim build the platform
+default-country hook is absent, so it returns error and the country stays the hardcoded
+fallback wifi_countrycode_US. US 6GHz is NO-IR (PASSIVE) in wireless-regdb, so OneWifi
+drives the effective cfg80211 core reg to US and wifi2 (6GHz, ch37/6135) fails START_AP
+with -EINVAL (cfg80211_reg_check_beaconing on a NO-IR channel). GB 6GHz is IR-capable
+(LPI, 23 dBm) so wifi2 can beacon. A standalone-hostapd A/B/C/D matrix proved 5975 and
+6135 both reach AP-ENABLED under GB, alone and as a 3rd concurrent AP on one phy. Real
+BananaPi R4 hardware supplies its own platform country and keeps US/its default.
+
+---
+ source/db/wifi_db.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+--- a/source/db/wifi_db.c
++++ b/source/db/wifi_db.c
+@@ -189,6 +189,23 @@
+             break;
+     }
+
++#if defined(HWSIM_RADIO)
++    /* FEATURE_SINGLE_PHY on mac80211_hwsim: all logical radios share ONE physical
++     * wiphy. On Linux 7.0 two concurrent AP channel contexts come up on one phy at
++     * 20 MHz, but a 2nd/3rd context at 80/160 MHz is rejected (-EINVAL at START_AP)
++     * -- proven with a host-hwsim test (two 20 MHz APs up concurrently, 80 MHz not).
++     * The default 80 MHz (5 GHz) / 160 MHz (6 GHz) therefore make wifi1/wifi2 fail to
++     * beacon. Clamp to 20 MHz so tri-band comes up. Pairs with the rdk-wifi-hal
++     * single-phy fix that drops the pre-START_AP standalone SET_WIPHY channel-set.
++     * Real BananaPi R4 hardware keeps its wide-channel defaults. */
++    cfg.channelWidth = WIFI_CHANNELBANDWIDTH_20MHZ;
++    /* 6 GHz operating class encodes the width (131=20, 132=40, 133=80, 134=160). The
++     * default is 134; with the width clamped to 20 MHz that tuple is inconsistent and
++     * hostap's 6 GHz chandef makes START_AP -EINVAL. Use class 131 to match 20 MHz. */
++    if (cfg.band == WIFI_FREQUENCY_6_BAND)
++        cfg.operatingClass = 131;
++#endif /* HWSIM_RADIO */
++
+     for (int i=0; i<radio_capab.channel_list[0].num_channels; i++)
+     {
+         cfg.channel_map[i].ch_number = radio_capab.channel_list[0].channels_list[i];
+@@ -232,6 +249,14 @@
+         }
+     }
+     cfg.countryCode = country_code_val;
++#if defined(HWSIM_RADIO)
++    /* The platform default-country hook is absent in this hwsim build, so the code
++     * above falls back to wifi_countrycode_US. US 6 GHz is NO-IR (PASSIVE) in
++     * wireless-regdb, so wifi2 (6 GHz) fails START_AP with -EINVAL
++     * (cfg80211_reg_check_beaconing). Override to a 6 GHz-IR lab domain so the single
++     * hwsim phy can beacon 6 GHz. Real hardware keeps its platform/US default. */
++    cfg.countryCode = wifi_countrycode_GB;
++#endif /* HWSIM_RADIO */
+     cfg.operatingEnvironment = wifi_operating_env_indoor;
+     cfg.dtimPeriod = 1;
+     if (cfg.beaconInterval == 0) {

@@ -1,0 +1,192 @@
+Subject: [PATCH] al-sap: retry registration during 1905 startup
+
+The em_ctrl service waits for the ieee1905 Unix socket pathname, but a
+pathname can outlive its listener and ieee1905's forking service can report
+started before it accepts connections.  AlServiceAccessPoint then throws
+ConnectionFailed from its constructor and the uncaught exception terminates
+the EasyMesh process with SIGABRT.
+
+Retry the existing registration transaction for a bounded 90 seconds in both
+controller and agent.  Delete a partially constructed SAP between attempts,
+and return a normal startup error rather than producing a core dump when the
+dependency never becomes ready.
+
+Upstream-Status: Pending
+---
+ src/agent/em_agent.cpp                    | 48 ++++++++++++++++++++++++++----------------
+ src/al-sap/al_service_access_point.cpp    |  2 ++
+ src/ctrl/em_ctrl.cpp                      | 49 +++++++++++++++++++++++++++----------------
+ 3 files changed, 64 insertions(+), 35 deletions(-)
+
+diff --git a/src/al-sap/al_service_access_point.cpp b/src/al-sap/al_service_access_point.cpp
+index 2f32b7c..98c83d4 100644
+--- a/src/al-sap/al_service_access_point.cpp
++++ b/src/al-sap/al_service_access_point.cpp
+@@ -23,12 +23,14 @@
+     alDataSocketDescriptor = socket(AF_UNIX, SOCK_STREAM, 0);
+     if (alDataSocketDescriptor == -1)
+     {
++        close(alControlSocketDescriptor);
+         throw AlServiceException("Failed to create Unix socket for data", PrimitiveError::SocketCreationFailed);
+     }
+     struct sockaddr_un dataAddr = createUnixSocketAddress(dataSocketPath);
+     if (connect(alDataSocketDescriptor, (struct sockaddr *)&dataAddr, sizeof(dataAddr)) == -1)
+     {
+         close(alDataSocketDescriptor);
++        close(alControlSocketDescriptor);
+         throw AlServiceException("Failed to connect to Unix socket for data", PrimitiveError::ConnectionFailed);
+     }
+ #ifdef DEBUG_MODE
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 29f9837..53219a1 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -2424,26 +2424,42 @@ em_agent_t::~em_agent_t()
+ #ifdef AL_SAP
+ AlServiceAccessPoint* em_agent_t::al_sap_register(const std::string& data_socket_path, const std::string& control_socket_path)
+ {
+-    AlServiceAccessPoint* sap = new AlServiceAccessPoint(data_socket_path.c_str(), control_socket_path.c_str());
+-
+-    AlServiceRegistrationRequest registrationRequest(SAPActivation::SAP_ENABLE, ServiceType::EmAgent);
+-    sap->serviceAccessPointRegistrationRequest(registrationRequest);
+-
+-    AlServiceRegistrationResponse registrationResponse = sap->serviceAccessPointRegistrationResponse();
+-
+-    RegistrationResult result = registrationResponse.getResult();
+-    if (result == RegistrationResult::SUCCESS) {
+-        g_al_mac_sap = registrationResponse.getAlMacAddressLocal();
+-        std::cout << "Registration completed with MAC Address: ";
+-        for (auto byte : g_al_mac_sap) {
+-            std::cout << std::hex << static_cast<int>(byte) << " ";
++    constexpr unsigned int max_attempts = 90;
++
++    for (unsigned int attempt = 1; attempt <= max_attempts; attempt++) {
++        AlServiceAccessPoint* sap = nullptr;
++        try {
++            sap = new AlServiceAccessPoint(data_socket_path.c_str(), control_socket_path.c_str());
++
++            AlServiceRegistrationRequest registrationRequest(SAPActivation::SAP_ENABLE, ServiceType::EmAgent);
++            sap->serviceAccessPointRegistrationRequest(registrationRequest);
++
++            AlServiceRegistrationResponse registrationResponse = sap->serviceAccessPointRegistrationResponse();
++
++            RegistrationResult result = registrationResponse.getResult();
++            if (result == RegistrationResult::SUCCESS) {
++                g_al_mac_sap = registrationResponse.getAlMacAddressLocal();
++                std::cout << "Registration completed with MAC Address: ";
++                for (auto byte : g_al_mac_sap) {
++                    std::cout << std::hex << static_cast<int>(byte) << " ";
++                }
++                std::cout << std::dec << std::endl;
++            } else {
++                std::cout << "Registration failed with error: " << static_cast<int>(result) << std::endl;
++            }
++
++            return sap;
++        } catch (const AlServiceException& e) {
++            delete sap;
++            printf("AL SAP registration attempt %u/%u failed: %s\n", attempt, max_attempts, e.what());
++            if (attempt == max_attempts) {
++                return nullptr;
++            }
++            sleep(1);
+         }
+-        std::cout << std::dec << std::endl;
+-    } else {
+-        std::cout << "Registration failed with error: " << static_cast<int>(result) << std::endl;
+     }
+ 
+-    return sap;
++    return nullptr;
+ }
+ #endif
+ #ifndef UNIT_TEST
+@@ -2505,6 +2521,10 @@ int main(int argc, const char *argv[])
+     if (g_agent.init(data_model_path.empty() ? NULL : data_model_path.c_str()) == 0) {
+ #ifdef AL_SAP
+     g_sap = g_agent.al_sap_register();
++    if (g_sap == nullptr) {
++        printf("AL SAP registration did not become ready\n");
++        return 1;
++    }
+ #endif
+         g_agent.start();
+     }
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 483979e..a937dad 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1297,35 +1297,55 @@ em_ctrl_t::~em_ctrl_t()
+ #ifdef AL_SAP
+ AlServiceAccessPoint* em_ctrl_t::al_sap_register(const std::string& data_socket_path, const std::string& control_socket_path)
+ {
+-    AlServiceAccessPoint* sap = new AlServiceAccessPoint(data_socket_path.c_str(), control_socket_path.c_str());
+-
+-    AlServiceRegistrationRequest registrationRequest(SAPActivation::SAP_ENABLE, ServiceType::EmController);
+-    sap->serviceAccessPointRegistrationRequest(registrationRequest);
+-
+-    AlServiceRegistrationResponse registrationResponse = sap->serviceAccessPointRegistrationResponse();
+-
+-    RegistrationResult result = registrationResponse.getResult();
+-    if (result == RegistrationResult::SUCCESS) {
+-        g_al_mac_sap = registrationResponse.getAlMacAddressLocal();
+-        uint8_t* al_mac_bytes = g_al_mac_sap.data();
+-        em_printfout("AL SAP registration successful, AL MAC: %s", util::mac_to_string(al_mac_bytes).c_str());
+-
+-        m_data_model.set_dev_interface_mac(al_mac_bytes);
+-    } else {
+-        std::cout << "Registration failed with error: " << static_cast<int>(result) << std::endl;
++    constexpr unsigned int max_attempts = 90;
++
++    for (unsigned int attempt = 1; attempt <= max_attempts; attempt++) {
++        AlServiceAccessPoint* sap = nullptr;
++        try {
++            sap = new AlServiceAccessPoint(data_socket_path.c_str(), control_socket_path.c_str());
++
++            AlServiceRegistrationRequest registrationRequest(SAPActivation::SAP_ENABLE, ServiceType::EmController);
++            sap->serviceAccessPointRegistrationRequest(registrationRequest);
++
++            AlServiceRegistrationResponse registrationResponse = sap->serviceAccessPointRegistrationResponse();
++
++            RegistrationResult result = registrationResponse.getResult();
++            if (result == RegistrationResult::SUCCESS) {
++                g_al_mac_sap = registrationResponse.getAlMacAddressLocal();
++                uint8_t* al_mac_bytes = g_al_mac_sap.data();
++                em_printfout("AL SAP registration successful, AL MAC: %s", util::mac_to_string(al_mac_bytes).c_str());
++
++                m_data_model.set_dev_interface_mac(al_mac_bytes);
++            } else {
++                std::cout << "Registration failed with error: " << static_cast<int>(result) << std::endl;
++            }
++
++            return sap;
++        } catch (const AlServiceException& e) {
++            delete sap;
++            em_printfout("AL SAP registration attempt %u/%u failed: %s", attempt, max_attempts, e.what());
++            if (attempt == max_attempts) {
++                return nullptr;
++            }
++            sleep(1);
++        }
+     }
+ 
+-    return sap;
++    return nullptr;
+ }
+ #endif
+ 
+ 
+ #ifndef TESTING
+ int main(int argc, const char *argv[])
+ {
+     em_ctrl_t  *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
+ #ifdef AL_SAP
+     g_sap = em_ctrl->al_sap_register("/tmp/al_em_ctrl_data_socket", "/tmp/al_em_ctrl_control_socket");
++    if (g_sap == nullptr) {
++        em_printfout("AL SAP registration did not become ready");
++        return 1;
++    }
+ #endif
+ 
+     if (em_ctrl->init(argv[1]) == 0) {

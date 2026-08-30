@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000111 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Sun, 23 Aug 2026 20:45:00 -0700
+Subject: [PATCH] agent: recover orphaned OneWifi WSC subdocs
+
+A packaged-appliance reboot exposed the remaining gap in tri-band WSC
+recovery.  A radio can accept M2 and enter owconfig_pending while its
+internal manager event is not represented by either the active OneWifi WSC
+subdoc or the deferred-radio queue.  The active-subdoc watchdog cannot see
+that radio, while the per-radio M1 recovery correctly stops after M2.  The
+band therefore stays in owconfig_pending indefinitely and the Agent never
+publishes a complete topology response.
+
+Make the manager's serialization set authoritative.  On each one-second
+tick, observe owconfig_pending radios that are neither active nor deferred.
+After a five-second grace period, enqueue the orphan and release it through
+the existing serialized fresh-M1 recovery path.  The grace period lets an
+ordinary queued manager event run without interference.  Active, deferred,
+completed, and non-WSC radio states are unchanged, and only one orphan is
+released while no OneWifi WSC subdoc is active.
+
+This closes the state-ownership gap without adding a parallel OneWifi writer
+or resetting a successfully configured band.
+
+Upstream-Status: Pending
+---
+ inc/em_agent.h         |  4 ++++
+ src/agent/em_agent.cpp | 52 +++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 52 insertions(+), 4 deletions(-)
+
+diff --git a/inc/em_agent.h b/inc/em_agent.h
+index f9e66b3..4a2bb1b 100644
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -30,6 +30,7 @@
+ 
+ #include <deque>
+ #include <string>
++#include <unordered_map>
+ 
+ #ifdef AL_SAP
+ #include "al_service_access_point.h"
+@@ -51,10 +52,13 @@ class em_agent_t : public em_mgr_t {
+     std::string m_onewifi_wsc_ruid;
+     unsigned int m_onewifi_wsc_wait_ticks = 0;
+     std::deque<std::string> m_deferred_onewifi_wsc_ruids;
++    std::unordered_map<std::string, unsigned int> m_orphaned_onewifi_wsc_ticks;
+ 
+     bool publish_initial_operating_channels();
+     bool rearm_onewifi_wsc_radio(const std::string& ruid, const char *reason);
+     void release_next_onewifi_wsc_radio(const char *reason);
++    bool is_onewifi_wsc_radio_tracked(const std::string& ruid) const;
++    void recover_orphaned_onewifi_wsc_radios();
+ 
+ 	
+ 	/**!
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 6b71f04..6422d21 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -358,6 +358,47 @@ void em_agent_t::release_next_onewifi_wsc_radio(const char *reason)
+     }
+ }
+ 
++bool em_agent_t::is_onewifi_wsc_radio_tracked(const std::string& ruid) const
++{
++    if (m_onewifi_wsc_subdoc_active && m_onewifi_wsc_ruid == ruid) {
++        return true;
++    }
++    for (const std::string& deferred : m_deferred_onewifi_wsc_ruids) {
++        if (deferred == ruid) {
++            return true;
++        }
++    }
++    return false;
++}
++
++void em_agent_t::recover_orphaned_onewifi_wsc_radios()
++{
++    em_t *em = static_cast<em_t *>(hash_map_get_first(m_em_map));
++    while (em != NULL) {
++        em_t *next = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
++        if (!em->is_al_interface_em()) {
++            std::string ruid = util::mac_to_string(em->get_radio_interface_mac());
++            if (em->get_state() == em_state_agent_owconfig_pending &&
++                    !is_onewifi_wsc_radio_tracked(ruid)) {
++                unsigned int& ticks = m_orphaned_onewifi_wsc_ticks[ruid];
++                if (++ticks >= 5) {
++                    m_deferred_onewifi_wsc_ruids.push_back(ruid);
++                    m_orphaned_onewifi_wsc_ticks.erase(ruid);
++                    em_printfout("Orphaned OneWifi WSC subdoc detected for radio %s; queued for recovery",
++                        ruid.c_str());
++                }
++            } else {
++                m_orphaned_onewifi_wsc_ticks.erase(ruid);
++            }
++        }
++        em = next;
++    }
++
++    if (!m_onewifi_wsc_subdoc_active) {
++        release_next_onewifi_wsc_radio("Orphaned OneWifi WSC subdoc");
++    }
++}
++
+ void em_agent_t::handle_onewifi_private_cb(em_bus_event_t *evt)
+ {
+     em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+@@ -1548,15 +1589,18 @@ void em_agent_t::handle_2s_tick()
+ 
+ void em_agent_t::handle_1s_tick()
+ {
+-    if (!m_onewifi_wsc_subdoc_active || ++m_onewifi_wsc_wait_ticks < 5) {
+-        return;
++    if (m_onewifi_wsc_subdoc_active && ++m_onewifi_wsc_wait_ticks >= 5) {
++        std::string ruid = m_onewifi_wsc_ruid;
++        m_onewifi_wsc_subdoc_active = false;
++        m_onewifi_wsc_ruid.clear();
++        m_onewifi_wsc_wait_ticks = 0;
++        rearm_onewifi_wsc_radio(ruid, "OneWifi subdoc callback timed out");
++        release_next_onewifi_wsc_radio("OneWifi subdoc callback timeout");
+     }
+ 
+-    std::string ruid = m_onewifi_wsc_ruid;
+-    m_onewifi_wsc_subdoc_active = false;
+-    m_onewifi_wsc_ruid.clear();
+-    m_onewifi_wsc_wait_ticks = 0;
+-    rearm_onewifi_wsc_radio(ruid, "OneWifi subdoc callback timed out");
+-    release_next_onewifi_wsc_radio("OneWifi subdoc callback timeout");
++    // owconfig_pending is meaningful only while this manager owns the
++    // corresponding active or deferred WSC subdoc. Recover any radio that
++    // remains outside that serialization set after a bounded grace period.
++    recover_orphaned_onewifi_wsc_radios();
+ }
+ 
+ void em_agent_t::handle_250ms_tick()
+-- 
+2.43.0
