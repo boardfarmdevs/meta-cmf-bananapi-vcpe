@@ -108,7 +108,7 @@ for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     fi
 done
 
-rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
+sudo rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 EASYMESH_REPO="$repo" \
 CONTROLLER_IMAGE="$controller_image" \
 EXTENDER_IMAGE="$extender_image" \
