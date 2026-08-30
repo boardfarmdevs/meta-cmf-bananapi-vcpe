@@ -3,7 +3,7 @@ set -euo pipefail
 
 exec </dev/null
 
-results=/home/vagrant/.local/state/easymesh-vagrant/steering-return.csv
+results=/home/easymesh/.local/state/easymesh-lab/steering-return.csv
 mkdir -p "$(dirname "$results")"
 printf '%s\n' 'client,sta,direction,source_bssid,target_bssid,link_ms,db_ms,topology_ms,result' > "$results"
 

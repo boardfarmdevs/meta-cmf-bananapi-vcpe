@@ -86,9 +86,9 @@ The two supported deployment modes intentionally differ:
 | Environment | Boot behavior |
 | --- | --- |
 | Direct bare-metal lab host | Do not start or reconstruct the lab automatically. The operator explicitly runs `easymesh-labctl start all`. |
-| Packaged EasyMesh VM | `vagrant up` is the explicit appliance start, so the lab starts automatically inside that VM. |
+| Packaged EasyMesh VM | `lxc start INSTANCE` is the explicit appliance start, so the lab starts automatically inside that VM. |
 
-A physical host must not automatically start a Vagrant VM. A guest reboot in
+A physical host must not create or import an LXD VM automatically. A guest reboot in
 an already selected VM may restore the enabled lab, but it must converge the
 existing desired state rather than stop every healthy node and rebuild the
 whole runtime.
@@ -539,7 +539,7 @@ duplicate record, or manual command.
 Deliverables:
 
 - direct-host installation leaves `easymesh-lab.target` disabled;
-- packaged VM enables it and `vagrant up` starts the appliance;
+- packaged VM enables it and `lxc start INSTANCE` starts the appliance;
 - replace VM stop-all/restart-all boot logic with desired-state convergence;
 - implement reverse-order shutdown and preserve the last enabled-node set;
 - update the operating guide so ordered manual startup is engineering fallback

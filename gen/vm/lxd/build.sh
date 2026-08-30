@@ -5,7 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
     | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 default_host_address=${default_host_address:-127.0.0.1}
-name=${EASYMESH_LXD_NAME:-easymesh-lab-0828}
+name=${EASYMESH_LXD_NAME:-easymesh-lab-0829}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-6}
 memory=${EASYMESH_LXD_MEMORY:-6GiB}
@@ -22,6 +22,7 @@ boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfa
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
 extender_image=${EASYMESH_EXTENDER_IMAGE:-}
 export_dir=${EASYMESH_LXD_EXPORT_DIR:-$root/gen/vm/lxd/artifacts}
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short HEAD)}
 
 usage() {
     cat <<EOF
@@ -35,7 +36,7 @@ Commands:
   status      show VM and lab status
   check       run the complete lab acceptance audit
   snapshot    replace the accepted snapshot after a passing check
-  export      stop, publish and export a portable LXD image
+  export      check, stop and export a portable LXD VM backup bundle
   delete      delete only the named appliance VM after showing its identity
 
 Build inputs:
@@ -158,17 +159,17 @@ prepare_assets() {
 }
 
 push_inputs() {
-    local stage=$1 assets=$stage/assets provision=/home/vagrant/easymesh-provision
+    local stage=$1 assets=$stage/assets provision=/home/easymesh/easymesh-provision
     local file
     lxc exec "$name" -- bash -eu -c '
-        id vagrant >/dev/null 2>&1 || useradd -m -s /bin/bash vagrant
-        install -d -o vagrant -g vagrant /home/vagrant/easymesh-assets
-        install -d -o vagrant -g vagrant /home/vagrant/easymesh-provision
-        install -m 0440 /dev/null /etc/sudoers.d/easymesh-vagrant
-        printf "%s\n" "vagrant ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/easymesh-vagrant
+        id easymesh >/dev/null 2>&1 || useradd -m -s /bin/bash easymesh
+        install -d -o easymesh -g easymesh /home/easymesh/easymesh-assets
+        install -d -o easymesh -g easymesh /home/easymesh/easymesh-provision
+        install -m 0440 /dev/null /etc/sudoers.d/easymesh-lab
+        printf "%s\n" "easymesh ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/easymesh-lab
     '
     for file in "$assets"/*; do
-        lxc file push "$file" "$name/home/vagrant/easymesh-assets/$(basename "$file")"
+        lxc file push "$file" "$name/home/easymesh/easymesh-assets/$(basename "$file")"
     done
     for file in 00-base.sh 10-install-linux-7.sh 20-prepare-lab-host.sh \
         30-boardfarm-wan.sh 40-deploy-easymesh.sh 50-runtime-service.sh \
@@ -193,25 +194,25 @@ push_inputs() {
     )
     for file in "${!guest_assets[@]}"; do
         lxc file push --mode 0755 "$root/${guest_assets[$file]}" \
-            "$name/home/vagrant/easymesh-assets/$file"
+            "$name/home/easymesh/easymesh-assets/$file"
     done
     lxc file push --mode 0755 "$root/gen/vm/scripts/60-scale-steering-test.sh" \
-        "$name/home/vagrant/scale-steering-test.sh"
+        "$name/home/easymesh/scale-steering-test.sh"
     lxc file push --mode 0755 "$root/gen/vm/scripts/55-scale-topology.sh" \
-        "$name/home/vagrant/scale-topology.sh"
+        "$name/home/easymesh/scale-topology.sh"
     lxc file push --mode 0755 "$root/gen/vm/scripts/61-return-steering-regression.sh" \
-        "$name/home/vagrant/return-steering-test.sh"
+        "$name/home/easymesh/return-steering-test.sh"
     lxc file push --mode 0755 "$root/gen/tests/health-audit.sh" \
-        "$name/home/vagrant/health-audit.sh"
-    lxc exec "$name" -- chown -R vagrant:vagrant \
-        /home/vagrant/easymesh-assets /home/vagrant/easymesh-provision \
-        /home/vagrant/scale-steering-test.sh /home/vagrant/scale-topology.sh \
-        /home/vagrant/return-steering-test.sh /home/vagrant/health-audit.sh
+        "$name/home/easymesh/health-audit.sh"
+    lxc exec "$name" -- chown -R easymesh:easymesh \
+        /home/easymesh/easymesh-assets /home/easymesh/easymesh-provision \
+        /home/easymesh/scale-steering-test.sh /home/easymesh/scale-topology.sh \
+        /home/easymesh/return-steering-test.sh /home/easymesh/health-audit.sh
 }
 
 run_root() {
     lxc exec "$name" -- env EASYMESH_KERNEL="$kernel" \
-        EASYMESH_RUNTIME_BRANCH=codex/0828-clean "$@"
+        EASYMESH_RUNTIME_BRANCH="$runtime_branch" "$@"
 }
 
 build_vm() {
@@ -250,28 +251,28 @@ build_vm() {
     wait_agent
     push_inputs "$stage"
 
-    run_root bash /home/vagrant/easymesh-provision/00-base.sh
-    run_root bash /home/vagrant/easymesh-provision/10-install-linux-7.sh
+    run_root bash /home/easymesh/easymesh-provision/00-base.sh
+    run_root bash /home/easymesh/easymesh-provision/10-install-linux-7.sh
     lxc restart "$name" --timeout 300
     wait_agent
     test "$(lxc exec "$name" -- uname -r)" = "$kernel"
 
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
-        bash /home/vagrant/easymesh-provision/20-prepare-lab-host.sh
-    run_root bash /home/vagrant/easymesh-provision/30-boardfarm-wan.sh
+        bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
+    run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
     # outer VM agent cannot be tracked by snapd, so appliance lifecycle runs as
-    # root. Source checkout operations remain explicitly scoped to vagrant.
-    run_root env HOME=/home/vagrant \
-        CONTROLLER_IMAGE="/home/vagrant/easymesh-assets/$controller_name" \
-        EXTENDER_IMAGE="/home/vagrant/easymesh-assets/$extender_name" \
+    # root. Source checkout operations remain explicitly scoped to easymesh.
+    run_root env HOME=/home/easymesh \
+        CONTROLLER_IMAGE="/home/easymesh/easymesh-assets/$controller_name" \
+        EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
-        bash /home/vagrant/easymesh-provision/40-deploy-easymesh.sh
-    run_root env HOME=/home/vagrant \
-        EXTENDER_IMAGE="/home/vagrant/easymesh-assets/$extender_name" \
-        bash /home/vagrant/easymesh-provision/55-scale-topology.sh
-    run_root bash /home/vagrant/easymesh-provision/50-runtime-service.sh
-    run_root bash /home/vagrant/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/install.sh --start
+        bash /home/easymesh/easymesh-provision/40-deploy-easymesh.sh
+    run_root env HOME=/home/easymesh \
+        EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
+        bash /home/easymesh/easymesh-provision/55-scale-topology.sh
+    run_root bash /home/easymesh/easymesh-provision/50-runtime-service.sh
+    run_root bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/install.sh --start
     # A VM NAT proxy connects to the guest NIC, not to guest loopback. Keep the
     # Console's normal package default private, but bind its appliance instance
     # to the isolated guest interface so the host-side proxy can reach it.
@@ -331,19 +332,24 @@ snapshot_vm() {
 }
 
 export_vm() {
-    local alias=${EASYMESH_LXD_ALIAS:-easymesh-lab-0828} stamp output
+    local short bundle output
     check_vm
     stop_vm
-    if lxc image info "$alias" >/dev/null 2>&1; then
-        lxc image delete "$alias"
-    fi
-    lxc publish "$name" --alias "$alias"
-    install -d "$export_dir"
-    stamp=$(date -u +%Y%m%dT%H%M%SZ)
-    output="$export_dir/${alias}-${stamp}"
-    lxc image export "$alias" "$output"
-    sha256sum "$output"* | tee "$output.SHA256SUMS"
-    ls -lh "$output"*
+    short=$(git -C "$root" rev-parse --short=7 HEAD)
+    bundle="$export_dir/easymesh-lab-0829-${short}-lxd"
+    output="$bundle/easymesh-lab-0829-${short}-lxd.tar.zst"
+    rm -rf -- "$bundle"
+    install -d "$bundle"
+    lxc export "$name" "$output" --instance-only --compression zstd
+    install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
+    install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    (
+        cd "$bundle"
+        sha256sum "$(basename "$output")" import.sh install-host.sh README.md \
+            > SHA256SUMS
+    )
+    ls -lh "$bundle"/*
 }
 
 delete_vm() {

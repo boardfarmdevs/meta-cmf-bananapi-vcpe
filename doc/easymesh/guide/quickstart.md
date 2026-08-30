@@ -13,13 +13,13 @@ On rev130:
 
 ```sh
 ssh rev130
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
+cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
 ```
 
 Inside a packaged VM, the repository is normally:
 
 ```sh
-cd /home/vagrant/git/meta-cmf-bananapi-vcpe
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 ```
 
 Confirm that the checkout and expected topology match

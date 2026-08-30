@@ -12,7 +12,7 @@ echo BOARDFARM
 systemctl is-active boardfarm-lab.service
 BF_LAB_CONFIG=ca-desk6.json \
     BF_INVENTORY=ca-desk6.json \
-    timeout 180 /home/vagrant/boardfarm-open-0406/.venv/bin/bf-lab status
+    timeout 180 /home/easymesh/boardfarm-open-0406/.venv/bin/bf-lab status
 test "$(docker network inspect wan-cpe1 \
     -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan101
 test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
@@ -55,7 +55,7 @@ done < <(lxc list -c n --format csv \
 wait
 
 echo MATRIX
-matrix=/home/vagrant/.local/state/easymesh-vagrant/steering-scale.csv
+matrix=/home/easymesh/.local/state/easymesh-lab/steering-scale.csv
 if [ -f "$matrix" ]; then
 awk -F, 'NR > 1 {
     gsub(/%/, "", $11)

@@ -30,7 +30,7 @@ SSH to rev130 and use the canonical checkout:
 
 ```sh
 ssh rev130
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
+cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
 ```
 
 Open the WebUI from the lab LAN and select **Network Topology**:
@@ -265,7 +265,7 @@ intentionally creates new logical device identities.
 ### Bring it down
 
 ```sh
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
+cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
 demo_runtime=gen/vm/scripts/guest/easymesh-lab-runtime
 
 sudo env \
@@ -337,7 +337,7 @@ their normal error paths. If a terminal or host is killed before cleanup can
 run, stop all experiments and restore the known all-strong baseline once:
 
 ```sh
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
+cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
 SNR=40 gen/wmediumd/wmediumd-up.sh up
 gen/tests/health-audit.sh
 ```

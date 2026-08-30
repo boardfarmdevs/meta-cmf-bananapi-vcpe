@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATOR = ROOT / "wmediumd" / "configurator"
 if not CONFIGURATOR.is_dir():
     CONFIGURATOR = Path(
-        os.environ.get("EASYMESH_REPO", "/home/vagrant/git/meta-cmf-bananapi-vcpe")
+        os.environ.get("EASYMESH_REPO", "/home/easymesh/git/meta-cmf-bananapi-vcpe")
     ) / "gen" / "wmediumd" / "configurator"
 sys.path.insert(0, str(CONFIGURATOR))
 

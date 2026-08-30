@@ -525,7 +525,7 @@ exceptions, not normal acceptance settings.
 
 ### Deployment-model evidence
 
-Use the paired collectors when comparing bare metal, VirtualBox, and LXD VM.
+Use the paired collectors when comparing bare metal and LXD VM.
 Run the runtime collector inside the operating-system boundary that owns hwsim
 and the host collector on the physical machine:
 
@@ -541,8 +541,8 @@ created through the outer host's `lxc exec`. The collector handles the source
 checkout ownership difference without changing persistent Git configuration.
 The runtime collector executes the normal health audit after capturing
 topology, model, service, process, LXD, API-latency, wmediumd, memory, storage,
-and module evidence. The host collector separates QEMU/VirtualBox resource use
-from guest measurements. Use the same sample length and idle/traffic phase on
+and module evidence. The host collector separates QEMU resource use from guest
+measurements. Use the same sample length and idle/traffic phase on
 every target. The complete comparison method and result table are in
 [`deployment-models.md`](../../doc/easymesh/reference/deployment-models.md).
 

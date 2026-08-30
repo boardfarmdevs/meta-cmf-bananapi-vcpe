@@ -2,7 +2,7 @@
 set -euo pipefail
 
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
-assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
+assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 kernel_archive=${EASYMESH_KERNEL_ARCHIVE:-$assets/linux-${kernel%-generic}-hwsim.tar.zst}
 
 cd "$assets"
@@ -37,4 +37,4 @@ if [ -n "${EASYMESH_HWSIM_SHA256:-}" ]; then
         "$EASYMESH_HWSIM_SHA256"
 fi
 
-printf '%s\n' "$kernel" > /var/lib/easymesh-vagrant/installed-kernel
+printf '%s\n' "$kernel" > /var/lib/easymesh-lab/installed-kernel

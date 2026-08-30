@@ -38,8 +38,8 @@ ps -eo user,pid,ppid,nlwp,etimes,pcpu,pmem,vsz,rss,stat,args --sort=-rss \
     >"$run/processes.txt" 2>&1
 
 {
-    pgrep -a -f 'qemu-system|VBoxHeadless' || true
-    for pid in $(pgrep -f 'qemu-system|VBoxHeadless' || true); do
+    pgrep -a -f 'qemu-system' || true
+    for pid in $(pgrep -f 'qemu-system' || true); do
         printf '\nPID %s\n' "$pid"
         grep -E '^(Name|State|Threads|VmPeak|VmSize|VmHWM|VmRSS|RssAnon|RssFile|RssShmem|VmSwap):' \
             "/proc/$pid/status" 2>/dev/null || true
@@ -56,8 +56,4 @@ fi
 if command -v lxc >/dev/null 2>&1; then
     lxc list -c nst4m >"$run/lxc-list.txt" 2>&1 || true
 fi
-if command -v VBoxManage >/dev/null 2>&1; then
-    VBoxManage list runningvms >"$run/virtualbox.txt" 2>&1 || true
-fi
-
 printf '%s\n' "$run"

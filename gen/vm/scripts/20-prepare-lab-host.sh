@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# LXC commands opportunistically parse non-terminal stdin as YAML. Vagrant's
-# remote shell leaves control text there, so isolate the whole host setup.
+# LXC commands opportunistically parse non-terminal stdin as YAML. Isolate the
+# complete host setup from any outer VM-agent input.
 exec </dev/null
 
 expected_kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
-assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
-meta_workspace=/home/vagrant/git
-boardfarm_workspace=/home/vagrant/boardfarm-open-0406
+assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
+meta_workspace=/home/easymesh/git
+boardfarm_workspace=/home/easymesh/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
-runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0828-clean}
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0829-lxd-primary}
 alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
@@ -19,49 +19,49 @@ if [ "$(uname -r)" != "$expected_kernel" ]; then
     exit 1
 fi
 
-install -d -o vagrant -g vagrant "$meta_workspace" "$boardfarm_workspace"
+install -d -o easymesh -g easymesh "$meta_workspace" "$boardfarm_workspace"
 
 if [ ! -d "$meta_workspace/meta-cmf-bananapi-vcpe/.git" ]; then
     test -f "$meta_bundle"
-    sudo -u vagrant git clone "$meta_bundle" \
+    sudo -u easymesh git clone "$meta_bundle" \
         "$meta_workspace/meta-cmf-bananapi-vcpe"
 fi
-if [ "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" != \
+if [ "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" != \
     "$expected_meta_head" ]; then
-    test -z "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" status --porcelain)"
+    test -z "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" status --porcelain)"
     if [ -f "$meta_bundle" ]; then
-        sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch \
+        sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch \
             "$meta_bundle" 'refs/heads/*:refs/remotes/bundle/*'
     else
-        sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch origin
+        sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch origin
     fi
-    sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" checkout -B \
+    sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" checkout -B \
         "$runtime_branch" "$expected_meta_head"
 fi
-test "$(sudo -u vagrant git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" = \
+test "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" = \
     "$expected_meta_head"
 
 clone_pinned_repo() {
     local name=$1 branch=$2 expected=$3
     local destination="$boardfarm_workspace/$name"
     if [ ! -d "$destination/.git" ]; then
-        sudo -u vagrant git clone "$assets/$name.bundle" "$destination"
+        sudo -u easymesh git clone "$assets/$name.bundle" "$destination"
     fi
-    sudo -u vagrant git -C "$destination" checkout -B "$branch" "$expected"
-    test -z "$(sudo -u vagrant git -C "$destination" \
+    sudo -u easymesh git -C "$destination" checkout -B "$branch" "$expected"
+    test -z "$(sudo -u easymesh git -C "$destination" \
         status --porcelain --untracked-files=no)"
-    test "$(sudo -u vagrant git -C "$destination" rev-parse HEAD)" = "$expected"
+    test "$(sudo -u easymesh git -C "$destination" rev-parse HEAD)" = "$expected"
 }
 
 clone_pinned_repo boardfarm-lab-staging main eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
 
 if [ ! -x "$boardfarm_workspace/.venv/bin/python" ]; then
-    sudo -H -u vagrant /snap/bin/uv venv --python 3.13.15 \
+    sudo -H -u easymesh /snap/bin/uv venv --python 3.13.15 \
         --prompt bf-venv "$boardfarm_workspace/.venv"
 fi
-sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
+sudo -H -u easymesh env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
     /snap/bin/uv pip install -e "$boardfarm_workspace/boardfarm-lab-staging"
-sudo -H -u vagrant env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
+sudo -H -u easymesh env VIRTUAL_ENV="$boardfarm_workspace/.venv" \
     /snap/bin/uv pip check
 test "$($boardfarm_workspace/.venv/bin/python -c 'import platform; print(platform.python_version())')" = 3.13.15
 
@@ -77,9 +77,8 @@ printf '%s\n' \
     > /etc/profile.d/boardfarm-lab.sh
 
 if ! lxc storage show default >/dev/null 2>&1; then
-    # Vagrant's remote shell leaves control text on stdin. LXD 6.7 otherwise
-    # consumes that text after --auto and tries to decode it as a storage-pool
-    # YAML update even though initialization itself succeeded.
+    # LXD 6.7 may consume outer agent input after --auto and try to decode it
+    # as a storage-pool YAML update even though initialization succeeded.
     lxd init --auto --storage-backend dir </dev/null
 fi
 if ! lxc storage show bpi-lab >/dev/null 2>&1; then
@@ -121,7 +120,7 @@ case "$hwsim_module" in
 esac
 grep -aq 'EXPERIMENTAL wmediumd' "$hwsim_module"
 sha256sum "$hwsim_module" \
-    > /var/lib/easymesh-vagrant/mac80211_hwsim.sha256
+    > /var/lib/easymesh-lab/mac80211_hwsim.sha256
 rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build"
 
 # Start a tri-band pool only after installing the multichannel registration
@@ -143,4 +142,4 @@ test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$hwsim_radios"
 test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = 3
 test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
 
-printf '%s\n' 'lab-host-ready' > /var/lib/easymesh-vagrant/host.status
+printf '%s\n' 'lab-host-ready' > /var/lib/easymesh-lab/host.status

@@ -1,23 +1,21 @@
 # Lab setup and operation
 
-> The reproducible VirtualBox/Vagrant appliance, including Docker and the full
-> Boardfarm installation, is maintained under `gen/vm/`. Its README is the
-> canonical VM lifecycle and navigation guide. `gen/vm/thin/` documents the
-> recommended Ubuntu 24.04 + Linux 7 image and one-time online installer;
-> `gen/vm/precooked/` retains the complete offline appliance.
+> The reproducible LXD VM appliance, including Docker and the lean Boardfarm
+> installation, is maintained under `gen/vm/lxd/`. Its README is the canonical
+> VM build, import, lifecycle, acceptance, export and removal guide.
 
 ## Supported labs
 
 | System | Role |
 | --- | --- |
-| rev140 | Yocto build host; does not run the lab |
-| rev130 | direct Linux 7.0/LXD runtime |
-| rev150 Vagrant VM | portable Linux 7.0/LXD runtime; accepted peer result |
-| rev120 Vagrant VM | clean-install/portability acceptance runtime |
+| rev140 | Yocto build host and LXD VM appliance runtime |
+| rev120 | direct Linux 7.0/LXD performance runtime |
+| rev130 | constrained direct Linux 7.0/LXD runtime |
+| another Ubuntu 22.04/24.04 host | imported LXD VM portability target |
 
-`codex/0824-clean` is authoritative on all four systems. The three runtime labs are
-peers: results are comparable only when source revision, image hashes, kernel,
-topology, clients, wmediumd and test parameters match.
+`codex/0829-lxd-primary` is authoritative. Runtime results are comparable only
+when source revision, image hashes, kernel, topology, clients, medium backend
+and test parameters match.
 
 ## Image provenance
 
@@ -25,7 +23,7 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-runtime source            codex/0824-clean
+host/runtime source       codex/0829-lxd-primary
 image content             EasyMesh 0123; OneWifi 0020; Wi-Fi HAL 0030
 kernel                    7.0.0-28-generic
 controller image          X86EMLTRBPIBB_rdk-next_20260828160826.rootfs.lxc.tar.bz2
@@ -49,9 +47,8 @@ For any current pair, verify and retain its hashes before use:
 sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
 ```
 
-Artifacts are built on rev140 under
-`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0824-clean`. Build instructions are in
-[the build guide](../../build/README.md).
+Artifacts are built on rev140 from the clean canonical source checkout. Build
+instructions are in [the build guide](../../build/README.md).
 
 ## Runtime prerequisites
 
@@ -89,9 +86,7 @@ Do not unload hwsim while any lab container owns a radio.
 
 ## Source layout
 
-The validated direct-runtime checkout is
-`/home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe`. Host-side entry
-points are:
+Run host-side commands from the current source checkout. Entry points are:
 
 ```text
 gen/bpi.sh                         deploy controller/extender containers
@@ -108,14 +103,9 @@ gen/tests/bpibroadband-memory-profile.py whole-container PSS/RSS/storage profile
 gen/tests/p0-churn-soak.py          requirements-driven long-duration gate
 ```
 
-The packaged rev150 VM normally installs its runtime source at
-`/home/vagrant/git/meta-cmf-bananapi-vcpe`; an engineering VM may use an
-explicit suffixed checkout. Enter it with:
-
-```sh
-ssh -tt rev@192.168.2.150 \
-  "cd /home/rev/easymesh-vagrant-lab && vagrant ssh"
-```
+An LXD appliance installs its source at
+`/home/easymesh/git/meta-cmf-bananapi-vcpe`. Enter it from the outer host with
+`lxc exec INSTANCE -- bash`.
 
 ## Deployment order
 
@@ -178,25 +168,20 @@ baseline. Omit it only when restarting the same logical device with its complete
 identity preserved. The NVRAM root ownership guard prevents one checkout from
 silently deleting another checkout's identities.
 
-### Vagrant runtime
+### LXD VM runtime
 
-Use `gen/vm/consumer/Vagrantfile` for an installed package. The VM installs an
-enabled `easymesh-lab.service` that reconstructs controller, extenders, clients,
-and wmediumd in gated order after boot.
+The appliance VM installs an enabled `easymesh-lab.service` that reconstructs
+controller, extenders, clients and wmediumd after the guest boots.
 
 ```sh
-mkdir -p /home/rev/easymesh-lab/current
-cp gen/vm/consumer/Vagrantfile /home/rev/easymesh-lab/current/
-cd /home/rev/easymesh-lab/current
-vagrant up
-vagrant status
-vagrant ssh
+cd gen/vm/lxd
+./build.sh status
+./build.sh check
+./build.sh restart
 ```
 
-The complete host installation, package import, first start, warm start, and
-uninstall procedures are maintained under `gen/vm/`. Pin the expected source
-revision, image paths, and wmediumd hash when building or testing a different
-package.
+Host installation, clean build, portable import, acceptance, export and
+removal are maintained in `gen/vm/lxd/README.md`.
 
 ### rev130 recovery after a host reboot
 
@@ -231,7 +216,7 @@ docker exec dhcp-cpe1 ip -4 address show eth1 | grep '10.101.0.10/24'
 docker exec dhcp-cpe1 pgrep -x kea-dhcp4
 docker exec dhcp-cpe1 ss -lun | grep ':67 '
 
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe/gen
+cd /path/to/meta-cmf-bananapi-vcpe/gen
 
 # Load the already-installed patched module. Kernel headers are needed to build
 # it, not to recover with the installed updates/mac80211_hwsim.ko.
@@ -401,31 +386,20 @@ hwsim may retain station link state until a real link-loss event is delivered.
 From the lab LAN:
 
 ```text
-http://192.168.2.130:8888    rev130
-http://192.168.2.130:8890    rev130 wmediumd Console
-http://192.168.2.150:18889   rev150 VM
-http://192.168.2.120:18889   rev120 VM
-http://192.168.2.150:18890   rev150 VM wmediumd Console
-http://192.168.2.120:18890   rev120 VM wmediumd Console
+http://BARE-METAL-HOST:8888   EasyMesh WebUI
+http://BARE-METAL-HOST:8890   wmediumd Console
+http://LXD-VM-HOST:18889      proxied EasyMesh WebUI
+http://LXD-VM-HOST:18890      proxied wmediumd Console
 ```
 
-rev150 forwards the VM without reloading it:
+The LXD appliance host owns direct NAT proxy devices:
 
 ```text
-192.168.2.150:18889 -> 127.0.0.1:18888 -> VM:8888
+HOST:18889 -> VM:8888
+HOST:18890 -> VM:8890
 ```
 
-The user socket is `easymesh-vm-webui-forward.socket`; `rev` user lingering is
-enabled so it remains available without an interactive login.
-
-The clean-install rev120 VM uses Vagrant's direct host forwarding instead:
-
-```text
-192.168.2.120:18889 -> VM:8888
-```
-
-The Phase 1/2 Vagrant profile separately forwards guest port 8890 to host port
-18890. The Console observes wmediumd; it is not served by `em_cli`. Its managed
+The Console observes wmediumd; it is not served by `em_cli`. Its managed
 service must report read-only mode during ordinary lab operation:
 
 ```sh
@@ -433,8 +407,8 @@ systemctl status wmediumd-console.service
 curl -fsS http://127.0.0.1:8890/api/v1/controls | jq .
 ```
 
-Use `vagrant ssh` from the consumer directory rather than treating Vagrant's
-dynamically selected SSH port as a stable lab interface.
+Use `lxc exec INSTANCE -- bash` for guest access. There is no provider-specific
+SSH port or mounted host directory.
 
 On the Network Topology page, **Optimize Layout** only rearranges the rendered
 graph. It places the controller on the left, advances each backhaul generation

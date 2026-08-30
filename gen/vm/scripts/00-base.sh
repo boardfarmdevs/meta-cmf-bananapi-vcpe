@@ -2,12 +2,10 @@
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
-# Package upgrades can otherwise restart the VirtualBox guest service and
-# detach /vagrant and /vagrant-artifacts while the one-time installer is still
-# consuming them.  Report pending restarts but defer them to the optional VM
-# reboot after installation.
+# Report pending service restarts but defer them to the controlled VM reboot
+# after installation.
 export NEEDRESTART_MODE=l
-assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
+assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 lxd_channel=${EASYMESH_LXD_CHANNEL:-latest/stable}
 
 apt-get update
@@ -37,7 +35,7 @@ apt-get install -y --no-install-recommends \
     zstd
 
 systemctl enable --now docker
-usermod -aG docker vagrant
+usermod -aG docker easymesh
 
 cd "$assets"
 if [ -f SHA256SUMS ]; then
@@ -89,10 +87,10 @@ fi
 snap refresh --hold=forever lxd
 
 getent group lxd >/dev/null || groupadd --system lxd
-usermod -aG lxd vagrant
+usermod -aG lxd easymesh
 snap start lxd
 lxd waitready
 lxc version
 
-install -d -m 0755 /var/lib/easymesh-vagrant
-printf '%s\n' 'base-ready' > /var/lib/easymesh-vagrant/base.status
+install -d -m 0755 /var/lib/easymesh-lab
+printf '%s\n' 'base-ready' > /var/lib/easymesh-lab/base.status

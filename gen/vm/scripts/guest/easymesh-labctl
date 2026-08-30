@@ -33,12 +33,12 @@ check)
     "$audit"
     ;;
 steer-return)
-    sudo -H -u vagrant bash /home/vagrant/return-steering-test.sh
+    sudo -H -u easymesh bash /home/easymesh/return-steering-test.sh
     ;;
 steer-scale)
     iterations=${2:-3}
     [[ "$iterations" =~ ^[1-9][0-9]*$ ]]
-    sudo -H -u vagrant bash /home/vagrant/scale-steering-test.sh "$iterations"
+    sudo -H -u easymesh bash /home/easymesh/scale-steering-test.sh "$iterations"
     ;;
 *)
     echo 'usage: easymesh-labctl {warm-start|start|status|check|steer-return|steer-scale [iterations]}' >&2

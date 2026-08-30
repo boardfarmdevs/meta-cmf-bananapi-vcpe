@@ -2,7 +2,7 @@
 # Exercise a compiled wmdcfg plan while sampling client association and traffic.
 set -euo pipefail
 
-META_DIR=${META_DIR:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
+META_DIR=${META_DIR:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 PLAN=${PLAN:-/tmp/wmdcfg-crossover-plan.json}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/tmp/wmdcfg-live-crossover}
 CLIENT=${CLIENT:-wlan-client}

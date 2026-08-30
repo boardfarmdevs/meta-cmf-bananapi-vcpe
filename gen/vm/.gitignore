@@ -1,5 +1,2 @@
-**/.vagrant/
 **/.cache/
 **/artifacts/
-precooked/assets/*
-!precooked/assets/.gitkeep

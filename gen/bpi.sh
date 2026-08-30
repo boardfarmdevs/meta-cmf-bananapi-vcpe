@@ -5,7 +5,7 @@ source gen-util.sh
 # LXC commands can opportunistically interpret non-terminal stdin as YAML.
 # bpi.sh receives all of its inputs as arguments and creates the one intentional
 # profile-edit stream through an explicit pipeline below, so never inherit an
-# SSH here-document, Vagrant control stream, or caller script as LXC input.
+# SSH here-document, outer VM-agent stream, or caller script as LXC input.
 exec </dev/null
 
 # Parse -b/-l flags out of the argument list first, wherever they appear,

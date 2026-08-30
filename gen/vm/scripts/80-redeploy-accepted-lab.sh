@@ -4,14 +4,14 @@ set -euo pipefail
 
 exec </dev/null
 
-repo=${EASYMESH_REPO:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
+repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 controller_image=${CONTROLLER_IMAGE:?set CONTROLLER_IMAGE to the controller LXC image}
 extender_image=${EXTENDER_IMAGE:?set EXTENDER_IMAGE to the extender LXC image}
 expected_repo_head=${EXPECTED_REPO_HEAD:?set EXPECTED_REPO_HEAD to the accepted commit}
 controller_sha256=${CONTROLLER_SHA256:?set CONTROLLER_SHA256}
 extender_sha256=${EXTENDER_SHA256:?set EXTENDER_SHA256}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:?set EXPECTED_WMEDIUMD_SHA256}
-evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/vagrant/easymesh-evidence}
+evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/easymesh/easymesh-evidence}
 hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-32}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 evidence="$evidence_root/$run_id"
@@ -108,7 +108,7 @@ for profile in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     fi
 done
 
-rm -f /home/vagrant/.local/state/easymesh-vagrant/deploy.status
+rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 EASYMESH_REPO="$repo" \
 CONTROLLER_IMAGE="$controller_image" \
 EXTENDER_IMAGE="$extender_image" \

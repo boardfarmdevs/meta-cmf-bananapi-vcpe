@@ -1,62 +1,65 @@
-# Native LXD EasyMesh appliance
+# Portable LXD VM appliance
 
-This directory builds the complete EasyMesh research lab as one LXD virtual
-machine. Inside that VM, LXD continues to own the BPI and WLAN-client system
-containers. The guest therefore retains its accepted Linux 7, hwsim,
-wmediumd, Docker/Boardfarm and nested-LXD boundary without requiring
-VirtualBox or Vagrant on the host.
+LXD VM is the supported portable EasyMesh lab. Bare metal remains the
+performance and kernel-debug reference. VirtualBox, Vagrant and `.box`
+artifacts are not required or supported.
 
 ```text
-Linux host + LXD
-`-- easymesh-lab-0828 (LXD virtual machine, Ubuntu 24.04/Linux 7)
+Ubuntu 22.04/24.04 host + LXD/KVM
+`-- easymesh-lab-0829 (Ubuntu 24.04/Linux 7 LXD VM)
     |-- Docker: Boardfarm DHCP/NAT and br-wan101
     |-- nested LXD: controller, four extenders, twenty clients
     |-- hwsim + multichannel wmediumd
-    |-- WebUI :8888
+    |-- EasyMesh WebUI :8888
     `-- wmediumd Console :8890
 ```
 
-The initial implementation deliberately uses an LXD VM. hwsim is then owned
-by the appliance kernel and can be recreated independently of the host. A
-privileged outer system-container experiment is tracked separately because its
-hwsim wiphys belong to the host kernel and must cross two network-namespace
-boundaries before the inner BPI containers can own them.
+The guest kernel owns hwsim. This keeps the radio module, wiphys and medium
+lifecycle inside the appliance instead of crossing an outer system-container
+namespace.
 
-## Build
+## Prepare an outer host
 
-The host needs LXD with VM support, hardware virtualization, Internet access,
-the current clean source checkout, and the accepted controller/extender image
-archives. The default allocation is six virtual CPUs, 6 GiB RAM and a dynamic
-64 GiB root disk.
+On an Ubuntu 22.04 or 24.04 x86-64 host:
 
 ```sh
-cd gen/vm/lxd
+sudo ./install-host.sh
+newgrp lxd
+lxc version
+test -c /dev/kvm
+```
 
+The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
+`lxd` group, and initializes LXD only when no storage pool exists.
+
+## Build a clean appliance
+
+The source checkout must be clean. Provide the accepted controller and
+extender images explicitly:
+
+```sh
 EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
 EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
   ./build.sh build
 ```
 
-The builder performs all of these gates before creating the `accepted`
-snapshot:
+The builder:
 
-1. create a fresh Ubuntu 24.04 LXD VM;
-2. install Ubuntu's Linux 7 kernel and reboot into it;
-3. install Docker, nested LXD and the single Boardfarm repository;
-4. create the 32-radio, three-channel hwsim pool;
-5. deploy the controller, four extenders and 20 clients from explicit images;
-6. install wmediumd and its Console;
-7. reboot the complete appliance and let systemd reconstruct it; and
-8. require the complete `easymesh-labctl check` result.
+1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 6 GiB RAM and a sparse
+   64-GiB disk;
+2. installs and boots the accepted Linux 7 kernel;
+3. installs Docker, nested LXD and the single Boardfarm repository;
+4. builds and loads the patched 32-radio, three-channel hwsim module;
+5. deploys the controller, four extenders, ten private and ten IoT clients;
+6. installs userspace wmediumd, the Console, configurator and optimizer;
+7. reboots the VM and lets systemd reconstruct the lab; and
+8. requires `easymesh-labctl check` plus both host-side HTTP health gates.
 
-Source and Boardfarm are transferred as commit-bounded Git bundles. The BPI
-images and bundles are checksum-verified inside the VM. Git credentials are
-not copied into the appliance. A bundled Alpine 3.19 client image is used when
-present; an Internet build otherwise imports the maintained
-`images:alpine/3.22/amd64` image. Override that fallback with
-`EASYMESH_ALPINE_REMOTE` when a different pinned remote image is required.
+Source and Boardfarm enter the VM as commit-bounded Git bundles. Images are
+checksum verified. Host Git credentials and host-mounted source directories do
+not enter the appliance.
 
-## Operation
+## Operate and verify
 
 ```sh
 ./build.sh status
@@ -66,22 +69,33 @@ present; an Internet build otherwise imports the maintained
 ./build.sh restart
 ```
 
-By default, the builder detects the source address of the host's IPv4 default
-route and binds both ports to that one address. For example, on rev140:
+The default instance is `easymesh-lab-0829`. The builder detects the address
+used by the outer host's IPv4 default route and exposes:
 
 ```text
-http://192.168.2.140:18889/  EasyMesh WebUI
-http://192.168.2.140:18890/  wmediumd Console
+http://HOST:18889/  EasyMesh WebUI
+http://HOST:18890/  wmediumd Console
 ```
 
-The detected address is intentionally not hardcoded in the appliance. Override
-it with `EASYMESH_WEBUI_HOST_IP` when the host has several uplinks;
-`WMEDIUMD_CONSOLE_HOST_IP` defaults to the same value. Binding either service
-to `0.0.0.0` is suitable only on a trusted lab network. Change the port
-variables when another lab already owns the defaults. The build is not
-accepted until both host-side URLs respond through their LXD NAT proxies.
+Override site-local settings without changing image identity:
 
-## Portable image
+```sh
+EASYMESH_LXD_NAME=my-lab \
+EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
+EASYMESH_WEBUI_PORT=28889 \
+WMEDIUMD_CONSOLE_PORT=28890 \
+  ./build.sh start
+```
+
+The complete lab starts automatically after the VM boots. Imported appliance
+VMs also default to LXD `boot.autostart=true`; disable it explicitly when an
+outer host must not start the VM after reboot:
+
+```sh
+lxc config set easymesh-lab-0829 boot.autostart false
+```
+
+## Export a release
 
 After a passing check:
 
@@ -90,17 +104,42 @@ After a passing check:
 ./build.sh export
 ```
 
-`export` stops the VM, publishes it as `easymesh-lab-0828`, writes LXD's
-portable image files under `gen/vm/lxd/artifacts/`, and creates an adjacent
-checksum manifest. Import those files on another LXD host with `lxc image
-import`, then initialize a VM from the imported alias.
+`export` creates `artifacts/easymesh-lab-0829-COMMIT-lxd/` containing one
+zstd-compressed instance backup, `import.sh`, `install-host.sh`, this README,
+and `SHA256SUMS`. The VM is stopped before export so its nested LXD database,
+radio state and filesystems are coherent.
 
-Deleting is explicit and limited to `EASYMESH_LXD_NAME`:
+## Import on another host
+
+Copy the exported directory into any empty working directory:
 
 ```sh
-./build.sh delete
+sha256sum -c SHA256SUMS
+EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
+  ./import.sh easymesh-lab-0829-COMMIT-lxd.tar.zst
 ```
 
-The VirtualBox bundle remains a compatibility release. New LXD acceptance is
-performed independently; it does not weaken or rewrite the 0828 VirtualBox
-artifact.
+The importer refuses to overwrite an existing instance, chooses an address on
+the selected LXD network, replaces site-specific proxy devices, starts the VM,
+and prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
+`EASYMESH_LXD_NETWORK`, `EASYMESH_WEBUI_PORT`, and
+`WMEDIUMD_CONSOLE_PORT` when the defaults collide.
+
+Monitor the first imported cold reconstruction:
+
+```sh
+lxc console easymesh-lab-0829 --show-log
+lxc exec easymesh-lab-0829 -- journalctl -fu easymesh-lab.service
+lxc exec easymesh-lab-0829 -- /usr/local/sbin/easymesh-labctl check
+```
+
+## Remove
+
+Review the exact target, then delete only that instance:
+
+```sh
+EASYMESH_LXD_NAME=easymesh-lab-0829 ./build.sh delete
+```
+
+The delete command is destructive. It does not delete LXD itself, storage
+pools, networks, source checkouts, or another lab instance.

@@ -1,6 +1,0 @@
-# name kind revision
-meta-cmf-bananapi-vcpe git beef6311cec68bf4276b9f54905cdea84ba70ea1
-boardfarm-lab-staging git eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
-astral-uv snap 1662
-python cpython 3.13.15
-lxd snap 38768

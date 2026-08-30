@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# LXC may otherwise consume Vagrant's trailing remote-shell control input.
+# LXC may otherwise consume trailing outer VM-agent input.
 exec </dev/null
 
-# Run inside the Vagrant guest after the mixed-client scale topology is healthy.
+# Run inside the LXD VM after the mixed-client scale topology is healthy.
 # Every client in the selected SSID cohort is steered while traffic is flowing.
 # The radio link, controller database, WebUI API, loss, and service restart
 # counters are recorded independently so a command response alone cannot pass.
@@ -18,8 +18,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$ssid" in private_ssid|iot_ssid) ;; *) echo "unsupported SSID: $ssid" >&2; exit 2;; esac
-repo=${EASYMESH_REPO:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
-results=/home/vagrant/.local/state/easymesh-vagrant/steering-scale.csv
+repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
+results=/home/easymesh/.local/state/easymesh-lab/steering-scale.csv
 mkdir -p "$(dirname "$results")"
 run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%S.%3NZ)-$$}
 events=${EVENTS_FILE:-${results%.csv}.events.log}

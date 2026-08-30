@@ -3,7 +3,7 @@
 ## Purpose and ownership
 
 The steering optimizer is a completely external component. It runs on the lab
-host or Vagrant VM, outside every BPI container and outside the EasyMesh,
+host or LXD VM, outside every BPI container and outside the EasyMesh,
 OneWifi, WebUI and wmediumd processes.
 
 For installation, operating commands, input schemas, adapter examples and
@@ -44,7 +44,7 @@ flowchart TB
     classDef contract fill:#ffffff,stroke:#4f5b66,stroke-width:1.5px,stroke-dasharray:5 3,color:#20262c
     classDef warning fill:#fff0f0,stroke:#b42318,stroke-width:2px,color:#7a1a12
 
-    subgraph HOST["Linux 7 lab host or Vagrant VM"]
+    subgraph HOST["Linux 7 lab host or LXD VM"]
         direction LR
 
         subgraph RF["Independent RF stimulus plane"]

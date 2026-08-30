@@ -22,7 +22,7 @@ scenario writer, steering optimizer or source of EasyMesh measurements.
 
 ## Implementation status
 
-Phases 1 and 2 are implemented in the current `codex/0824-clean` series:
+Phases 1 and 2 are implemented in the current `codex/0829-lxd-primary` series:
 
 - patched wmediumd exposes bounded packet telemetry through a separate,
   host-only `-O` Unix socket;
@@ -155,9 +155,9 @@ curl -fsS http://127.0.0.1:8890/api/v1/status | jq .
 curl -fsS http://127.0.0.1:8890/api/v1/controls | jq .
 ```
 
-The Vagrant host forwards the page to `http://127.0.0.1:18890/`; bind the
-forward to a trusted host/LAN address only when another workstation must view
-it. Normal `/api/v1/controls` output says `enabled:false` and `mode:read-only`.
+The LXD VM host proxies the page to `http://HOST:18890/`; bind the proxy to a
+trusted host/LAN address only when another workstation must view it. Normal
+`/api/v1/controls` output says `enabled:false` and `mode:read-only`.
 
 Typed controls are a diagnostic convenience, not the scenario runner. Enable
 them only for a bounded session as described in

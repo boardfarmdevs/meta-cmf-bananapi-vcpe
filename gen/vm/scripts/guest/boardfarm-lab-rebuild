@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${BOARDFARM_WORKSPACE:=/home/vagrant/boardfarm-open-0406}"
+: "${BOARDFARM_WORKSPACE:=/home/easymesh/boardfarm-open-0406}"
 : "${BF_LAB_CONFIG:=ca-desk6.json}"
 : "${BF_INVENTORY:=ca-desk6.json}"
 export BOARDFARM_WORKSPACE BF_LAB_CONFIG BF_INVENTORY
@@ -57,6 +57,6 @@ docker exec wan-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.20/24'
 test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
 
-install -d /var/lib/easymesh-vagrant
-date -Ins > /var/lib/easymesh-vagrant/boardfarm.completed-at
-printf '%s\n' 'boardfarm-wan-ready' > /var/lib/easymesh-vagrant/boardfarm.status
+install -d /var/lib/easymesh-lab
+date -Ins > /var/lib/easymesh-lab/boardfarm.completed-at
+printf '%s\n' 'boardfarm-wan-ready' > /var/lib/easymesh-lab/boardfarm.status

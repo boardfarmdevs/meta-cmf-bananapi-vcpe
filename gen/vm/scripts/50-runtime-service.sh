@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-test -f /home/vagrant/.local/state/easymesh-vagrant/deploy.status
+test -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 
-install -m 0755 /home/vagrant/easymesh-assets/easymesh-lab-runtime \
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-lab-runtime \
     /usr/local/sbin/easymesh-lab-runtime
-install -m 0644 /home/vagrant/easymesh-assets/easymesh-lab.service \
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-lab.service \
     /etc/systemd/system/easymesh-lab.service
-install -m 0755 /home/vagrant/easymesh-assets/easymesh-hwsim-pool \
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-hwsim-pool \
     /usr/local/sbin/easymesh-hwsim-pool
-install -m 0644 /home/vagrant/easymesh-assets/easymesh-hwsim-pool.service \
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-hwsim-pool.service \
     /etc/systemd/system/easymesh-hwsim-pool.service
 install -d /etc/systemd/system/snap.lxd.daemon.service.d
-install -m 0644 /home/vagrant/easymesh-assets/lxd-easymesh-ordering.conf \
+install -m 0644 /home/easymesh/easymesh-assets/lxd-easymesh-ordering.conf \
     /etc/systemd/system/snap.lxd.daemon.service.d/easymesh-ordering.conf
-install -m 0755 /home/vagrant/easymesh-assets/easymesh-labctl \
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-labctl \
     /usr/local/sbin/easymesh-labctl
-install -m 0755 /home/vagrant/easymesh-assets/easymesh-health-audit \
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-health-audit \
     /usr/local/sbin/easymesh-health-audit
-install -m 0755 /home/vagrant/easymesh-assets/easymesh-package-cleanup \
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-package-cleanup \
     /usr/local/sbin/easymesh-package-cleanup
 
 # Boardfarm reconstructs its two-container WAN lab and br-wan101 first. The EasyMesh

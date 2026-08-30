@@ -3,7 +3,7 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: accepted `codex/0824-clean` baseline.
+Status: `codex/0829-lxd-primary` release candidate.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
@@ -12,10 +12,10 @@ link here instead of repeating versioned results.
 
 | Item | Accepted value |
 | --- | --- |
-| Source branch | `codex/0824-clean` |
-| Runtime image source | `codex/0824-clean`; EasyMesh `0123`, OneWifi `0020`, Wi-Fi HAL `0030` |
+| Source branch | `codex/0829-lxd-primary` |
+| Runtime image source | consolidated EasyMesh `0123`, OneWifi `0020`, Wi-Fi HAL `0030` |
 | Kernel | Linux `7.0.0-28-generic` |
-| Runtime | primary LXD lab on rev130; accepted Vagrant VM on rev120 |
+| Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
 | Mesh | controller, colocated Agent-1, and four extenders |
 | Controller model | 5 devices / 15 radios / 50 BSS records / 24 associated STAs |
@@ -82,24 +82,20 @@ SNMP                     one systemd-owned subagent, no launcher leak
 The Console also passed every REST resource, Prometheus export, live packet
 telemetry, provenance reporting, and rejection of writes in read-only mode.
 
-The clean rev120 VM deployment and subsequent real reboot reconstruction both
-reached `5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero
-RCPI values, four fresh backhaul signals, 20/20 working WLAN data paths, and
-zero OneWifi/EasyMesh restarts. The rebooted lab then held the topology for 120
-seconds before the accepted disk was packaged as
-`easymesh-lab-0828-cf6b5e8.box`.
+The LXD VM deployment and guest reboot reconstruction must both reach
+`5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero RCPI
+values, four fresh backhaul signals, 20/20 working WLAN data paths, and zero
+OneWifi/EasyMesh restarts before an instance backup is published.
 
 ## Runtime access
 
 | Runtime | EasyMesh WebUI | wmediumd Console |
 | --- | --- | --- |
-| rev130 | `http://192.168.2.130:8888` | `http://192.168.2.130:8890` |
-| rev120 VM | `http://192.168.2.120:18889` | `http://192.168.2.120:18890` |
-| rev150 older VM | `http://192.168.2.150:18888` | `http://192.168.2.150:18890` |
+| bare metal | `http://HOST:8888` | `http://HOST:8890` |
+| LXD VM | `http://HOST:18889` | `http://HOST:18890` |
 
-rev130 is the primary development and demonstration runtime. rev120 is the
-accepted portability target. The running rev150 VM is an older compatibility
-image and is not a current parity claim.
+Host addresses are site configuration. They are selected during LXD VM build
+or import and are never baked into the portable artifact.
 
 ## Important boundaries
 

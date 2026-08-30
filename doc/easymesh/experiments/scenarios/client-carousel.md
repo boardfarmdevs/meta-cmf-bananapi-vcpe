@@ -65,14 +65,14 @@ Open the WebUI Network Topology tab first and optionally click **Optimize
 Layout** once. Then run on the lab host/VM:
 
 ```sh
-cd /home/rev/easymesh-lab/0824-clean/meta-cmf-bananapi-vcpe
+cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
 gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
 ```
 
-Inside a distributable VM the repository is normally under `/home/vagrant`:
+Inside a distributable VM the repository is normally under `/home/easymesh`:
 
 ```sh
-cd /home/vagrant/git/meta-cmf-bananapi-vcpe
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
 ```
 

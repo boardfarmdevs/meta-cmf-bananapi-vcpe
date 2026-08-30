@@ -3,7 +3,7 @@ set -euo pipefail
 
 exec </dev/null
 
-lab_user=${EASYMESH_LAB_USER:-vagrant}
+lab_user=${EASYMESH_LAB_USER:-easymesh}
 lab_group=${EASYMESH_LAB_GROUP:-$(id -gn "$lab_user")}
 lab_home=${EASYMESH_LAB_HOME:-$(getent passwd "$lab_user" | cut -d: -f6)}
 gen=${EASYMESH_GEN:-$lab_home/git/meta-cmf-bananapi-vcpe/gen}
@@ -14,7 +14,7 @@ clients=$(lxc list -c n --format csv 2>/dev/null \
 client_count=$(printf '%s\n' $clients | sed '/^$/d' | wc -l)
 [ "$client_count" -gt 0 ] || { echo 'no provisioned WLAN clients found' >&2; exit 1; }
 expected_associated=$((client_count + 4))
-state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-vagrant/reboot-acceptance}
+state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-lab/reboot-acceptance}
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-userspace}
 kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
 medium_runtime=/run/meta-cmf-wmediumd

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Vagrant's remote shell leaves control text on stdin. Some LXC subcommands
-# opportunistically consume non-terminal stdin as YAML, so isolate the complete
-# deployment (individual commands that intentionally pipe YAML still work).
+# Some LXC subcommands opportunistically consume outer VM-agent input as YAML,
+# so isolate the complete deployment. Commands that intentionally pipe YAML
+# still work.
 exec </dev/null
 
-repo=${EASYMESH_REPO:-/home/vagrant/git/meta-cmf-bananapi-vcpe}
+repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 gen="$repo/gen"
-assets=${EASYMESH_ASSETS:-/home/vagrant/easymesh-assets}
-state=${EASYMESH_STATE:-/home/vagrant/.local/state/easymesh-vagrant}
-boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-vagrant/boardfarm.status}
+assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
+state=${EASYMESH_STATE:-/home/easymesh/.local/state/easymesh-lab}
+boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-lab/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2"}
 expected_repo_head=${EXPECTED_REPO_HEAD:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
@@ -20,7 +20,7 @@ mkdir -p "$state"
 test -f "$boardfarm_status"
 test "$(systemctl is-active boardfarm-lab.service 2>/dev/null)" = active
 ip link show br-wan101 >/dev/null
-test "$(sudo -u vagrant git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
+test "$(sudo -u easymesh git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
 test "$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 

@@ -49,7 +49,7 @@ changed.
 Run this inside the VM after the normal lab health check:
 
 ```sh
-cd /home/vagrant/git/meta-cmf-bananapi-vcpe
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 sudo gen/tests/wmediumd-extender-outage.py --extender bpiap-003
 ```
 
