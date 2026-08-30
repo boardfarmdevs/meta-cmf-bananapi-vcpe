@@ -44,6 +44,17 @@ PY
 )
 
 lxc import "$backup" "$name"
+# An LXD backup preserves VM firmware, vsock and NIC identities for disaster
+# recovery.  A portable appliance import is a new instance and may coexist
+# with the release-builder instance during acceptance, so reseed all
+# host-visible identities before attaching it to the selected network.
+instance_uuid=$(cat /proc/sys/kernel/random/uuid)
+vsock_id=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+lxc config unset "$name" volatile.eth0.hwaddr
+lxc config set "$name" volatile.uuid "$instance_uuid"
+lxc config set "$name" volatile.uuid.generation "$instance_uuid"
+lxc config set "$name" volatile.cloud-init.instance-id "$instance_uuid"
+lxc config set "$name" volatile.vsock_id "$vsock_id"
 lxc config set "$name" limits.cpu "$cpus"
 lxc config set "$name" limits.memory "$memory"
 lxc config set "$name" boot.autostart true

@@ -194,7 +194,8 @@ lxc list -c ns4,user.build > "$evidence/lxc-list.txt"
 printf '%s\n' "$topology" > "$evidence/topology.json"
 curl -fsS http://127.0.0.1:8888/api/v1/clients > "$evidence/clients.json"
 printf '%s\n' "$counts" > "$evidence/model-counts.txt"
-git -C "$repo" rev-parse HEAD > "$evidence/source-commit.txt"
+git -c safe.directory="$repo" -C "$repo" rev-parse HEAD \
+    > "$evidence/source-commit.txt"
 sha256sum "$controller_image" "$extender_image" > "$evidence/image-sha256.txt"
 date -Ins > "$evidence/completed-at.txt"
 
