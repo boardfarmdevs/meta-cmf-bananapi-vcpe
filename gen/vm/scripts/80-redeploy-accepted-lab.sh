@@ -113,7 +113,8 @@ done
 # files and allocate new NVRAM directories without changing ownership inside
 # retained NVRAM trees.
 sudo install -d -o "$(id -u)" -g "$(id -g)" "$repo/tmp" \
-    "$repo/tmp/bpi-nvram"
+    "$repo/tmp/bpi-nvram" \
+    /home/easymesh/.local/state/easymesh-lab
 sudo rm -f "$repo/tmp/ofw-exm-qemux86-bpibroadband.tar.bz2" \
     "$repo/tmp/ofw-exm-qemux86-bpiap.tar.bz2"
 sudo rm -f /home/easymesh/.local/state/easymesh-lab/deploy.status
