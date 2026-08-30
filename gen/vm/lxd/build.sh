@@ -83,20 +83,29 @@ wait_agent() {
 }
 
 select_guest_ipv4() {
-    local cidr
+    local cidr used
     if [ -n "$guest_ipv4" ]; then
         printf '%s\n' "$guest_ipv4"
         return
     fi
     cidr=$(lxc network get "$network" ipv4.address)
-    python3 - "$cidr" <<'PY'
+    used=$(lxc network list-leases "$network" --format csv \
+        | awk -F, '$3 ~ /^[0-9]+\./ {print $3}' | paste -sd, -)
+    python3 - "$cidr" "$used" <<'PY'
 import ipaddress
 import sys
 
 network = ipaddress.ip_network(sys.argv[1], strict=False)
 if network.num_addresses < 16:
     raise SystemExit(f"managed bridge is too small for an appliance address: {network}")
-print(network.broadcast_address - 5)
+used = {ipaddress.ip_address(value) for value in sys.argv[2].split(",") if value}
+for offset in range(5, min(network.num_addresses - 2, 256)):
+    candidate = network.broadcast_address - offset
+    if candidate not in used:
+        print(candidate)
+        break
+else:
+    raise SystemExit(f"no free appliance address found near the end of {network}")
 PY
 }
 

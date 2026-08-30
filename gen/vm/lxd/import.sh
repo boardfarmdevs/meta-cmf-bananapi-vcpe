@@ -23,14 +23,23 @@ if lxc info "$name" >/dev/null 2>&1; then
 fi
 
 cidr=$(lxc network get "$network" ipv4.address)
-guest_address=$(python3 - "$cidr" <<'PY'
+used=$(lxc network list-leases "$network" --format csv \
+    | awk -F, '$3 ~ /^[0-9]+\./ {print $3}' | paste -sd, -)
+guest_address=$(python3 - "$cidr" "$used" <<'PY'
 import ipaddress
 import sys
 
 network = ipaddress.ip_network(sys.argv[1], strict=False)
 if network.num_addresses < 16:
     raise SystemExit(f"managed bridge is too small: {network}")
-print(network.broadcast_address - 5)
+used = {ipaddress.ip_address(value) for value in sys.argv[2].split(",") if value}
+for offset in range(5, min(network.num_addresses - 2, 256)):
+    candidate = network.broadcast_address - offset
+    if candidate not in used:
+        print(candidate)
+        break
+else:
+    raise SystemExit(f"no free appliance address found near the end of {network}")
 PY
 )
 
