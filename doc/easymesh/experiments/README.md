@@ -14,6 +14,7 @@ medium restoration before accepting the result.
 | Do clients recover when one extender becomes unreachable? | [Extender outage](scenarios/extender-outage.md) | client/AP ownership, aging, traffic, recovery |
 | Can backhaul form a chain or branch rather than a star? | [Multihop backhaul](scenarios/multihop-backhaul.md) | bSTA link, parent BSSID, controller edge, backhaul signal |
 | How are private and IoT cohorts provisioned and scaled? | [Client scale](scenarios/client-scale.md) | cohort counts, radio capacity, topology, traffic |
+| How long do complete 25- and 55-container lifecycle transactions take? | [Lifecycle performance](lifecycle-performance.md) | systemd wall time, phase timings, topology, metrics, traffic, restart counts |
 | Does the lab remain stable under repeated churn? | [Soak acceptance](scenarios/soak-acceptance.md) | duration, restarts, memory, drops, candidate RCPI, restoration |
 | How is an optimizer evaluated across deterministic worlds? | [Optimizer scenarios](optimizer-scenarios.md) | replay inputs, decisions, scores, action outcomes |
 | How do I add an optimizer input or algorithm? | [Optimizer development](optimizer-development.md) | tests, schemas, journals, live ladder |

@@ -20,6 +20,19 @@ kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
 medium_runtime=/run/meta-cmf-wmediumd
 kernel_metrics_socket=$medium_runtime/metrics/control.sock
 kernel_metrics_unit=easymesh-kernel-metrics.service
+extender_start_parallelism=${EASYMESH_EXTENDER_START_PARALLELISM:-4}
+extender_ready_parallelism=${EASYMESH_EXTENDER_READY_PARALLELISM:-4}
+extender_stop_parallelism=${EASYMESH_EXTENDER_STOP_PARALLELISM:-4}
+client_start_parallelism=${EASYMESH_CLIENT_START_PARALLELISM:-10}
+client_ready_parallelism=${EASYMESH_CLIENT_READY_PARALLELISM:-10}
+client_stop_parallelism=${EASYMESH_CLIENT_STOP_PARALLELISM:-16}
+traffic_parallelism=${EASYMESH_TRAFFIC_PARALLELISM:-10}
+client_stop_timeout=${EASYMESH_CLIENT_STOP_TIMEOUT:-2}
+mesh_stop_timeout=${EASYMESH_MESH_STOP_TIMEOUT:-10}
+lifecycle_started_ms=$(date +%s%3N)
+lifecycle_timing_file=
+lifecycle_phase=
+lifecycle_phase_started_ms=0
 
 case "$medium_backend" in
 userspace|kernel) ;;
@@ -40,8 +53,69 @@ start|stop)
         echo "another EasyMesh lab lifecycle transaction is already active" >&2
         exit 75
     fi
+    lifecycle_timing_file=$(mktemp /run/easymesh-lifecycle-timing.XXXXXX)
+    for value in "$extender_start_parallelism" "$extender_ready_parallelism" \
+            "$extender_stop_parallelism" "$client_start_parallelism" \
+            "$client_ready_parallelism" "$client_stop_parallelism" \
+            "$traffic_parallelism" "$client_stop_timeout" \
+            "$mesh_stop_timeout"; do
+        [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'lifecycle parallelism and timeout values must be positive integers' >&2
+            exit 2
+        }
+    done
     ;;
 esac
+
+begin_phase() {
+    lifecycle_phase=$1
+    lifecycle_phase_started_ms=$(date +%s%3N)
+    echo "EasyMesh lifecycle phase begin: action=$action phase=$lifecycle_phase"
+}
+
+end_phase() {
+    local finished_ms elapsed_ms
+    [ -n "$lifecycle_phase" ] || return 0
+    finished_ms=$(date +%s%3N)
+    elapsed_ms=$((finished_ms - lifecycle_phase_started_ms))
+    printf '%s\t%s\n' "$lifecycle_phase" "$elapsed_ms" >> "$lifecycle_timing_file"
+    echo "EasyMesh lifecycle phase end: action=$action phase=$lifecycle_phase elapsed_ms=$elapsed_ms"
+    lifecycle_phase=
+}
+
+write_lifecycle_timing() {
+    local result=$1 finished_ms total_ms output tmp
+    finished_ms=$(date +%s%3N)
+    total_ms=$((finished_ms - lifecycle_started_ms))
+    install -d -m 0755 -o "$lab_user" -g "$lab_group" "$state"
+    output=$state/last-$action-timing.json
+    tmp=$output.tmp.$$
+    jq -Rn \
+        --arg action "$action" \
+        --arg result "$result" \
+        --arg backend "$medium_backend" \
+        --argjson containers "$((client_count + 5))" \
+        --argjson mesh_nodes 5 \
+        --argjson clients "$client_count" \
+        --argjson total_ms "$total_ms" '
+        [inputs | split("\t") | {phase: .[0], elapsed_ms: (.[1] | tonumber)}] as $phases
+        | {
+            schema_version: 1,
+            action: $action,
+            result: $result,
+            medium_backend: $backend,
+            containers: $containers,
+            mesh_nodes: $mesh_nodes,
+            clients: $clients,
+            elapsed_ms: $total_ms,
+            phases: $phases
+          }
+    ' < "$lifecycle_timing_file" > "$tmp"
+    chown "$lab_user:$lab_group" "$tmp"
+    mv -f "$tmp" "$output"
+    echo "EasyMesh lifecycle timing: action=$action containers=$((client_count + 5)) elapsed_ms=$total_ms output=$output"
+    rm -f "$lifecycle_timing_file"
+}
 
 select_medium_backend() {
     case "$medium_backend" in
@@ -156,40 +230,72 @@ start_instance() {
     return 1
 }
 
+wait_pid_batch() {
+    local pid failed=0
+    for pid in "$@"; do
+        wait "$pid" || failed=1
+    done
+    return "$failed"
+}
+
+run_bounded() {
+    local parallelism=$1 function=$2 item failed=0
+    local -a pids=()
+    shift 2
+    for item in "$@"; do
+        "$function" "$item" &
+        pids+=("$!")
+        if [ "${#pids[@]}" -ge "$parallelism" ]; then
+            wait_pid_batch "${pids[@]}" || failed=1
+            pids=()
+        fi
+    done
+    wait_pid_batch "${pids[@]}" || failed=1
+    return "$failed"
+}
+
+start_instances_bounded() {
+    local parallelism=$1
+    shift
+    run_bounded "$parallelism" start_instance "$@"
+}
+
 stop_instance() {
-    local container=$1
+    local container=$1 timeout=${2:-$mesh_stop_timeout}
     [ "$(instance_state "$container")" = RUNNING ] || return 0
-    lxc stop "$container" --timeout 20 >/dev/null 2>&1 \
+    lxc stop "$container" --timeout "$timeout" >/dev/null 2>&1 \
         || lxc stop "$container" --force >/dev/null 2>&1 \
         || true
 }
 
+stop_client_instance() {
+    local container=$1
+    stop_instance "$container" "$client_stop_timeout"
+    lxc config set "$container" boot.autostart false
+}
+
+stop_extender_instance() {
+    local container=$1
+    stop_instance "$container" "$mesh_stop_timeout"
+    lxc config set "$container" boot.autostart false
+}
+
 stop_client_instances() {
-    local parallelism=${EASYMESH_CLIENT_STOP_PARALLELISM:-8}
-    local container pid
-    local -a pids=()
-
-    [[ "$parallelism" =~ ^[1-9][0-9]*$ ]] || {
-        echo 'EASYMESH_CLIENT_STOP_PARALLELISM must be positive' >&2
-        return 2
-    }
-
     # Client namespaces are independent. Stop them in bounded batches so the
-    # 50/100-client profiles do not exceed the systemd stop budget, but finish
-    # every batch before stopping mesh nodes or reclaiming returned PHYs.
-    while read -r container; do
-        [ -n "$container" ] || continue
-        (
-            stop_instance "$container"
-            lxc config set "$container" boot.autostart false
-        ) &
-        pids+=("$!")
-        if [ "${#pids[@]}" -ge "$parallelism" ]; then
-            for pid in "${pids[@]}"; do wait "$pid"; done
-            pids=()
-        fi
-    done < <(printf '%s\n' $clients | sort -Vr)
-    for pid in "${pids[@]}"; do wait "$pid"; done
+    # 50/100-client profiles do not exceed the systemd stop budget. They have
+    # no persistent service state, so use a short graceful interval and then
+    # let LXD force the individual namespace down. Finish every stop before
+    # reclaiming returned PHYs.
+    local -a reverse_clients=()
+    mapfile -t reverse_clients < <(printf '%s\n' $clients | sort -Vr)
+    run_bounded "$client_stop_parallelism" stop_client_instance \
+        "${reverse_clients[@]}"
+}
+
+stop_mesh_instances() {
+    run_bounded "$extender_stop_parallelism" stop_extender_instance $extenders
+    stop_instance bpibroadband "$mesh_stop_timeout"
+    lxc config set bpibroadband boot.autostart false
 }
 
 reclaim_hwsim_vifs() {
@@ -508,33 +614,33 @@ verify_stability_window() {
     echo 'topology and zero-restart state held for 120 seconds'
 }
 
+client_traffic_one() {
+    local client=$1 output loss
+    output=$(lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 2>&1 || true)
+    loss=$(printf '%s\n' "$output" \
+        | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
+    printf '%s packet_loss=%s\n' "$client" "${loss:-FAIL}"
+}
+
 client_traffic_report() {
-    local client output loss
-    for client in $clients; do
-        output=$(lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 2>&1 || true)
-        loss=$(printf '%s\n' "$output" \
-            | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
-        printf '%s packet_loss=%s\n' "$client" "${loss:-FAIL}"
+    run_bounded "$traffic_parallelism" client_traffic_one $clients
+}
+
+verify_client_traffic_one() {
+    local client=$1 attempt
+    for attempt in 1 2 3; do
+        if lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 \
+                >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
     done
+    echo "$client cannot reach the WLAN gateway after three retries" >&2
+    return 1
 }
 
 verify_client_traffic() {
-    local client attempt passed
-    for client in $clients; do
-        passed=0
-        for attempt in 1 2 3; do
-            if lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 \
-                >/dev/null 2>&1; then
-                passed=1
-                break
-            fi
-            sleep 2
-        done
-        if [ "$passed" -ne 1 ]; then
-            echo "$client cannot reach the WLAN gateway after three retries" >&2
-            return 1
-        fi
-    done
+    run_bounded "$traffic_parallelism" verify_client_traffic_one $clients
     echo "all $client_count WLAN clients reach 10.0.0.1"
 }
 
@@ -583,7 +689,8 @@ capture_result() {
 case "$action" in
 start)
     result=FAIL
-    trap 'capture_result "$result"' EXIT
+    trap 'if [ "$result" != PASS ]; then capture_result "$result"; fi; rm -f "$lifecycle_timing_file"' EXIT
+    begin_phase infrastructure
     systemctl start docker.service snap.lxd.daemon.service
     for attempt in $(seq 1 30); do
         ip link show br-wan101 >/dev/null 2>&1 \
@@ -594,6 +701,7 @@ start)
     ip link show br-wan101 >/dev/null
     docker start dhcp-cpe1 wan-cpe1 >/dev/null
     wait_wan_provider
+    end_phase
 
     # A pre-fix appliance may let LXD restore clients from its previous-power
     # state. Quiesce every managed node so this service still establishes the
@@ -603,28 +711,35 @@ start)
     # discovery calls return no containers even when the user is in the lxd
     # group. Keep lifecycle ownership in this root service; wmediumd-up still
     # applies its narrow socket permissions for operator access.
+    begin_phase quiesce_and_radio_reset
     "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     stop_client_instances
-    for container in bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
-        stop_instance "$container"
-        lxc config set "$container" boot.autostart false
-    done
+    stop_mesh_instances
     reclaim_hwsim_vifs
     select_medium_backend
+    end_phase
 
+    begin_phase controller
     start_instance bpibroadband
     wait_controller
-    for container in $extenders; do
-        start_instance "$container"
-        wait_extender_live "$container"
-    done
-    wait_mesh_model
-    enable_metrics_reporting
-    for client in $clients; do
-        start_instance "$client"
-        wait_client_live "$client"
-    done
+    end_phase
 
+    begin_phase extenders
+    start_instances_bounded "$extender_start_parallelism" $extenders
+    run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
+    wait_mesh_model
+    end_phase
+
+    begin_phase initial_metrics_policy
+    enable_metrics_reporting
+    end_phase
+
+    begin_phase clients
+    start_instances_bounded "$client_start_parallelism" $clients
+    run_bounded "$client_ready_parallelism" wait_client_live $clients
+    end_phase
+
+    begin_phase medium
     if [ "$medium_backend" = userspace ]; then
         env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
     else
@@ -636,6 +751,9 @@ start)
         start_kernel_metrics_proxy
         verify_medium_backend
     fi
+    end_phase
+
+    begin_phase convergence_and_acceptance
     wait_clients
     verify_client_ipv4_ownership
     wait_mesh_model
@@ -649,19 +767,36 @@ start)
     verify_stability_window
     assert_zero_restarts
     verify_client_traffic
+    end_phase
     result=PASS
+
+    begin_phase evidence_capture
+    capture_result "$result"
+    end_phase
+    write_lifecycle_timing "$result"
+    trap - EXIT
     echo "EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
     ;;
 stop)
+    begin_phase medium
     stop_kernel_metrics_proxy
     "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    end_phase
+
+    begin_phase clients
     stop_client_instances
-    for container in bpiap-003 bpiap-002 bpiap-001 bpiap bpibroadband; do
-        stop_instance "$container"
-    done
+    end_phase
+
+    begin_phase mesh
+    stop_mesh_instances
+    end_phase
+
+    begin_phase radio_reset
     if [ -w "$kernel_medium_parameter" ]; then
         printf 'N\n' > "$kernel_medium_parameter"
     fi
+    end_phase
+    write_lifecycle_timing PASS
     ;;
 status)
     systemctl is-active --quiet docker.service snap.lxd.daemon.service
