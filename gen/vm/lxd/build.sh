@@ -171,6 +171,9 @@ push_inputs() {
     local stage=$1 assets=$stage/assets provision=/home/easymesh/easymesh-provision
     local file
     lxc exec "$name" -- bash -eu -c '
+        current_hostname=$(hostname)
+        grep -Eq "^[^#]*[[:space:]]${current_hostname}([[:space:]]|$)" /etc/hosts || \
+            printf "127.0.1.1 %s\n" "$current_hostname" >> /etc/hosts
         id easymesh >/dev/null 2>&1 || useradd -m -s /bin/bash easymesh
         install -d -o easymesh -g easymesh /home/easymesh/easymesh-assets
         install -d -o easymesh -g easymesh /home/easymesh/easymesh-provision
@@ -225,7 +228,7 @@ run_root() {
 }
 
 build_vm() {
-    local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address
+    local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
     require_command git
     require_command lxc
     require_command curl
@@ -240,6 +243,7 @@ build_vm() {
     stage=$(mktemp -d /tmp/easymesh-lxd-build.XXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
     meta_commit=$(prepare_assets "$stage" | tail -n 1)
+    wmediumd_sha=$(sha256sum "$root/gen/wmediumd/wmediumd.patched" | awk '{print $1}')
     controller_name=$(basename "$controller_image")
     extender_name=$(basename "$extender_image")
 
@@ -276,6 +280,7 @@ build_vm() {
         CONTROLLER_IMAGE="/home/easymesh/easymesh-assets/$controller_name" \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
+        EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \
         bash /home/easymesh/easymesh-provision/40-deploy-easymesh.sh
     run_root env HOME=/home/easymesh \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \

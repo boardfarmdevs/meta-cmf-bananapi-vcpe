@@ -14,7 +14,7 @@ boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-lab/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260824200448.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260824200947.rootfs.lxc.tar.bz2"}
 expected_repo_head=${EXPECTED_REPO_HEAD:-dee4dd4a773d8d4a5fe0e1312c6393b42c986d0c}
-expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-f8fb9d668c8bfc1964728f8db620254817ff4bce3de3493f7e5166dcb576641f}
+expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')}
 
 mkdir -p "$state"
 test -f "$boardfarm_status"
