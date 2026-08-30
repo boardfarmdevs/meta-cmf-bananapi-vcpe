@@ -127,6 +127,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0124-association-ignore-metrics-only-fronthaul-owners.patch \
     file://0125-steering-report-from-topology-synchronized-state.patch \
     file://0126-cli-stage-steering-and-shape-layout.patch \
+    file://0127-controller-reconcile-client-snapshot-across-agent-models.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
