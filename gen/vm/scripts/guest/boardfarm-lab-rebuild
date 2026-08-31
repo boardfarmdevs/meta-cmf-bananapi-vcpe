@@ -47,6 +47,25 @@ restart_dhcp_clean() {
     docker restart dhcp-cpe1 >/dev/null
 }
 
+rebuild_boardfarm() {
+    local attempt max_attempts=3
+
+    for attempt in $(seq 1 "$max_attempts"); do
+        echo "Boardfarm setup attempt $attempt/$max_attempts"
+        if "$bf_lab" teardown,setup,status; then
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            echo "Boardfarm setup attempt $attempt failed; retrying after a bounded delay" >&2
+            sleep $((attempt * 10))
+        fi
+    done
+
+    echo "Boardfarm setup failed after $max_attempts attempts" >&2
+    return 1
+}
+
 # Docker preserves the two Boardfarm containers and their networks in the
 # appliance, but older releases created them without a restart policy.  A
 # normal guest reboot must revive that preserved state instead of entering the
@@ -79,7 +98,7 @@ if ! boardfarm_ready; then
     done
 
     cd "$lab_repo/lab"
-    "$bf_lab" teardown,setup,status
+    rebuild_boardfarm
 fi
 
 # bf-lab status proves the Docker topology, but not that Kea survived a rapid

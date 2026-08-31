@@ -19,6 +19,7 @@ if [ -z "$backup" ]; then
 fi
 name=${EASYMESH_LXD_NAME:-${LAB_DEFAULT_NAME:-rdkeasymesh-20-0829}}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
+storage=${EASYMESH_LXD_STORAGE:-}
 cpus=${EASYMESH_LXD_CPUS:-${LAB_DEFAULT_CPUS:-6}}
 memory=${EASYMESH_LXD_MEMORY:-${LAB_DEFAULT_MEMORY:-8GiB}}
 host_address=${EASYMESH_WEBUI_HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')}
@@ -31,6 +32,12 @@ command -v lxc >/dev/null 2>&1 || { echo "lxc is missing; run install-host.sh" >
 [ -c /dev/kvm ] || { echo "/dev/kvm is unavailable; enable hardware virtualization" >&2; exit 1; }
 [ -r "$backup" ] || { echo "backup is not readable: $backup" >&2; exit 1; }
 lxc network show "$network" >/dev/null 2>&1 || { echo "LXD network does not exist: $network" >&2; exit 1; }
+if [ -n "$storage" ]; then
+    lxc storage show "$storage" >/dev/null 2>&1 || {
+        echo "LXD storage pool does not exist: $storage" >&2
+        exit 1
+    }
+fi
 if lxc info "$name" >/dev/null 2>&1; then
     echo "LXD instance already exists: $name" >&2
     echo "stop and delete it explicitly before importing a replacement" >&2
@@ -58,8 +65,21 @@ else:
 PY
 )
 
-lxc import "$backup" "$name"
-# An LXD backup preserves VM firmware, vsock and NIC identities for disaster
+import_args=(lxc import "$backup" "$name")
+[ -z "$storage" ] || import_args+=(--storage "$storage")
+import_args+=(
+    --device "eth0,network=$network"
+    --device "eth0,ipv4.address=$guest_address"
+    --device "easymesh-webui,listen=tcp:$host_address:$webui_port"
+    --device "easymesh-webui,connect=tcp:$guest_address:8888"
+    --device "wmediumd-console,listen=tcp:$console_address:$console_port"
+    --device "wmediumd-console,connect=tcp:$guest_address:8890"
+)
+"${import_args[@]}"
+# Device overrides must be applied atomically above: a foreign LXD server
+# validates serialized static addresses and proxy listeners while creating the
+# instance. An LXD backup also preserves VM firmware, vsock and NIC identities
+# for disaster
 # recovery.  A portable appliance import is a new instance and may coexist
 # with the release-builder instance during acceptance, so reseed all
 # host-visible identities before attaching it to the selected network.
@@ -86,6 +106,10 @@ for device in easymesh-webui wmediumd-console; do
     fi
 done
 lxc config device set "$name" eth0 network "$network"
+# The portable import reseeds the NIC MAC after the instance record is
+# created. Force LXD to regenerate its static DHCP host entry for that new
+# MAC; assigning an unchanged address alone is treated as a no-op.
+lxc config device unset "$name" eth0 ipv4.address
 lxc config device set "$name" eth0 ipv4.address "$guest_address"
 lxc config device add "$name" easymesh-webui proxy nat=true \
     listen="tcp:${host_address}:${webui_port}" \

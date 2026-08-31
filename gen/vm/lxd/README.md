@@ -31,6 +31,15 @@ test -c /dev/kvm
 The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
 `lxd` group, and initializes LXD only when no storage pool exists.
 
+Validate profile metadata and import argument handling without creating an
+appliance:
+
+```sh
+./test-profiles.sh
+./test-build-storage.sh
+./test-import-storage.sh
+```
+
 ## Build a clean appliance
 
 The source checkout must be clean. Select one immutable client profile and
@@ -45,7 +54,7 @@ EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
 
 The builder:
 
-1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 6 GiB RAM and a sparse
+1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 8 GiB RAM and a sparse
    64-GiB disk;
 2. installs and boots the accepted Linux 7 kernel;
 3. installs Docker, nested LXD and the single Boardfarm repository;
@@ -91,6 +100,7 @@ Override site-local settings without changing image identity:
 
 ```sh
 EASYMESH_LXD_NAME=my-lab \
+EASYMESH_LXD_STORAGE=bpi-lab \
 EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
 EASYMESH_WEBUI_PORT=28889 \
 WMEDIUMD_CONSOLE_PORT=28890 \
@@ -128,7 +138,9 @@ Upload the resulting `*-bundle.tar` and its adjacent `.sha256`. Google Drive
 is transport only; the checksum and `release.json` identify the release. The
 outer checksum records only the bundle filename, so verification works from
 any empty download directory. Export also records the VM's actual CPU, memory
-and disk settings. The backup remains neutral between the old and current LXD
+and disk settings, plus the source host's storage-pool name for traceability.
+That pool name is not imposed on a destination host. The backup remains
+neutral between the old and current LXD
 Secure-Boot keys; the importer disables Secure Boot using the spelling
 supported by the destination host before the VM's first boot.
 
@@ -154,8 +166,19 @@ EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
 The importer refuses to overwrite an existing instance, chooses an address on
 the selected LXD network, replaces site-specific proxy devices, starts the VM,
 and prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
-`EASYMESH_LXD_NETWORK`, `EASYMESH_WEBUI_PORT`, and
+`EASYMESH_LXD_NETWORK`, `EASYMESH_LXD_STORAGE`, `EASYMESH_WEBUI_PORT`, and
 `WMEDIUMD_CONSOLE_PORT` when the defaults collide.
+
+When the host's default storage pool cannot hold the selected sparse disk,
+choose an existing pool explicitly for both build and import:
+
+```sh
+EASYMESH_LXD_STORAGE=bpi-lab ./import.sh
+```
+
+The importer validates the pool before creating the VM. The source host's
+pool name is recorded for traceability but is not imposed on a destination
+host.
 
 Monitor the first imported cold reconstruction:
 
