@@ -1,0 +1,102 @@
+From 31d99ada915a144b92d7b995755c52f9350a1330 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Sun, 30 Aug 2026 22:30:00 -0700
+Subject: [PATCH] agent: preserve association start across full snapshots
+
+OneWifi reports last_conn_time as an elapsed age.  Converting that value to
+a boot-time timestamp on every periodic full snapshot can move the start of
+an unchanged association forward.  A stale cross-band row can then remain
+perpetually newer than the client's real association, causing the controller
+to select the wrong BSSID and making deterministic steering fail.
+
+Keep the earliest non-zero start time while refreshing an exact association
+from a full snapshot.  Diff association events still reset the timestamp for
+a real reconnect.  Add a focused regression test that also verifies metrics
+continue to refresh.
+
+Upstream-Status: Pending
+---
+ src/orch/em_orch_agent.cpp       | 17 +++++++++++++++--
+ tests/test_l1_em_orch_agent.cpp | 38 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -76,9 +76,24 @@ unsigned int em_orch_agent_t::retain_full_sta_snapshot_deltas(
+             sta->m_sta_info.bssid, sta->m_sta_info.radiomac,
+             em_target_sta_map_consolidated);
+         if (existing != NULL && existing->associated) {
++            const uint64_t previous_assoc_start =
++                existing->assoc_start_boottime_sec;
++
+             /* Refresh metrics/capabilities without advertising unchanged
+-             * ownership as another association event. */
++             * ownership as another association event.  OneWifi expresses
++             * last_conn_time as an elapsed age, and converting each full
++             * snapshot back to a boot-time timestamp can move an unchanged
++             * association start forward.  Preserve the earliest non-zero
++             * start so a stale cross-band row cannot remain perpetually
++             * newer than the client's actual association.  A real reconnect
++             * arrives as a diff notification and is allowed to reset it. */
+             memcpy(existing, &sta->m_sta_info, sizeof(em_sta_info_t));
++            if (previous_assoc_start != 0 &&
++                    (existing->assoc_start_boottime_sec == 0 ||
++                     existing->assoc_start_boottime_sec >
++                        previous_assoc_start)) {
++                existing->assoc_start_boottime_sec = previous_assoc_start;
++            }
+             unchanged_keys.emplace_back(key);
+         } else {
+             assoc_delta++;
+diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -92,6 +92,44 @@ TEST(em_orch_agent_snapshot_delta_TEST, IdenticalFullSnapshotsEmitNoNotification
+     current.deinit();
+ }
+ 
++TEST(em_orch_agent_snapshot_delta_TEST, FullSnapshotCannotRefreshAssociationAge)
++{
++    const char *sta = "02:00:00:00:01:00";
++    const char *bssid = "02:00:00:10:00:01";
++    const char *radio = "02:00:00:20:00:01";
++    mac_address_t reporting_radio;
++    dm_easy_mesh_t current{};
++    dm_easy_mesh_t snapshot{};
++    em_sta_info_t current_info = make_associated_sta(sta, bssid, radio);
++    em_sta_info_t snapshot_info = make_associated_sta(sta, bssid, radio);
++
++    current_info.assoc_start_boottime_sec = 100;
++    current_info.rcpi = 40;
++    snapshot_info.assoc_start_boottime_sec = 200;
++    snapshot_info.rcpi = 80;
++
++    ASSERT_EQ(current.init(), 0);
++    ASSERT_EQ(snapshot.init(), 0);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radio),
++        reporting_radio);
++    current.put_sta_info(&current_info, em_target_sta_map_consolidated);
++    snapshot.put_sta_info(&snapshot_info, em_target_sta_map_assoc);
++
++    EXPECT_EQ(em_orch_agent_t::retain_full_sta_snapshot_deltas(
++        &current, &snapshot, reporting_radio), 0u);
++
++    em_sta_info_t *retained = current.get_sta_info(current_info.id,
++        current_info.bssid, current_info.radiomac,
++        em_target_sta_map_consolidated);
++    ASSERT_NE(retained, nullptr);
++    EXPECT_EQ(retained->assoc_start_boottime_sec, 100u);
++    EXPECT_EQ(retained->rcpi, 80);
++    EXPECT_EQ(hash_map_count(snapshot.m_sta_assoc_map), 0u);
++
++    snapshot.deinit();
++    current.deinit();
++}
++
+ TEST(em_orch_agent_snapshot_delta_TEST, BssMoveEmitsOneDisassocAndOneAssoc)
+ {
+     const char *sta = "02:00:00:00:01:00";
+-- 
+2.43.0
+

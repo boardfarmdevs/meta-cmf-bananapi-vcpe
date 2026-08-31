@@ -1,0 +1,220 @@
+From 036b9485d7b742afb749bebc0aa699c8cef47af2 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Mon, 31 Aug 2026 11:48:39 -0700
+Subject: [PATCH] agent: reconcile station snapshot by reporting radio
+
+Each OneWifi full station snapshot creates one sta_list command per radio.
+The command carries the reporting RUID in args[0], but the sta_aggregate
+operation selected a radio from the orchestration clone context.  The base
+clone_for_next() implementation resets that context, including arr_index,
+to zero.  Consequently every radio's full snapshot reconciled radio 0 and a
+station omitted from radio 1 or 2 remained in the agent data model until a
+later explicit disassociation event.
+
+Resolve the reporting radio from the stable command RUID instead.  Reject a
+missing, malformed, or unknown RUID rather than silently mutating radio 0.
+Add a three-radio regression which reproduces the zeroed clone index and
+proves that only the reporting radio is reconciled.
+
+Upstream-Status: Pending
+---
+ inc/em_orch_agent.h             |   7 +++
+ src/orch/em_orch_agent.cpp      |  38 +++++++++++-
+ tests/test_l1_em_orch_agent.cpp | 103 ++++++++++++++++++++++++++++++++
+ 3 files changed, 147 insertions(+), 1 deletion(-)
+
+diff --git a/inc/em_orch_agent.h b/inc/em_orch_agent.h
+index c50737c..e33dc96 100644
+--- a/inc/em_orch_agent.h
++++ b/inc/em_orch_agent.h
+@@ -36,6 +36,13 @@ public:
+ 	 */
+ 	static unsigned int retain_full_sta_snapshot_deltas(dm_easy_mesh_t *current,
+ 		dm_easy_mesh_t *snapshot, const mac_address_t reporting_radio);
++
++	/**
++	 * Resolve the radio that owns a station-list command from the reporting
++	 * RUID carried in args[0].  The orchestration clone context identifies an
++	 * operation, not a radio, and therefore must not be used for this lookup.
++	 */
++	static em_interface_t *resolve_sta_snapshot_interface(em_cmd_t *cmd);
+     
+ 	/**!
+ 	 * @brief Builds candidate elements based on the provided command.
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 024142e..8e02707 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -42,6 +42,34 @@
+ #include "em_orch_agent.h"
+ #include "em.h"
+ 
++em_interface_t *em_orch_agent_t::resolve_sta_snapshot_interface(em_cmd_t *cmd)
++{
++    unsigned int octet[6] = {};
++    mac_address_t reporting_radio = {};
++    const char *ruid;
++    dm_radio_t *radio;
++
++    if (cmd == NULL || cmd->m_param.u.args.num_args == 0) {
++        return NULL;
++    }
++
++    ruid = cmd->m_param.u.args.args[0];
++    if (strlen(ruid) != 17 || ruid[2] != ':' || ruid[5] != ':' ||
++            ruid[8] != ':' || ruid[11] != ':' || ruid[14] != ':' ||
++            sscanf(ruid, "%2x:%2x:%2x:%2x:%2x:%2x", &octet[0],
++                &octet[1], &octet[2], &octet[3], &octet[4],
++                &octet[5]) != 6) {
++        return NULL;
++    }
++
++    for (unsigned int i = 0; i < sizeof(reporting_radio); i++) {
++        reporting_radio[i] = static_cast<unsigned char>(octet[i]);
++    }
++
++    radio = cmd->get_data_model()->get_radio(reporting_radio);
++    return radio == NULL ? NULL : radio->get_radio_interface();
++}
++
+ unsigned int em_orch_agent_t::retain_full_sta_snapshot_deltas(
+     dm_easy_mesh_t *current, dm_easy_mesh_t *snapshot,
+     const mac_address_t reporting_radio)
+@@ -402,7 +430,15 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+         case dm_orch_type_em_update:
+             break;
+         case dm_orch_type_sta_aggregate:
+-            intf = pcmd->get_radio_interface(ctx->arr_index);
++            /* clone_for_next() resets the operation context, including
++             * arr_index.  A station-list command already carries its
++             * reporting RUID in args[0]; use that stable identity rather
++             * than reconciling every radio snapshot against radio 0. */
++            intf = resolve_sta_snapshot_interface(pcmd);
++            if (intf == NULL) {
++                em_printfout("Rejecting STA snapshot with missing, invalid, or unknown reporting RUID");
++                return false;
++            }
+             if ((dm = m_mgr->get_data_model(GLOBAL_NET_ID, intf->mac)) == NULL) {
+                 dm = m_mgr->create_data_model(GLOBAL_NET_ID, intf);
+             }
+diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
+index a4f0aab..a598fab 100644
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -24,6 +24,7 @@
+ #include "em_mgr.h"
+ #include "em_orch_agent.h"
+ #include "em_agent.h"
++#include "em_cmd_sta_list.h"
+ 
+ 
+ class em_orch_agent_t_TEST : public testing::Test {
+@@ -128,6 +129,108 @@ TEST(em_orch_agent_snapshot_delta_TEST, BssMoveEmitsOneDisassocAndOneAssoc)
+     current.deinit();
+ }
+ 
++TEST(em_orch_agent_snapshot_delta_TEST,
++    ThreeRadioCloneReconcilesReportingRadioOnly)
++{
++    const char *radios[] = {
++        "02:00:00:20:00:00",
++        "02:00:00:20:00:01",
++        "02:00:00:20:00:02",
++    };
++    const char *stas[] = {
++        "02:00:00:00:01:00",
++        "02:00:00:00:02:00",
++        "02:00:00:00:03:00",
++    };
++    const char *bssids[] = {
++        "02:00:00:10:00:00",
++        "02:00:00:10:00:01",
++        "02:00:00:10:00:02",
++    };
++    em_cmd_params_t params{};
++    dm_easy_mesh_t current{};
++    dm_easy_mesh_t snapshot{};
++
++    ASSERT_EQ(current.init(), 0);
++    ASSERT_EQ(snapshot.init(), 0);
++    current.m_num_radios = 3;
++    snapshot.m_num_radios = 3;
++    for (unsigned int i = 0; i < 3; i++) {
++        dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radios[i]),
++            current.m_radio[i].m_radio_info.intf.mac);
++        memcpy(snapshot.m_radio[i].m_radio_info.intf.mac,
++            current.m_radio[i].m_radio_info.intf.mac,
++            sizeof(mac_address_t));
++        em_sta_info_t info = make_associated_sta(stas[i], bssids[i],
++            radios[i]);
++        current.put_sta_info(&info, em_target_sta_map_consolidated);
++        if (i != 1) {
++            snapshot.put_sta_info(&info, em_target_sta_map_assoc);
++        }
++    }
++
++    params.u.args.num_args = 2;
++    snprintf(params.u.args.args[0], sizeof(params.u.args.args[0]), "%s",
++        radios[1]);
++    snprintf(params.u.args.args[1], sizeof(params.u.args.args[1]), "full");
++    em_cmd_sta_list_t notify(params, snapshot);
++    em_cmd_t *aggregate = notify.clone_for_next();
++    ASSERT_NE(aggregate, nullptr);
++    ASSERT_EQ(aggregate->get_data_model()->get_cmd_ctx()->arr_index, 0u);
++
++    em_interface_t *reporting =
++        em_orch_agent_t::resolve_sta_snapshot_interface(aggregate);
++    ASSERT_NE(reporting, nullptr);
++    EXPECT_EQ(memcmp(reporting->mac,
++        snapshot.m_radio[1].m_radio_info.intf.mac,
++        sizeof(mac_address_t)), 0);
++    EXPECT_NE(memcmp(reporting->mac,
++        snapshot.m_radio[0].m_radio_info.intf.mac,
++        sizeof(mac_address_t)), 0);
++
++    EXPECT_EQ(em_orch_agent_t::retain_full_sta_snapshot_deltas(
++        &current, &snapshot, reporting->mac), 1u);
++    EXPECT_EQ(hash_map_count(current.m_sta_map), 2u);
++    EXPECT_EQ(hash_map_count(snapshot.m_sta_assoc_map), 0u);
++    EXPECT_EQ(hash_map_count(snapshot.m_sta_dassoc_map), 1u);
++
++    mac_address_t sta_mac, bssid, radio_mac;
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(stas[1]), sta_mac);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(bssids[1]), bssid);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radios[1]),
++        radio_mac);
++    EXPECT_EQ(current.get_sta_info(sta_mac, bssid, radio_mac,
++        em_target_sta_map_consolidated), nullptr);
++    EXPECT_NE(snapshot.get_sta_info(sta_mac, bssid, radio_mac,
++        em_target_sta_map_disassoc), nullptr);
++
++    aggregate->deinit();
++    delete aggregate;
++    notify.deinit();
++    snapshot.deinit();
++    current.deinit();
++}
++
++TEST(em_orch_agent_snapshot_delta_TEST, RejectsUnknownReportingRadio)
++{
++    em_cmd_params_t params{};
++    dm_easy_mesh_t snapshot{};
++    ASSERT_EQ(snapshot.init(), 0);
++    snapshot.m_num_radios = 1;
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>("02:00:00:20:00:00"),
++        snapshot.m_radio[0].m_radio_info.intf.mac);
++
++    params.u.args.num_args = 1;
++    snprintf(params.u.args.args[0], sizeof(params.u.args.args[0]),
++        "02:00:00:20:00:ff");
++    em_cmd_sta_list_t cmd(params, snapshot);
++    EXPECT_EQ(em_orch_agent_t::resolve_sta_snapshot_interface(&cmd), nullptr);
++
++    cmd.deinit();
++    snapshot.deinit();
++}
++
+ 
+ 
+ /**

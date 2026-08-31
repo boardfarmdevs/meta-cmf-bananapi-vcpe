@@ -131,6 +131,14 @@ EASYMESH_CORE_PATCHES = " \
     file://0128-orch-complete-upstream-command-lifetime-fixes.patch \
     file://0129-controller-bound-dataelements-device-enumeration.patch \
     file://0130-controller-lightweight-em-config-stage-clones.patch \
+    file://0131-agent-emit-station-snapshot-topology-deltas.patch \
+    file://0132-controller-bound-station-churn-and-honor-cross-band.patch \
+    file://0133-agent-preserve-association-start-across-snapshots.patch \
+    file://0134-agent-reconcile-station-snapshot-by-reporting-radio.patch \
+    file://0135-agent-reconcile-before-topology-notification.patch \
+    file://0136-controller-scope-station-delete-to-owner.patch \
+    file://0137-agent-preserve-radio-filtered-station-clone.patch \
+    file://0138-agent-suppress-withdrawn-stations-in-topology-response.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

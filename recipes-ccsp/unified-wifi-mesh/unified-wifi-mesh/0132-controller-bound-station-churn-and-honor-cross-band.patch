@@ -1,0 +1,312 @@
+From 06c907fffd6691d3745d25c5c96f6e6fbaec89be Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Sun, 30 Aug 2026 18:21:49 -0700
+Subject: [PATCH] controller: bound station churn and honor cross-band
+ ownership
+
+Rapid station moves exposed three related defects. Every association event
+cloned a multi-megabyte empty data model for each orchestration stage,
+cross-radio non-MLO evidence could be suppressed, and an ordinary non-MLO
+disassociation was ignored when no Associated STA MLD record existed. A
+transient 2.4-to-5 GHz association could consequently consume hundreds of
+MiB and leave the controller showing the obsolete BSS.
+
+Keep station-event stages lightweight, preserve cross-radio non-MLO ownership
+evidence in agent snapshots, and apply non-MLO withdrawals directly to the
+controller maps. Add focused tests for lightweight stage cloning and normal
+station withdrawal.
+
+Upstream-Status: Pending
+---
+ inc/em_cmd_sta_assoc.h             |  7 +++++
+ inc/em_configuration.h             |  9 ++++++
+ inc/em_orch.h                      |  2 +-
+ src/agent/dm_easy_mesh_agent.cpp   | 11 +++++++
+ src/cmd/em_cmd_sta_assoc.cpp       | 25 +++++++++++++--
+ src/em/config/em_configuration.cpp | 50 ++++++++++++++++++++++++++++--
+ tests/test_l1_em_cmd_sta_assoc.cpp | 27 ++++++++++++++++
+ tests/test_l1_em_orch.cpp          |  2 +-
+ tests/test_l1_em_orch_ctrl.cpp     | 30 ++++++++++++++++++
+ 9 files changed, 157 insertions(+), 6 deletions(-)
+
+diff --git a/inc/em_cmd_sta_assoc.h b/inc/em_cmd_sta_assoc.h
+index 87ef77f..31df633 100644
+--- a/inc/em_cmd_sta_assoc.h
++++ b/inc/em_cmd_sta_assoc.h
+@@ -38,6 +38,13 @@ public:
+ 	 * @note Ensure that the mesh configuration is properly initialized before calling this function.
+ 	 */
+ 	em_cmd_sta_assoc_t(em_cmd_params_t param, dm_easy_mesh_t& dm);
++
++	/**
++	 * Clone the next station-association orchestration stage without copying
++	 * the multi-megabyte command-local data model.  Station events carry all
++	 * required identity in m_param and execute against the manager-owned model.
++	 */
++	em_cmd_t *clone_for_next() override;
+ };
+ 
+ #endif
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index 83b8145..23b9290 100644
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1608,6 +1608,15 @@ private:
+     unsigned int m_wsc_m1_resends = 0;
+ 
+ public:
++	/**
++	 * Apply a non-MLO station withdrawal to the controller's live and pending
++	 * station maps. Topology Notifications carry a normal STA MAC but no
++	 * Associated STA MLD entry, so they must not depend on MLO metadata to
++	 * remove the old owner.
++	 */
++	static bool remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
++		const em_sta_info_t& sta_info);
++
+ 
+ 	bool send_autoconf_search_ext_chirp(em_dpp_chirp_value_t *chirp, size_t hash_len);
+ 
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+index ef6ab02..2b6d07f 100644
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -71,7 +71,7 @@ public:
+ 	 * does not exceed the maximum allowed.
+ 	 */
+ 	unsigned int submit_commands(em_cmd_t *pcmd[], unsigned int num);
+-    
++
+ 	/**!
+ 	 * @brief Builds candidates based on the provided command.
+ 	 *
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index d966752..283380c 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -167,6 +167,17 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[]
+ 
+ 
+     for ( i = 0; i < num_radios; i++) {
++#if !defined(EM_MLO_SUPPORT)
++        /* The de-duplication arrays were historically shared by every radio
++         * in this snapshot.  During a cross-band roam the HAL can briefly
++         * report the old and new AP station rows together; sharing the array
++         * kept the first (usually 2.4 GHz) row and silently discarded the
++         * later current owner.  Non-MLO clients may have at most one row per
++         * radio, but ownership evidence from a different radio must survive
++         * so the controller can select the latest association. */
++        assoc_sta_mld_tracked_count = 0;
++        disassoc_sta_mld_tracked_count = 0;
++#endif
+         evt->params.u.args.num_args = 2;
+         dm_easy_mesh_t::macbytes_to_string(get_radio_by_ref(i).get_radio_interface_mac(), radio_str);
+         snprintf(evt->params.u.args.args[0], sizeof(evt->params.u.args.args[0]), "%s", radio_str);
+diff --git a/src/cmd/em_cmd_sta_assoc.cpp b/src/cmd/em_cmd_sta_assoc.cpp
+index f6a4c6c..fd8f097 100644
+--- a/src/cmd/em_cmd_sta_assoc.cpp
++++ b/src/cmd/em_cmd_sta_assoc.cpp
+@@ -36,11 +36,12 @@
+ #include "em_cmd_sta_assoc.h"
+ 
+ em_cmd_sta_assoc_t::em_cmd_sta_assoc_t(em_cmd_params_t param, dm_easy_mesh_t& dm)
++    : em_cmd_t(em_cmd_type_sta_assoc, param)
+ {
+     em_cmd_ctx_t ctx;
+ 
+-    m_type = em_cmd_type_sta_assoc;
+-    memcpy(&m_param, &param, sizeof(em_cmd_params_t));
++	(void)dm;
++	m_em_candidates = queue_create();
+ 
+ 	memset(reinterpret_cast<unsigned char *> (&m_orch_desc[0]), 0, EM_MAX_CMD*sizeof(em_orch_desc_t));
+ 
+@@ -62,3 +63,23 @@ em_cmd_sta_assoc_t::em_cmd_sta_assoc_t(em_cmd_params_t param, dm_easy_mesh_t& dm
+     m_data_model.set_cmd_ctx(&ctx);
+ }
+ 
++em_cmd_t *em_cmd_sta_assoc_t::clone_for_next()
++{
++    em_cmd_ctx_t ctx;
++
++    if (m_orch_op_idx == (m_num_orch_desc - 1)) {
++        return NULL;
++    }
++
++    em_cmd_sta_assoc_t *out = new em_cmd_sta_assoc_t(m_param, m_data_model);
++    out->m_num_orch_desc = m_num_orch_desc;
++    for (unsigned int i = 0; i < m_num_orch_desc; i++) {
++        out->m_orch_desc[i] = m_orch_desc[i];
++    }
++    out->set_orch_op_index(m_orch_op_idx + 1);
++
++    memset(&ctx, 0, sizeof(ctx));
++    ctx.type = out->get_orch_op();
++    out->m_data_model.set_cmd_ctx(&ctx);
++    return out;
++}
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 99e3516..14da5fb 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2235,8 +2235,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+                 if (updated_any) {
+                     dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
+                 } else {
+-                    em_printfout("topo notification disassoc: no MLD info for sta=%s",
+-                            util::mac_to_string(sta_info.id).c_str());
++                    updated_any = remove_non_mlo_sta_assoc(dm, sta_info);
+                 }
+             } else {
+                 dm_sta_t *pending = static_cast<dm_sta_t *>(
+@@ -2284,6 +2283,53 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+ 	return 0;
+ }
+ 
++bool em_configuration_t::remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
++    const em_sta_info_t& sta_info)
++{
++    if (dm == NULL) {
++        return false;
++    }
++
++    mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
++    em_long_string_t key;
++    dm_easy_mesh_t::macbytes_to_string(
++        const_cast<unsigned char *>(sta_info.id), sta_mac_str);
++    dm_easy_mesh_t::macbytes_to_string(
++        const_cast<unsigned char *>(sta_info.bssid), bssid_str);
++    dm_easy_mesh_t::macbytes_to_string(
++        const_cast<unsigned char *>(sta_info.radiomac), radio_mac_str);
++    snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str, bssid_str,
++        radio_mac_str);
++
++    em_sta_info_t removed = sta_info;
++    dm_sta_t *live = static_cast<dm_sta_t *>(
++        hash_map_get(dm->m_sta_map, key));
++    if (live != NULL) {
++        removed = live->m_sta_info;
++    }
++    removed.associated = false;
++
++    dm_sta_t *pending_assoc = static_cast<dm_sta_t *>(
++        hash_map_remove(dm->m_sta_assoc_map, key));
++    delete pending_assoc;
++
++    dm_sta_t *pending_disassoc = static_cast<dm_sta_t *>(
++        hash_map_get(dm->m_sta_dassoc_map, key));
++    if (pending_disassoc != NULL) {
++        pending_disassoc->m_sta_info = removed;
++    } else {
++        hash_map_put(dm->m_sta_dassoc_map, strdup(key),
++            new dm_sta_t(&removed));
++    }
++
++    dm_sta_t *old = static_cast<dm_sta_t *>(
++        hash_map_remove(dm->m_sta_map, key));
++    delete old;
++    dm->set_db_cfg_param(db_cfg_type_sta_list_delete, "");
++    em_printfout("topo notification non-MLO disassoc applied key=%s", key);
++    return true;
++}
++
+ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                                                           unsigned int len)
+ {
+diff --git a/tests/test_l1_em_cmd_sta_assoc.cpp b/tests/test_l1_em_cmd_sta_assoc.cpp
+index ccd46cb..be0d9fb 100644
+--- a/tests/test_l1_em_cmd_sta_assoc.cpp
++++ b/tests/test_l1_em_cmd_sta_assoc.cpp
+@@ -70,6 +70,33 @@ TEST(em_cmd_sta_assoc_t, em_cmd_sta_assoc_t_valid_parameters) {
+     assoc.deinit();
+     std::cout << "Exiting em_cmd_sta_assoc_t_valid_parameters test" << std::endl;
+ }
++
++TEST(em_cmd_sta_assoc_t, stage_clones_are_lightweight_and_preserve_overrides) {
++    em_cmd_params_t param = {};
++    dm_easy_mesh_t dm;
++    em_orch_desc_t first = {};
++    em_orch_desc_t second = {};
++
++    param.u.args.num_args = 4;
++    first.op = dm_orch_type_sta_cap;
++    first.submit = true;
++    second.op = dm_orch_type_topo_publish;
++    second.submit = true;
++    snprintf(param.u.args.args[2], sizeof(param.u.args.args[2]),
++        "%s", "02:00:00:00:23:00");
++    em_cmd_sta_assoc_t command(param, dm);
++    command.override_op(0, &first);
++    command.override_op(1, &second);
++    command.m_num_orch_desc = 2;
++
++    EXPECT_EQ(command.get_data_model()->m_sta_map, nullptr);
++    em_cmd_t *clone = command.clone_for_next();
++    ASSERT_NE(clone, nullptr);
++    EXPECT_EQ(clone->get_orch_op(), dm_orch_type_topo_publish);
++    EXPECT_EQ(clone->get_data_model()->m_sta_map, nullptr);
++    EXPECT_EQ(clone->clone_for_next(), nullptr);
++    delete clone;
++}
+ /**
+  * @brief Verify that em_cmd_sta_assoc_t initialized with minimal parameters functions correctly
+  *
+diff --git a/tests/test_l1_em_orch.cpp b/tests/test_l1_em_orch.cpp
+index bd662e2..31b6c59 100644
+--- a/tests/test_l1_em_orch.cpp
++++ b/tests/test_l1_em_orch.cpp
+@@ -994,4 +994,4 @@ TEST_F(EmOrchTest, em_orch_t_destructor_start) {
+     });
+     std::cout << "Destructor invoked successfully; resources cleaned up if allocated." << std::endl;    
+     std::cout << "Exiting em_orch_t_destructor_start test" << std::endl;
+-}
+\ No newline at end of file
++}
+diff --git a/tests/test_l1_em_orch_ctrl.cpp b/tests/test_l1_em_orch_ctrl.cpp
+index 96644c2..2c08198 100644
+--- a/tests/test_l1_em_orch_ctrl.cpp
++++ b/tests/test_l1_em_orch_ctrl.cpp
+@@ -23,6 +23,7 @@
+ #include "em_cmd.h"
+ #include "em_mgr.h"
+ #include "em_orch_ctrl.h"
++#include "em_configuration.h"
+ 
+ 
+ class em_orch_ctrl_t_TEST : public testing::Test {
+@@ -1732,3 +1733,32 @@ TEST_F(em_orch_ctrl_t_TEST, pre_process_orch_op_ValidCommandUnsupportedOp_NoneOr
+     EXPECT_FALSE(ret);
+     std::cout << "Exiting pre_process_orch_op_ValidCommandUnsupportedOp_NoneOrchType test" << std::endl;
+ }
++
++TEST(em_configuration_t, non_mlo_disassociation_removes_live_owner)
++{
++    dm_easy_mesh_t dm;
++    em_sta_info_t info = {};
++
++    dm.init();
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>("02:00:00:00:23:00"), info.id);
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>("02:00:00:da:5c:65"), info.bssid);
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>("02:00:00:30:d3:8d"), info.radiomac);
++    info.associated = true;
++    dm.put_sta_info(&info, em_target_sta_map_consolidated);
++    dm.put_sta_info(&info, em_target_sta_map_assoc);
++
++    EXPECT_TRUE(em_configuration_t::remove_non_mlo_sta_assoc(&dm, info));
++    EXPECT_EQ(dm.get_sta_info(info.id, info.bssid, info.radiomac,
++        em_target_sta_map_consolidated), nullptr);
++    EXPECT_EQ(dm.get_sta_info(info.id, info.bssid, info.radiomac,
++        em_target_sta_map_assoc), nullptr);
++    em_sta_info_t *withdrawn = dm.get_sta_info(info.id, info.bssid,
++        info.radiomac, em_target_sta_map_disassoc);
++    ASSERT_NE(withdrawn, nullptr);
++    EXPECT_FALSE(withdrawn->associated);
++    EXPECT_TRUE(dm.db_cfg_type_is_set(db_cfg_type_sta_list_delete));
++    dm.deinit();
++}
+-- 
+2.53.0
+

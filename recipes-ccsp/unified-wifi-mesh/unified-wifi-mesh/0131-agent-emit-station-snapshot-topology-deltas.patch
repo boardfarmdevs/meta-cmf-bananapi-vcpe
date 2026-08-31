@@ -1,0 +1,367 @@
+From 84bce8e8591776c7c9ad3449d56cbc92a5adbd4f Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Sun, 30 Aug 2026 16:34:51 -0700
+Subject: [PATCH] agent: emit station snapshot topology deltas
+
+OneWifi full associated-client snapshots repeat every current association even
+when ownership has not changed. The agent converted every repeated row into a
+new sta_list orchestration command and Topology Notification. Each notification
+created large controller commands faster than they could be serviced, so the
+pending queue retained hundreds of embedded data models and controller RSS grew
+without bound.
+
+Reduce full snapshots to association/withdrawal deltas before orchestration.
+Refresh unchanged station metrics in the consolidated agent model, remove
+unchanged rows from the transient notification model, and drop the command when
+no ownership changed. Preserve explicit association plus disassociation rows
+for a BSS move.
+
+Add focused tests for repeated identical snapshots and a real BSS move. Also
+log pending-queue high-water marks at powers of two so future fan-out is visible
+without producing per-command log load.
+
+Upstream-Status: Submitted [RDKB-EM lab validation]
+---
+ inc/em_orch.h                   |   1 +
+ inc/em_orch_agent.h             |  12 +++
+ src/orch/em_orch.cpp            |   9 ++
+ src/orch/em_orch_agent.cpp      | 147 ++++++++++++++++++++++++--------
+ tests/test_l1_em_orch_agent.cpp |  85 ++++++++++++++++++
+ 5 files changed, 220 insertions(+), 34 deletions(-)
+
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+index f360564..ab2aaa5 100644
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -32,6 +32,7 @@ public:
+     queue_t *m_pending;
+     queue_t *m_active;
+     hash_map_t  *m_cmd_map;
++    unsigned int m_pending_high_water;
+ 
+ public:
+     
+diff --git a/inc/em_orch_agent.h b/inc/em_orch_agent.h
+index 3553f96..c50737c 100644
+--- a/inc/em_orch_agent.h
++++ b/inc/em_orch_agent.h
+@@ -24,6 +24,18 @@
+ class em_orch_agent_t : public em_orch_t {
+ 
+ public:
++
++	/**
++	 * Reduce an authoritative full station snapshot to the ownership changes
++	 * that require Topology Notifications. Existing identical associations
++	 * are refreshed in the consolidated model and removed from the transient
++	 * notification model. Missing and changed ownership is represented by
++	 * explicit disassociation and association rows.
++	 *
++	 * @return Number of association plus disassociation deltas retained.
++	 */
++	static unsigned int retain_full_sta_snapshot_deltas(dm_easy_mesh_t *current,
++		dm_easy_mesh_t *snapshot, const mac_address_t reporting_radio);
+     
+ 	/**!
+ 	 * @brief Builds candidate elements based on the provided command.
+diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index 5a41969..a203713 100644
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -149,6 +149,14 @@ bool em_orch_t::submit_command(em_cmd_t *pcmd)
+     } else {
+         queue_push(m_pending, pcmd);
+         push_stats(pcmd);
++        unsigned int pending = queue_count(m_pending);
++        if (pending > m_pending_high_water) {
++            m_pending_high_water = pending;
++            if ((pending & (pending - 1)) == 0) {
++                em_printfout("Orchestrator pending queue high-water=%u active=%u latest=%s",
++                    pending, queue_count(m_active), pcmd->get_cmd_name());
++            }
++        }
+         submitted = true;
+     }
+ 
+@@ -581,6 +589,7 @@ em_orch_t::em_orch_t()
+     m_pending = queue_create();
+     m_active = queue_create();
+     m_cmd_map = hash_map_create();
++    m_pending_high_water = 0;
+ }
+ 
+ em_orch_t::~em_orch_t()
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index e8ef185..eeb98b1 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -33,12 +33,115 @@
+ #include <sys/uio.h>
+ #include <unistd.h>
+ #include <assert.h>
++#include <set>
++#include <string>
++#include <vector>
+ #include <util.h>
+ #include "em_base.h"
+ #include "em_cmd.h"
+ #include "em_orch_agent.h"
+ #include "em.h"
+ 
++unsigned int em_orch_agent_t::retain_full_sta_snapshot_deltas(
++    dm_easy_mesh_t *current, dm_easy_mesh_t *snapshot,
++    const mac_address_t reporting_radio)
++{
++    if (current == NULL || snapshot == NULL || reporting_radio == NULL) {
++        return 0;
++    }
++
++    std::set<std::string> reported_keys;
++    std::vector<std::string> unchanged_keys;
++    dm_sta_t *sta = static_cast<dm_sta_t *>(
++        hash_map_get_first(snapshot->m_sta_assoc_map));
++    unsigned int assoc_delta = 0;
++    unsigned int disassoc_delta = 0;
++
++    while (sta != NULL) {
++        mac_addr_str_t sta_mac_str, bss_mac_str, radio_mac_str;
++        em_long_string_t key;
++        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
++        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
++        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
++            radio_mac_str);
++        snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str, bss_mac_str,
++            radio_mac_str);
++        reported_keys.insert(key);
++
++        dm_sta_t *stale_dassoc = static_cast<dm_sta_t *>(
++            hash_map_remove(current->m_sta_dassoc_map, key));
++        delete stale_dassoc;
++
++        em_sta_info_t *existing = current->get_sta_info(sta->m_sta_info.id,
++            sta->m_sta_info.bssid, sta->m_sta_info.radiomac,
++            em_target_sta_map_consolidated);
++        if (existing != NULL && existing->associated) {
++            /* Refresh metrics/capabilities without advertising unchanged
++             * ownership as another association event. */
++            memcpy(existing, &sta->m_sta_info, sizeof(em_sta_info_t));
++            unchanged_keys.emplace_back(key);
++        } else {
++            assoc_delta++;
++        }
++        sta = static_cast<dm_sta_t *>(
++            hash_map_get_next(snapshot->m_sta_assoc_map, sta));
++    }
++
++    sta = static_cast<dm_sta_t *>(hash_map_get_first(current->m_sta_map));
++    while (sta != NULL) {
++        dm_sta_t *next = static_cast<dm_sta_t *>(
++            hash_map_get_next(current->m_sta_map, sta));
++        if (memcmp(sta->m_sta_info.radiomac, reporting_radio,
++                sizeof(mac_address_t)) == 0) {
++            mac_addr_str_t sta_mac_str, bss_mac_str, radio_mac_str;
++            em_long_string_t key;
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id,
++                sta_mac_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid,
++                bss_mac_str);
++            dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac,
++                radio_mac_str);
++            snprintf(key, sizeof(key), "%s@%s@%s", sta_mac_str, bss_mac_str,
++                radio_mac_str);
++
++            if (reported_keys.find(key) == reported_keys.end()) {
++                em_sta_info_t removed_info = sta->m_sta_info;
++                removed_info.associated = false;
++                em_sta_info_t *current_disassoc = current->get_sta_info(
++                    removed_info.id, removed_info.bssid,
++                    removed_info.radiomac, em_target_sta_map_disassoc);
++                if (current_disassoc != NULL) {
++                    memcpy(current_disassoc, &removed_info,
++                        sizeof(em_sta_info_t));
++                } else {
++                    current->put_sta_info(&removed_info,
++                        em_target_sta_map_disassoc);
++                }
++                snapshot->put_sta_info(&removed_info,
++                    em_target_sta_map_disassoc);
++                dm_sta_t *old = static_cast<dm_sta_t *>(
++                    hash_map_remove(current->m_sta_map, key));
++                delete old;
++                disassoc_delta++;
++            }
++        }
++        sta = next;
++    }
++
++    for (const std::string &key : unchanged_keys) {
++        dm_sta_t *unchanged = static_cast<dm_sta_t *>(
++            hash_map_remove(snapshot->m_sta_assoc_map, key.c_str()));
++        delete unchanged;
++    }
++
++    if (assoc_delta != 0 || disassoc_delta != 0) {
++        em_printfout("Full STA snapshot delta radio=%s assoc=%u disassoc=%u suppressed=%zu",
++            util::mac_to_string(reporting_radio).c_str(), assoc_delta,
++            disassoc_delta, unchanged_keys.size());
++    }
++    return assoc_delta + disassoc_delta;
++}
++
+ void em_orch_agent_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+ {
+     em_cmd_stats_t *stats;
+@@ -299,6 +402,16 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 pcmd->m_param.u.args.num_args > 1 &&
+                 strcmp(pcmd->m_param.u.args.args[1], "full") == 0;
+ 
++            if (full_sta_snapshot) {
++                if (retain_full_sta_snapshot_deltas(dm,
++                        pcmd->get_data_model(), intf->mac) == 0) {
++                    /* The consolidated model was refreshed, but no station
++                     * ownership changed. Do not enqueue a sta_list command or
++                     * emit an empty/repeated Topology Notification. */
++                    return false;
++                }
++            }
++
+             sta = static_cast<dm_sta_t *> (hash_map_get_first(pcmd->get_data_model()->m_sta_assoc_map));
+             while(sta != NULL) {
+                 dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
+@@ -350,40 +463,6 @@ bool em_orch_agent_t::pre_process_orch_op(em_cmd_t *pcmd)
+                 sta = static_cast<dm_sta_t *>(hash_map_get_next(pcmd->get_data_model()->m_sta_dassoc_map, sta));
+             }
+ 
+-            if (full_sta_snapshot) {
+-                sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
+-                while (sta != NULL) {
+-                    dm_sta_t *next = static_cast<dm_sta_t *>(hash_map_get_next(dm->m_sta_map, sta));
+-
+-                    if (memcmp(sta->m_sta_info.radiomac, intf->mac,
+-                        sizeof(mac_address_t)) == 0 &&
+-                        pcmd->get_data_model()->get_sta_info(sta->m_sta_info.id,
+-                            sta->m_sta_info.bssid, sta->m_sta_info.radiomac,
+-                            em_target_sta_map_assoc) == NULL) {
+-                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.id, sta_mac_str);
+-                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.bssid, bss_mac_str);
+-                        dm_easy_mesh_t::macbytes_to_string(sta->m_sta_info.radiomac, radio_mac_str);
+-                        snprintf(key, sizeof(em_long_string_t), "%s@%s@%s",
+-                            sta_mac_str, bss_mac_str, radio_mac_str);
+-
+-                        em_sta_info_t removed_info = sta->m_sta_info;
+-                        removed_info.associated = false;
+-                        em_sta_info_t *removed = dm->get_sta_info(removed_info.id,
+-                            removed_info.bssid, removed_info.radiomac,
+-                            em_target_sta_map_disassoc);
+-                        if (removed != NULL) {
+-                            memcpy(removed, &removed_info, sizeof(em_sta_info_t));
+-                        } else {
+-                            dm->put_sta_info(&removed_info, em_target_sta_map_disassoc);
+-                        }
+-
+-                        em_printfout("Full STA snapshot removed absent consolidated row key=%s", key);
+-                        dm_sta_t *old = static_cast<dm_sta_t *>(hash_map_remove(dm->m_sta_map, key));
+-                        delete old;
+-                    }
+-                    sta = next;
+-                }
+-            }
+             break;
+         case dm_orch_type_sta_insert:
+         case dm_orch_type_sta_update:
+diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
+index ae86be9..0a08a47 100644
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -43,6 +43,91 @@ public:
+     }
+ };
+ 
++namespace {
++
++em_sta_info_t make_associated_sta(const char *sta, const char *bssid,
++    const char *radio)
++{
++    em_sta_info_t info{};
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta), info.id);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(bssid), info.bssid);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radio), info.radiomac);
++    info.associated = true;
++    return info;
++}
++
++} // namespace
++
++TEST(em_orch_agent_snapshot_delta_TEST, IdenticalFullSnapshotsEmitNoNotifications)
++{
++    const char *sta = "02:00:00:00:01:00";
++    const char *bssid = "02:00:00:10:00:01";
++    const char *radio = "02:00:00:20:00:01";
++    mac_address_t reporting_radio;
++    dm_easy_mesh_t current{};
++    em_sta_info_t current_info = make_associated_sta(sta, bssid, radio);
++
++    ASSERT_EQ(current.init(), 0);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radio),
++        reporting_radio);
++    current.put_sta_info(&current_info, em_target_sta_map_consolidated);
++
++    for (unsigned int repeat = 0; repeat < 2; repeat++) {
++        dm_easy_mesh_t snapshot{};
++        em_sta_info_t snapshot_info = make_associated_sta(sta, bssid, radio);
++        ASSERT_EQ(snapshot.init(), 0);
++        snapshot.put_sta_info(&snapshot_info, em_target_sta_map_assoc);
++
++        EXPECT_EQ(em_orch_agent_t::retain_full_sta_snapshot_deltas(
++            &current, &snapshot, reporting_radio), 0u);
++        EXPECT_EQ(hash_map_count(snapshot.m_sta_assoc_map), 0u);
++        EXPECT_EQ(hash_map_count(snapshot.m_sta_dassoc_map), 0u);
++        EXPECT_EQ(hash_map_count(current.m_sta_map), 1u);
++        EXPECT_NE(current.get_sta_info(current_info.id, current_info.bssid,
++            current_info.radiomac, em_target_sta_map_consolidated), nullptr);
++
++        snapshot.deinit();
++    }
++
++    current.deinit();
++}
++
++TEST(em_orch_agent_snapshot_delta_TEST, BssMoveEmitsOneDisassocAndOneAssoc)
++{
++    const char *sta = "02:00:00:00:01:00";
++    const char *old_bssid = "02:00:00:10:00:01";
++    const char *new_bssid = "02:00:00:10:00:02";
++    const char *radio = "02:00:00:20:00:01";
++    mac_address_t reporting_radio;
++    dm_easy_mesh_t current{};
++    dm_easy_mesh_t snapshot{};
++    em_sta_info_t old_info = make_associated_sta(sta, old_bssid, radio);
++    em_sta_info_t new_info = make_associated_sta(sta, new_bssid, radio);
++
++    ASSERT_EQ(current.init(), 0);
++    ASSERT_EQ(snapshot.init(), 0);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radio),
++        reporting_radio);
++    current.put_sta_info(&old_info, em_target_sta_map_consolidated);
++    snapshot.put_sta_info(&new_info, em_target_sta_map_assoc);
++
++    EXPECT_EQ(em_orch_agent_t::retain_full_sta_snapshot_deltas(
++        &current, &snapshot, reporting_radio), 2u);
++    EXPECT_EQ(hash_map_count(snapshot.m_sta_assoc_map), 1u);
++    EXPECT_EQ(hash_map_count(snapshot.m_sta_dassoc_map), 1u);
++    EXPECT_NE(snapshot.get_sta_info(new_info.id, new_info.bssid,
++        new_info.radiomac, em_target_sta_map_assoc), nullptr);
++    em_sta_info_t *disassoc = snapshot.get_sta_info(old_info.id,
++        old_info.bssid, old_info.radiomac, em_target_sta_map_disassoc);
++    ASSERT_NE(disassoc, nullptr);
++    EXPECT_FALSE(disassoc->associated);
++    EXPECT_EQ(current.get_sta_info(old_info.id, old_info.bssid,
++        old_info.radiomac, em_target_sta_map_consolidated), nullptr);
++
++    snapshot.deinit();
++    current.deinit();
++}
++
+ 
+ 
+ /**
