@@ -47,7 +47,7 @@ memory and root-disk configuration rather than inferred profile defaults.
 Use one release folder and preserve the filenames produced by the packager:
 
 ```text
-EasyMesh-LXD-0829/
+EasyMesh-LXD-0831/
 |-- catalog.json
 |-- rdkeasymesh-20-...-bundle.tar
 |-- rdkeasymesh-20-...-bundle.tar.sha256

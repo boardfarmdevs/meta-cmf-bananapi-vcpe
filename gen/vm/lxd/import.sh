@@ -17,7 +17,7 @@ if [ -z "$backup" ]; then
     }
     backup=${candidates[0]}
 fi
-name=${EASYMESH_LXD_NAME:-${LAB_DEFAULT_NAME:-rdkeasymesh-20-0829}}
+name=${EASYMESH_LXD_NAME:-${LAB_DEFAULT_NAME:-rdkeasymesh-20-0831}}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
 storage=${EASYMESH_LXD_STORAGE:-}
 cpus=${EASYMESH_LXD_CPUS:-${LAB_DEFAULT_CPUS:-6}}

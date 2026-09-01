@@ -10,7 +10,7 @@ default_host_address=${default_host_address:-127.0.0.1}
 profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
-name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0829}
+name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0831}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
 memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
@@ -294,7 +294,7 @@ build_vm() {
         }
         init_args+=(--storage "$storage")
     fi
-    "${init_args[@]}"
+    "${init_args[@]}" </dev/null
     # The appliance builds the narrowly-scoped multichannel hwsim module from
     # the exact Ubuntu source package. Disable guest Secure Boot before first
     # boot so that this locally-built module can load after installation.
@@ -357,7 +357,7 @@ build_vm() {
         "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
     curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
         "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
-    lxc snapshot "$name" accepted
+    lxc snapshot "$name" accepted </dev/null
     lxc config show "$name" --expanded
     trap - EXIT
     rm -rf -- "$stage"
@@ -408,7 +408,7 @@ snapshot_vm() {
     if lxc config show "$name/accepted" >/dev/null 2>&1; then
         lxc delete "$name/accepted"
     fi
-    lxc snapshot "$name" accepted
+    lxc snapshot "$name" accepted </dev/null
 }
 
 export_vm() {
@@ -432,11 +432,11 @@ export_vm() {
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-0829-${short}-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-0829-${short}-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
-    if ! lxc export "$name" "$output" --instance-only --compression zstd; then
+    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
         configure_no_secure_boot
         return 1
     fi

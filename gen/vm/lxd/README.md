@@ -5,7 +5,7 @@ performance and kernel-debug reference.
 
 ```text
 Ubuntu 22.04/24.04 host + LXD/KVM
-`-- rdkeasymesh-CLIENTS-0829 (Ubuntu 24.04/Linux 7 LXD VM)
+`-- rdkeasymesh-CLIENTS-0831 (Ubuntu 24.04/Linux 7 LXD VM)
     |-- Docker: Boardfarm DHCP/NAT and br-wan101
     |-- nested LXD: controller, four extenders, 20/50/100-client roster
     |-- hwsim + multichannel wmediumd
@@ -86,7 +86,7 @@ therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 ```
 
 Profiles `20`, `50`, and `100` create separate instances named
-`rdkeasymesh-PROFILE-0829`. A profile is immutable inside a release appliance:
+`rdkeasymesh-PROFILE-0831`. A profile is immutable inside a release appliance:
 download another profile instead of deleting and recreating client identities
 after import. The builder detects the address
 used by the outer host's IPv4 default route and exposes:
@@ -112,7 +112,7 @@ VMs also default to LXD `boot.autostart=true`; disable it explicitly when an
 outer host must not start the VM after reboot:
 
 ```sh
-lxc config set rdkeasymesh-20-0829 boot.autostart false
+lxc config set rdkeasymesh-20-0831 boot.autostart false
 ```
 
 ## Export a release
@@ -124,14 +124,14 @@ After a passing check:
 ./build.sh export
 ```
 
-`export` creates `artifacts/rdkeasymesh-CLIENTS-0829-COMMIT-lxd/` containing
+`export` creates `artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,
 this README, and `SHA256SUMS`. The VM is stopped before export so its nested
 LXD database, radio state and filesystems are coherent. Create the single file
 for Google Drive with:
 
 ```sh
-./package-release.sh artifacts/rdkeasymesh-CLIENTS-0829-COMMIT-lxd
+./package-release.sh artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd
 ```
 
 Upload the resulting `*-bundle.tar` and its adjacent `.sha256`. Google Drive
@@ -150,9 +150,9 @@ Download the selected profile into any empty working directory, verify and
 extract it:
 
 ```sh
-sha256sum -c rdkeasymesh-CLIENTS-0829-COMMIT-lxd-bundle.tar.sha256
-tar -xf rdkeasymesh-CLIENTS-0829-COMMIT-lxd-bundle.tar
-cd rdkeasymesh-CLIENTS-0829-COMMIT-lxd
+sha256sum -c rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar.sha256
+tar -xf rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar
+cd rdkeasymesh-CLIENTS-0831-COMMIT-lxd
 sha256sum -c SHA256SUMS
 ```
 
@@ -183,9 +183,9 @@ host.
 Monitor the first imported cold reconstruction:
 
 ```sh
-lxc console rdkeasymesh-20-0829 --show-log
-lxc exec rdkeasymesh-20-0829 -- journalctl -fu easymesh-lab.service
-lxc exec rdkeasymesh-20-0829 -- /usr/local/sbin/easymesh-labctl check
+lxc console rdkeasymesh-20-0831 --show-log
+lxc exec rdkeasymesh-20-0831 -- journalctl -fu easymesh-lab.service
+lxc exec rdkeasymesh-20-0831 -- /usr/local/sbin/easymesh-labctl check
 ```
 
 ## Remove

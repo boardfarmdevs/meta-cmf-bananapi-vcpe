@@ -3,7 +3,7 @@
 Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
 engineers.
 
-Status: current documentation for `codex/0829-lxd-primary`.
+Status: current documentation for `codex/0831-clean`.
 
 This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
 node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel
@@ -17,6 +17,7 @@ a large physical Wi-Fi installation.
 | --- | --- |
 | Understand what the lab is | [Architecture](concepts/architecture.md) |
 | See exactly what works now | [Current state](current-state.md) |
+| See what each lab release delivered | [Release notes](release-notes.md) |
 | Use an already installed lab | [Quickstart](guide/quickstart.md) |
 | Start, stop, recover, or redeploy it | [Operations](guide/operations.md) |
 | Give a live demonstration | [Demonstrations](guide/demonstrations.md) |
@@ -89,6 +90,7 @@ boundary:
 - [Association ownership case study](reference/association-ownership-case-study.md)
 - [Bare-metal and LXD VM deployment models](reference/deployment-models.md)
 - [Portable LXD VM releases](reference/portable-lab-releases.md)
+- [Release notes](release-notes.md)
 - [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
 - [Lab appliance refactor plan](reference/lab-appliance-refactor-plan.md)
 - [prplMesh virtual-radio evaluation plan](reference/prplmesh-virtual-radio-evaluation-plan.md)
