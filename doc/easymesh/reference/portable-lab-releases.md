@@ -8,19 +8,24 @@ Two independent lab families use the same release contract:
 | RDK EasyMesh | 20, 50, 100 clients | EasyMesh `18889`, wmediumd `18890` |
 | prplMesh | 20, 50, 100 clients | topology adapter `8090`, Controller UI `8091` |
 
-Each client count is a separate appliance. The exact nested containers, stable
-radio identities, hwsim pool, wmediumd roster and startup service already exist
-inside it. Import never converts a 20-client VM into a 50- or 100-client VM.
-This costs more stored artifacts but gives the fastest and least fragile cold
-start.
+Each client count is a separate appliance and is published in two flavors:
+
+- `ready` contains the complete provisioned nested roster for the fastest cold
+  start;
+- `thin` contains the installed host, exact source and local runtime inputs,
+  but zero provisioned mesh nodes. Its first boot builds the selected roster
+  entirely offline and therefore takes longer.
+
+Import never converts one profile into another. Stable radio identities, the
+hwsim pool size, wmediumd roster and resource limits remain profile-specific.
 
 ## Release contents
 
 A downloadable `*-bundle.tar` contains one directory:
 
 ```text
-STACK-CLIENTS-DATE-COMMIT-lxd/
-|-- STACK-CLIENTS-DATE-COMMIT-lxd.tar.zst  LXD VM backup
+STACK-CLIENTS-DATE-COMMIT[-thin]-lxd/
+|-- STACK-CLIENTS-DATE-COMMIT[-thin]-lxd.tar.zst  LXD VM backup
 |-- import.sh                              portable import and proxy setup
 |-- install-host.sh                        Ubuntu 22.04/24.04 LXD/KVM setup
 |-- README.md                              empty-directory workflow
@@ -49,24 +54,21 @@ Use one release folder and preserve the filenames produced by the packager:
 ```text
 EasyMesh-LXD-0831/
 |-- catalog.json
-|-- rdkeasymesh-20-...-bundle.tar
-|-- rdkeasymesh-20-...-bundle.tar.sha256
-|-- rdkeasymesh-50-...-bundle.tar
-|-- rdkeasymesh-50-...-bundle.tar.sha256
-|-- rdkeasymesh-100-...-bundle.tar
-|-- rdkeasymesh-100-...-bundle.tar.sha256
-|-- prplmesh-20-...-bundle.tar
-|-- prplmesh-20-...-bundle.tar.sha256
-|-- prplmesh-50-...-bundle.tar
-|-- prplmesh-50-...-bundle.tar.sha256
-|-- prplmesh-100-...-bundle.tar
-`-- prplmesh-100-...-bundle.tar.sha256
+|-- rdkeasymesh-{20,50,100}-...-lxd-bundle.tar
+|-- rdkeasymesh-{20,50,100}-...-lxd-bundle.tar.sha256
+|-- rdkeasymesh-{20,50,100}-...-thin-lxd-bundle.tar
+|-- rdkeasymesh-{20,50,100}-...-thin-lxd-bundle.tar.sha256
+|-- prplmesh-{20,50,100}-...-lxd-bundle.tar
+|-- prplmesh-{20,50,100}-...-lxd-bundle.tar.sha256
+|-- prplmesh-{20,50,100}-...-thin-lxd-bundle.tar
+`-- prplmesh-{20,50,100}-...-thin-lxd-bundle.tar.sha256
 ```
 
-`catalog.json` lists the stack, profile, source commit, size, SHA-256, release
-status, Drive file identifier and UI ports. Drive is only the transport; a
-release is identified by its checked metadata and checksum. Publish a direct
-download identifier only after uploading the immutable file.
+`catalog.json` lists the stack, profile, flavor, source commit, accepted
+runtime-base commit where applicable, size, SHA-256, release status, Drive
+file identifier and UI ports. Drive is only the transport; a release is
+identified by its checked metadata and checksum. Publish a direct download
+identifier only after uploading the immutable file.
 
 ## Empty-directory workflow
 
@@ -100,6 +102,12 @@ status to `accepted` only after a clean import on another host passes:
 5. configurator and optimizer restoration gates;
 6. a one-hour churn soak for that exact profile; and
 7. bounded CPU, memory, storage, logs and startup/shutdown time.
+
+A thin candidate additionally has to prove that its exported inventory is
+empty, the first boot performs no clone, pull or download, the final inventory
+matches the selected profile, and its pending marker is cleared only after the
+normal acceptance gates pass. A longer first boot is expected and is not a
+failure by itself.
 
 Failure in one profile does not demote another profile, but a 20-client result
 must never be used to label a 50- or 100-client artifact accepted. Userspace
