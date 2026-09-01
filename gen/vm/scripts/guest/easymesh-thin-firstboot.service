@@ -9,4 +9,3 @@ Type=oneshot
 ExecStart=/usr/local/sbin/easymesh-thin-firstboot
 RemainAfterExit=yes
 TimeoutStartSec=3600
-
