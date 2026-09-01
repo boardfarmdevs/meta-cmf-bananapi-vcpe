@@ -1,0 +1,133 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 1 Sep 2026 02:15:00 -0700
+Subject: [PATCH] metrics: reject samples from a prior association epoch
+
+Exact STA+BSSID ownership prevents an old AP report from updating a client
+after it roams elsewhere.  It is not sufficient when the client returns to
+the same BSSID before that AP has discarded its cached metrics.  In that
+case the retained sample has the right key but belongs to the previous
+association epoch.
+
+Associated STA Link Metrics supplies the measurement age as time_delta_ms,
+and the controller model carries the current association age as
+last_conn_time.  Ignore a sample whose rounded-up measurement age exceeds
+the current association age.  Apply this guard before changing RCPI,
+timestamp, rates, or database flags, so an unavailable fresh sample remains
+the zero/unknown state until current-epoch telemetry arrives.
+
+Add a focused regression for a return to the same BSSID: the prior-epoch
+sample is ignored, a current-epoch sample is accepted, and a later stale
+copy cannot regress its RCPI or timestamp.
+
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ src/em/metrics/em_metrics.cpp | 22 ++++++++++++++++++-
+ tests/test_l1_em_metrics.cpp  | 53 +++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index c60695d..564116b 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -129,13 +129,33 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+             continue;
+         }
+ 
++        /* The same STA can return to a BSSID before the reporting agent has
++         * discarded a cached sample from its previous association there.
++         * Exact STA+BSSID lookup alone cannot distinguish those two
++         * association epochs.  The standard time-delta is the age of this
++         * observation, while last_conn_time is the age of the controller's
++         * current authoritative association.  A sample older than that
++         * association must not populate the new row. */
++        const unsigned int delta_ms = ntohl(metrics->time_delta_ms);
++        const uint64_t delta_seconds =
++            (static_cast<uint64_t>(delta_ms) + 999ULL) / 1000ULL;
++        if (delta_seconds > sta->m_sta_info.last_conn_time) {
++            em_printfout("Ignoring pre-association STA metrics: sta=%s bssid=%s "
++                         "sample_age=%llu association_age=%u",
++                util::mac_to_string(sta_metrics->sta_mac).c_str(),
++                util::mac_to_string(metrics->bssid).c_str(),
++                static_cast<unsigned long long>(delta_seconds),
++                sta->m_sta_info.last_conn_time);
++            continue;
++        }
++
+         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
+         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+         sta->m_sta_info.rcpi = metrics->rcpi;
+         char observed_at[64] = {0};
+         sta->m_sta_info.timestamp[0] = '\0';
+         if (em_format_link_metric_observed_at(observed_at, sizeof(observed_at),
+-                now, ntohl(metrics->time_delta_ms))) {
++                now, delta_ms)) {
+             snprintf(sta->m_sta_info.timestamp, sizeof(sta->m_sta_info.timestamp),
+                      "%s", observed_at);
+         }
+diff --git a/tests/test_l1_em_metrics.cpp b/tests/test_l1_em_metrics.cpp
+index 644504e..eef5d11 100644
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -396,6 +396,59 @@ TEST_F(EmMetricsTest, AssociatedMetricsRequireExactStaAndBssidOwner) {
+     owning_dm.deinit();
+ }
+ 
++TEST_F(EmMetricsTest, AssociatedMetricsCannotPredateCurrentAssociation) {
++    const char *sta = "02:00:00:00:0c:00";
++    const char *bssid = "02:00:00:10:00:02";
++    const char *radio = "02:00:00:20:00:02";
++    dm_easy_mesh_t dm{};
++
++    ASSERT_EQ(dm.init(), 0);
++    em_sta_info_t current = make_metrics_station(sta, bssid, radio, true);
++    current.last_conn_time = 2;
++    dm.put_sta_info(&current, em_target_sta_map_consolidated);
++
++    std::vector<unsigned char> payload(
++        7 + sizeof(em_assoc_link_metrics_t), 0);
++    auto *report = reinterpret_cast<em_assoc_sta_link_metrics_t *>(
++        payload.data());
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta),
++        report->sta_mac);
++    report->num_bssids = 1;
++    auto *metric = &report->assoc_link_metrics[0];
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(bssid),
++        metric->bssid);
++
++    DummyEmMetrics metrics(nullptr, &dm);
++    metric->rcpi = 158;
++    metric->time_delta_ms = htonl(47000);
++    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++        payload.data(), payload.size()), 0);
++
++    dm_sta_t *owner = dm.find_sta(current.id, current.bssid);
++    ASSERT_NE(owner, nullptr);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 0);
++    EXPECT_STREQ(owner->m_sta_info.timestamp, "");
++
++    /* A sample measured during the current epoch is accepted. */
++    metric->rcpi = 118;
++    metric->time_delta_ms = htonl(1000);
++    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++        payload.data(), payload.size()), 0);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 118);
++    const std::string current_timestamp = owner->m_sta_info.timestamp;
++    EXPECT_FALSE(current_timestamp.empty());
++
++    /* A late copy from the prior visit cannot regress the current epoch. */
++    metric->rcpi = 158;
++    metric->time_delta_ms = htonl(47000);
++    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++        payload.data(), payload.size()), 0);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 118);
++    EXPECT_STREQ(owner->m_sta_info.timestamp, current_timestamp.c_str());
++
++    dm.deinit();
++}
++
+ namespace {
+ 
+ em_unassoc_query_list_t make_unassoc_ack_query(
+-- 
+2.43.0

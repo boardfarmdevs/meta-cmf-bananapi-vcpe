@@ -143,6 +143,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0140-metrics-complete-rejected-candidate-query.patch \
     file://0141-cli-serialize-candidate-lists-as-arrays.patch \
     file://0142-metrics-apply-associated-reports-to-exact-bss.patch \
+    file://0143-metrics-reject-pre-association-samples.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
