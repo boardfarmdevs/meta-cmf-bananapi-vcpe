@@ -469,6 +469,8 @@ LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
 LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
+LAB_RELEASE_FLAVOR=ready
+LAB_FIRST_BOOT_PROVISIONING=false
 LAB_TRIMMED=true
 EOF
     jq -n \
@@ -481,6 +483,7 @@ EOF
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          release_flavor:"ready",first_boot_provisioning:false,
           build:{storage_pool:$build_storage},
           trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"
