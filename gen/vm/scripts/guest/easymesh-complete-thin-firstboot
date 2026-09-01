@@ -4,16 +4,18 @@ set -euo pipefail
 pending=/var/lib/easymesh-lab/thin-firstboot.env
 completed=/var/lib/easymesh-lab/thin-firstboot.completed.env
 report=/var/lib/easymesh-lab/thin-firstboot-report.json
+started_file=/var/lib/easymesh-lab/thin-firstboot.started-at
 
 [ -f "$pending" ] || exit 0
 # shellcheck disable=SC1090
 . "$pending"
 
-: "${THIN_STARTED_AT:?missing THIN_STARTED_AT}"
 : "${THIN_INITIAL_INSTANCES:?missing THIN_INITIAL_INSTANCES}"
 : "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
 : "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
 : "${EXPECTED_REPO_HEAD:?missing EXPECTED_REPO_HEAD}"
+test -s "$started_file"
+started=$(cat "$started_file")
 
 HEALTH_EXPECT_CLIENTS="$HEALTH_EXPECT_CLIENTS" \
     /usr/local/sbin/easymesh-labctl check
@@ -25,7 +27,7 @@ expected_instances=$((HEALTH_EXPECT_CLIENTS + 5))
 
 finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 jq -n \
-    --arg started_at "$THIN_STARTED_AT" --arg finished_at "$finished" \
+    --arg started_at "$started" --arg finished_at "$finished" \
     --arg profile "$EASYMESH_SCALE_PROFILE" \
     --arg source_commit "$EXPECTED_REPO_HEAD" \
     --argjson clients "$HEALTH_EXPECT_CLIENTS" \
@@ -38,5 +40,6 @@ jq -n \
     > "$report.tmp"
 mv -f "$report.tmp" "$report"
 mv -f "$pending" "$completed"
+rm -f "$started_file"
 
 echo "EasyMesh thin first-boot acceptance PASS: $final_instances instances"

@@ -4,6 +4,7 @@ set -euo pipefail
 exec </dev/null
 
 pending=/var/lib/easymesh-lab/thin-firstboot.env
+started_file=/var/lib/easymesh-lab/thin-firstboot.started-at
 lock=/run/easymesh-thin-firstboot.lock
 
 [ -f "$pending" ] || exit 0
@@ -11,6 +12,10 @@ exec 9>"$lock"
 flock 9
 # shellcheck disable=SC1090
 . "$pending"
+
+if [ ! -s "$started_file" ]; then
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$started_file"
+fi
 
 : "${EASYMESH_REPO:?missing EASYMESH_REPO}"
 : "${CONTROLLER_IMAGE:?missing CONTROLLER_IMAGE}"

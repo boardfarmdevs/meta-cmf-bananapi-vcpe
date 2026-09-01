@@ -58,12 +58,12 @@ install -d -m 0755 /var/lib/easymesh-lab "$nvram" "$state"
 find "$nvram" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 find "$state" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 rm -f /var/lib/easymesh-lab/thin-firstboot.completed.env \
-    /var/lib/easymesh-lab/thin-firstboot-report.json
+    /var/lib/easymesh-lab/thin-firstboot-report.json \
+    /var/lib/easymesh-lab/thin-firstboot.started-at
 
 controller_sha=$(sha256sum "$CONTROLLER_IMAGE" | awk '{print $1}')
 extender_sha=$(sha256sum "$EXTENDER_IMAGE" | awk '{print $1}')
 cat > "$pending" <<EOF
-THIN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 THIN_INITIAL_INSTANCES=0
 EASYMESH_REPO=$EASYMESH_REPO
 CONTROLLER_IMAGE=$CONTROLLER_IMAGE
