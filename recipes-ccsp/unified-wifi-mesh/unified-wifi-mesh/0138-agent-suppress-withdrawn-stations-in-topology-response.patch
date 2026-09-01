@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000138 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 31 Aug 2026 16:00:00 -0700
+Subject: [PATCH] agent: suppress withdrawn stations in topology response
+
+Station-list notification and aggregation stages are asynchronous.  A full
+snapshot can therefore leave the same STA/BSSID/RUID key briefly present in
+both the consolidated association map and the disassociation map.  The
+Topology Notification correctly publishes the withdrawal, but a Topology
+Response emitted during that convergence window previously serialized the
+stale live row.  Its freshly reconstructed Association Time made the
+controller select the former AP as the newer owner and reversed a completed
+roam until a later withdrawal repaired it.
+
+Treat a matching disassociation tombstone as newer than the consolidated row
+when constructing the Associated Clients TLV.  A genuine reassociation
+already removes that tombstone in the station aggregate path, so it remains
+eligible for the next complete snapshot.  Add regression coverage for the
+conflicting-map state observed in the live lab.
+
+Upstream-Status: Pending
+---
+ inc/em_configuration.h           |  9 +++++++++
+ src/em/config/em_configuration.cpp | 23 +++++++++++++++++++++--
+ tests/test_l1_em_orch_agent.cpp  | 22 ++++++++++++++++++++++
+ 3 files changed, 52 insertions(+), 2 deletions(-)
+
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1609,6 +1609,15 @@
+ 
+ public:
+ 	/**
++	 * Return true only when a station row is safe to advertise as associated.
++	 * A disassociation tombstone for the same STA/BSSID/RUID is authoritative
++	 * while asynchronous station-list stages converge and must suppress a
++	 * stale live-map row.
++	 */
++	static bool is_advertisable_association(dm_easy_mesh_t *dm,
++		const em_sta_info_t& sta_info);
++
++	/**
+ 	 * Apply a non-MLO station withdrawal to the controller's live and pending
+ 	 * station maps. Topology Notifications carry a normal STA MAC but no
+ 	 * Associated STA MLD entry, so they must not depend on MLO metadata to
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1558,6 +1558,25 @@
+     return static_cast<int> (len);
+ }
+ 
++bool em_configuration_t::is_advertisable_association(
++        dm_easy_mesh_t *dm, const em_sta_info_t& sta_info)
++{
++    if (dm == NULL || !sta_info.associated) {
++        return false;
++    }
++
++    /* Association and disassociation commands are intentionally staged on
++     * independent objects.  During that short convergence window both maps
++     * can contain the same key.  The withdrawal is the newer ownership
++     * evidence; advertising the stale live row resets Association Time and
++     * can make the controller move the STA back to its previous AP. */
++    return dm->get_sta_info(
++            const_cast<unsigned char *>(sta_info.id),
++            const_cast<unsigned char *>(sta_info.bssid),
++            const_cast<unsigned char *>(sta_info.radiomac),
++            em_target_sta_map_disassoc) == NULL;
++}
++
+ int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
+                                                        unsigned int capacity)
+ {
+@@ -1590,7 +1609,7 @@
+ 
+         sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
+         while (sta != NULL) {
+-            if (sta->m_sta_info.associated &&
++            if (is_advertisable_association(dm, sta->m_sta_info) &&
+                     memcmp(sta->m_sta_info.bssid, bss->bssid.mac,
+                            sizeof(bssid_t)) == 0) {
+                 sta_count++;
+@@ -1617,7 +1636,7 @@
+ 
+         sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
+         while (sta != NULL) {
+-            if (sta->m_sta_info.associated &&
++            if (is_advertisable_association(dm, sta->m_sta_info) &&
+                     memcmp(sta->m_sta_info.bssid, bss->bssid.mac,
+                            sizeof(bssid_t)) == 0) {
+                 memcpy(tmp, sta->m_sta_info.id, sizeof(mac_address_t));
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -25,6 +25,7 @@
+ #include "em_orch_agent.h"
+ #include "em_agent.h"
+ #include "em_cmd_sta_list.h"
++#include "em_configuration.h"
+ 
+ 
+ class em_orch_agent_t_TEST : public testing::Test {
+@@ -59,6 +60,27 @@
+ 
+ } // namespace
+ 
++TEST(em_configuration_associated_clients_TEST,
++    WithdrawalTombstoneSuppressesStaleLiveRow)
++{
++    dm_easy_mesh_t dm{};
++    em_sta_info_t live = make_associated_sta("02:00:00:00:0c:00",
++        "02:00:00:10:00:01", "02:00:00:20:00:01");
++
++    ASSERT_EQ(dm.init(), 0);
++    dm.put_sta_info(&live, em_target_sta_map_consolidated);
++    EXPECT_TRUE(em_configuration_t::is_advertisable_association(&dm, live));
++
++    em_sta_info_t withdrawn = live;
++    withdrawn.associated = false;
++    dm.put_sta_info(&withdrawn, em_target_sta_map_disassoc);
++
++    /* A delayed aggregate or metrics stage may leave a stale copy in the
++     * live map.  The topology snapshot must still honor the newer tombstone. */
++    EXPECT_FALSE(em_configuration_t::is_advertisable_association(&dm, live));
++    dm.deinit();
++}
++
+ TEST(em_orch_agent_snapshot_delta_TEST, IdenticalFullSnapshotsEmitNoNotifications)
+ {
+     const char *sta = "02:00:00:00:01:00";
+-- 
+2.43.0

@@ -5,7 +5,7 @@ performance and kernel-debug reference.
 
 ```text
 Ubuntu 22.04/24.04 host + LXD/KVM
-`-- rdkeasymesh-CLIENTS-0829 (Ubuntu 24.04/Linux 7 LXD VM)
+`-- rdkeasymesh-CLIENTS-0831 (Ubuntu 24.04/Linux 7 LXD VM)
     |-- Docker: Boardfarm DHCP/NAT and br-wan101
     |-- nested LXD: controller, four extenders, 20/50/100-client roster
     |-- hwsim + multichannel wmediumd
@@ -31,6 +31,15 @@ test -c /dev/kvm
 The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
 `lxd` group, and initializes LXD only when no storage pool exists.
 
+Validate profile metadata and import argument handling without creating an
+appliance:
+
+```sh
+./test-profiles.sh
+./test-build-storage.sh
+./test-import-storage.sh
+```
+
 ## Build a clean appliance
 
 The source checkout must be clean. Select one immutable client profile and
@@ -45,7 +54,7 @@ EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
 
 The builder:
 
-1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 6 GiB RAM and a sparse
+1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 8 GiB RAM and a sparse
    64-GiB disk;
 2. installs and boots the accepted Linux 7 kernel;
 3. installs Docker, nested LXD and the single Boardfarm repository;
@@ -77,7 +86,7 @@ therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 ```
 
 Profiles `20`, `50`, and `100` create separate instances named
-`rdkeasymesh-PROFILE-0829`. A profile is immutable inside a release appliance:
+`rdkeasymesh-PROFILE-0831`. A profile is immutable inside a release appliance:
 download another profile instead of deleting and recreating client identities
 after import. The builder detects the address
 used by the outer host's IPv4 default route and exposes:
@@ -91,6 +100,7 @@ Override site-local settings without changing image identity:
 
 ```sh
 EASYMESH_LXD_NAME=my-lab \
+EASYMESH_LXD_STORAGE=bpi-lab \
 EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
 EASYMESH_WEBUI_PORT=28889 \
 WMEDIUMD_CONSOLE_PORT=28890 \
@@ -102,7 +112,7 @@ VMs also default to LXD `boot.autostart=true`; disable it explicitly when an
 outer host must not start the VM after reboot:
 
 ```sh
-lxc config set rdkeasymesh-20-0829 boot.autostart false
+lxc config set rdkeasymesh-20-0831 boot.autostart false
 ```
 
 ## Export a release
@@ -110,27 +120,41 @@ lxc config set rdkeasymesh-20-0829 boot.autostart false
 After a passing check:
 
 ```sh
-./build.sh snapshot
 ./build.sh export
 ```
 
-`export` creates `artifacts/rdkeasymesh-CLIENTS-0829-COMMIT-lxd/` containing
+`export` reruns the complete acceptance check. An `accepted` snapshot is not
+required by the release and is not created automatically because non-copy-on-
+write LXD pools duplicate the complete VM disk. On a copy-on-write pool, a
+release engineer may create the optional local rollback point with
+`./build.sh snapshot`; it is excluded from the portable export.
+
+`export` creates `artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,
 this README, and `SHA256SUMS`. The VM is stopped before export so its nested
 LXD database, radio state and filesystems are coherent. Create the single file
 for Google Drive with:
 
 ```sh
-./package-release.sh artifacts/rdkeasymesh-CLIENTS-0829-COMMIT-lxd
+./package-release.sh artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd
 ```
 
 Upload the resulting `*-bundle.tar` and its adjacent `.sha256`. Google Drive
 is transport only; the checksum and `release.json` identify the release. The
 outer checksum records only the bundle filename, so verification works from
 any empty download directory. Export also records the VM's actual CPU, memory
-and disk settings. The backup remains neutral between the old and current LXD
+and disk settings, plus the source host's storage-pool name for traceability.
+That pool name is not imposed on a destination host. The backup remains
+neutral between the old and current LXD
 Secure-Boot keys; the importer disables Secure Boot using the spelling
 supported by the destination host before the VM's first boot.
+
+Export first stops the lab and removes only reconstructible package, journal,
+Docker and nested-LXD image caches. It then issues filesystem discard before
+the instance-only export; it does not fill a thin disk with zeros. Provisioned
+containers, NVRAM identities, configuration and source are retained. The
+checksummed `trim-report.txt` records before/after guest usage, discard output
+and the final compressed archive size.
 
 ## Import on another host
 
@@ -138,9 +162,9 @@ Download the selected profile into any empty working directory, verify and
 extract it:
 
 ```sh
-sha256sum -c rdkeasymesh-CLIENTS-0829-COMMIT-lxd-bundle.tar.sha256
-tar -xf rdkeasymesh-CLIENTS-0829-COMMIT-lxd-bundle.tar
-cd rdkeasymesh-CLIENTS-0829-COMMIT-lxd
+sha256sum -c rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar.sha256
+tar -xf rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar
+cd rdkeasymesh-CLIENTS-0831-COMMIT-lxd
 sha256sum -c SHA256SUMS
 ```
 
@@ -154,15 +178,26 @@ EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
 The importer refuses to overwrite an existing instance, chooses an address on
 the selected LXD network, replaces site-specific proxy devices, starts the VM,
 and prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
-`EASYMESH_LXD_NETWORK`, `EASYMESH_WEBUI_PORT`, and
+`EASYMESH_LXD_NETWORK`, `EASYMESH_LXD_STORAGE`, `EASYMESH_WEBUI_PORT`, and
 `WMEDIUMD_CONSOLE_PORT` when the defaults collide.
+
+When the host's default storage pool cannot hold the selected sparse disk,
+choose an existing pool explicitly for both build and import:
+
+```sh
+EASYMESH_LXD_STORAGE=bpi-lab ./import.sh
+```
+
+The importer validates the pool before creating the VM. The source host's
+pool name is recorded for traceability but is not imposed on a destination
+host.
 
 Monitor the first imported cold reconstruction:
 
 ```sh
-lxc console rdkeasymesh-20-0829 --show-log
-lxc exec rdkeasymesh-20-0829 -- journalctl -fu easymesh-lab.service
-lxc exec rdkeasymesh-20-0829 -- /usr/local/sbin/easymesh-labctl check
+lxc console rdkeasymesh-20-0831 --show-log
+lxc exec rdkeasymesh-20-0831 -- journalctl -fu easymesh-lab.service
+lxc exec rdkeasymesh-20-0831 -- /usr/local/sbin/easymesh-labctl check
 ```
 
 ## Remove

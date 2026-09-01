@@ -11,7 +11,7 @@
 | Bare-metal Ubuntu 24.04/Linux 7 host | performance, scale and kernel debugging |
 | Ubuntu 22.04/24.04 LXD host | portable appliance import and operation |
 
-`codex/0829-lxd-primary` is authoritative. Runtime results are comparable only
+`codex/0831-clean` is authoritative. Runtime results are comparable only
 when source revision, image hashes, kernel, topology, clients, medium backend
 and test parameters match.
 
@@ -21,7 +21,7 @@ Every deployment must record the exact image filenames and hashes. The current
 fully rebuilt pair is:
 
 ```text
-host/runtime source       codex/0829-lxd-primary
+host/runtime source       codex/0831-clean
 image content             EasyMesh 0127; OneWifi 0022; Wi-Fi HAL 0030
 kernel                    7.0.0-30-generic
 controller image          X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2

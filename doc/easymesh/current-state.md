@@ -3,7 +3,7 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: `codex/0829-lxd-primary` release candidate.
+Status: `codex/0831-clean` release candidate.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
@@ -12,7 +12,7 @@ link here instead of repeating versioned results.
 
 | Item | Accepted value |
 | --- | --- |
-| Source branch | `codex/0829-lxd-primary` |
+| Source branch | `codex/0831-clean` |
 | Runtime image source | EasyMesh through `0127`, OneWifi through `0022`, Wi-Fi HAL through `0030` |
 | Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |

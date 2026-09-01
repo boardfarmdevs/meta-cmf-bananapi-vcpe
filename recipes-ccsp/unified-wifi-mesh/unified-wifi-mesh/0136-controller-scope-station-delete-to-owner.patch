@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000136 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 31 Aug 2026 14:05:00 -0700
+Subject: [PATCH] controller: scope station delete to owner
+
+The controller stores one current STAList row per station MAC, while its
+in-memory station maps distinguish station ownership by MAC, BSSID, and RUID.
+A delayed disassociation from a previous AP used the generic MAC-only delete
+and could therefore remove the row which a newer association had already
+updated to the target AP.  The WebUI could retain cached ownership, but the
+controller subsequently considered the station unassociated and refused the
+next steering request.
+
+Delete a station row only when its persisted BSSID and RUID still match the
+association owner which issued the withdrawal.  A stale withdrawal then
+becomes a harmless no-op, while a current-owner withdrawal still removes the
+row.  Add regression coverage for the complete scoped predicate and bounded
+query formatting.
+
+Upstream-Status: Pending
+---
+ inc/dm_sta_list.h         | 21 +++++++++++++++++++++
+ src/dm/dm_sta_list.cpp    | 39 ++++++++++++++++++++++++++++++++++++++-
+ tests/test_l1_dm_sta.cpp  | 26 ++++++++++++++++++++++++++
+ 3 files changed, 85 insertions(+), 1 deletion(-)
+
+--- a/inc/dm_sta_list.h
++++ b/inc/dm_sta_list.h
+@@ -203,6 +203,27 @@ public:
+ 	 * this function.
+ 	 */
+ 	int update_row(db_client_t& db_client, ...);
++
++	/**!
++	 * @brief Formats a station delete that is scoped to the association owner.
++	 *
++	 * A station can move to a new BSS before a delayed disassociation arrives
++	 * from its previous BSS.  Include the BSSID and radio identity so that the
++	 * old notification cannot delete the station's current database row.
++	 *
++	 * @param[out] query Destination for the SQL statement.
++	 * @param[in] query_len Size of the destination buffer.
++	 * @param[in] info Station and association-owner identities.
++	 *
++	 * @returns 0 when the query was formatted, -1 for invalid or short buffers.
++	 */
++	static int format_scoped_delete_query(char *query, size_t query_len,
++			const em_sta_info_t& info);
++
++	/**!
++	 * @brief Deletes only the row owned by the supplied BSS and radio.
++	 */
++	int delete_sta_row(db_client_t& db_client, const em_sta_info_t& info);
+     
+ 	/**!
+ 	 * @brief Sets the configuration using the provided JSON object.
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -330,6 +330,43 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
+     return 0;
+ }
+ 
++int dm_sta_list_t::format_scoped_delete_query(char *query, size_t query_len,
++        const em_sta_info_t& info)
++{
++    mac_addr_str_t sta_mac_str, bssid_mac_str, radio_mac_str;
++
++    if (query == NULL || query_len == 0) {
++        return -1;
++    }
++
++    int written = snprintf(query, query_len,
++            "delete from STAList where MACAddress = '%s' and BSSID = '%s' and RUID = '%s'",
++            dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(info.id), sta_mac_str),
++            dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(info.bssid), bssid_mac_str),
++            dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *>(info.radiomac), radio_mac_str));
++
++    if (written < 0 || static_cast<size_t>(written) >= query_len) {
++        query[0] = '\0';
++        return -1;
++    }
++
++    return 0;
++}
++
++int dm_sta_list_t::delete_sta_row(db_client_t& db_client, const em_sta_info_t& info)
++{
++    db_query_t query;
++
++    if (format_scoped_delete_query(query, sizeof(query), info) != 0) {
++        return -1;
++    }
++
++    void *ctx = db_client.execute(query);
++    while (db_client.next_result(ctx) == true);
++
++    return 0;
++}
++
+ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *data)
+ {
+     mac_addr_str_t sta_mac_str, bssid_mac_str, radio_mac_str;
+@@ -367,7 +404,7 @@ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
+ 			break;
+ 
+ 		case dm_orch_type_db_delete:
+-			ret = delete_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->id, sta_mac_str));
++			ret = delete_sta_row(db_client, *info);
+ 			break;
+ 
+ 		default:
+--- a/tests/test_l1_dm_sta.cpp
++++ b/tests/test_l1_dm_sta.cpp
+@@ -22,6 +22,7 @@
+ #include <stdio.h>
+ #include <climits>
+ #include "dm_sta.h"
++#include "dm_sta_list.h"
+ 
+ /**
+ * @brief Test the decode function with a valid JSON object and valid parent ID
+@@ -1549,3 +1550,28 @@ TEST(dm_sta_t_Test, dm_sta_t_destructor_default_constructor) {
+     });
+     std::cout << "Exiting dm_sta_t::~dm_sta_t()_end test" << std::endl;
+ }
++
++TEST(dm_sta_list_t_Test, DeleteQueryIsScopedToAssociationOwner) {
++    em_sta_info_t info = {};
++    const unsigned char sta[6] = {0x02, 0x00, 0x00, 0x00, 0x0c, 0x00};
++    const unsigned char bssid[6] = {0x02, 0x00, 0x00, 0x10, 0x35, 0x6b};
++    const unsigned char ruid[6] = {0x02, 0x00, 0x00, 0x00, 0x09, 0x22};
++    db_query_t query;
++
++    memcpy(info.id, sta, sizeof(sta));
++    memcpy(info.bssid, bssid, sizeof(bssid));
++    memcpy(info.radiomac, ruid, sizeof(ruid));
++
++    ASSERT_EQ(dm_sta_list_t::format_scoped_delete_query(query, sizeof(query), info), 0);
++    EXPECT_STREQ(query,
++            "delete from STAList where MACAddress = '02:00:00:00:0c:00' "
++            "and BSSID = '02:00:00:10:35:6b' and RUID = '02:00:00:00:09:22'");
++}
++
++TEST(dm_sta_list_t_Test, DeleteQueryRejectsShortBuffer) {
++    em_sta_info_t info = {};
++    char query[16] = "not-empty";
++
++    EXPECT_EQ(dm_sta_list_t::format_scoped_delete_query(query, sizeof(query), info), -1);
++    EXPECT_STREQ(query, "");
++}
+-- 
+2.43.0

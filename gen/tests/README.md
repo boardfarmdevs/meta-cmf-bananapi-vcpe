@@ -124,6 +124,7 @@ Docker/Boardfarm reconstruction.
 | `scale-soak-campaign.sh` | Sequential 20/50/100-client qualification | Reprovisions the hwsim pool and client roster |
 | `p0-cold-reconstruction.sh` | Repeated full reconstruction | Yes, highly disruptive |
 | `bpibroadband-memory-profile.py` | Live measurement | No |
+| `onewifi-memory-slope.py` | Live bounded-growth gate | No |
 | `wmediumd-performance.py` | Live CPU/traffic benchmark | Generates bounded WLAN traffic |
 | `deployment-model-evidence.sh` | Runtime/guest comparison evidence | Health audit only |
 | `deployment-host-evidence.sh` | Physical-host/hypervisor comparison evidence | No |
@@ -138,6 +139,23 @@ Docker/Boardfarm reconstruction.
 | `webui-topology-layout-test.js` | Isolated WebUI unit test | No |
 
 ## Live health and configuration tests
+
+### `onewifi-memory-slope.py`
+
+Measure the post-warmup PSS slope of `OneWifi` on the controller and every
+running extender without changing lab state:
+
+```sh
+./gen/tests/onewifi-memory-slope.py \
+  --duration 900 --warmup 120 --interval 30 \
+  --output /tmp/onewifi-memory-slope.json
+```
+
+The default gate permits at most 2 MiB/hour per process after warmup and fails
+on a missing sample or process restart. A release campaign should use a full
+hour; the 15-minute form is a focused regression for the five-second AP-metrics
+allocation leak. Run its isolated arithmetic check with
+`./gen/tests/onewifi-memory-slope.py --self-test`.
 
 ### `wmediumd-performance.py`
 

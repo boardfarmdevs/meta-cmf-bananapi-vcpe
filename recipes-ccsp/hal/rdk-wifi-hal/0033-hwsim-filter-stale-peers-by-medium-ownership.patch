@@ -1,0 +1,301 @@
+From c71abee8788342e2fa8fb6abdc564131e7c413e5 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <revogelaar@gmail.com>
+Date: Mon, 31 Aug 2026 09:22:38 -0700
+Subject: [PATCH] hwsim: filter stale peers by medium ownership
+
+Use wmediumd protocol-positive association ownership before exporting NL80211 station rows. A known current owner wins over inactivity, a known different owner is filtered immediately, and unknown or unavailable ownership preserves the existing conservative timeout fallback.
+
+Upstream-Status: Inappropriate [hwsim EasyMesh laboratory interface]
+---
+ platform/banana-pi/platform.c | 237 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 230 insertions(+), 7 deletions(-)
+
+diff --git a/platform/banana-pi/platform.c b/platform/banana-pi/platform.c
+index 59f5bfe..abbb290 100644
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -27,10 +27,17 @@
+ 
+ #include "wifi_hal.h"
+ #include "wifi_hal_priv.h"
++#include <arpa/inet.h>
++#include <dirent.h>
+ #include <net/if.h>
+ #include <stddef.h>
++#include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <sys/socket.h>
++#include <sys/time.h>
++#include <sys/un.h>
++#include <unistd.h>
+ 
+ #define NULL_CHAR '\0'
+ #define NEW_LINE '\n'
+@@ -60,8 +67,196 @@ typedef struct {
+     sta_entry_t *entries;
+     unsigned int num;
+     unsigned int query_ifindex;
++#ifdef HWSIM_RADIO
++    int ownership_fd;
++    bool local_radio_known;
++    mac_address_t local_radio;
++#endif
+ } sta_list_t;
+ 
++#ifdef HWSIM_RADIO
++enum {
++    WMDC_OP_HELLO = 1,
++    WMDC_OP_GET_ASSOCIATION = 14,
++    WMDC_OK = 0,
++    WMDC_CAP_READ_ONLY = 1U << 5,
++    WMDC_CAP_ASSOCIATION_OWNERSHIP = 1U << 10,
++};
++
++struct wmdc_header {
++    uint32_t magic;
++    uint16_t version;
++    uint16_t opcode;
++    uint32_t payload_len;
++    uint32_t status;
++    uint64_t generation;
++} __attribute__((packed));
++
++struct wmdc_info {
++    uint64_t instance_hi;
++    uint64_t instance_lo;
++    uint32_t capabilities;
++    uint32_t max_updates;
++    uint32_t num_stations;
++    uint32_t reserved;
++} __attribute__((packed));
++
++struct wmdc_association {
++    uint8_t endpoint[6];
++    uint8_t station[6];
++    uint8_t owner[6];
++    uint8_t reserved[2];
++    uint32_t frequency_mhz;
++    uint32_t flags;
++} __attribute__((packed));
++
++static bool hwsim_local_radio_identity(mac_address_t identity)
++{
++    DIR *phys;
++    struct dirent *entry;
++    char path[256];
++    char address[32];
++    unsigned int octets[6];
++    unsigned int i;
++    FILE *file;
++    bool found = false;
++
++    phys = opendir("/sys/class/ieee80211");
++    if (phys == NULL) {
++        return false;
++    }
++    while ((entry = readdir(phys)) != NULL) {
++        if (entry->d_name[0] == '.') {
++            continue;
++        }
++        snprintf(path, sizeof(path), "/sys/class/ieee80211/%s/macaddress",
++            entry->d_name);
++        file = fopen(path, "r");
++        if (file == NULL) {
++            continue;
++        }
++        if (fgets(address, sizeof(address), file) != NULL &&
++            sscanf(address, "%x:%x:%x:%x:%x:%x", &octets[0], &octets[1],
++                &octets[2], &octets[3], &octets[4], &octets[5]) == 6) {
++            for (i = 0; i < 6; i++) {
++                identity[i] = (uint8_t)octets[i];
++            }
++            identity[0] |= 0x40;
++            found = true;
++        }
++        fclose(file);
++        if (found) {
++            break;
++        }
++    }
++    closedir(phys);
++    return found;
++}
++
++static int hwsim_ownership_open(void)
++{
++    struct sockaddr_un address = {};
++    struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
++    struct wmdc_header request = {};
++    uint8_t response[sizeof(struct wmdc_header) + sizeof(struct wmdc_info)];
++    struct wmdc_header *header = (struct wmdc_header *)response;
++    struct wmdc_info *info = (struct wmdc_info *)(response + sizeof(*header));
++    uint32_t capabilities;
++    int fd;
++    ssize_t length;
++
++    fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
++    if (fd < 0) {
++        return -1;
++    }
++    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0 ||
++        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
++        close(fd);
++        return -1;
++    }
++    address.sun_family = AF_UNIX;
++    snprintf(address.sun_path, sizeof(address.sun_path), "%s",
++        "/wmediumd-metrics/control.sock");
++    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
++        close(fd);
++        return -1;
++    }
++    request.magic = htonl(0x574d4443U);
++    request.version = htons(1);
++    request.opcode = htons(WMDC_OP_HELLO);
++    if (send(fd, &request, sizeof(request), 0) != (ssize_t)sizeof(request)) {
++        close(fd);
++        return -1;
++    }
++    length = recv(fd, response, sizeof(response), 0);
++    if (length != (ssize_t)sizeof(response) ||
++        ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
++        ntohs(header->opcode) != WMDC_OP_HELLO ||
++        ntohl(header->status) != WMDC_OK ||
++        ntohl(header->payload_len) != sizeof(*info)) {
++        close(fd);
++        return -1;
++    }
++    capabilities = ntohl(info->capabilities);
++    if ((capabilities & (WMDC_CAP_READ_ONLY |
++            WMDC_CAP_ASSOCIATION_OWNERSHIP)) !=
++            (WMDC_CAP_READ_ONLY | WMDC_CAP_ASSOCIATION_OWNERSHIP)) {
++        close(fd);
++        return -1;
++    }
++    return fd;
++}
++
++/* Return one only for a protocol-validated, known owner. Unknown state and
++ * every socket/protocol failure return zero so the caller fails open. */
++static int hwsim_association_owner(int fd, const mac_address_t endpoint,
++    mac_address_t owner)
++{
++    struct {
++        struct wmdc_header header;
++        struct wmdc_association association;
++    } request = {};
++    uint8_t response[sizeof(request)];
++    struct wmdc_header *header = (struct wmdc_header *)response;
++    struct wmdc_association *association =
++        (struct wmdc_association *)(response + sizeof(*header));
++    ssize_t length;
++
++    if (fd < 0) {
++        return 0;
++    }
++    request.header.magic = htonl(0x574d4443U);
++    request.header.version = htons(1);
++    request.header.opcode = htons(WMDC_OP_GET_ASSOCIATION);
++    request.header.payload_len = htonl(sizeof(request.association));
++    memcpy(request.association.endpoint, endpoint, sizeof(mac_address_t));
++    if (send(fd, &request, sizeof(request), 0) != (ssize_t)sizeof(request)) {
++        return 0;
++    }
++    length = recv(fd, response, sizeof(response), 0);
++    if (length != (ssize_t)sizeof(response) ||
++        ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
++        ntohs(header->opcode) != WMDC_OP_GET_ASSOCIATION ||
++        ntohl(header->status) != WMDC_OK ||
++        ntohl(header->payload_len) != sizeof(*association) ||
++        memcmp(association->endpoint, endpoint, sizeof(mac_address_t)) != 0) {
++        return 0;
++    }
++    memcpy(owner, association->owner, sizeof(mac_address_t));
++    return 1;
++}
++
++static bool hwsim_should_filter_station(bool owner_known,
++    const mac_address_t owner, const mac_address_t local_radio,
++    bool inactivity_known, uint32_t inactivity_msec)
++{
++    if (owner_known) {
++        return memcmp(owner, local_radio, sizeof(mac_address_t)) != 0;
++    }
++    return inactivity_known && inactivity_msec > HWSIM_ASSOC_STALE_MSEC;
++}
++#endif
++
+ int wifi_nvram_defaultRead(char *in,char *out)
+ {
+     char buf[MAX_BUF_SIZE]={'\0'};
+@@ -693,6 +888,11 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+     struct nlattr *tb[NL80211_ATTR_MAX + 1];
+     struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+ #ifdef HWSIM_RADIO
++    mac_address_t owner = {};
++    const uint8_t *station_mac;
++    uint32_t inactive_msec = 0;
++    bool inactive_known = false;
++    bool owner_known = false;
+     struct nlattr *stats[NL80211_STA_INFO_MAX + 1];
+     static struct nla_policy stats_policy[NL80211_STA_INFO_MAX + 1] = {
+         [NL80211_STA_INFO_INACTIVE_TIME] = { .type = NLA_U32 },
+@@ -712,14 +912,24 @@ static int get_sta_list_handler(struct nl_msg *msg, void *arg)
+     /* A hwsim STA can leave an authorized station object behind when it
+      * silently reassociates to another virtual AP.  Such an object is useful
+      * kernel history, but it is not a current associated device. */
+-    if (tb[NL80211_ATTR_STA_INFO] != NULL &&
++    station_mac = tb[NL80211_ATTR_MAC] == NULL ? NULL :
++        nla_data(tb[NL80211_ATTR_MAC]);
++    if (station_mac != NULL && sta_list->local_radio_known) {
++        owner_known = hwsim_association_owner(sta_list->ownership_fd,
++            station_mac, owner) == 1;
++    }
++    if (!owner_known && tb[NL80211_ATTR_STA_INFO] != NULL &&
+         nla_parse_nested(stats, NL80211_STA_INFO_MAX,
+             tb[NL80211_ATTR_STA_INFO], stats_policy) == 0 &&
+-        stats[NL80211_STA_INFO_INACTIVE_TIME] != NULL &&
+-        nla_get_u32(stats[NL80211_STA_INFO_INACTIVE_TIME]) >
+-            HWSIM_ASSOC_STALE_MSEC) {
+-        wifi_hal_stats_dbg_print("%s:%d Skip inactive hwsim station row\n",
+-            __func__, __LINE__);
++        stats[NL80211_STA_INFO_INACTIVE_TIME] != NULL) {
++        inactive_msec = nla_get_u32(stats[NL80211_STA_INFO_INACTIVE_TIME]);
++        inactive_known = true;
++    }
++    if (hwsim_should_filter_station(owner_known, owner,
++            sta_list->local_radio, inactive_known, inactive_msec)) {
++        wifi_hal_stats_dbg_print(
++            "%s:%d Skip stale hwsim station row (owner=%s)\n",
++            __func__, __LINE__, owner_known ? "different" : "unknown");
+         return NL_OK;
+     }
+ #endif
+@@ -760,7 +970,21 @@ static int get_sta_list(wifi_interface_info_t *interface, sta_list_t *sta_list)
+         return -1;
+     }
+ 
++#ifdef HWSIM_RADIO
++    sta_list->ownership_fd = -1;
++    sta_list->local_radio_known =
++        hwsim_local_radio_identity(sta_list->local_radio);
++    if (sta_list->local_radio_known) {
++        sta_list->ownership_fd = hwsim_ownership_open();
++    }
++#endif
+     ret = nl80211_send_and_recv(msg, get_sta_list_handler, sta_list, NULL, NULL);
++#ifdef HWSIM_RADIO
++    if (sta_list->ownership_fd >= 0) {
++        close(sta_list->ownership_fd);
++        sta_list->ownership_fd = -1;
++    }
++#endif
+     if (ret < 0) {
+         wifi_hal_stats_error_print("%s:%d Failed to execute NL command\n", __func__, __LINE__);
+         return -1;
+@@ -1180,4 +1404,3 @@ int update_hostap_mlo(wifi_interface_info_t *interface)
+     return 0;
+ }
+ #endif /* CONFIG_IEEE80211BE && CONFIG_MLO */
+-

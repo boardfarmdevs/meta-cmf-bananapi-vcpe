@@ -114,6 +114,11 @@ PLATFORM_WDS_STA_METRICS_PATCH := "${THISDIR}/${BPN}/0026-include-wds-children-i
 # reassociated elsewhere.  Filter those inactive rows at the associated-device
 # provider boundary; physical builds retain their native liveness policy.
 PLATFORM_HWSIM_STA_LIVENESS_PATCH := "${THISDIR}/${BPN}/0028-hwsim-filter-inactive-associated-station-rows.patch"
+# Under hwsim an old AP can retain an authorized station row for the full
+# fallback interval after a roam.  Query protocol-positive ownership from the
+# read-only wmediumd endpoint: a known different owner is stale immediately,
+# while known-local and unknown rows preserve legitimate idle-client behavior.
+PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0033-hwsim-filter-stale-peers-by-medium-ownership.patch"
 
 python do_patch_append() {
     import subprocess, os
@@ -134,6 +139,9 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: filtering inactive hwsim station rows")
     with open(d.getVar('PLATFORM_HWSIM_STA_LIVENESS_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
+    bb.note("meta-cmf-bananapi-vcpe: filtering stale hwsim peers by medium ownership")
+    with open(d.getVar('PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
 }
 # The *_PATCH variables hold absolute paths, so referencing them from do_patch put
 # this layer's checkout location into its basehash and no two trees could share
@@ -141,12 +149,14 @@ python do_patch_append() {
 # contents an input; the paths themselves are not one.
 do_patch[vardepsexclude] += "PLATFORM_CREATE_VAP_NULL_PATCH \
     PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH \
-    PLATFORM_WDS_STA_METRICS_PATCH PLATFORM_HWSIM_STA_LIVENESS_PATCH"
+    PLATFORM_WDS_STA_METRICS_PATCH PLATFORM_HWSIM_STA_LIVENESS_PATCH \
+    PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_MLD_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_BACKHAUL_SSID_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_WDS_STA_METRICS_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_STA_LIVENESS_PATCH}:True"
+do_patch[file-checksums] += "${PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH}:True"
 
 # InterfaceMap_em.json (BananaPi R4's EasyMesh interface map) groups every radio's
 # primary VAP (wifi0/wifi1/wifi2 -> private_ssid_*) under "MldName": "mld0", a real

@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000137 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 31 Aug 2026 15:10:00 -0700
+Subject: [PATCH] agent: preserve radio-filtered station clone
+
+A full OneWifi station snapshot is decoded once for all radios, then split
+into one radio-filtered command per reporting RUID.  The notification stage
+correctly removes rows owned by other radios.  However, the following
+aggregate stage cloned its hash maps from the original unfiltered decode.
+That silently restored an association which the notification stage had just
+withdrawn.  A later periodic Topology Response could consequently advertise
+the station on its old BSS and make the controller revert a completed steer.
+
+Clone each later station-list stage from the already filtered current command
+instead.  Add a regression which carries two radio owners in the original
+decode and proves the aggregate stage cannot restore the unrelated owner.
+
+Upstream-Status: Pending
+---
+ inc/dm_easy_mesh_agent.h          | 11 +++++++++++
+ src/agent/dm_easy_mesh_agent.cpp  | 16 ++++++++++++++--
+ tests/test_l1_em_orch_agent.cpp   | 49 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 74 insertions(+), 2 deletions(-)
+
+--- a/inc/dm_easy_mesh_agent.h
++++ b/inc/dm_easy_mesh_agent.h
+@@ -61,6 +61,17 @@
+ 	 * @note Ensure that the event and command data are properly initialized before calling this function.
+ 	 */
+ 	int analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[]);
++
++	/**
++	 * Clone the next station-list orchestration stage from the already
++	 * radio-filtered command snapshot.
++	 *
++	 * Station-list commands run first as a Topology Notification and then as
++	 * a local aggregate.  Both stages must carry the same reporting-radio
++	 * rows; cloning the original unfiltered OneWifi snapshot can reintroduce
++	 * a station which the notification stage just withdrew.
++	 */
++	static em_cmd_t *clone_sta_list_stage(em_cmd_t *current);
+     
+ 	/**!
+ 	 * @brief Analyzes the auto-configuration renewal process.
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -109,6 +109,19 @@
+ 	return num;
+ }
+ 
++em_cmd_t *dm_easy_mesh_agent_t::clone_sta_list_stage(em_cmd_t *current)
++{
++    if (current == NULL) {
++        return NULL;
++    }
++
++    em_cmd_t *next = current->clone_for_next();
++    if (next != NULL) {
++        current->get_data_model()->clone_hash_maps(*next->get_data_model());
++    }
++    return next;
++}
++
+ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[])
+ {
+     unsigned int num = 0, i = 0, num_radios = 0;
+@@ -251,8 +264,7 @@
+         tmp = pcmd[num];
+         num++;
+ 
+-        while ((pcmd[num] = tmp->clone_for_next()) != NULL) {
+-            dm.clone_hash_maps(*pcmd[num]->get_data_model());
++        while ((pcmd[num] = clone_sta_list_stage(tmp)) != NULL) {
+             tmp = pcmd[num];
+             num++;
+         }
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -249,6 +249,55 @@
+     current.deinit();
+ }
+ 
++TEST(em_orch_agent_snapshot_delta_TEST,
++    AggregateCloneCannotRestoreAnotherRadioOwner)
++{
++    const char *reporting_radio = "02:00:00:20:00:01";
++    const char *other_radio = "02:00:00:20:00:02";
++    em_cmd_params_t params{};
++    dm_easy_mesh_t decoded{};
++
++    ASSERT_EQ(decoded.init(), 0);
++    decoded.m_num_radios = 2;
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>(reporting_radio),
++        decoded.m_radio[0].m_radio_info.intf.mac);
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>(other_radio),
++        decoded.m_radio[1].m_radio_info.intf.mac);
++
++    params.u.args.num_args = 2;
++    snprintf(params.u.args.args[0], sizeof(params.u.args.args[0]), "%s",
++        reporting_radio);
++    snprintf(params.u.args.args[1], sizeof(params.u.args.args[1]), "full");
++    em_cmd_sta_list_t notify(params, decoded);
++
++    em_sta_info_t retained = make_associated_sta(
++        "02:00:00:00:01:00", "02:00:00:10:00:01", reporting_radio);
++    em_sta_info_t unrelated = make_associated_sta(
++        "02:00:00:00:02:00", "02:00:00:10:00:02", other_radio);
++    notify.get_data_model()->put_sta_info(
++        &retained, em_target_sta_map_assoc);
++    decoded.put_sta_info(&unrelated, em_target_sta_map_assoc);
++
++    em_cmd_t *aggregate =
++        dm_easy_mesh_agent_t::clone_sta_list_stage(&notify);
++    ASSERT_NE(aggregate, nullptr);
++    EXPECT_EQ(hash_map_count(
++        aggregate->get_data_model()->m_sta_assoc_map), 1u);
++    EXPECT_NE(aggregate->get_data_model()->get_sta_info(
++        retained.id, retained.bssid, retained.radiomac,
++        em_target_sta_map_assoc), nullptr);
++    EXPECT_EQ(aggregate->get_data_model()->get_sta_info(
++        unrelated.id, unrelated.bssid, unrelated.radiomac,
++        em_target_sta_map_assoc), nullptr);
++
++    aggregate->deinit();
++    delete aggregate;
++    notify.deinit();
++    decoded.deinit();
++}
++
+ TEST(em_orch_agent_snapshot_delta_TEST, RejectsUnknownReportingRadio)
+ {
+     em_cmd_params_t params{};

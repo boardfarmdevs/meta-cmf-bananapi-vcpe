@@ -1,0 +1,161 @@
+From 0000000000000000000000000000000000000139 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 31 Aug 2026 18:30:00 -0700
+Subject: [PATCH] metrics: ignore withdrawn station rows
+
+The Unassociated STA Link Metrics query path treated any consolidated station
+row as a live local association.  Full station-snapshot reconciliation can
+leave an inactive historical row, or briefly stage a disassociation tombstone
+beside an asynchronous live-map row.  Immediately after a roam the former AP
+therefore rejected that STA before asking OneWifi for candidate RCPI, producing
+a partial response and making controller aggregation time out.
+
+Use the same live-ownership predicate as Topology Response serialization.
+Search every row for the STA so hash iteration order cannot hide a genuine
+local association.  A truly live local STA remains rejected and included in
+the 1905 ACK error list; inactive and withdrawn rows are measured normally.
+Add a three-radio regression covering historical, live, and withdrawn rows.
+
+Upstream-Status: Pending
+---
+ inc/em_metrics.h              | 11 +++++++++
+ src/em/metrics/em_metrics.cpp | 23 +++++++++++++++++++----
+ tests/test_l1_em_metrics.cpp  | 59 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 93 insertions(+), 3 deletions(-)
+
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -642,6 +642,17 @@ class em_metrics_t {
+         * @note Used for ACK tracking and response correlation.
+         */
+ public:
++       /**
++        * @brief Return true when any live local association owns a STA.
++        *
++        * Historical consolidated rows and rows superseded by a matching
++        * disassociation tombstone do not make an unassociated-station query
++        * fail.  This predicate deliberately shares the same ownership rule
++        * used by Topology Response serialization.
++        */
++       static bool is_sta_actively_associated(dm_easy_mesh_t *dm,
++                                              mac_address_t sta_mac);
++
+         unsigned short m_unassoc_sta_query_msg_id = 0;
+  
+        /**
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -48,6 +48,7 @@
+ #include "em_cmd_exec.h"
+ #include "dm_easy_mesh_agent.h"
+ #include "em_cmd_unassoc_sta_query.h"
++#include "em_configuration.h"
+ #include "em_metrics_time.h"
+ 
+ static     const unsigned char em_vendor_oui[EM_VENDOR_OUI_SIZE] = {0xd8, 0x9c, 0x8e};
+@@ -2268,6 +2269,25 @@ int em_metrics_t::send_1905_ack_unassoc_sta_query(mac_address_t *sta_list,
+     return static_cast<int> (len);
+ }
+ 
++bool em_metrics_t::is_sta_actively_associated(dm_easy_mesh_t *dm,
++                                              mac_address_t sta_mac)
++{
++    if (dm == NULL) {
++        return false;
++    }
++
++    dm_sta_t *sta = dm->get_first_sta(sta_mac);
++    while (sta != NULL) {
++        if (em_configuration_t::is_advertisable_association(
++                dm, sta->m_sta_info)) {
++            return true;
++        }
++        sta = dm->get_next_sta(sta_mac, sta);
++    }
++
++    return false;
++}
++
+ int em_metrics_t::handle_unassoc_sta_link_metrics_query(unsigned char *buff, unsigned int len)
+ {
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+@@ -2375,9 +2395,9 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_query(unsigned char *buff, uns
+ 
+                         query_ptr += sizeof(mac_address_t);
+ 
+-			// Check if the STA is associated with any BSS on this agent
+-                        dm_sta_t *assoc_sta = dm->get_first_sta(sta);
+-		        bool sta_is_associated = (assoc_sta != NULL);
++			// Check if the STA has a live association on any BSS on this agent.
++		        bool sta_is_associated =
++                            is_sta_actively_associated(dm, sta);
+                         
+ 		        if (sta_is_associated) {
+                             bool already_added = false;
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -287,3 +287,62 @@ TEST_F(EmMetricsTest, AssociatedLinkMetricObservedAtHonorsWireDelta) {
+     EXPECT_FALSE(em_format_link_metric_observed_at(
+         observed_at, 0, received_at, 1000));
+ }
++
++namespace {
++
++em_sta_info_t make_metrics_station(const char *sta, const char *bssid,
++                                   const char *radio, bool associated)
++{
++    em_sta_info_t info{};
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta), info.id);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(bssid), info.bssid);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(radio),
++                                       info.radiomac);
++    info.associated = associated;
++    return info;
++}
++
++} // namespace
++
++TEST_F(EmMetricsTest, UnassocQueryRejectsOnlyLiveLocalAssociation) {
++    const char *sta = "02:00:00:00:0c:00";
++    const char *old_bssid = "02:00:00:10:00:01";
++    const char *old_radio = "02:00:00:20:00:01";
++    const char *live_bssid = "02:00:00:10:00:02";
++    const char *live_radio = "02:00:00:20:00:02";
++    const char *other_bssid = "02:00:00:10:00:03";
++    const char *other_radio = "02:00:00:20:00:03";
++    dm_easy_mesh_t dm{};
++    mac_address_t sta_mac{};
++
++    ASSERT_EQ(dm.init(), 0);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta), sta_mac);
++    EXPECT_FALSE(em_metrics_t::is_sta_actively_associated(&dm, sta_mac));
++
++    /* An inactive historical row must not suppress candidate measurement. */
++    em_sta_info_t historical = make_metrics_station(
++        sta, old_bssid, old_radio, false);
++    dm.put_sta_info(&historical, em_target_sta_map_consolidated);
++    EXPECT_FALSE(em_metrics_t::is_sta_actively_associated(&dm, sta_mac));
++    em_sta_info_t other_historical = make_metrics_station(
++        sta, other_bssid, other_radio, false);
++    dm.put_sta_info(&other_historical, em_target_sta_map_consolidated);
++    EXPECT_FALSE(em_metrics_t::is_sta_actively_associated(&dm, sta_mac));
++
++    /* Any genuinely live local owner still rejects the standard query, even
++     * if a historical row for the same STA happens to be visited first. */
++    em_sta_info_t live = make_metrics_station(
++        sta, live_bssid, live_radio, true);
++    dm.put_sta_info(&live, em_target_sta_map_consolidated);
++    EXPECT_TRUE(em_metrics_t::is_sta_actively_associated(&dm, sta_mac));
++
++    /* Snapshot reconciliation can stage a withdrawal while an asynchronous
++     * aggregate still holds the live-map row.  The tombstone is authoritative
++     * and immediately makes that former owner eligible for measurement. */
++    em_sta_info_t withdrawn = live;
++    withdrawn.associated = false;
++    dm.put_sta_info(&withdrawn, em_target_sta_map_disassoc);
++    EXPECT_FALSE(em_metrics_t::is_sta_actively_associated(&dm, sta_mac));
++
++    dm.deinit();
++}
+-- 
+2.43.0

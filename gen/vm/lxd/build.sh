@@ -10,13 +10,14 @@ default_host_address=${default_host_address:-127.0.0.1}
 profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
-name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0829}
+name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0831}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
 memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
 disk=${EASYMESH_LXD_DISK:-$(easymesh_profile_disk "$profile")}
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
+storage=${EASYMESH_LXD_STORAGE:-}
 guest_ipv4=${EASYMESH_LXD_IPV4:-}
 webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
@@ -54,6 +55,7 @@ Common overrides:
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
   EASYMESH_LXD_NETWORK=$network
+  EASYMESH_LXD_STORAGE=<destination pool; default is LXD default pool>
   EASYMESH_LXD_IPV4=<automatic static address>
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
@@ -245,6 +247,16 @@ configure_no_secure_boot() {
     fi
 }
 
+set_root_disk_size() {
+    if lxc config device show "$name" | grep -q '^root:'; then
+        # Selecting --storage materializes root as a local instance device.
+        lxc config device set "$name" root size "$disk"
+    else
+        # With the default pool, root is inherited from the default profile.
+        lxc config device override "$name" root size="$disk"
+    fi
+}
+
 clear_secure_boot_config() {
     # A backup must not contain either version-specific spelling.  The
     # importer sets the spelling supported by its own LXD before first boot.
@@ -254,6 +266,7 @@ clear_secure_boot_config() {
 
 build_vm() {
     local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
+    local -a init_args
     require_command git
     require_command lxc
     require_command curl
@@ -272,13 +285,21 @@ build_vm() {
     controller_name=$(basename "$controller_image")
     extender_name=$(basename "$extender_image")
 
-    lxc init "$image" "$name" --vm \
-        --config limits.cpu="$cpus" --config limits.memory="$memory"
+    init_args=(lxc init "$image" "$name" --vm
+        --config limits.cpu="$cpus" --config limits.memory="$memory")
+    if [ -n "$storage" ]; then
+        lxc storage show "$storage" >/dev/null 2>&1 || {
+            echo "LXD storage pool does not exist: $storage" >&2
+            exit 1
+        }
+        init_args+=(--storage "$storage")
+    fi
+    "${init_args[@]}" </dev/null
     # The appliance builds the narrowly-scoped multichannel hwsim module from
     # the exact Ubuntu source package. Disable guest Secure Boot before first
     # boot so that this locally-built module can load after installation.
     configure_no_secure_boot
-    lxc config device override "$name" root size="$disk"
+    set_root_disk_size
     appliance_ipv4=$(select_guest_ipv4)
     lxc config device override "$name" eth0 network="$network" \
         ipv4.address="$appliance_ipv4"
@@ -336,7 +357,8 @@ build_vm() {
         "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
     curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
         "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
-    lxc snapshot "$name" accepted
+    # Export reruns the complete acceptance gate and excludes snapshots. Do
+    # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
     trap - EXIT
     rm -rf -- "$stage"
@@ -381,20 +403,25 @@ check_vm() {
 
 snapshot_vm() {
     check_vm
-    if lxc info "$name/accepted" >/dev/null 2>&1; then
+    # `lxc info INSTANCE/SNAPSHOT` rejects the slash-qualified name on newer
+    # LXD releases even when the snapshot exists. `lxc config show` supports
+    # that identifier consistently, so use it to make replacement idempotent.
+    if lxc config show "$name/accepted" >/dev/null 2>&1; then
         lxc delete "$name/accepted"
     fi
-    lxc snapshot "$name" accepted
+    lxc snapshot "$name" accepted </dev/null
 }
 
 export_vm() {
-    local short bundle output created actual_cpus actual_memory actual_disk
+    local short bundle output created actual_cpus actual_memory actual_disk actual_storage trim_report
     require_command jq
     check_vm
     actual_cpus=$(lxc config get "$name" limits.cpu)
     actual_memory=$(lxc config get "$name" limits.memory)
     actual_disk=$(lxc config device get "$name" root size)
-    [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] || {
+    actual_storage=$(lxc config device get "$name" root pool)
+    [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] \
+        && [ -n "$actual_storage" ] || {
         echo "cannot determine actual resources for $name" >&2
         exit 1
     }
@@ -402,18 +429,21 @@ export_vm() {
         printf 'exporting actual resources rather than profile defaults: cpu=%s memory=%s disk=%s\n' \
             "$actual_cpus" "$actual_memory" "$actual_disk" >&2
     fi
+    trim_report=$(mktemp "$export_dir/.${name}.trim.XXXXXX")
+    run_root /usr/local/sbin/easymesh-package-cleanup | tee "$trim_report"
     stop_vm
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-0829-${short}-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-0829-${short}-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
-    if ! lxc export "$name" "$output" --instance-only --compression zstd; then
+    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
         configure_no_secure_boot
         return 1
     fi
+    printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
     # Restore the release-builder instance. The exported archive intentionally
     # remains firmware-neutral until import.sh selects the target-LXD key.
     configure_no_secure_boot
@@ -421,6 +451,8 @@ export_vm() {
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    install -m 0644 "$trim_report" "$bundle/trim-report.txt"
+    rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
 LAB_STACK=rdkeasymesh
 LAB_PROFILE=$profile
@@ -430,7 +462,9 @@ LAB_DEFAULT_NAME=$name
 LAB_DEFAULT_CPUS=$actual_cpus
 LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
+LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
+LAB_TRIMMED=true
 EOF
     jq -n \
         --arg stack rdkeasymesh --arg profile "$profile" \
@@ -438,15 +472,17 @@ EOF
         --arg source_commit "$(git -C "$root" rev-parse HEAD)" \
         --arg created_at "$created" --arg archive "$(basename "$output")" \
         --arg instance "$name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
-        --arg disk "$actual_disk" \
+        --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          build:{storage_pool:$build_storage},
+          trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
         sha256sum "$(basename "$output")" import.sh install-host.sh \
-            package-release.sh README.md release.env release.json \
+            package-release.sh README.md release.env release.json trim-report.txt \
             > SHA256SUMS
     )
     ls -lh "$bundle"/*
