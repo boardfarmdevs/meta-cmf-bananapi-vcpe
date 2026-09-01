@@ -120,9 +120,14 @@ lxc config set rdkeasymesh-20-0831 boot.autostart false
 After a passing check:
 
 ```sh
-./build.sh snapshot
 ./build.sh export
 ```
+
+`export` reruns the complete acceptance check. An `accepted` snapshot is not
+required by the release and is not created automatically because non-copy-on-
+write LXD pools duplicate the complete VM disk. On a copy-on-write pool, a
+release engineer may create the optional local rollback point with
+`./build.sh snapshot`; it is excluded from the portable export.
 
 `export` creates `artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,

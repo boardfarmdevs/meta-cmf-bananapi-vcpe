@@ -357,7 +357,8 @@ build_vm() {
         "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
     curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
         "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
-    lxc snapshot "$name" accepted </dev/null
+    # Export reruns the complete acceptance gate and excludes snapshots. Do
+    # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
     trap - EXIT
     rm -rf -- "$stage"
