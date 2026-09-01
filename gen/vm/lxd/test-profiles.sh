@@ -6,18 +6,19 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 source "$root/gen/vm/lxd/profile.sh"
 
 check() {
-    local input=$1 name=$2 clients=$3 radios=$4
+    local input=$1 name=$2 clients=$3 radios=$4 release_name=$5
     test "$(easymesh_profile_name "$input")" = "$name"
     test "$(easymesh_profile_clients "$input")" = "$clients"
     test "$(easymesh_profile_radios "$input")" = "$radios"
+    test "$(easymesh_profile_release_name "$input")" = "$release_name"
 }
 
-check 20 small 20 32
-check small small 20 32
-check 50 medium 50 64
-check medium medium 50 64
-check 100 stress 100 128
-check stress stress 100 128
+check 20 small 20 32 rdkeasymesh-20-0831
+check small small 20 32 rdkeasymesh-20-0831
+check 50 medium 50 64 rdkeasymesh-50-0831
+check medium medium 50 64 rdkeasymesh-50-0831
+check 100 stress 100 128 rdkeasymesh-100-0831
+check stress stress 100 128 rdkeasymesh-100-0831
 if easymesh_profile_name 21 >/dev/null 2>&1; then
     echo 'invalid profile was accepted' >&2
     exit 1

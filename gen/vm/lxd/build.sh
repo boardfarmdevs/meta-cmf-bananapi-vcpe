@@ -10,7 +10,8 @@ default_host_address=${default_host_address:-127.0.0.1}
 profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
-name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0831}
+release_name=$(easymesh_profile_release_name "$profile")
+name=${EASYMESH_LXD_NAME:-$release_name}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
 memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
@@ -464,7 +465,7 @@ LAB_STACK=rdkeasymesh
 LAB_PROFILE=$profile
 LAB_CLIENTS=$profile_clients
 LAB_HWSIM_RADIOS=$profile_radios
-LAB_DEFAULT_NAME=$name
+LAB_DEFAULT_NAME=$release_name
 LAB_DEFAULT_CPUS=$actual_cpus
 LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
@@ -479,7 +480,7 @@ EOF
         --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
         --arg source_commit "$(git -C "$root" rev-parse HEAD)" \
         --arg created_at "$created" --arg archive "$(basename "$output")" \
-        --arg instance "$name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
+        --arg instance "$release_name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
         --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
@@ -587,7 +588,7 @@ LAB_STACK=rdkeasymesh
 LAB_PROFILE=$profile
 LAB_CLIENTS=$profile_clients
 LAB_HWSIM_RADIOS=$profile_radios
-LAB_DEFAULT_NAME=$name
+LAB_DEFAULT_NAME=$release_name
 LAB_DEFAULT_CPUS=$actual_cpus
 LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
@@ -601,7 +602,7 @@ EOF
         --arg stack rdkeasymesh --arg profile "$profile" \
         --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
         --arg source_commit "$meta_commit" --arg created_at "$created" \
-        --arg archive "$(basename "$output")" --arg instance "$name" \
+        --arg archive "$(basename "$output")" --arg instance "$release_name" \
         --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
         --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,

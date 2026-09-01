@@ -24,6 +24,10 @@ easymesh_profile_clients() {
     esac
 }
 
+easymesh_profile_release_name() {
+    printf 'rdkeasymesh-%s-0831\n' "$(easymesh_profile_clients "${1:-20}")"
+}
+
 easymesh_profile_radios() {
     case "$(easymesh_profile_name "${1:-20}")" in
         small) printf '32\n' ;;
