@@ -472,11 +472,14 @@ python3 gen/tests/optimizer-live-smoke.py --cycles 3
 
 This is a read-only optimizer integration test. Each cycle observes the live
 controller APIs, obtains candidate-link RCPI through the configured candidate
-provider, verifies the policy's expected device/client counts, requires fresh
-current-link and same-band candidate metrics, and evaluates the threshold
-policy. It prints the decisions and reasons but does not deploy steering
-actions. `--policy`, `--maximum-age-seconds`, `--interval` and `--base-url`
-select the policy and observation constraints.
+provider only for clients whose policy gates can consume it, verifies the
+policy's expected device/client counts, requires fresh current-link and
+selected same-band candidate metrics, and evaluates the threshold policy. An
+acceptable current link needs no active candidate transaction; weak links and
+band-upgrade policies still fail closed if their complete candidate set cannot
+be collected within the freshness bound. It prints the decisions and reasons
+but does not deploy steering actions. `--policy`, `--maximum-age-seconds`,
+`--interval` and `--base-url` select the policy and observation constraints.
 
 The default 60-second freshness gate covers the measured collection interval
 of the 20-client lab. Candidate batches and Agents are queried sequentially by
