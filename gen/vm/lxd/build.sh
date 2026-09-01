@@ -24,6 +24,7 @@ webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
 boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
@@ -62,6 +63,7 @@ Common overrides:
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
   WMEDIUMD_CONSOLE_PORT=$console_port
+  EASYMESH_LXD_HTTP_READY_TIMEOUT=$http_ready_timeout
 EOF
 }
 
@@ -89,6 +91,29 @@ wait_agent() {
         sleep 2
     done
     echo "$name did not expose its LXD VM agent after 240 seconds" >&2
+    return 1
+}
+
+wait_http_ready() {
+    local label=$1 url=$2 retries
+    case "$http_ready_timeout" in
+        ''|*[!0-9]*|0)
+            echo "EASYMESH_LXD_HTTP_READY_TIMEOUT must be a positive integer" >&2
+            return 2
+            ;;
+    esac
+    # LXD's outer proxy may answer 503 briefly after the VM agent and the
+    # guest-side service are ready. Bound the wait independently from each
+    # connection/response attempt and require the real endpoint to return 2xx.
+    retries=$((http_ready_timeout / 2 + 1))
+    if curl -fsS --retry-all-errors --retry "$retries" --retry-delay 2 \
+        --retry-max-time "$http_ready_timeout" --connect-timeout 2 \
+        --max-time 10 "$url" >/dev/null; then
+        printf '%s ready: %s\n' "$label" "$url"
+        return 0
+    fi
+    printf '%s did not become ready within %ss: %s\n' \
+        "$label" "$http_ready_timeout" "$url" >&2
     return 1
 }
 
@@ -359,10 +384,10 @@ build_vm() {
         /usr/local/sbin/easymesh-labctl check
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
-    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
-        "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
-    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
-        "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
+    wait_http_ready "EasyMesh WebUI proxy" \
+        "http://$proxy_check_address:$webui_port/api/v1/topology"
+    wait_http_ready "wmediumd Console proxy" \
+        "http://$proxy_check_address:$console_port/api/v1/health"
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
