@@ -1,13 +1,14 @@
 [Unit]
 Description=EasyMesh steering laboratory runtime
-Wants=network-online.target
-After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service
-Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service
+Wants=network-online.target easymesh-thin-firstboot.service
+After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service easymesh-thin-firstboot.service
+Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service easymesh-thin-firstboot.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/easymesh-lab
 ExecStart=/usr/local/sbin/easymesh-lab-runtime start
+ExecStartPost=/usr/local/sbin/easymesh-complete-thin-firstboot
 ExecStop=/usr/local/sbin/easymesh-lab-runtime stop
 RemainAfterExit=yes
 TimeoutStartSec=1800

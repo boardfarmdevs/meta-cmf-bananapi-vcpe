@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec </dev/null
+
+[ "$(id -u)" -eq 0 ] || {
+    echo "thin package preparation must run as root" >&2
+    exit 1
+}
+
+: "${EASYMESH_REPO:?missing EASYMESH_REPO}"
+: "${CONTROLLER_IMAGE:?missing CONTROLLER_IMAGE}"
+: "${EXTENDER_IMAGE:?missing EXTENDER_IMAGE}"
+: "${EXPECTED_REPO_HEAD:?missing EXPECTED_REPO_HEAD}"
+: "${EXPECTED_WMEDIUMD_SHA256:?missing EXPECTED_WMEDIUMD_SHA256}"
+: "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
+: "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
+
+state=/home/easymesh/.local/state/easymesh-lab
+nvram=/var/lib/easymesh-lab/nvram
+pending=/var/lib/easymesh-lab/thin-firstboot.env
+
+test -f "$CONTROLLER_IMAGE"
+test -f "$EXTENDER_IMAGE"
+test "$(git -c safe.directory="$EASYMESH_REPO" -C "$EASYMESH_REPO" rev-parse HEAD)" = \
+    "$EXPECTED_REPO_HEAD"
+
+systemctl stop easymesh-lab.service 2>/dev/null || true
+systemctl stop wmediumd-console.service 2>/dev/null || true
+
+# The normal ready export deletes its nested image cache. Recreate exactly one
+# reusable client image from a provisioned client before deleting instances.
+if ! lxc image info wlan-client-base >/dev/null 2>&1; then
+    lxc info wlan-client >/dev/null
+    if [ "$(lxc info wlan-client | sed -n 's/^Status: //p')" = RUNNING ]; then
+        lxc stop wlan-client --timeout 10 >/dev/null 2>&1 \
+            || lxc stop wlan-client --force >/dev/null
+    fi
+    lxc publish wlan-client --alias wlan-client-base >/dev/null
+fi
+
+mapfile -t instances < <(lxc list -c n --format csv | awk '
+    /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {print}' \
+    | sort -Vr)
+for instance in "${instances[@]}"; do
+    lxc delete "$instance" --force >/dev/null
+done
+
+# Retain only the reusable offline client image. Controller and extender root
+# filesystems are the checksummed archives named in the first-boot manifest.
+while IFS= read -r fingerprint; do
+    [ -n "$fingerprint" ] || continue
+    lxc image delete "$fingerprint" >/dev/null
+done < <(lxc image list --format json \
+    | jq -r '.[] | select(([.aliases[]?.name] | index("wlan-client-base")) == null) | .fingerprint')
+
+install -d -m 0755 /var/lib/easymesh-lab "$nvram" "$state"
+find "$nvram" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+find "$state" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+rm -f /var/lib/easymesh-lab/thin-firstboot.completed.env \
+    /var/lib/easymesh-lab/thin-firstboot-report.json
+
+controller_sha=$(sha256sum "$CONTROLLER_IMAGE" | awk '{print $1}')
+extender_sha=$(sha256sum "$EXTENDER_IMAGE" | awk '{print $1}')
+cat > "$pending" <<EOF
+THIN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+THIN_INITIAL_INSTANCES=0
+EASYMESH_REPO=$EASYMESH_REPO
+CONTROLLER_IMAGE=$CONTROLLER_IMAGE
+EXTENDER_IMAGE=$EXTENDER_IMAGE
+EXPECTED_REPO_HEAD=$EXPECTED_REPO_HEAD
+CONTROLLER_SHA256=$controller_sha
+EXTENDER_SHA256=$extender_sha
+EXPECTED_WMEDIUMD_SHA256=$EXPECTED_WMEDIUMD_SHA256
+EASYMESH_SCALE_PROFILE=$EASYMESH_SCALE_PROFILE
+HEALTH_EXPECT_CLIENTS=$HEALTH_EXPECT_CLIENTS
+EOF
+chmod 0600 "$pending"
+
+definitions=$(lxc list -c n --format csv | awk '
+    /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+    END {print n+0}')
+[ "$definitions" -eq 0 ]
+lxc image info wlan-client-base >/dev/null
+
+printf 'thin_profile=%s\n' "$EASYMESH_SCALE_PROFILE"
+printf 'thin_clients=%s\n' "$HEALTH_EXPECT_CLIENTS"
+printf 'thin_provisioned_instances=%s\n' "$definitions"
+printf 'thin_nested_images=%s\n' "$(lxc image list --format csv -c f | awk 'NF {n++} END {print n+0}')"
+printf 'thin_controller_sha256=%s\n' "$controller_sha"
+printf 'thin_extender_sha256=%s\n' "$extender_sha"

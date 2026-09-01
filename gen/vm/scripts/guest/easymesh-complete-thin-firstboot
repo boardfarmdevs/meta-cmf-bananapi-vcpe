@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pending=/var/lib/easymesh-lab/thin-firstboot.env
+completed=/var/lib/easymesh-lab/thin-firstboot.completed.env
+report=/var/lib/easymesh-lab/thin-firstboot-report.json
+
+[ -f "$pending" ] || exit 0
+# shellcheck disable=SC1090
+. "$pending"
+
+: "${THIN_STARTED_AT:?missing THIN_STARTED_AT}"
+: "${THIN_INITIAL_INSTANCES:?missing THIN_INITIAL_INSTANCES}"
+: "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
+: "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
+: "${EXPECTED_REPO_HEAD:?missing EXPECTED_REPO_HEAD}"
+
+HEALTH_EXPECT_CLIENTS="$HEALTH_EXPECT_CLIENTS" \
+    /usr/local/sbin/easymesh-labctl check
+final_instances=$(lxc list -c n --format csv | awk '
+    /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+    END {print n+0}')
+expected_instances=$((HEALTH_EXPECT_CLIENTS + 5))
+[ "$final_instances" -eq "$expected_instances" ]
+
+finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+jq -n \
+    --arg started_at "$THIN_STARTED_AT" --arg finished_at "$finished" \
+    --arg profile "$EASYMESH_SCALE_PROFILE" \
+    --arg source_commit "$EXPECTED_REPO_HEAD" \
+    --argjson clients "$HEALTH_EXPECT_CLIENTS" \
+    --argjson initial_instances "$THIN_INITIAL_INSTANCES" \
+    --argjson final_instances "$final_instances" \
+    '{schema_version:1,release_flavor:"thin",first_boot_provisioning:true,
+      result:"pass",started_at:$started_at,finished_at:$finished_at,
+      profile:$profile,clients:$clients,source_commit:$source_commit,
+      initial_instances:$initial_instances,final_instances:$final_instances}' \
+    > "$report.tmp"
+mv -f "$report.tmp" "$report"
+mv -f "$pending" "$completed"
+
+echo "EasyMesh thin first-boot acceptance PASS: $final_instances instances"

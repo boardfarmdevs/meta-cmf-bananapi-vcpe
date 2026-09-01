@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec </dev/null
+
+pending=/var/lib/easymesh-lab/thin-firstboot.env
+lock=/run/easymesh-thin-firstboot.lock
+
+[ -f "$pending" ] || exit 0
+exec 9>"$lock"
+flock 9
+# shellcheck disable=SC1090
+. "$pending"
+
+: "${EASYMESH_REPO:?missing EASYMESH_REPO}"
+: "${CONTROLLER_IMAGE:?missing CONTROLLER_IMAGE}"
+: "${EXTENDER_IMAGE:?missing EXTENDER_IMAGE}"
+: "${EXPECTED_REPO_HEAD:?missing EXPECTED_REPO_HEAD}"
+: "${CONTROLLER_SHA256:?missing CONTROLLER_SHA256}"
+: "${EXTENDER_SHA256:?missing EXTENDER_SHA256}"
+: "${EXPECTED_WMEDIUMD_SHA256:?missing EXPECTED_WMEDIUMD_SHA256}"
+: "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
+: "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
+
+state=/home/easymesh/.local/state/easymesh-lab
+nvram=/var/lib/easymesh-lab/nvram
+current_instances=$(lxc list -c n --format csv | awk '
+    /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+    END {print n+0}')
+expected_instances=$((HEALTH_EXPECT_CLIENTS + 5))
+
+test "$(git -c safe.directory="$EASYMESH_REPO" -C "$EASYMESH_REPO" rev-parse HEAD)" = \
+    "$EXPECTED_REPO_HEAD"
+test "$(sha256sum "$CONTROLLER_IMAGE" | awk '{print $1}')" = \
+    "$CONTROLLER_SHA256"
+test "$(sha256sum "$EXTENDER_IMAGE" | awk '{print $1}')" = \
+    "$EXTENDER_SHA256"
+test "$(sha256sum "$EASYMESH_REPO/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
+    "$EXPECTED_WMEDIUMD_SHA256"
+test "$(systemctl is-active boardfarm-lab.service)" = active
+ip link show br-wan101 >/dev/null
+lxc image info wlan-client-base >/dev/null
+
+if [ "$current_instances" -ne "$expected_instances" ]; then
+    install -d -o easymesh -g easymesh "$state" "$nvram"
+    rm -f "$state/deploy.status"
+
+    HOME=/home/easymesh \
+    EASYMESH_REPO="$EASYMESH_REPO" \
+    EASYMESH_NVRAM_ROOT="$nvram" \
+    CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+    EXTENDER_IMAGE="$EXTENDER_IMAGE" \
+    EXPECTED_REPO_HEAD="$EXPECTED_REPO_HEAD" \
+    EXPECTED_WMEDIUMD_SHA256="$EXPECTED_WMEDIUMD_SHA256" \
+        bash "$EASYMESH_REPO/gen/vm/scripts/40-deploy-easymesh.sh"
+
+    HOME=/home/easymesh \
+    EASYMESH_REPO="$EASYMESH_REPO" \
+    EASYMESH_NVRAM_ROOT="$nvram" \
+    EXTENDER_IMAGE="$EXTENDER_IMAGE" \
+    EASYMESH_SCALE_PROFILE="$EASYMESH_SCALE_PROFILE" \
+        bash "$EASYMESH_REPO/gen/vm/scripts/55-scale-topology.sh"
+else
+    echo "thin first boot resumes an already provisioned $current_instances-instance roster"
+fi
+
+final_instances=$(lxc list -c n --format csv | awk '
+    /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+    END {print n+0}')
+[ "$final_instances" -eq "$expected_instances" ] || {
+    echo "thin first boot created $final_instances instances, expected $expected_instances" >&2
+    exit 1
+}
+
+echo "EasyMesh thin first-boot provisioning complete: $final_instances instances"

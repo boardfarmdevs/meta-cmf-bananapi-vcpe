@@ -27,6 +27,14 @@ install -m 0755 /home/easymesh/easymesh-assets/easymesh-health-audit \
     /usr/local/sbin/easymesh-health-audit
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-package-cleanup \
     /usr/local/sbin/easymesh-package-cleanup
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-prepare-thin-package \
+    /usr/local/sbin/easymesh-prepare-thin-package
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-complete-thin-firstboot \
+    /usr/local/sbin/easymesh-complete-thin-firstboot
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-thin-firstboot \
+    /usr/local/sbin/easymesh-thin-firstboot
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-thin-firstboot.service \
+    /etc/systemd/system/easymesh-thin-firstboot.service
 
 # Boardfarm reconstructs its two-container WAN lab and br-wan101 first. The EasyMesh
 # runtime then starts LXD nodes in dependency order.

@@ -43,6 +43,7 @@ Commands:
   check       run the complete lab acceptance audit
   snapshot    replace the accepted snapshot after a passing check
   export      check, stop and export a portable LXD VM backup bundle
+  export-thin check, remove provisioned nodes and export an offline first-boot bundle
   delete      delete only the named appliance VM after showing its identity
 
 Build inputs:
@@ -211,6 +212,10 @@ push_inputs() {
         [easymesh-labctl]=gen/vm/scripts/guest/easymesh-labctl
         [easymesh-health-audit]=gen/tests/health-audit.sh
         [easymesh-package-cleanup]=gen/vm/scripts/guest/easymesh-package-cleanup
+        [easymesh-prepare-thin-package]=gen/vm/scripts/guest/easymesh-prepare-thin-package
+        [easymesh-complete-thin-firstboot]=gen/vm/scripts/guest/easymesh-complete-thin-firstboot
+        [easymesh-thin-firstboot]=gen/vm/scripts/guest/easymesh-thin-firstboot
+        [easymesh-thin-firstboot.service]=gen/vm/scripts/guest/easymesh-thin-firstboot.service
     )
     for file in "${!guest_assets[@]}"; do
         lxc file push --mode 0755 "$root/${guest_assets[$file]}" \
@@ -488,6 +493,127 @@ EOF
     ls -lh "$bundle"/*
 }
 
+export_thin_vm() {
+    local short bundle output created actual_cpus actual_memory actual_disk actual_storage
+    local trim_report controller_name extender_name meta_commit wmediumd_sha assets
+    require_command jq
+    [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
+    [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
+    check_vm
+    actual_cpus=$(lxc config get "$name" limits.cpu)
+    actual_memory=$(lxc config get "$name" limits.memory)
+    actual_disk=$(lxc config device get "$name" root size)
+    actual_storage=$(lxc config device get "$name" root pool)
+    [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] \
+        && [ -n "$actual_storage" ] || {
+        echo "cannot determine actual resources for $name" >&2
+        exit 1
+    }
+
+    meta_commit=$(git -C "$root" rev-parse HEAD)
+    wmediumd_sha=$(sha256sum "$root/gen/wmediumd/wmediumd.patched" | awk '{print $1}')
+    controller_name=$(basename "$controller_image")
+    extender_name=$(basename "$extender_image")
+    assets=/home/easymesh/easymesh-assets
+    run_root install -d -o easymesh -g easymesh "$assets"
+    lxc file push "$controller_image" "$name$assets/$controller_name"
+    lxc file push "$extender_image" "$name$assets/$extender_name"
+    lxc exec "$name" -- chown easymesh:easymesh \
+        "$assets/$controller_name" "$assets/$extender_name"
+
+    # Install from the accepted checkout as well as the staged copies. This
+    # permits export-thin after a ready export removed the staging directory.
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-prepare-thin-package \
+        /usr/local/sbin/easymesh-prepare-thin-package
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-thin-firstboot \
+        /usr/local/sbin/easymesh-thin-firstboot
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-complete-thin-firstboot \
+        /usr/local/sbin/easymesh-complete-thin-firstboot
+    run_root install -m 0644 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-thin-firstboot.service \
+        /etc/systemd/system/easymesh-thin-firstboot.service
+    run_root install -m 0644 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-lab.service \
+        /etc/systemd/system/easymesh-lab.service
+    run_root systemctl daemon-reload
+
+    trim_report=$(mktemp "$export_dir/.${name}.thin-trim.XXXXXX")
+    run_root env \
+        EASYMESH_REPO=/home/easymesh/git/meta-cmf-bananapi-vcpe \
+        CONTROLLER_IMAGE="$assets/$controller_name" \
+        EXTENDER_IMAGE="$assets/$extender_name" \
+        EXPECTED_REPO_HEAD="$meta_commit" \
+        EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \
+        EASYMESH_SCALE_PROFILE="$profile" \
+        HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        /usr/local/sbin/easymesh-prepare-thin-package | tee "$trim_report"
+    run_root /usr/local/sbin/easymesh-package-cleanup thin | tee -a "$trim_report"
+    test "$(lxc exec "$name" -- lxc list -c n --format csv | awk '
+        /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+        END {print n+0}')" = 0
+    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-firstboot.env
+    lxc exec "$name" -- lxc image info wlan-client-base >/dev/null
+
+    stop_vm
+    clear_secure_boot_config
+    short=$(git -C "$root" rev-parse --short=7 HEAD)
+    created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-thin-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-thin-lxd.tar.zst"
+    rm -rf -- "$bundle"
+    install -d "$bundle"
+    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
+        configure_no_secure_boot
+        return 1
+    fi
+    printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
+    configure_no_secure_boot
+    install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
+    install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
+    install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    install -m 0644 "$trim_report" "$bundle/trim-report.txt"
+    rm -f -- "$trim_report"
+    cat > "$bundle/release.env" <<EOF
+LAB_STACK=rdkeasymesh
+LAB_PROFILE=$profile
+LAB_CLIENTS=$profile_clients
+LAB_HWSIM_RADIOS=$profile_radios
+LAB_DEFAULT_NAME=$name
+LAB_DEFAULT_CPUS=$actual_cpus
+LAB_DEFAULT_MEMORY=$actual_memory
+LAB_DEFAULT_DISK=$actual_disk
+LAB_BUILD_STORAGE=$actual_storage
+LAB_SOURCE_COMMIT=$meta_commit
+LAB_RELEASE_FLAVOR=thin
+LAB_FIRST_BOOT_PROVISIONING=true
+LAB_TRIMMED=true
+EOF
+    jq -n \
+        --arg stack rdkeasymesh --arg profile "$profile" \
+        --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
+        --arg source_commit "$meta_commit" --arg created_at "$created" \
+        --arg archive "$(basename "$output")" --arg instance "$name" \
+        --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
+        --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
+        '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
+          hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
+          archive:$archive,release_flavor:"thin",first_boot_provisioning:true,
+          defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          build:{storage_pool:$build_storage},trim:{applied:true,report:"trim-report.txt"},
+          status:"candidate"}' > "$bundle/release.json"
+    (
+        cd "$bundle"
+        sha256sum "$(basename "$output")" import.sh install-host.sh \
+            package-release.sh README.md release.env release.json trim-report.txt \
+            > SHA256SUMS
+    )
+    ls -lh "$bundle"/*
+}
+
 delete_vm() {
     instance_exists
     lxc list "$name" -c nst4m --format table
@@ -504,6 +630,7 @@ case "${1:-}" in
     check) check_vm ;;
     snapshot) snapshot_vm ;;
     export) export_vm ;;
+    export-thin) export_thin_vm ;;
     delete) delete_vm ;;
     -h|--help|help|'') usage ;;
     *) usage >&2; exit 2 ;;

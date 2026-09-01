@@ -8,6 +8,11 @@ set -euo pipefail
     echo "package cleanup must run as root" >&2
     exit 1
 }
+flavor=${1:-ready}
+case "$flavor" in
+    ready|thin) ;;
+    *) echo "invalid package flavor: $flavor (expected ready or thin)" >&2; exit 2 ;;
+esac
 
 root_used()
 {
@@ -41,14 +46,18 @@ journalctl --vacuum-size=16M >/dev/null 2>&1 || true
 find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 1 -delete 2>/dev/null || true
 find /var/log -type f \( -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) \
     -delete
-rm -rf /home/easymesh/easymesh-assets
+if [ "$flavor" = ready ]; then
+    rm -rf /home/easymesh/easymesh-assets
+fi
 
 # Fixed release profiles already contain every provisioned node. Their nested
 # LXD source-image cache is not needed for normal lifecycle or acceptance.
-while IFS= read -r fingerprint; do
-    [ -n "$fingerprint" ] || continue
-    lxc image delete "$fingerprint" >/dev/null
-done < <(nested_images)
+if [ "$flavor" = ready ]; then
+    while IFS= read -r fingerprint; do
+        [ -n "$fingerprint" ] || continue
+        lxc image delete "$fingerprint" >/dev/null
+    done < <(nested_images)
+fi
 
 sync
 printf 'fstrim_output_begin\n'

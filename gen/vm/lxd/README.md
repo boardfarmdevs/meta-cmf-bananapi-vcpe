@@ -115,6 +115,24 @@ outer host must not start the VM after reboot:
 lxc config set rdkeasymesh-20-0831 boot.autostart false
 ```
 
+## Ready and thin releases
+
+Each 20-, 50-, and 100-client profile is published in two forms:
+
+- `ready` retains every provisioned nested controller, extender, and client.
+  Its first start reconstructs the accepted lab immediately, but the download
+  grows with the client count.
+- `thin` retains the installed VM, exact source, controller/extender archives,
+  and one reusable WLAN-client image, but contains zero provisioned lab
+  instances. Its first boot provisions the selected roster entirely offline,
+  records `/var/lib/easymesh-lab/thin-firstboot-report.json`, and then passes
+  through the same runtime and health gates as a ready appliance. Later boots
+  use the normal fast reconstruction path.
+
+The selected profile is immutable in both forms. A thin release is not a
+network installer: its longer first boot does not clone repositories or fetch
+container images.
+
 ## Export a release
 
 After a passing check:
@@ -122,6 +140,23 @@ After a passing check:
 ```sh
 ./build.sh export
 ```
+
+After producing the ready release, the same accepted builder VM can be turned
+into a thin release. Supply the original checksummed images because a ready
+export deliberately removed its staging cache:
+
+```sh
+EASYMESH_LAB_PROFILE=20 \
+EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
+EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
+  ./build.sh export-thin
+```
+
+`export-thin` first reruns full ready-lab acceptance. It then removes all
+provisioned nested instances and transient NVRAM/model state, retains exactly
+the offline inputs required by first boot, and verifies that the exported VM
+has zero lab definitions plus the `wlan-client-base` image and pending
+first-boot manifest.
 
 `export` reruns the complete acceptance check. An `accepted` snapshot is not
 required by the release and is not created automatically because non-copy-on-
@@ -199,6 +234,18 @@ lxc console rdkeasymesh-20-0831 --show-log
 lxc exec rdkeasymesh-20-0831 -- journalctl -fu easymesh-lab.service
 lxc exec rdkeasymesh-20-0831 -- /usr/local/sbin/easymesh-labctl check
 ```
+
+For a thin release, follow both provisioning and normal runtime gates:
+
+```sh
+lxc exec rdkeasymesh-20-0831 -- \
+  journalctl -fu easymesh-thin-firstboot.service -u easymesh-lab.service
+lxc exec rdkeasymesh-20-0831 -- \
+  jq . /var/lib/easymesh-lab/thin-firstboot-report.json
+```
+
+Acceptance requires `result: "pass"`, `initial_instances: 0`, and
+`final_instances` equal to five mesh nodes plus the profile's client count.
 
 ## Remove
 

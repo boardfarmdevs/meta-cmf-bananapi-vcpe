@@ -1,0 +1,12 @@
+[Unit]
+Description=Provision a thin EasyMesh appliance on its first boot
+ConditionPathExists=/var/lib/easymesh-lab/thin-firstboot.env
+After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-hwsim-pool.service
+Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-hwsim-pool.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easymesh-thin-firstboot
+RemainAfterExit=yes
+TimeoutStartSec=3600
+
