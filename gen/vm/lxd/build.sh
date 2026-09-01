@@ -420,6 +420,7 @@ snapshot_vm() {
 export_vm() {
     local short bundle output created actual_cpus actual_memory actual_disk actual_storage trim_report
     require_command jq
+    install -d "$export_dir"
     check_vm
     actual_cpus=$(lxc config get "$name" limits.cpu)
     actual_memory=$(lxc config get "$name" limits.memory)
@@ -500,6 +501,7 @@ export_thin_vm() {
     local short bundle output created actual_cpus actual_memory actual_disk actual_storage
     local trim_report controller_name extender_name meta_commit wmediumd_sha assets
     require_command jq
+    install -d "$export_dir"
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
     check_vm
