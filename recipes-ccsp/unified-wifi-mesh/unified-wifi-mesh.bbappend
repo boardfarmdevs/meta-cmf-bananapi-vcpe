@@ -140,6 +140,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0137-agent-preserve-radio-filtered-station-clone.patch \
     file://0138-agent-suppress-withdrawn-stations-in-topology-response.patch \
     file://0139-metrics-ignore-withdrawn-station-rows.patch \
+    file://0140-metrics-complete-rejected-candidate-query.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

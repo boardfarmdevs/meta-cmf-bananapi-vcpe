@@ -1,0 +1,783 @@
+From 493b747bfe54e30ef6102cc8e49125803e119801 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 31 Aug 2026 21:49:51 -0700
+Subject: [PATCH] metrics: complete candidate query on rejection ACK
+
+---
+ inc/dm_easy_mesh.h                       |   5 +
+ inc/em_metrics.h                         |  29 ++++
+ src/ctrl/dm_easy_mesh_ctrl.cpp           |  29 ++++
+ src/ctrl/em_ctrl.cpp                     |  11 +-
+ src/em/metrics/em_metrics.cpp            | 183 ++++++++++++++++++++++-
+ src/rdkb-cli/candidate_rejection.go      |  17 +++
+ src/rdkb-cli/candidate_rejection_test.go |  50 +++++++
+ src/rdkb-cli/main.go                     | 125 ++++++++++++----
+ tests/test_l1_em_metrics.cpp             | 103 +++++++++++++
+ 9 files changed, 520 insertions(+), 32 deletions(-)
+ create mode 100644 src/rdkb-cli/candidate_rejection.go
+ create mode 100644 src/rdkb-cli/candidate_rejection_test.go
+
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index f746aa1..876c264 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -99,6 +99,11 @@ public:
+     uint64_t m_unassoc_sta_metrics_received_ms = 0;
+     unsigned short m_unassoc_sta_metrics_msg_id = 0;
+     mac_address_t m_unassoc_sta_metrics_ruid = {0};
++    unsigned int m_num_unassoc_sta_errors = 0;
++    em_error_code_t m_unassoc_sta_errors[EM_MAX_UNASSOC_STA] = {};
++    uint64_t m_unassoc_sta_errors_received_ms = 0;
++    unsigned short m_unassoc_sta_errors_msg_id = 0;
++    mac_address_t m_unassoc_sta_errors_ruid = {0};
+ 
+ public:
+ 
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index d1a2f84..a8f4d47 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -23,6 +23,23 @@
+ #include "dm_easy_mesh.h"
+ 
+ class em_mgr_t;
++
++typedef enum {
++    em_unassoc_ack_invalid,
++    em_unassoc_ack_wrong_mid,
++    em_unassoc_ack_empty,
++    em_unassoc_ack_partial_reject,
++    em_unassoc_ack_all_rejected,
++} em_unassoc_ack_status_t;
++
++typedef struct {
++    em_unassoc_ack_status_t status;
++    unsigned short msg_id;
++    unsigned int num_requested;
++    unsigned int num_rejected;
++    em_error_code_t rejected[EM_MAX_UNASSOC_STA];
++} em_unassoc_ack_result_t;
++
+ class em_metrics_t {
+ 
+     
+@@ -642,6 +659,18 @@ class em_metrics_t {
+         * @note Used for ACK tracking and response correlation.
+         */
+ public:
++       /**
++        * Parse and classify a 1905 ACK for one Unassociated STA query.
++        *
++        * The helper is deliberately side-effect free so malformed, stale and
++        * partial ACK behavior can be regression tested independently of the
++        * controller manager and orchestrator.
++        */
++       static em_unassoc_ack_result_t classify_unassoc_sta_ack(
++           const unsigned char *buff, unsigned int len,
++           unsigned short expected_mid,
++           const em_unassoc_query_list_t *query);
++
+        /**
+         * @brief Return true when any live local association owns a STA.
+         *
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index a19210f..3e0080f 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -3718,6 +3718,8 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+         char *device_id = cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "ID"));
+         cJSON *candidate_metrics = cJSON_AddArrayToObject(dev_obj,
+             "UnassociatedSTAMetrics");
++        cJSON *candidate_errors = cJSON_AddArrayToObject(dev_obj,
++            "UnassociatedSTAErrors");
+         if (device_id != NULL) {
+             dm_easy_mesh_t::string_to_macbytes(device_id, device_mac);
+             agent_dm = m_data_model_list.get_data_model(key, device_mac);
+@@ -3747,6 +3749,33 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+                     cJSON_AddItemToArray(candidate_metrics, metric_obj);
+                 }
+             }
++            if (agent_dm != NULL &&
++                agent_dm->m_unassoc_sta_errors_received_ms != 0) {
++                dm_easy_mesh_t::macbytes_to_string(
++                    agent_dm->m_unassoc_sta_errors_ruid, ruid_str);
++                for (unsigned int error_idx = 0;
++                     error_idx < agent_dm->m_num_unassoc_sta_errors; error_idx++) {
++                    em_error_code_t *error =
++                        &agent_dm->m_unassoc_sta_errors[error_idx];
++                    cJSON *error_obj = cJSON_CreateObject();
++                    char received_at_ms[32] = {0};
++
++                    dm_easy_mesh_t::macbytes_to_string(
++                        error->sta_mac_addr, mac_str);
++                    snprintf(received_at_ms, sizeof(received_at_ms), "%llu",
++                        static_cast<unsigned long long>(
++                            agent_dm->m_unassoc_sta_errors_received_ms));
++                    cJSON_AddStringToObject(error_obj, "STA", mac_str);
++                    cJSON_AddStringToObject(error_obj, "RUID", ruid_str);
++                    cJSON_AddNumberToObject(error_obj, "ErrorCode",
++                        error->reason_code);
++                    cJSON_AddStringToObject(error_obj, "ReceivedAtMS",
++                        received_at_ms);
++                    cJSON_AddNumberToObject(error_obj, "MessageID",
++                        agent_dm->m_unassoc_sta_errors_msg_id);
++                    cJSON_AddItemToArray(candidate_errors, error_obj);
++                }
++            }
+         }
+ 
+         radio_list_obj = cJSON_AddArrayToObject(dev_obj, "RadioList");
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 1e72f30..15c64cc 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1220,6 +1220,13 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+ 
+             get_all_em_for_al_mac(hdr->src, em_radios);
+             for (auto &radio_em : em_radios) {
++                if ((radio_em->get_state() ==
++                        em_state_ctrl_unassoc_sta_link_metrics_pending) &&
++                    (radio_em->get_unassoc_sta_query_msg_id() ==
++                        response_msg_id)) {
++                    em = radio_em;
++                    break;
++                }
+                 if ((radio_em->get_state() == em_state_ctrl_sta_steer_pending) &&
+                     (radio_em->get_client_steering_req_msg_id() == response_msg_id)) {
+                     em = radio_em;
+@@ -1233,8 +1240,8 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             }
+ 
+             if (em == NULL) {
+-                /* No radio has a steering or policy op outstanding for this ACK's
+-                 * MID. Do NOT misroute it to an arbitrary
++                /* No radio has an unassociated-metrics, steering or policy op
++                 * outstanding for this ACK's MID. Do NOT misroute it to an arbitrary
+                  * (first non-AL) radio -- that arbitrary fallback was the very
+                  * defect this patch fixes. Leaving em == NULL makes the caller
+                  * drop the frame; a genuine non-steering ACK has no per-radio
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index b0c94b3..4165889 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -2158,6 +2158,133 @@ short em_metrics_t::create_error_code_tlv(unsigned char *buff, mac_address_t sta
+     return len;
+ }
+ 
++em_unassoc_ack_result_t em_metrics_t::classify_unassoc_sta_ack(
++    const unsigned char *buff, unsigned int len, unsigned short expected_mid,
++    const em_unassoc_query_list_t *query)
++{
++    em_unassoc_ack_result_t result{};
++    result.status = em_unassoc_ack_invalid;
++
++    const unsigned int base_len = static_cast<unsigned int>(
++        sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
++    if (buff == nullptr || query == nullptr || len < base_len ||
++        query->num_opclass > EM_MAX_OPCLASS) {
++        return result;
++    }
++
++    const em_cmdu_t *cmdu = reinterpret_cast<const em_cmdu_t *>(
++        buff + sizeof(em_raw_hdr_t));
++    result.msg_id = ntohs(cmdu->id);
++    if (ntohs(cmdu->type) != em_msg_type_1905_ack) {
++        return result;
++    }
++    if (result.msg_id != expected_mid) {
++        result.status = em_unassoc_ack_wrong_mid;
++        return result;
++    }
++
++    mac_address_t requested[EM_MAX_UNASSOC_STA] = {};
++    for (unsigned int op_idx = 0; op_idx < query->num_opclass; op_idx++) {
++        const em_unassoc_query_opclass_t *op = &query->opclass_list[op_idx];
++        if (op->num_channels > EM_MAX_CHANNELS_PER_OPCLASS) {
++            return result;
++        }
++        for (unsigned int channel_idx = 0; channel_idx < op->num_channels;
++             channel_idx++) {
++            const em_unassoc_query_channel_t *channel =
++                &op->channel_list[channel_idx];
++            if (channel->num_sta > EM_MAX_STA_PER_CHANNEL) {
++                return result;
++            }
++            for (unsigned int sta_idx = 0; sta_idx < channel->num_sta; sta_idx++) {
++                bool duplicate = false;
++                for (unsigned int requested_idx = 0;
++                     requested_idx < result.num_requested; requested_idx++) {
++                    if (memcmp(requested[requested_idx], channel->sta_list[sta_idx],
++                               sizeof(mac_address_t)) == 0) {
++                        duplicate = true;
++                        break;
++                    }
++                }
++                if (!duplicate) {
++                    if (result.num_requested >= EM_MAX_UNASSOC_STA) {
++                        return result;
++                    }
++                    memcpy(requested[result.num_requested++],
++                           channel->sta_list[sta_idx], sizeof(mac_address_t));
++                }
++            }
++        }
++    }
++    if (result.num_requested == 0) {
++        return result;
++    }
++
++    unsigned int remaining = len - base_len;
++    const unsigned char *cursor = buff + base_len;
++    bool saw_eom = false;
++    while (remaining >= sizeof(em_tlv_t)) {
++        const em_tlv_t *tlv = reinterpret_cast<const em_tlv_t *>(cursor);
++        const unsigned int value_len = ntohs(tlv->len);
++        const unsigned int total_len = static_cast<unsigned int>(sizeof(em_tlv_t)) +
++            value_len;
++        if (total_len > remaining) {
++            return result;
++        }
++        if (tlv->type == em_tlv_type_eom) {
++            if (value_len != 0) {
++                return result;
++            }
++            saw_eom = true;
++            break;
++        }
++        if (tlv->type == em_tlv_type_error_code) {
++            if (value_len != sizeof(em_error_code_t)) {
++                return result;
++            }
++            const em_error_code_t *error =
++                reinterpret_cast<const em_error_code_t *>(tlv->value);
++            if (error->reason_code != 0) {
++                bool requested_sta = false;
++                for (unsigned int requested_idx = 0;
++                     requested_idx < result.num_requested; requested_idx++) {
++                    if (memcmp(requested[requested_idx], error->sta_mac_addr,
++                               sizeof(mac_address_t)) == 0) {
++                        requested_sta = true;
++                        break;
++                    }
++                }
++                bool duplicate = false;
++                for (unsigned int rejected_idx = 0;
++                     rejected_idx < result.num_rejected; rejected_idx++) {
++                    if (memcmp(result.rejected[rejected_idx].sta_mac_addr,
++                               error->sta_mac_addr, sizeof(mac_address_t)) == 0) {
++                        duplicate = true;
++                        break;
++                    }
++                }
++                if (requested_sta && !duplicate) {
++                    result.rejected[result.num_rejected++] = *error;
++                }
++            }
++        }
++        cursor += total_len;
++        remaining -= total_len;
++    }
++
++    if (!saw_eom) {
++        return result;
++    }
++    if (result.num_rejected == 0) {
++        result.status = em_unassoc_ack_empty;
++    } else if (result.num_rejected == result.num_requested) {
++        result.status = em_unassoc_ack_all_rejected;
++    } else {
++        result.status = em_unassoc_ack_partial_reject;
++    }
++    return result;
++}
++
+ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+ {
+     std::vector<em_t *> em_radios;
+@@ -2184,13 +2311,63 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+         }
+     }
+ 
+-    if (matched_em != nullptr) {
++    if (matched_em == nullptr) {
++        em_printfout("Ignoring uncorrelated Unassociated STA ACK MID %u",
++            response_msg_id);
++        return -1;
++    }
++
++    em_cmd_t *current = matched_em->get_current_cmd();
++    if (current == nullptr || current->get_type() != em_cmd_type_unassoc_sta_query) {
++        em_printfout("Unassociated STA ACK MID %u has no matching active command",
++            response_msg_id);
++        return -1;
++    }
++    auto *query_cmd = static_cast<em_cmd_unassoc_sta_query_t *>(current);
++    em_unassoc_ack_result_t ack = classify_unassoc_sta_ack(
++        buff, len, matched_em->get_unassoc_sta_query_msg_id(), query_cmd->get_query());
++    if (ack.status == em_unassoc_ack_invalid ||
++        ack.status == em_unassoc_ack_wrong_mid) {
++        em_printfout("Ignoring invalid Unassociated STA ACK MID %u status=%d",
++            response_msg_id, static_cast<int>(ack.status));
++        return -1;
++    }
++
++    if (ack.status == em_unassoc_ack_empty) {
+         em_printfout("Unassociated STA query MID %u accepted; awaiting metrics response",
+             response_msg_id);
++        return 0;
++    }
++
++    dm_easy_mesh_t *dm = matched_em->get_data_model();
++    memset(dm->m_unassoc_sta_errors, 0, sizeof(dm->m_unassoc_sta_errors));
++    dm->m_num_unassoc_sta_errors = ack.num_rejected;
++    memcpy(dm->m_unassoc_sta_errors, ack.rejected,
++           ack.num_rejected * sizeof(em_error_code_t));
++    struct timeval received_at;
++    gettimeofday(&received_at, NULL);
++    dm->m_unassoc_sta_errors_received_ms =
++        static_cast<uint64_t>(received_at.tv_sec) * 1000ULL +
++        static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
++    dm->m_unassoc_sta_errors_msg_id = response_msg_id;
++    memcpy(dm->m_unassoc_sta_errors_ruid,
++           matched_em->get_radio_interface_mac(), sizeof(mac_address_t));
++
++    if (ack.status == em_unassoc_ack_partial_reject) {
++        em_printfout("Unassociated STA query MID %u rejected %u/%u STAs; awaiting metrics for the remainder",
++            response_msg_id, ack.num_rejected, ack.num_requested);
++        return 0;
+     }
+ 
+-    em_radios.clear();
+-    em_printfout("Unassociated STA Link Metrics Query Ack handled successfully");
++    matched_em->clear_unassoc_sta_query_msg_id();
++    matched_em->set_state(em_state_ctrl_configured);
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr || !orch->complete_command(em_cmd_type_unassoc_sta_query)) {
++        em_printfout("All-rejected candidate ACK MID %u had no active command",
++            response_msg_id);
++    }
++    em_printfout("Completed candidate query MID %u with %u explicit STA rejection(s)",
++        response_msg_id, ack.num_rejected);
+     return 0;
+ }
+ 
+diff --git a/src/rdkb-cli/candidate_rejection.go b/src/rdkb-cli/candidate_rejection.go
+new file mode 100644
+index 0000000..84a6b97
+--- /dev/null
++++ b/src/rdkb-cli/candidate_rejection.go
+@@ -0,0 +1,17 @@
++package main
++
++type candidateLinkError struct {
++	AgentAL    string `json:"agent_al"`
++	RUID       string `json:"ruid"`
++	STA        string `json:"sta"`
++	ErrorCode  int    `json:"error_code"`
++	ReceivedAt uint64 `json:"received_at_ms"`
++	MessageID  int    `json:"message_id"`
++}
++
++const candidateErrorFreshnessMillis uint64 = 15000
++
++func candidateErrorIsFresh(receivedAt, baseline, now uint64) bool {
++	return receivedAt > baseline && receivedAt <= now &&
++		now-receivedAt <= candidateErrorFreshnessMillis
++}
+diff --git a/src/rdkb-cli/candidate_rejection_test.go b/src/rdkb-cli/candidate_rejection_test.go
+new file mode 100644
+index 0000000..03bec6c
+--- /dev/null
++++ b/src/rdkb-cli/candidate_rejection_test.go
+@@ -0,0 +1,50 @@
++package main
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++func TestCandidateErrorFreshness(t *testing.T) {
++	const now uint64 = 20000
++	if !candidateErrorIsFresh(19000, 18000, now) {
++		t.Fatal("new in-window rejection was not fresh")
++	}
++	if candidateErrorIsFresh(18000, 18000, now) {
++		t.Fatal("baseline rejection was treated as fresh")
++	}
++	if candidateErrorIsFresh(
++		now-candidateErrorFreshnessMillis-1, 0, now) {
++		t.Fatal("expired rejection was treated as fresh")
++	}
++	if candidateErrorIsFresh(now+1, 0, now) {
++		t.Fatal("future rejection was treated as fresh")
++	}
++}
++
++func TestCandidateErrorSerializationIsExplicit(t *testing.T) {
++	encoded, err := json.Marshal(candidateLinkError{
++		AgentAL:    "02:00:00:00:08:20",
++		RUID:       "02:00:00:00:08:00",
++		STA:        "02:00:00:00:0c:00",
++		ErrorCode:  1,
++		ReceivedAt: 1234,
++		MessageID:  42,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	text := string(encoded)
++	for _, field := range []string{
++		`"agent_al"`, `"ruid"`, `"sta"`, `"error_code"`,
++		`"received_at_ms"`, `"message_id"`,
++	} {
++		if !strings.Contains(text, field) {
++			t.Fatalf("serialized rejection omitted %s: %s", field, text)
++		}
++	}
++	if strings.Contains(text, `"rcpi"`) {
++		t.Fatalf("rejection invented an RCPI sentinel: %s", text)
++	}
++}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 0742760..c172b45 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4368,20 +4368,21 @@ func candidateMetricKey(sta string, opclass, channel int) string {
+     return fmt.Sprintf("%s/%d/%d", strings.ToLower(sta), opclass, channel)
+ }
+ 
+-func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
++func loadCandidateLinkState() ([]candidateLinkMetric, []candidateLinkError, error) {
+     cmd := C.CString("get_sta OneWifiMesh")
+     defer C.free(unsafe.Pointer(cmd))
+     tree := execEMCommand(cmd, nil)
+     if tree == nil {
+-        return nil, fmt.Errorf("controller returned no candidate metrics data")
++        return nil, nil, fmt.Errorf("controller returned no candidate metrics data")
+     }
+     defer C.free_network_tree(tree)
+ 
+     deviceList := getNetworkTreeByKey(tree, "DeviceList")
+     if deviceList == nil {
+-        return nil, fmt.Errorf("controller STA tree has no DeviceList")
++        return nil, nil, fmt.Errorf("controller STA tree has no DeviceList")
+     }
+     metrics := make([]candidateLinkMetric, 0)
++    rejected := make([]candidateLinkError, 0)
+     for deviceIndex := 0; deviceIndex < int(deviceList.num_children); deviceIndex++ {
+         device := deviceList.child[deviceIndex]
+         if device == nil {
+@@ -4389,29 +4390,52 @@ func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
+         }
+         agentAL := strings.ToLower(getTreeValue(device, "ID"))
+         candidateList := getNetworkTreeByKey(device, "UnassociatedSTAMetrics")
+-        if agentAL == "" || candidateList == nil {
++        errorList := getNetworkTreeByKey(device, "UnassociatedSTAErrors")
++        if agentAL == "" {
+             continue
+         }
+-        for metricIndex := 0; metricIndex < int(candidateList.num_children); metricIndex++ {
+-            item := candidateList.child[metricIndex]
+-            if item == nil {
+-                continue
++        if candidateList != nil {
++            for metricIndex := 0; metricIndex < int(candidateList.num_children); metricIndex++ {
++                item := candidateList.child[metricIndex]
++                if item == nil {
++                    continue
++                }
++                receivedAt, err := strconv.ParseUint(getTreeValue(item, "ReceivedAtMS"), 10, 64)
++                if err != nil {
++                    continue
++                }
++                metrics = append(metrics, candidateLinkMetric{
++                    AgentAL: agentAL,
++                    RUID: strings.ToLower(getTreeValue(item, "RUID")),
++                    STA: strings.ToLower(getTreeValue(item, "STA")),
++                    Channel: getKeyIntValue(item, "Channel"),
++                    OpClass: getKeyIntValue(item, "OpClass"),
++                    RCPI: getKeyIntValue(item, "RCPI"),
++                    TimeDelta: getKeyIntValue(item, "TimeDelta"),
++                    ReceivedAt: receivedAt,
++                    MessageID: getKeyIntValue(item, "MessageID"),
++                })
+             }
+-            receivedAt, err := strconv.ParseUint(getTreeValue(item, "ReceivedAtMS"), 10, 64)
+-            if err != nil {
+-                continue
++        }
++        if errorList != nil {
++            for errorIndex := 0; errorIndex < int(errorList.num_children); errorIndex++ {
++                item := errorList.child[errorIndex]
++                if item == nil {
++                    continue
++                }
++                receivedAt, err := strconv.ParseUint(getTreeValue(item, "ReceivedAtMS"), 10, 64)
++                if err != nil {
++                    continue
++                }
++                rejected = append(rejected, candidateLinkError{
++                    AgentAL: agentAL,
++                    RUID: strings.ToLower(getTreeValue(item, "RUID")),
++                    STA: strings.ToLower(getTreeValue(item, "STA")),
++                    ErrorCode: getKeyIntValue(item, "ErrorCode"),
++                    ReceivedAt: receivedAt,
++                    MessageID: getKeyIntValue(item, "MessageID"),
++                })
+             }
+-            metrics = append(metrics, candidateLinkMetric{
+-                AgentAL: agentAL,
+-                RUID: strings.ToLower(getTreeValue(item, "RUID")),
+-                STA: strings.ToLower(getTreeValue(item, "STA")),
+-                Channel: getKeyIntValue(item, "Channel"),
+-                OpClass: getKeyIntValue(item, "OpClass"),
+-                RCPI: getKeyIntValue(item, "RCPI"),
+-                TimeDelta: getKeyIntValue(item, "TimeDelta"),
+-                ReceivedAt: receivedAt,
+-                MessageID: getKeyIntValue(item, "MessageID"),
+-            })
+         }
+     }
+     sort.Slice(metrics, func(i, j int) bool {
+@@ -4422,11 +4446,25 @@ func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
+             metrics[i].Channel) < candidateMetricKey(metrics[j].STA,
+             metrics[j].OpClass, metrics[j].Channel)
+     })
+-    return metrics, nil
++    sort.Slice(rejected, func(i, j int) bool {
++        if rejected[i].AgentAL != rejected[j].AgentAL {
++            return rejected[i].AgentAL < rejected[j].AgentAL
++        }
++        if rejected[i].RUID != rejected[j].RUID {
++            return rejected[i].RUID < rejected[j].RUID
++        }
++        return rejected[i].STA < rejected[j].STA
++    })
++    return metrics, rejected, nil
++}
++
++func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
++    metrics, _, err := loadCandidateLinkState()
++    return metrics, err
+ }
+ 
+ func unassocStaMetricsHandler(w http.ResponseWriter, r *http.Request) {
+-    metrics, err := loadCandidateLinkMetrics()
++    metrics, rejected, err := loadCandidateLinkState()
+     if err != nil {
+         http.Error(w, err.Error(), http.StatusServiceUnavailable)
+         return
+@@ -4434,6 +4472,7 @@ func unassocStaMetricsHandler(w http.ResponseWriter, r *http.Request) {
+     w.Header().Set("Content-Type", "application/json")
+     _ = json.NewEncoder(w).Encode(map[string]interface{}{
+         "metrics": metrics,
++        "rejected": rejected,
+         "total": len(metrics),
+         "provider": "hwsim-wmediumd-read-only",
+         "simulated": true,
+@@ -4486,19 +4525,31 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     }
+ 
+     baseline := make(map[string]uint64)
+-    if current, err := loadCandidateLinkMetrics(); err == nil {
++    errorBaseline := make(map[string]uint64)
++    if current, currentErrors, err := loadCandidateLinkState(); err == nil {
+         for _, metric := range current {
+             if strings.EqualFold(metric.AgentAL, req.AlMac) {
+                 baseline[candidateMetricKey(metric.STA, metric.OpClass,
+                     metric.Channel)] = metric.ReceivedAt
+             }
+         }
++        for _, candidateError := range currentErrors {
++            if strings.EqualFold(candidateError.AgentAL, req.AlMac) &&
++                candidateError.ReceivedAt > errorBaseline[candidateError.STA] {
++                errorBaseline[candidateError.STA] = candidateError.ReceivedAt
++            }
++        }
+     }
+     expected := make(map[string]struct{})
++    expectedBySTA := make(map[string][]string)
+     for _, op := range req.QueryList {
+         for _, channel := range op.Channels {
+             for _, sta := range channel.StaMacList {
+-                expected[candidateMetricKey(sta, op.OpClass, channel.Channel)] = struct{}{}
++                key := candidateMetricKey(sta, op.OpClass, channel.Channel)
++                expected[key] = struct{}{}
++                normalizedSTA := strings.ToLower(sta)
++                expectedBySTA[normalizedSTA] = append(
++                    expectedBySTA[normalizedSTA], key)
+             }
+         }
+     }
+@@ -4540,10 +4591,12 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+ 
+     deadline := time.Now().Add(8 * time.Second)
+     var observed []candidateLinkMetric
++    var observedErrors []candidateLinkError
+     for time.Now().Before(deadline) {
+-        all, err := loadCandidateLinkMetrics()
++        all, allErrors, err := loadCandidateLinkState()
+         if err == nil {
+             observed = observed[:0]
++            observedErrors = observedErrors[:0]
+             fresh := make(map[string]struct{})
+             for _, metric := range all {
+                 if !strings.EqualFold(metric.AgentAL, req.AlMac) {
+@@ -4555,12 +4608,29 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+                     observed = append(observed, metric)
+                 }
+             }
++            now := uint64(time.Now().UnixMilli())
++            for _, candidateError := range allErrors {
++                if !strings.EqualFold(candidateError.AgentAL, req.AlMac) ||
++                    !candidateErrorIsFresh(candidateError.ReceivedAt,
++                        errorBaseline[candidateError.STA], now) {
++                    continue
++                }
++                keys, wanted := expectedBySTA[candidateError.STA]
++                if !wanted {
++                    continue
++                }
++                for _, key := range keys {
++                    fresh[key] = struct{}{}
++                }
++                observedErrors = append(observedErrors, candidateError)
++            }
+             if len(fresh) == len(expected) {
+                 w.Header().Set("Content-Type", "application/json")
+                 _ = json.NewEncoder(w).Encode(map[string]interface{}{
+                     "success": true,
+                     "message": "Unassociated STA metrics response received",
+                     "metrics": observed,
++                    "rejected": observedErrors,
+                     "provider": "hwsim-wmediumd-read-only",
+                     "simulated": true,
+                 })
+@@ -4576,6 +4646,7 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+         "success": false,
+         "message": "Timed out waiting for a fresh unassociated STA metrics response",
+         "metrics": observed,
++        "rejected": observedErrors,
+     })
+ }
+ 
+diff --git a/tests/test_l1_em_metrics.cpp b/tests/test_l1_em_metrics.cpp
+index 115e49f..2c270ee 100644
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -24,6 +24,9 @@
+ #include "em_mgr.h"
+ #include "em_cmd.h"
+ #include "dm_easy_mesh.h"
++#include <initializer_list>
++#include <utility>
++#include <vector>
+ 
+ class DummyEmMetrics : public em_metrics_t {
+ public:
+@@ -346,3 +349,103 @@ TEST_F(EmMetricsTest, UnassocQueryRejectsOnlyLiveLocalAssociation) {
+ 
+     dm.deinit();
+ }
++
++namespace {
++
++em_unassoc_query_list_t make_unassoc_ack_query(
++    std::initializer_list<const char *> stations)
++{
++    em_unassoc_query_list_t query{};
++    query.num_opclass = 1;
++    query.opclass_list[0].op_class = 115;
++    query.opclass_list[0].num_channels = 1;
++    query.opclass_list[0].channel_list[0].channel = 36;
++    for (const char *station : stations) {
++        unsigned int idx = query.opclass_list[0].channel_list[0].num_sta++;
++        dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(station),
++            query.opclass_list[0].channel_list[0].sta_list[idx]);
++    }
++    return query;
++}
++
++std::vector<unsigned char> make_unassoc_ack(
++    unsigned short mid,
++    std::initializer_list<std::pair<const char *, unsigned char>> errors)
++{
++    const size_t base = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++    const size_t error_size = sizeof(em_tlv_t) + sizeof(em_error_code_t);
++    std::vector<unsigned char> frame(
++        base + errors.size() * error_size + sizeof(em_tlv_t), 0);
++    auto *cmdu = reinterpret_cast<em_cmdu_t *>(
++        frame.data() + sizeof(em_raw_hdr_t));
++    cmdu->type = htons(em_msg_type_1905_ack);
++    cmdu->id = htons(mid);
++    cmdu->last_frag_ind = 1;
++
++    unsigned char *cursor = frame.data() + base;
++    for (const auto &item : errors) {
++        auto *tlv = reinterpret_cast<em_tlv_t *>(cursor);
++        tlv->type = em_tlv_type_error_code;
++        tlv->len = htons(sizeof(em_error_code_t));
++        auto *error = reinterpret_cast<em_error_code_t *>(tlv->value);
++        error->reason_code = item.second;
++        dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(item.first),
++            error->sta_mac_addr);
++        cursor += error_size;
++    }
++    auto *eom = reinterpret_cast<em_tlv_t *>(cursor);
++    eom->type = em_tlv_type_eom;
++    eom->len = 0;
++    return frame;
++}
++
++} // namespace
++
++TEST_F(EmMetricsTest, UnassocAckWrongMidDoesNotMatchTransaction) {
++    auto query = make_unassoc_ack_query({"02:00:00:00:0c:00"});
++    auto frame = make_unassoc_ack(43, {});
++    auto result = em_metrics_t::classify_unassoc_sta_ack(
++        frame.data(), frame.size(), 42, &query);
++    EXPECT_EQ(result.status, em_unassoc_ack_wrong_mid);
++    EXPECT_EQ(result.num_rejected, 0U);
++}
++
++TEST_F(EmMetricsTest, EmptyUnassocAckAwaitsMetrics) {
++    auto query = make_unassoc_ack_query({"02:00:00:00:0c:00"});
++    auto frame = make_unassoc_ack(42, {});
++    auto result = em_metrics_t::classify_unassoc_sta_ack(
++        frame.data(), frame.size(), 42, &query);
++    EXPECT_EQ(result.status, em_unassoc_ack_empty);
++    EXPECT_EQ(result.num_requested, 1U);
++    EXPECT_EQ(result.num_rejected, 0U);
++}
++
++TEST_F(EmMetricsTest, PartialUnassocAckAwaitsRemainingMetrics) {
++    auto query = make_unassoc_ack_query({
++        "02:00:00:00:0b:00", "02:00:00:00:0c:00"});
++    auto frame = make_unassoc_ack(42, {
++        {"02:00:00:00:0c:00", 0x01},
++        /* A duplicate error cannot make a partial ACK terminal. */
++        {"02:00:00:00:0c:00", 0x01},
++    });
++    auto result = em_metrics_t::classify_unassoc_sta_ack(
++        frame.data(), frame.size(), 42, &query);
++    EXPECT_EQ(result.status, em_unassoc_ack_partial_reject);
++    EXPECT_EQ(result.num_requested, 2U);
++    ASSERT_EQ(result.num_rejected, 1U);
++    EXPECT_EQ(result.rejected[0].reason_code, 0x01);
++}
++
++TEST_F(EmMetricsTest, AllRejectedUnassocAckIsTerminal) {
++    auto query = make_unassoc_ack_query({
++        "02:00:00:00:0b:00", "02:00:00:00:0c:00"});
++    auto frame = make_unassoc_ack(42, {
++        {"02:00:00:00:0b:00", 0x01},
++        {"02:00:00:00:0c:00", 0x01},
++    });
++    auto result = em_metrics_t::classify_unassoc_sta_ack(
++        frame.data(), frame.size(), 42, &query);
++    EXPECT_EQ(result.status, em_unassoc_ack_all_rejected);
++    EXPECT_EQ(result.num_requested, 2U);
++    EXPECT_EQ(result.num_rejected, 2U);
++}

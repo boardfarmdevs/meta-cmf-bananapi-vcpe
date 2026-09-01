@@ -444,3 +444,52 @@ def test_partial_success_response_is_rejected():
         list(provider(
             clients, candidates, bsses(), "2026-08-21T20:00:01.000Z"
         ))
+
+
+def test_explicit_partial_rejection_completes_without_inventing_rcpi():
+    second_sta = "02:00:00:00:04:00"
+    clients = (client(), replace(client(), sta_mac=second_sta))
+    candidates = (inventory(), replace(inventory(), sta_mac=second_sta))
+    result = response()
+    result["rejected"] = [{
+        "agent_al": AGENT,
+        "ruid": RADIO,
+        "sta": second_sta,
+        "error_code": 1,
+        "received_at_ms": 1787342400124,
+        "message_id": 42,
+    }]
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+    measured = list(provider(
+        clients, candidates, bsses(), "2026-08-21T20:00:01.000Z"
+    ))
+
+    assert [item.sta_mac for item in measured] == [STA]
+    assert all(item.rcpi is not None for item in measured)
+    assert provider.last_rejected_candidate_keys == {(second_sta, BSSID)}
+
+
+def test_rejection_must_match_agent_radio_and_requested_sta():
+    result = response()
+    result["metrics"] = []
+    result["rejected"] = [{
+        "agent_al": AGENT,
+        "ruid": "02:00:00:00:ff:00",
+        "sta": STA,
+        "error_code": 1,
+        "received_at_ms": 1787342400124,
+        "message_id": 42,
+    }]
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+
+    with pytest.raises(CandidateMetricsError, match="unexpected rejection"):
+        list(provider(
+            (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
+        ))
