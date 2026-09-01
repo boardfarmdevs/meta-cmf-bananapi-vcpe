@@ -27,6 +27,14 @@ host_address=${host_address:-127.0.0.1}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$host_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+address_timeout=${EASYMESH_LXD_ADDRESS_TIMEOUT:-120}
+
+case "$address_timeout" in
+    ''|*[!0-9]*|0)
+        echo "EASYMESH_LXD_ADDRESS_TIMEOUT must be a positive integer" >&2
+        exit 2
+        ;;
+esac
 
 command -v lxc >/dev/null 2>&1 || { echo "lxc is missing; run install-host.sh" >&2; exit 1; }
 [ -c /dev/kvm ] || { echo "/dev/kvm is unavailable; enable hardware virtualization" >&2; exit 1; }
@@ -45,6 +53,8 @@ if lxc info "$name" >/dev/null 2>&1; then
 fi
 
 cidr=$(lxc network get "$network" ipv4.address)
+gateway=${cidr%/*}
+prefix=${cidr#*/}
 used=$(lxc network list-leases "$network" --format csv \
     | awk -F, '$3 ~ /^[0-9]+\./ {print $3}' | paste -sd, -)
 guest_address=$(python3 - "$cidr" "$used" <<'PY'
@@ -111,15 +121,98 @@ lxc config device set "$name" eth0 network "$network"
 # MAC; assigning an unchanged address alone is treated as a no-op.
 lxc config device unset "$name" eth0 ipv4.address
 lxc config device set "$name" eth0 ipv4.address "$guest_address"
+lxc start "$name"
+
+# Imported VM disks can retain a DHCP lease and RFC4361 client identity from
+# the build host.  A foreign LXD server may then advertise the requested
+# static reservation while the guest continues using its old dynamic address,
+# leaving both proxy devices pointed at a non-existent endpoint.  Reconcile
+# the selected site address inside the guest over the LXD agent/vsock before
+# exposing either service.
+agent_ready=false
+for attempt in $(seq 1 "$address_timeout"); do
+    if lxc exec "$name" -- true >/dev/null 2>&1; then
+        agent_ready=true
+        break
+    fi
+    [ "$attempt" -eq "$address_timeout" ] || sleep 1
+done
+if [ "$agent_ready" != true ]; then
+    echo "$name: LXD agent did not become ready within ${address_timeout}s" >&2
+    exit 1
+fi
+
+eth0_mac=$(lxc config get "$name" volatile.eth0.hwaddr | tr '[:upper:]' '[:lower:]')
+[ -n "$eth0_mac" ] || {
+    echo "$name: cannot determine the final eth0 MAC" >&2
+    exit 1
+}
+guest_interface=$(lxc exec "$name" -- sh -eu -c '
+    wanted=$1
+    for address_file in /sys/class/net/*/address; do
+        read -r address < "$address_file"
+        if [ "$address" = "$wanted" ]; then
+            basename "$(dirname "$address_file")"
+            exit 0
+        fi
+    done
+    exit 1
+' sh "$eth0_mac") || guest_interface=
+[ -n "$guest_interface" ] || {
+    echo "$name: final eth0 MAC $eth0_mac is not visible in the guest" >&2
+    exit 1
+}
+
+site_network=$(mktemp /tmp/easymesh-lxd-site.XXXXXX.yaml)
+trap 'rm -f -- "$site_network"' EXIT
+cat > "$site_network" <<EOF
+network:
+  version: 2
+  ethernets:
+    $guest_interface:
+      dhcp4: false
+      accept-ra: true
+      addresses:
+        - $guest_address/$prefix
+      routes:
+        - to: default
+          via: $gateway
+      nameservers:
+        addresses:
+          - $gateway
+EOF
+lxc file push --mode 0600 "$site_network" \
+    "$name/run/easymesh-lxd-site.yaml"
+lxc exec "$name" -- install -o root -g root -m 0600 \
+    /run/easymesh-lxd-site.yaml /etc/netplan/99-easymesh-lxd-site.yaml
+lxc exec "$name" -- rm -f /run/easymesh-lxd-site.yaml
+lxc exec "$name" -- netplan generate
+lxc exec "$name" -- netplan apply
+
+actual_address=
+for attempt in $(seq 1 "$address_timeout"); do
+    actual_address=$(lxc exec "$name" -- ip -4 -o address show \
+        dev "$guest_interface" scope global 2>/dev/null \
+        | awk '$3 == "inet" {split($4, field, "/"); print field[1]; exit}')
+    [ "$actual_address" = "$guest_address" ] && break
+    [ "$attempt" -eq "$address_timeout" ] || sleep 1
+done
+if [ "$actual_address" != "$guest_address" ]; then
+    echo "$name: reserved address $guest_address was not installed" \
+        "on $guest_interface within ${address_timeout}s" \
+        "(actual: ${actual_address:-none})" >&2
+    exit 1
+fi
+
 lxc config device add "$name" easymesh-webui proxy nat=true \
     listen="tcp:${host_address}:${webui_port}" \
     connect="tcp:${guest_address}:8888"
 lxc config device add "$name" wmediumd-console proxy nat=true \
     listen="tcp:${console_address}:${console_port}" \
     connect="tcp:${guest_address}:8890"
-lxc start "$name"
 
 echo "LXD VM started: $name"
+echo "site address:      $guest_interface $guest_address/$prefix via $gateway"
 echo "profile:           ${LAB_CLIENTS:-unknown} clients (${LAB_PROFILE:-unknown})"
 echo "EasyMesh WebUI:   http://${host_address}:${webui_port}/"
 echo "wmediumd Console: http://${console_address}:${console_port}/"

@@ -29,6 +29,12 @@ printf 'trim_started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'root_used_bytes_before=%s\n' "$(root_used)"
 printf 'nested_images_before=%s\n' "$(nested_images | awk 'NF {n++} END {print n+0}')"
 
+# The importer installs a site-specific static address only after a foreign
+# LXD server has selected its managed bridge and free reservation.  Never
+# carry that build/import host address into the portable backup.
+rm -f /etc/netplan/99-easymesh-lxd-site.yaml \
+    /etc/netplan/99-easymesh-lxd-dhcp-mac.yaml
+
 systemctl stop easymesh-lab.service 2>/dev/null || true
 systemctl stop wmediumd-console.service 2>/dev/null || true
 docker stop dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 || true

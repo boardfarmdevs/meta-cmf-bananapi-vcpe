@@ -215,10 +215,15 @@ EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
 ```
 
 The importer refuses to overwrite an existing instance, chooses an address on
-the selected LXD network, replaces site-specific proxy devices, starts the VM,
-and prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
+the selected LXD network, starts the VM, and reconciles the guest's outer NIC
+to that reservation before exposing the site-specific proxy devices. This
+bounded address gate prevents an imported DHCP lease from leaving the WebUI
+and Console proxies pointed at an address the guest does not own. It then
+prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
 `EASYMESH_LXD_NETWORK`, `EASYMESH_LXD_STORAGE`, `EASYMESH_WEBUI_PORT`, and
-`WMEDIUMD_CONSOLE_PORT` when the defaults collide.
+`WMEDIUMD_CONSOLE_PORT` when the defaults collide. The address and agent gate
+defaults to 120 seconds; `EASYMESH_LXD_ADDRESS_TIMEOUT` may raise that bounded
+deadline for a slow foreign host.
 
 When the host's default storage pool cannot hold the selected sparse disk,
 choose an existing pool explicitly for both build and import:
