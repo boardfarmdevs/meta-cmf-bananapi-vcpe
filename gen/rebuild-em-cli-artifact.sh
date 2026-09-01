@@ -26,7 +26,7 @@ libemcli="$work/build/src/rdkb-cli/.libs/libemcli.so"
 artifact="$repo/recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh/em-cli.tar.gz"
 go_bin=${GO_BIN:-$(command -v go || true)}
 
-for required in "$source_dir/main.go" "$source_dir/backhaul_signal.go" \
+for required in "$source_dir" \
     "$source_dir/static/index.html" "$source_dir/static/script.js" \
     "$sysroot/usr/include/ccsp/wifi_webconfig.h" \
     "$native/usr/bin/i686-rdk-linux/i686-rdk-linux-gcc" "$libemcli" "$artifact"; do
@@ -37,6 +37,16 @@ for required in "$source_dir/main.go" "$source_dir/backhaul_signal.go" \
 done
 if [ -z "$go_bin" ] || [ ! -x "$go_bin" ]; then
     echo "Go compiler not found; set GO_BIN to a usable host Go binary" >&2
+    exit 1
+fi
+
+# The helper is one Go package split over several production files.  Keep the
+# input list derived from that package so adding another non-test source file
+# cannot silently leave the checked-in binary behind the patched source tree.
+go_sources=$(find "$source_dir" -maxdepth 1 -type f -name '*.go' \
+    ! -name '*_test.go' -exec basename {} \; | LC_ALL=C sort)
+if [ -z "$go_sources" ]; then
+    echo "no production Go sources found in: $source_dir" >&2
     exit 1
 fi
 
@@ -52,11 +62,15 @@ binary="$work/onewifi_em_cli.rebuilt"
     CGO_CFLAGS="--sysroot=$sysroot -m32 -I$sysroot/usr/include -I$sysroot/usr/include/ccsp -I$sysroot/usr/include/rbus" \
     CGO_LDFLAGS="--sysroot=$sysroot -m32 -L$(dirname "$libemcli") -L$sysroot/usr/lib" \
     "$go_bin" build -trimpath -ldflags='-s -w' -o "$binary" \
-        main.go backhaul_signal.go
+        $go_sources
 )
 
 if ! file "$binary" | grep -q 'ELF 32-bit.*Intel 80386'; then
     echo "rebuilt helper is not a 32-bit x86 ELF: $binary" >&2
+    exit 1
+fi
+if ! grep -a -q 'UnassociatedSTAErrors' "$binary"; then
+    echo "rebuilt helper omits the candidate-rejection API schema" >&2
     exit 1
 fi
 
