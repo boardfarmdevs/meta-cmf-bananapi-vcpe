@@ -127,7 +127,11 @@ Each 20-, 50-, and 100-client profile is published in two forms:
   instances. Its first boot provisions the selected roster entirely offline,
   records `/var/lib/easymesh-lab/thin-firstboot-report.json`, and then passes
   through the same runtime and health gates as a ready appliance. Later boots
-  use the normal fast reconstruction path.
+  use the normal fast reconstruction path. Thin provisioning has no additional
+  fixed systemd start deadline because its duration scales with the profile and
+  storage backend; the deployment scripts retain bounded readiness gates for
+  each operation. In particular, creating a stress-profile roster on a
+  directory-backed LXD pool can legitimately take more than one hour.
 
 The selected profile is immutable in both forms. A thin release is not a
 network installer: its longer first boot does not clone repositories or fetch
