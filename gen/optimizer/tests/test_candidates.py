@@ -113,6 +113,79 @@ def test_provider_batches_query_and_maps_ruid_to_exact_bssid():
     assert provider.last_raw[0]["response"]["metrics"][0]["message_id"] == 42
 
 
+@pytest.mark.parametrize(
+    ("metrics_value", "rejected_value"),
+    [
+        ("absent", "absent"),
+        (None, None),
+        ([], []),
+    ],
+    ids=("absent", "null", "empty"),
+)
+def test_optional_candidate_result_lists_accept_empty_wire_representations(
+    metrics_value, rejected_value
+):
+    result = response()
+    if metrics_value == "absent":
+        result.pop("metrics")
+    else:
+        result["metrics"] = metrics_value
+    if rejected_value != "absent":
+        result["rejected"] = rejected_value
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+    with pytest.raises(CandidateMetricsError, match=f"omitted {STA}"):
+        list(provider(
+            (client(),), (inventory(),), bsses(),
+            "2026-08-21T20:00:01.000Z",
+        ))
+
+
+def test_measured_response_accepts_legacy_null_rejection_list():
+    result = response()
+    result["rejected"] = None
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+
+    measured = list(provider(
+        (client(),), (inventory(),), bsses(),
+        "2026-08-21T20:00:01.000Z",
+    ))
+
+    assert [item.sta_mac for item in measured] == [STA]
+    assert provider.last_rejected_candidate_keys == set()
+
+
+def test_all_rejected_response_accepts_legacy_null_metric_list():
+    result = response()
+    result["metrics"] = None
+    result["rejected"] = [{
+        "agent_al": AGENT,
+        "ruid": RADIO,
+        "sta": STA,
+        "error_code": 1,
+        "received_at_ms": 1787342400124,
+        "message_id": 42,
+    }]
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+
+    measured = list(provider(
+        (client(),), (inventory(),), bsses(),
+        "2026-08-21T20:00:01.000Z",
+    ))
+
+    assert measured == []
+    assert provider.last_rejected_candidate_keys == {(STA, BSSID)}
+
+
 def test_simulated_candidate_source_requires_explicit_lab_opt_in():
     provider = ControllerCandidateProvider(
         "http://controller", requester=lambda _url, _payload: response()

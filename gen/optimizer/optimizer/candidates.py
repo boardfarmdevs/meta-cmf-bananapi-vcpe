@@ -286,7 +286,11 @@ class ControllerCandidateProvider:
                     for opclass, channel, station in batch
                 }
                 received: set[tuple[str, str, str, int, int]] = set()
-                for metric in response.get("metrics", []):
+                # Successful controller replies always define both list-valued
+                # fields, but older helpers encoded an empty Go slice as JSON
+                # null.  Treat absent and null as the same empty compatibility
+                # value while retaining strict validation for list entries.
+                for metric in response.get("metrics") or []:
                     metric_agent = normalize_mac(metric["agent_al"])
                     radio = normalize_mac(metric["ruid"])
                     sta = normalize_mac(metric["sta"])
@@ -323,7 +327,7 @@ class ControllerCandidateProvider:
                             )
                         )
                 rejected: set[tuple[str, str, str, int, int]] = set()
-                for candidate_error in response.get("rejected", []):
+                for candidate_error in response.get("rejected") or []:
                     error_agent = normalize_mac(candidate_error["agent_al"])
                     radio = normalize_mac(candidate_error["ruid"])
                     sta = normalize_mac(candidate_error["sta"])

@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 1 Sep 2026 00:00:00 -0700
+Subject: [PATCH] cli: serialize candidate result lists as arrays
+
+The candidate metrics API used nil Go slices while a query was satisfied by
+only measurements or only explicit rejections.  encoding/json serializes a
+nil slice as null, but both API fields are list-valued.  The optimizer then
+failed while iterating the successful response instead of evaluating it.
+
+Normalize both symmetric fields at the producer boundary.  This retains the
+existing wire schema for non-empty results and makes empty results stable JSON
+arrays for successful and timeout responses alike.
+
+Upstream-Status: Inappropriate [hwsim lab API]
+---
+ src/rdkb-cli/candidate_rejection_test.go | 53 +++++++++++++++++++++++++
+ src/rdkb-cli/main.go                     | 26 +++++++++----
+ 2 files changed, 73 insertions(+), 6 deletions(-)
+
+diff --git a/src/rdkb-cli/candidate_rejection_test.go b/src/rdkb-cli/candidate_rejection_test.go
+index 03bec6c..1d31f3a 100644
+--- a/src/rdkb-cli/candidate_rejection_test.go
++++ b/src/rdkb-cli/candidate_rejection_test.go
+@@ -48,3 +48,56 @@ func TestCandidateErrorSerializationIsExplicit(t *testing.T) {
+ 		t.Fatalf("rejection invented an RCPI sentinel: %s", text)
+ 	}
+ }
++
++func TestCandidateResultListsSerializeAsArrays(t *testing.T) {
++	metric := candidateLinkMetric{
++		AgentAL: "02:00:00:00:08:20",
++		RUID:    "02:00:00:00:08:00",
++		STA:     "02:00:00:00:0c:00",
++	}
++	candidateError := candidateLinkError{
++		AgentAL:   "02:00:00:00:08:20",
++		RUID:      "02:00:00:00:08:00",
++		STA:       "02:00:00:00:0c:00",
++		ErrorCode: 1,
++	}
++
++	tests := []struct {
++		name       string
++		metrics    []candidateLinkMetric
++		errors     []candidateLinkError
++		wantMetric string
++		wantError  string
++	}{
++		{name: "nil", wantMetric: `[]`, wantError: `[]`},
++		{name: "empty", metrics: []candidateLinkMetric{},
++			errors: []candidateLinkError{}, wantMetric: `[]`, wantError: `[]`},
++		{name: "non-empty", metrics: []candidateLinkMetric{metric},
++			errors: []candidateLinkError{candidateError},
++			wantMetric: `"sta":"02:00:00:00:0c:00"`,
++			wantError: `"error_code":1`},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			metrics, err := json.Marshal(candidateMetricsForJSON(test.metrics))
++			if err != nil {
++				t.Fatal(err)
++			}
++			errors, err := json.Marshal(candidateErrorsForJSON(test.errors))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if !strings.Contains(string(metrics), test.wantMetric) {
++				t.Fatalf("metrics encoded as %s; expected %s", metrics, test.wantMetric)
++			}
++			if !strings.Contains(string(errors), test.wantError) {
++				t.Fatalf("errors encoded as %s; expected %s", errors, test.wantError)
++			}
++			if string(metrics) == "null" || string(errors) == "null" {
++				t.Fatalf("candidate list encoded as null: metrics=%s errors=%s",
++					metrics, errors)
++			}
++		})
++	}
++}
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index c172b45..0e6d5e1 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4368,6 +4368,20 @@ func candidateMetricKey(sta string, opclass, channel int) string {
+     return fmt.Sprintf("%s/%d/%d", strings.ToLower(sta), opclass, channel)
+ }
+ 
++func candidateMetricsForJSON(metrics []candidateLinkMetric) []candidateLinkMetric {
++    if metrics == nil {
++        return []candidateLinkMetric{}
++    }
++    return metrics
++}
++
++func candidateErrorsForJSON(errors []candidateLinkError) []candidateLinkError {
++    if errors == nil {
++        return []candidateLinkError{}
++    }
++    return errors
++}
++
+ func loadCandidateLinkState() ([]candidateLinkMetric, []candidateLinkError, error) {
+     cmd := C.CString("get_sta OneWifiMesh")
+     defer C.free(unsafe.Pointer(cmd))
+@@ -4471,8 +4485,8 @@ func unassocStaMetricsHandler(w http.ResponseWriter, r *http.Request) {
+     }
+     w.Header().Set("Content-Type", "application/json")
+     _ = json.NewEncoder(w).Encode(map[string]interface{}{
+-        "metrics": metrics,
+-        "rejected": rejected,
++        "metrics": candidateMetricsForJSON(metrics),
++        "rejected": candidateErrorsForJSON(rejected),
+         "total": len(metrics),
+         "provider": "hwsim-wmediumd-read-only",
+         "simulated": true,
+@@ -4629,8 +4643,8 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+                 _ = json.NewEncoder(w).Encode(map[string]interface{}{
+                     "success": true,
+                     "message": "Unassociated STA metrics response received",
+-                    "metrics": observed,
+-                    "rejected": observedErrors,
++                    "metrics": candidateMetricsForJSON(observed),
++                    "rejected": candidateErrorsForJSON(observedErrors),
+                     "provider": "hwsim-wmediumd-read-only",
+                     "simulated": true,
+                 })
+@@ -4645,8 +4659,8 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     _ = json.NewEncoder(w).Encode(map[string]interface{}{
+         "success": false,
+         "message": "Timed out waiting for a fresh unassociated STA metrics response",
+-        "metrics": observed,
+-        "rejected": observedErrors,
++        "metrics": candidateMetricsForJSON(observed),
++        "rejected": candidateErrorsForJSON(observedErrors),
+     })
+ }
+ 
+-- 
+2.43.0
