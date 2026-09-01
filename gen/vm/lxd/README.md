@@ -149,6 +149,13 @@ neutral between the old and current LXD
 Secure-Boot keys; the importer disables Secure Boot using the spelling
 supported by the destination host before the VM's first boot.
 
+Export first stops the lab and removes only reconstructible package, journal,
+Docker and nested-LXD image caches. It then issues filesystem discard before
+the instance-only export; it does not fill a thin disk with zeros. Provisioned
+containers, NVRAM identities, configuration and source are retained. The
+checksummed `trim-report.txt` records before/after guest usage, discard output
+and the final compressed archive size.
+
 ## Import on another host
 
 Download the selected profile into any empty working directory, verify and

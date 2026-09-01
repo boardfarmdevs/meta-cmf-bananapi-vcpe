@@ -413,7 +413,7 @@ snapshot_vm() {
 }
 
 export_vm() {
-    local short bundle output created actual_cpus actual_memory actual_disk actual_storage
+    local short bundle output created actual_cpus actual_memory actual_disk actual_storage trim_report
     require_command jq
     check_vm
     actual_cpus=$(lxc config get "$name" limits.cpu)
@@ -429,6 +429,8 @@ export_vm() {
         printf 'exporting actual resources rather than profile defaults: cpu=%s memory=%s disk=%s\n' \
             "$actual_cpus" "$actual_memory" "$actual_disk" >&2
     fi
+    trim_report=$(mktemp "$export_dir/.${name}.trim.XXXXXX")
+    run_root /usr/local/sbin/easymesh-package-cleanup | tee "$trim_report"
     stop_vm
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
@@ -441,6 +443,7 @@ export_vm() {
         configure_no_secure_boot
         return 1
     fi
+    printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
     # Restore the release-builder instance. The exported archive intentionally
     # remains firmware-neutral until import.sh selects the target-LXD key.
     configure_no_secure_boot
@@ -448,6 +451,8 @@ export_vm() {
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    install -m 0644 "$trim_report" "$bundle/trim-report.txt"
+    rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
 LAB_STACK=rdkeasymesh
 LAB_PROFILE=$profile
@@ -459,6 +464,7 @@ LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
 LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
+LAB_TRIMMED=true
 EOF
     jq -n \
         --arg stack rdkeasymesh --arg profile "$profile" \
@@ -471,11 +477,12 @@ EOF
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
           build:{storage_pool:$build_storage},
+          trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
         sha256sum "$(basename "$output")" import.sh install-host.sh \
-            package-release.sh README.md release.env release.json \
+            package-release.sh README.md release.env release.json trim-report.txt \
             > SHA256SUMS
     )
     ls -lh "$bundle"/*
