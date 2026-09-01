@@ -34,7 +34,13 @@ systemctl stop wmediumd-console.service 2>/dev/null || true
 docker stop dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 || true
 
 docker builder prune -af >/dev/null 2>&1 || true
-docker image prune -af >/dev/null 2>&1 || true
+# Keep tagged base and Boardfarm images in both release flavors.  A thin
+# appliance deliberately provisions its nested EasyMesh roster on first boot,
+# but that longer first boot must remain independent of a registry.  Removing
+# every unused image here drops the FROM-image tags after the Boardfarm
+# containers stop and turns a portable artifact into an implicit online
+# installer.  Dangling intermediates are safe to discard.
+docker image prune -f >/dev/null 2>&1 || true
 apt-get clean
 find /var/lib/apt/lists -xdev -mindepth 1 -maxdepth 1 -delete
 journalctl --rotate >/dev/null 2>&1 || true
