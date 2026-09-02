@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@example.com>
+Date: Wed, 2 Sep 2026 16:45:00 -0700
+Subject: [PATCH] controller: scope BSS list deletion to matching radio
+
+The database BSS delete path evaluates the operation criteria before
+deleting a row, but it unconditionally removes every visited BSS from the
+controller's in-memory list.  A radio-scoped delete therefore empties the
+global model and a subsequent reconciliation makes that loss persistent.
+This is especially visible after a controller restart, when the colocated
+agent's ten tri-band BSS records collapse to a partial set.
+
+Apply the same match result to both representations so the in-memory model
+and database remain consistent and unrelated radios are preserved.
+
+Upstream-Status: Pending
+Signed-off-by: Rob Vogelaar <rob.vogelaar@example.com>
+---
+ src/ctrl/dm_easy_mesh_ctrl.cpp | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 1111111..2222222 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4749,11 +4749,13 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+         for (i = 0; i < dm->get_num_bss(); i++) {
+             bss = dm->get_bss_by_ref(i);
+ 			criteria = dm->db_cfg_type_get_criteria(db_cfg_type_bss_list_delete);
+-			if ((bss.match_criteria(criteria) == true) && (dm->get_bss(i)) &&
+-					(dm_bss_list_t::update_db(m_db_client, dm_orch_type_db_delete, dm->get_bss(i)->get_bss_info()) != 0)) {
+-                at_least_one_failed = true;
+-            }
+-			dm_bss_list_t::update_list(bss, dm_orch_type_db_delete);
++			if ((bss.match_criteria(criteria) == true) && (dm->get_bss(i))) {
++				if (dm_bss_list_t::update_db(m_db_client, dm_orch_type_db_delete,
++						dm->get_bss(i)->get_bss_info()) != 0) {
++					at_least_one_failed = true;
++				}
++				dm_bss_list_t::update_list(bss, dm_orch_type_db_delete);
++			}
+         }
+         if (at_least_one_failed == true) {
+             at_least_one_failed = false;
+-- 
+2.43.0
