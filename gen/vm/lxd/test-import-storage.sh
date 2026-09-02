@@ -42,6 +42,18 @@ lxc() {
         config:get) printf '00:16:3e:aa:bb:cc\n' ;;
         exec:*)
             case " $* " in
+                *' lxc query /1.0 '*)
+                    if [ -n "${EASYMESH_TEST_NESTED_READY_COUNT:-}" ]; then
+                        count=0
+                        [ ! -r "$EASYMESH_TEST_NESTED_READY_COUNT" ] || \
+                            read -r count < "$EASYMESH_TEST_NESTED_READY_COUNT"
+                        count=$((count + 1))
+                        printf '%s\n' "$count" \
+                            > "$EASYMESH_TEST_NESTED_READY_COUNT"
+                        [ "$count" -ge \
+                            "${EASYMESH_TEST_NESTED_READY_AFTER:-1}" ] || return 1
+                    fi
+                    ;;
                 *' /sys/class/net/'*) printf 'enp5s0\n' ;;
                 *' ip -4 -o address show '*)
                     printf '2: enp5s0    inet %s/24 scope global enp5s0\n' \
@@ -118,6 +130,61 @@ grep -F 'LXD storage pool does not exist: missing-pool' \
     "$stage/missing.out" >/dev/null
 if grep -q '^import ' "$log"; then
     echo 'import was attempted after storage validation failed' >&2
+    exit 1
+fi
+
+# A universal thin import must not race the nested snap LXD daemon.  Prove a
+# delayed API becomes ready before profile selection and that timeout leaves
+# the profile lock and host proxies unpublished.
+cat > "$bundle/release.env" <<'EOF'
+LAB_PROFILE_SELECTABLE=true
+LAB_SUPPORTED_PROFILES=20,50,100
+EOF
+ready_count=$stage/nested-ready.count
+export EASYMESH_TEST_NESTED_READY_COUNT=$ready_count
+
+: > "$log"
+printf '0\n' > "$ready_count"
+EASYMESH_TEST_NESTED_READY_AFTER=2 \
+EASYMESH_LXD_NESTED_READY_TIMEOUT=3 \
+EASYMESH_LXD_STORAGE=large-pool \
+EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
+EASYMESH_WEBUI_PORT=29889 \
+WMEDIUMD_CONSOLE_PORT=29890 \
+    bash "$bundle/import.sh" --profile 20 "$backup" \
+        > "$stage/nested-delayed.out"
+test "$(cat "$ready_count")" = 2
+ready_line=$(grep -nF \
+    'exec rdkeasymesh-20-0831 -- lxc query /1.0 ' "$log" \
+    | tail -1 | cut -d: -f1)
+select_line=$(grep -nF \
+    'exec rdkeasymesh-20-0831 -- /usr/local/sbin/easymesh-select-thin-profile 20 ' \
+    "$log" | cut -d: -f1)
+proxy_line=$(grep -nF \
+    'config device add rdkeasymesh-20-0831 easymesh-webui proxy ' \
+    "$log" | tail -1 | cut -d: -f1)
+test "$ready_line" -lt "$select_line"
+test "$select_line" -lt "$proxy_line"
+
+: > "$log"
+printf '0\n' > "$ready_count"
+if EASYMESH_TEST_NESTED_READY_AFTER=999 \
+    EASYMESH_LXD_NESTED_READY_TIMEOUT=2 \
+    EASYMESH_LXD_STORAGE=large-pool \
+    EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
+    bash "$bundle/import.sh" --profile 20 "$backup" \
+        > "$stage/nested-timeout.out" 2>&1; then
+    echo 'unready nested LXD was accepted' >&2
+    exit 1
+fi
+grep -F 'nested LXD did not become ready within 2s' \
+    "$stage/nested-timeout.out" >/dev/null
+if grep -q '/usr/local/sbin/easymesh-select-thin-profile' "$log"; then
+    echo 'thin profile was locked before nested LXD became ready' >&2
+    exit 1
+fi
+if grep -q '^config device add .* easymesh-webui proxy ' "$log"; then
+    echo 'WebUI proxy was published before nested LXD became ready' >&2
     exit 1
 fi
 

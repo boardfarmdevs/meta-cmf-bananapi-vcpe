@@ -112,10 +112,17 @@ webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$host_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
 address_timeout=${EASYMESH_LXD_ADDRESS_TIMEOUT:-120}
+nested_ready_timeout=${EASYMESH_LXD_NESTED_READY_TIMEOUT:-$address_timeout}
 
 case "$address_timeout" in
     ''|*[!0-9]*|0)
         echo "EASYMESH_LXD_ADDRESS_TIMEOUT must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$nested_ready_timeout" in
+    ''|*[!0-9]*|0)
+        echo "EASYMESH_LXD_NESTED_READY_TIMEOUT must be a positive integer" >&2
         exit 2
         ;;
 esac
@@ -291,8 +298,23 @@ fi
 if [ "$profile_selectable" = true ]; then
     # The backup contains no provisioned nodes and cannot start the lab while
     # its selection marker exists.  Select and lock the roster only after the
-    # VM identity and site network have been reconciled.  This also replaces
-    # the idle builder hwsim pool with the selected 32/64/128-radio pool.
+    # VM identity and site network have been reconciled.  The outer LXD agent
+    # can become reachable before the nested snap LXD daemon is ready; wait
+    # for its API rather than racing the selector's first `lxc list`.  This
+    # also replaces the idle builder hwsim pool with the selected
+    # 32/64/128-radio pool.
+    nested_ready=false
+    for attempt in $(seq 1 "$nested_ready_timeout"); do
+        if lxc exec "$name" -- lxc query /1.0 >/dev/null 2>&1; then
+            nested_ready=true
+            break
+        fi
+        [ "$attempt" -eq "$nested_ready_timeout" ] || sleep 1
+    done
+    if [ "$nested_ready" != true ]; then
+        echo "$name: nested LXD did not become ready within ${nested_ready_timeout}s" >&2
+        exit 1
+    fi
     lxc exec "$name" -- /usr/local/sbin/easymesh-select-thin-profile \
         "$selected_clients"
     lxc exec "$name" -- grep -Fx \
