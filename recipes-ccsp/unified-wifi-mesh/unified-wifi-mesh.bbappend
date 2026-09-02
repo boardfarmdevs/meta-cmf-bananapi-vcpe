@@ -656,7 +656,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -666,8 +666,11 @@ SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.
 # tracks the patched libemcli ABI automatically. Controller-only: libemcli.so is
 # packaged only in the broadband config. Usage + JSON schema in
 # doc/easymesh/container-hwsim-bringup-testing.md and demo/steering-demo.sh.
+# The pre-start helper normally belongs to the redundant stock CLI package, so
+# install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
+    install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
     cp -rf ${WORKDIR}/static/. ${D}/usr/ccsp/EasyMesh/static/
     # The helper archive supplies the cross-built Go binary and its baseline
