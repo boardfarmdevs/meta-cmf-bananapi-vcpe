@@ -31,8 +31,8 @@ test -c /dev/kvm
 The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
 `lxd` group, and initializes LXD only when no storage pool exists.
 
-Validate profile metadata and import argument handling without creating an
-appliance:
+Validate profile metadata, immutable selection, and import argument handling
+without creating an appliance:
 
 ```sh
 ./test-profiles.sh
@@ -85,10 +85,11 @@ therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 ./build.sh restart
 ```
 
-Profiles `20`, `50`, and `100` create separate instances named
-`rdkeasymesh-PROFILE-0831`. A profile is immutable inside a release appliance:
-download another profile instead of deleting and recreating client identities
-after import. The builder detects the address
+Ready builder profiles `20`, `50`, and `100` create separate instances named
+`rdkeasymesh-PROFILE-0831`. The universal thin release asks for one of those
+profiles during import and locks it before any nested node is created. The
+profile cannot be changed after selection; import the universal artifact again
+to create a different profile. The builder detects the address
 used by the outer host's IPv4 default route and exposes:
 
 ```text
@@ -115,16 +116,22 @@ outer host must not start the VM after reboot:
 lxc config set rdkeasymesh-20-0831 boot.autostart false
 ```
 
-## Ready and thin releases
+## Ready builders and the universal thin release
 
-Each 20-, 50-, and 100-client profile is published in two forms:
+The release has two forms with different purposes:
 
-- `ready` retains every provisioned nested controller, extender, and client.
+- A local `ready` builder retains every provisioned nested controller,
+  extender, and client. It is the accepted source used to produce a release,
+  but it is not the normal portable download.
   Its first start reconstructs the accepted lab immediately, but the download
   grows with the client count.
-- `thin` retains the installed VM, exact source, controller/extender archives,
+- `rdkeasymesh-0831-thin.tar` is the one portable download. It retains the
+  installed VM, exact source, controller/extender archives,
   and one reusable WLAN-client image, but contains zero provisioned lab
-  instances. Its first boot provisions the selected roster entirely offline,
+  instances. `./import.sh --profile 20|50|100` selects CPU, memory and the
+  32/64/128-radio hwsim pool, writes an immutable profile lock, and provisions
+  the selected roster entirely offline.
+  It
   records `/var/lib/easymesh-lab/thin-firstboot-report.json`, and then passes
   through the same runtime and health gates as a ready appliance. Later boots
   use the normal fast reconstruction path. Thin provisioning has no additional
@@ -133,9 +140,10 @@ Each 20-, 50-, and 100-client profile is published in two forms:
   each operation. In particular, creating a stress-profile roster on a
   directory-backed LXD pool can legitimately take more than one hour.
 
-The selected profile is immutable in both forms. A thin release is not a
-network installer: its longer first boot does not clone repositories or fetch
-container images.
+The thin release is not a network installer: its longer first boot does not
+clone repositories or fetch container images. Its sparse 96-GiB logical disk
+supports the stress profile; a smaller selected roster consumes only the blocks
+it actually writes.
 
 ## Export a release
 
@@ -145,9 +153,9 @@ After a passing check:
 ./build.sh export
 ```
 
-After producing the ready release, the same accepted builder VM can be turned
-into a thin release. Supply the original checksummed images because a ready
-export deliberately removed its staging cache:
+The same accepted builder VM can be turned into the universal thin release.
+The builder may be any accepted profile. Supply the original checksummed images
+because a ready export deliberately removed its staging cache:
 
 ```sh
 EASYMESH_LAB_PROFILE=20 \
@@ -156,11 +164,13 @@ EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
   ./build.sh export-thin
 ```
 
-`export-thin` first reruns full ready-lab acceptance. It then removes all
+`export-thin` first reruns full ready-lab acceptance. It expands the sparse
+logical disk to the common 96-GiB maximum, then removes all
 provisioned nested instances and transient NVRAM/model state, retains exactly
 the offline inputs required by first boot, and verifies that the exported VM
-has zero lab definitions plus the `wlan-client-base` image and pending
-first-boot manifest.
+has zero lab definitions plus the `wlan-client-base` image and an unselected
+first-boot template. A systemd condition prevents the lab from starting before
+the importer writes the profile lock.
 
 `export` reruns the complete acceptance check. An `accepted` snapshot is not
 required by the release and is not created automatically because non-copy-on-
@@ -168,17 +178,18 @@ write LXD pools duplicate the complete VM disk. On a copy-on-write pool, a
 release engineer may create the optional local rollback point with
 `./build.sh snapshot`; it is excluded from the portable export.
 
-`export` creates `artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd/` containing
+`export-thin` creates `artifacts/rdkeasymesh-0831-thin/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,
 this README, and `SHA256SUMS`. The VM is stopped before export so its nested
 LXD database, radio state and filesystems are coherent. Create the single file
 for Google Drive with:
 
 ```sh
-./package-release.sh artifacts/rdkeasymesh-CLIENTS-0831-COMMIT-lxd
+./package-release.sh artifacts/rdkeasymesh-0831-thin
 ```
 
-Upload the resulting `*-bundle.tar` and its adjacent `.sha256`. Google Drive
+This creates the requested `rdkeasymesh-0831-thin.tar` and adjacent
+`.sha256`. Upload those two files. Google Drive
 is transport only; the checksum and `release.json` identify the release. The
 outer checksum records only the bundle filename, so verification works from
 any empty download directory. Export also records the VM's actual CPU, memory
@@ -197,22 +208,27 @@ and the final compressed archive size.
 
 ## Import on another host
 
-Download the selected profile into any empty working directory, verify and
+Download the universal release into any empty working directory, verify and
 extract it:
 
 ```sh
-sha256sum -c rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar.sha256
-tar -xf rdkeasymesh-CLIENTS-0831-COMMIT-lxd-bundle.tar
-cd rdkeasymesh-CLIENTS-0831-COMMIT-lxd
+sha256sum -c rdkeasymesh-0831-thin.tar.sha256
+tar -xf rdkeasymesh-0831-thin.tar
+cd rdkeasymesh-0831-thin
 sha256sum -c SHA256SUMS
 ```
 
-Import requires no archive argument when the bundle is intact:
+Select one profile. No inner archive argument is needed when the bundle is
+intact:
 
 ```sh
 EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
-  ./import.sh
+  ./import.sh --profile 20
 ```
+
+Use `--profile 50` or `--profile 100` on a sufficiently sized host. Defaults
+are 6 vCPU/8 GiB, 8 vCPU/12 GiB, and 12 vCPU/20 GiB respectively. The importer
+refuses a missing or invalid choice and never silently defaults to a profile.
 
 The importer refuses to overwrite an existing instance, chooses an address on
 the selected LXD network, starts the VM, and reconciles the guest's outer NIC
@@ -236,7 +252,8 @@ The importer validates the pool before creating the VM. The source host's
 pool name is recorded for traceability but is not imposed on a destination
 host.
 
-Monitor the first imported cold reconstruction:
+Monitor the first imported cold reconstruction (replace `20` with the selected
+profile):
 
 ```sh
 lxc console rdkeasymesh-20-0831 --show-log
@@ -244,7 +261,7 @@ lxc exec rdkeasymesh-20-0831 -- journalctl -fu easymesh-lab.service
 lxc exec rdkeasymesh-20-0831 -- /usr/local/sbin/easymesh-labctl check
 ```
 
-For a thin release, follow both provisioning and normal runtime gates:
+Follow both provisioning and normal runtime gates:
 
 ```sh
 lxc exec rdkeasymesh-20-0831 -- \

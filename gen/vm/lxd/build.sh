@@ -45,7 +45,7 @@ Commands:
   check       run the complete lab acceptance audit
   snapshot    replace the accepted snapshot after a passing check
   export      check, stop and export a portable LXD VM backup bundle
-  export-thin check, remove provisioned nodes and export an offline first-boot bundle
+  export-thin check, remove provisioned nodes and export the universal offline bundle
   delete      delete only the named appliance VM after showing its identity
 
 Build inputs:
@@ -241,6 +241,7 @@ push_inputs() {
         [easymesh-prepare-thin-package]=gen/vm/scripts/guest/easymesh-prepare-thin-package
         [easymesh-complete-thin-firstboot]=gen/vm/scripts/guest/easymesh-complete-thin-firstboot
         [easymesh-thin-firstboot]=gen/vm/scripts/guest/easymesh-thin-firstboot
+        [easymesh-select-thin-profile]=gen/vm/scripts/guest/easymesh-select-thin-profile
         [easymesh-thin-firstboot.service]=gen/vm/scripts/guest/easymesh-thin-firstboot.service
     )
     for file in "${!guest_assets[@]}"; do
@@ -531,6 +532,11 @@ export_thin_vm() {
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
     check_vm
+    # One universal backup must have enough sparse logical capacity for the
+    # stress roster.  Profile selection changes CPU, RAM and the active radio
+    # pool at import; the common disk stays at the accepted maximum and only
+    # consumes blocks that first-boot provisioning actually writes.
+    lxc config device set "$name" root size 96GiB
     actual_cpus=$(lxc config get "$name" limits.cpu)
     actual_memory=$(lxc config get "$name" limits.memory)
     actual_disk=$(lxc config device get "$name" root size)
@@ -538,6 +544,10 @@ export_thin_vm() {
     [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] \
         && [ -n "$actual_storage" ] || {
         echo "cannot determine actual resources for $name" >&2
+        exit 1
+    }
+    [ "$actual_disk" = 96GiB ] || {
+        echo "universal thin root disk did not expand to 96GiB: $actual_disk" >&2
         exit 1
     }
 
@@ -561,6 +571,9 @@ export_thin_vm() {
         /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-thin-firstboot \
         /usr/local/sbin/easymesh-thin-firstboot
     run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-select-thin-profile \
+        /usr/local/sbin/easymesh-select-thin-profile
+    run_root install -m 0755 \
         /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-complete-thin-firstboot \
         /usr/local/sbin/easymesh-complete-thin-firstboot
     run_root install -m 0644 \
@@ -578,22 +591,23 @@ export_thin_vm() {
         EXTENDER_IMAGE="$assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
         EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \
-        EASYMESH_SCALE_PROFILE="$profile" \
-        HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        EASYMESH_THIN_PROFILE_SELECTABLE=true \
         /usr/local/sbin/easymesh-prepare-thin-package | tee "$trim_report"
     run_root /usr/local/sbin/easymesh-package-cleanup thin | tee -a "$trim_report"
     test "$(lxc exec "$name" -- lxc list -c n --format csv | awk '
         /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
         END {print n+0}')" = 0
-    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-firstboot.env
+    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-firstboot.template.env
+    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-profile-selection.required
+    lxc exec "$name" -- test ! -e /var/lib/easymesh-lab/thin-firstboot.env
     lxc exec "$name" -- lxc image info wlan-client-base >/dev/null
 
     stop_vm
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-thin-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-thin-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-0831-thin"
+    output="$bundle/rdkeasymesh-0831-${short}-thin-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
@@ -610,13 +624,9 @@ export_thin_vm() {
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
 LAB_STACK=rdkeasymesh
-LAB_PROFILE=$profile
-LAB_CLIENTS=$profile_clients
-LAB_HWSIM_RADIOS=$profile_radios
-LAB_DEFAULT_NAME=$release_name
-LAB_DEFAULT_CPUS=$actual_cpus
-LAB_DEFAULT_MEMORY=$actual_memory
-LAB_DEFAULT_DISK=$actual_disk
+LAB_PROFILE_SELECTABLE=true
+LAB_SUPPORTED_PROFILES=20,50,100
+LAB_DEFAULT_DISK=96GiB
 LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$meta_commit
 LAB_RELEASE_FLAVOR=thin
@@ -624,16 +634,17 @@ LAB_FIRST_BOOT_PROVISIONING=true
 LAB_TRIMMED=true
 EOF
     jq -n \
-        --arg stack rdkeasymesh --arg profile "$profile" \
-        --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
+        --arg stack rdkeasymesh \
         --arg source_commit "$meta_commit" --arg created_at "$created" \
-        --arg archive "$(basename "$output")" --arg instance "$release_name" \
-        --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
-        --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
-        '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
-          hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
+        --arg archive "$(basename "$output")" \
+        --arg disk 96GiB --arg build_storage "$actual_storage" \
+        '{schema_version:2,stack:$stack,profile_selectable:true,
+          supported_profiles:[20,50,100],source_commit:$source_commit,created_at:$created_at,
           archive:$archive,release_flavor:"thin",first_boot_provisioning:true,
-          defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          profiles:{"20":{name:"small",instance:"rdkeasymesh-20-0831",clients:20,hwsim_radios:32,cpus:6,memory:"8GiB"},
+                    "50":{name:"medium",instance:"rdkeasymesh-50-0831",clients:50,hwsim_radios:64,cpus:8,memory:"12GiB"},
+                    "100":{name:"stress",instance:"rdkeasymesh-100-0831",clients:100,hwsim_radios:128,cpus:12,memory:"20GiB"}},
+          defaults:{disk:$disk},
           build:{storage_pool:$build_storage},trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"
     (

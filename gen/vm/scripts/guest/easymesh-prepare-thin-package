@@ -13,12 +13,17 @@ exec </dev/null
 : "${EXTENDER_IMAGE:?missing EXTENDER_IMAGE}"
 : "${EXPECTED_REPO_HEAD:?missing EXPECTED_REPO_HEAD}"
 : "${EXPECTED_WMEDIUMD_SHA256:?missing EXPECTED_WMEDIUMD_SHA256}"
-: "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
-: "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
+selectable=${EASYMESH_THIN_PROFILE_SELECTABLE:-false}
+if [ "$selectable" != true ]; then
+    : "${EASYMESH_SCALE_PROFILE:?missing EASYMESH_SCALE_PROFILE}"
+    : "${HEALTH_EXPECT_CLIENTS:?missing HEALTH_EXPECT_CLIENTS}"
+fi
 
 state=/home/easymesh/.local/state/easymesh-lab
 nvram=/var/lib/easymesh-lab/nvram
 pending=/var/lib/easymesh-lab/thin-firstboot.env
+template=/var/lib/easymesh-lab/thin-firstboot.template.env
+selection_required=/var/lib/easymesh-lab/thin-profile-selection.required
 
 test -f "$CONTROLLER_IMAGE"
 test -f "$EXTENDER_IMAGE"
@@ -59,11 +64,13 @@ find "$nvram" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 find "$state" -xdev -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 rm -f /var/lib/easymesh-lab/thin-firstboot.completed.env \
     /var/lib/easymesh-lab/thin-firstboot-report.json \
-    /var/lib/easymesh-lab/thin-firstboot.started-at
+    /var/lib/easymesh-lab/thin-firstboot.started-at \
+    /var/lib/easymesh-lab/thin-profile.lock.env \
+    "$pending" "$template" "$selection_required"
 
 controller_sha=$(sha256sum "$CONTROLLER_IMAGE" | awk '{print $1}')
 extender_sha=$(sha256sum "$EXTENDER_IMAGE" | awk '{print $1}')
-cat > "$pending" <<EOF
+cat > "$template" <<EOF
 THIN_INITIAL_INSTANCES=0
 EASYMESH_REPO=$EASYMESH_REPO
 CONTROLLER_IMAGE=$CONTROLLER_IMAGE
@@ -72,10 +79,20 @@ EXPECTED_REPO_HEAD=$EXPECTED_REPO_HEAD
 CONTROLLER_SHA256=$controller_sha
 EXTENDER_SHA256=$extender_sha
 EXPECTED_WMEDIUMD_SHA256=$EXPECTED_WMEDIUMD_SHA256
+EOF
+chmod 0600 "$template"
+if [ "$selectable" = true ]; then
+    : > "$selection_required"
+    chmod 0444 "$selection_required"
+    rm -f /etc/default/easymesh-lab
+else
+    cp "$template" "$pending"
+    cat >> "$pending" <<EOF
 EASYMESH_SCALE_PROFILE=$EASYMESH_SCALE_PROFILE
 HEALTH_EXPECT_CLIENTS=$HEALTH_EXPECT_CLIENTS
 EOF
-chmod 0600 "$pending"
+    chmod 0600 "$pending"
+fi
 
 definitions=$(lxc list -c n --format csv | awk '
     /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
@@ -83,8 +100,13 @@ definitions=$(lxc list -c n --format csv | awk '
 [ "$definitions" -eq 0 ]
 lxc image info wlan-client-base >/dev/null
 
-printf 'thin_profile=%s\n' "$EASYMESH_SCALE_PROFILE"
-printf 'thin_clients=%s\n' "$HEALTH_EXPECT_CLIENTS"
+if [ "$selectable" = true ]; then
+    printf 'thin_profile=select-at-import\n'
+    printf 'thin_clients=20,50,100\n'
+else
+    printf 'thin_profile=%s\n' "$EASYMESH_SCALE_PROFILE"
+    printf 'thin_clients=%s\n' "$HEALTH_EXPECT_CLIENTS"
+fi
 printf 'thin_provisioned_instances=%s\n' "$definitions"
 printf 'thin_nested_images=%s\n' "$(lxc image list --format csv -c f | awk 'NF {n++} END {print n+0}')"
 printf 'thin_controller_sha256=%s\n' "$controller_sha"

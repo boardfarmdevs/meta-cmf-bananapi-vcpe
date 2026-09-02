@@ -33,6 +33,8 @@ install -m 0755 /home/easymesh/easymesh-assets/easymesh-complete-thin-firstboot 
     /usr/local/sbin/easymesh-complete-thin-firstboot
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-thin-firstboot \
     /usr/local/sbin/easymesh-thin-firstboot
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-select-thin-profile \
+    /usr/local/sbin/easymesh-select-thin-profile
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-thin-firstboot.service \
     /etc/systemd/system/easymesh-thin-firstboot.service
 

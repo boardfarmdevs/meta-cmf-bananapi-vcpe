@@ -1,5 +1,6 @@
 [Unit]
 Description=EasyMesh steering laboratory runtime
+ConditionPathExists=!/var/lib/easymesh-lab/thin-profile-selection.required
 Wants=network-online.target easymesh-thin-firstboot.service
 After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service easymesh-thin-firstboot.service
 Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-lxd-docker-forward.service easymesh-thin-firstboot.service
