@@ -90,6 +90,7 @@ boundary:
 - [Memory footprint](reference/memory-footprint.md)
 - [Association ownership case study](reference/association-ownership-case-study.md)
 - [Bare-metal and LXD VM deployment models](reference/deployment-models.md)
+- [Lab startup and topology formation](reference/lab-startup-and-topology-formation.md)
 - [Portable LXD VM releases](reference/portable-lab-releases.md)
 - [Release notes](release-notes.md)
 - [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
