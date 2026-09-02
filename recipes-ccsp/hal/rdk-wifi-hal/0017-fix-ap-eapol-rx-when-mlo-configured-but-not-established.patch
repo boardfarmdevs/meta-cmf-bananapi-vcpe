@@ -52,7 +52,7 @@ whose MLO setup fails after config enables it hits the same silent drop.
 
 --- a/wifi_hal_nl80211.c
 +++ b/wifi_hal_nl80211.c
-@@ -3120,19 +3120,42 @@
+@@ -3133,18 +3133,41 @@ void recv_data_frame(wifi_interface_info_t *interface)
      }
  
  #if defined(CONFIG_GENERIC_MLO) && defined(CONFIG_IEEE80211BE)
@@ -80,14 +80,13 @@ whose MLO setup fails after config enables it hits the same silent drop.
 +        ((interface_mac != NULL) &&
 +         (memcmp(eth_hdr->dest, interface_mac, sizeof(mac_address_t)) == 0))) {
          // received frame
-         // dir = wifi_direction_uplink;
+         is_rx_frame = true;
          memcpy(sta, eth_hdr->src, sizeof(mac_address_t));
 -    } else if (memcmp(eth_hdr->src, interface_mac, sizeof(mac_address_t)) == 0) {
 +    } else if ((memcmp(eth_hdr->src, interface->mac, sizeof(mac_address_t)) == 0) ||
 +               ((interface_mac != NULL) &&
 +                (memcmp(eth_hdr->src, interface_mac, sizeof(mac_address_t)) == 0))) {
          // transmitted frame
-         // dir = wifi_direction_downlink;
          memcpy(sta, eth_hdr->dest, sizeof(mac_address_t));
      } else {
 -        // drop

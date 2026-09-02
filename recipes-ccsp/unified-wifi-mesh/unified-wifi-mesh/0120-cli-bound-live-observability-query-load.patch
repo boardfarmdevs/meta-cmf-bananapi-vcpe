@@ -179,13 +179,18 @@ diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
          em_printfout("Link Stats Alarm publish fail");
      }
  
-@@ -839,16 +837,14 @@
-     dm_ctrl = reinterpret_cast<dm_easy_mesh_ctrl_t *>(get_data_model(GLOBAL_NET_ID));
+@@ -853,19 +853,17 @@
      dm_ctrl->get_network_config(parent, const_cast<char*>(GLOBAL_NET_ID));
  
 -    str = cJSON_Print(parent);
--    em_printfout("    ===============Publish Network Topology Json:\n%s\n===============\n",str);
 +    str = cJSON_PrintUnformatted(parent);
+     if (str == NULL) {
+-        printf("%s:%d cJSON_Print failed\n", __func__, __LINE__);
++        printf("%s:%d cJSON_PrintUnformatted failed\n", __func__, __LINE__);
+         cJSON_Delete(parent);
+         return;
+     }
+-    em_printfout("    ===============Publish Network Topology Json:\n%s\n===============\n",str);
  
  	raw.data_type    = bus_data_type_string;
      raw.raw_data.bytes = reinterpret_cast<unsigned char *> (str);
@@ -198,7 +203,6 @@ diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
 +            const_cast<char*>(DEVICE_WIFI_DATAELEMENTS_NETWORK_TOPOLOGY), &raw) != 0) {
          printf("%s:%d Topology publish fail\n",__func__, __LINE__);
      }
- 
 diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
 --- a/src/dm/dm_easy_mesh.cpp
 +++ b/src/dm/dm_easy_mesh.cpp
@@ -275,5 +279,3 @@ diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
  }
  
 -
-
-

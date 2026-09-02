@@ -33,7 +33,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0029-cli-release-native-tree-allocations.patch \
     file://0030-db-drain-result-sets-before-early-return.patch \
     file://0031-association-refresh-topology-before-publish.patch \
-    file://0032-sta-decode-reassociation-capabilities.patch \
     file://0033-sta-retain-capability-on-empty-roam-report.patch \
     file://0034-cli-serialize-native-command-execution.patch \
     file://0035-cli-remove-unused-command-data-model-init.patch \
@@ -128,8 +127,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0125-steering-report-from-topology-synchronized-state.patch \
     file://0126-cli-stage-steering-and-shape-layout.patch \
     file://0127-controller-reconcile-client-snapshot-across-agent-models.patch \
-    file://0128-orch-complete-upstream-command-lifetime-fixes.patch \
-    file://0129-controller-bound-dataelements-device-enumeration.patch \
     file://0130-controller-lightweight-em-config-stage-clones.patch \
     file://0131-agent-emit-station-snapshot-topology-deltas.patch \
     file://0132-controller-bound-station-churn-and-honor-cross-band.patch \

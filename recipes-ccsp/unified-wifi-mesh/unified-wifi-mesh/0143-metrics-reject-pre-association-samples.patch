@@ -54,8 +54,8 @@ index c60695d..564116b 100644
 +            continue;
 +        }
 +
-         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
-         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+         sta->m_sta_info.est_dl_rate = ntohl(metrics->est_mac_data_rate_dl);
+         sta->m_sta_info.est_ul_rate = ntohl(metrics->est_mac_data_rate_ul);
          sta->m_sta_info.rcpi = metrics->rcpi;
          char observed_at[64] = {0};
          sta->m_sta_info.timestamp[0] = '\0';

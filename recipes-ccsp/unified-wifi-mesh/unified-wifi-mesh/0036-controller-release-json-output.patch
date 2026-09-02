@@ -8,10 +8,9 @@ and, in two paths, every child of the generated tree. cJSON_free(parent)
 only releases the root allocation; cJSON_Delete(parent) is required to walk
 and release an owned cJSON tree.
 
-The live Network response path is exercised by every WebUI topology refresh.
-Its orphaned tree and print buffer grow em_ctrl RSS by about 82 KiB per
-request. The same ownership errors exist in device-test and topology/event
-publication paths.
+The same ownership errors exist in device-test and link-event publication
+paths. Fresh upstream already releases both objects in the network-topology
+publication path, so that formerly required hunk is omitted here.
 
 Release print buffers after their synchronous consumers finish and delete
 the complete owned trees.
@@ -19,9 +18,9 @@ the complete owned trees.
 Upstream-Status: Pending
 ---
  src/ctrl/dm_easy_mesh_ctrl.cpp | 3 ++-
- src/ctrl/em_ctrl.cpp           | 3 +++
+ src/ctrl/em_ctrl.cpp           | 1 +
  src/ctrl/em_dev_test_ctrl.cpp  | 3 ++-
- 3 files changed, 7 insertions(+), 2 deletions(-)
+ 3 files changed, 5 insertions(+), 2 deletions(-)
 
 diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
 --- a/src/ctrl/dm_easy_mesh_ctrl.cpp
@@ -47,15 +46,6 @@ diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
      cJSON_Delete(parent);
  }
  
-@@ -720,6 +721,8 @@ void em_ctrl_t::publish_network_topology()
-         printf("%s:%d Topology publish fail\n",__func__, __LINE__);
-     }
- 
-+    cJSON_free(str);
-+    cJSON_Delete(parent);
- #if 0
-     //Test code here
-     // if (desc->bus_event_subs_fn(&m_bus_hdl, DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_CFG_POLICY, (void *)&em_agent_t::onewifi_cb, NULL, 0) != 0) {
 diff --git a/src/ctrl/em_dev_test_ctrl.cpp b/src/ctrl/em_dev_test_ctrl.cpp
 --- a/src/ctrl/em_dev_test_ctrl.cpp
 +++ b/src/ctrl/em_dev_test_ctrl.cpp

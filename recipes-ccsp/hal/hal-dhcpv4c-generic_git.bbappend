@@ -17,3 +17,10 @@ do_configure_prepend() {
         fi
     fi
 }
+
+# meta-cmf-bananapi adds MediaTek's rdkb_hal as a second Git source but does
+# not pin that source. BitBake refuses to fetch an unpinned SCM URL. Keep the
+# known-good main revision reproducible and include both SCM names in PV's
+# aggregate revision.
+SRCREV_default = "e0fded2dff10d7c7b9be00e7c6479ce4c666c59a"
+SRCREV_FORMAT = "dhcpv4hal_default"
