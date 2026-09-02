@@ -153,6 +153,40 @@ ordinary cold reconstruction. Because `/run` is volatile and the marker is
 one-use, later service restarts and guest reboots retain normal cold-start
 semantics.
 
+## 0901 artifact verification
+
+The corrected sources were packaged as the universal 0901 thin appliances and
+then imported into clean 20-client VMs from the actual distribution tar files.
+
+| Item | RDK EasyMesh | prplMesh |
+| --- | --- | --- |
+| Artifact | `rdkeasymesh-0901-thin.tar` | `prplmesh-0901-thin.tar` |
+| Archive SHA-256 | `c08de65d5741e251548b35b61392ca830cb63e646bfc1b8a110156d0772e4383` | `8067495912458496be23030be2b05a212c0f8ff349c8da94ec2a5505bd98b955` |
+| Packaged source | `8753e4762537f263ddaa46fef48f7167c4e8ce99` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
+| Guest first-boot interval | 19 min 03 s | 16 min 13 s |
+| Final state | 25/25 running, acceptance pass | 25/25 running, acceptance pass |
+
+The RDK runtime validated the one-use handoff and completed its
+`thin_provisioned_handoff` phase in 352 ms. The nested roster remained at
+25/25 and the boot journal contained zero `quiesce_and_radio_reset` phases.
+The subsequent complete health audit reported five mesh devices, 20 live
+clients, unique association and IPv4 ownership for every client, fresh signal
+for all four backhauls, zero EasyMesh/OneWifi restarts, and successful traffic
+from every client.
+
+prplMesh completed one continuous provisioning, mesh, client, Console and
+acceptance transaction. It did not stop or redefine the 25-node roster after
+creating it. Its final model contained the controller, four agents, 20 clients,
+both fronthaul SSIDs and clients on 2.4, 5 and 6 GHz.
+
+The public presentation contract also passed: RDK served the EasyMesh UI and
+wmediumd Console on ports 18889 and 18890; prplMesh served the wmediumd Console
+on 8090 and Controller UI on 8091. The prplMesh Console shipped the operational
+station filter that excludes reserve `spare` radios from graph presentation.
+Its bounded daemon event ring reported that older startup records had been
+overwritten; this degrades retained event history but did not affect topology,
+traffic, UI availability or first-boot acceptance.
+
 ## Conclusions
 
 - Both 20-client universal thin artifacts reconstructed a complete accepted lab
@@ -163,6 +197,6 @@ semantics.
   memory columns as a controlled implementation benchmark.
 - The RDK duplicate lifecycle transaction was real, measurable, and removable
   without weakening final acceptance.
-- A future artifact refresh should include the handoff fix and the current
-  prplMesh Console/UI service layout. The present 0831 artifacts remain the
-  immutable baseline for this comparison.
+- The 0901 artifacts contain the handoff fix and the current prplMesh
+  Console/UI service layout; the 0831 results remain the measured baseline used
+  to demonstrate the lifecycle defect.

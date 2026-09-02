@@ -1,18 +1,18 @@
 # Portable LXD VM releases
 
-The 0831 handoff has exactly two portable downloads:
+The 0901 handoff has exactly two portable downloads:
 
 | Artifact | Selectable clients | Default host ports |
 | --- | --- | --- |
-| `rdkeasymesh-0831-thin.tar` | 20, 50, or 100 | EasyMesh `18889`, wmediumd `18890` |
-| `prplmesh-0831-thin.tar` | 20, 50, or 100 | topology `8090`, Controller UI `8091` |
+| `rdkeasymesh-0901-thin.tar` | 20, 50, or 100 | EasyMesh `18889`, wmediumd Console `18890` |
+| `prplmesh-0901-thin.tar` | 20, 50, or 100 | wmediumd Console `8090`, Controller UI `8091` |
 
-Published 0831 identities:
+Published 0901 identities:
 
 | Artifact | Bytes | SHA-256 | Source commit |
 | --- | ---: | --- | --- |
-| `rdkeasymesh-0831-thin.tar` | 2,447,974,400 | `c090f63ec2d9dd350111b68077d6eb951e706dbbfe52c9692a2dd5402701c675` | `9729ca4ed89a15c91538292eaf41d6880dd97f29` |
-| `prplmesh-0831-thin.tar` | 1,777,039,360 | `9ef007df292742ebc8c36e9405d71810c8754e7f1f802baa58b68cd9bf45f598` | `4eb6bcc32beff12e90328660fcd10970a4694a16` |
+| `rdkeasymesh-0901-thin.tar` | 2,075,002,880 | `c08de65d5741e251548b35b61392ca830cb63e646bfc1b8a110156d0772e4383` | `8753e4762537f263ddaa46fef48f7167c4e8ce99` |
+| `prplmesh-0901-thin.tar` | 1,816,176,640 | `8067495912458496be23030be2b05a212c0f8ff349c8da94ec2a5505bd98b955` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
 
 There are no separate 20-, 50-, or 100-client downloads. The profile is an
 explicit, immutable import choice. Each archive contains an installed Ubuntu
@@ -27,9 +27,9 @@ optional research backend and is not enabled in these appliances.
 Place one tar and its adjacent checksum in an empty directory, then run:
 
 ```sh
-sha256sum -c STACK-0831-thin.tar.sha256
-tar -xf STACK-0831-thin.tar
-cd STACK-0831-thin
+sha256sum -c STACK-0901-thin.tar.sha256
+tar -xf STACK-0901-thin.tar
+cd STACK-0901-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
@@ -84,8 +84,8 @@ PRPLMESH_UI_HOST_IP=192.168.2.140 \
   ./import.sh --profile 50
 ```
 
-Instance names default to `rdkeasymesh-PROFILE-0831` and
-`prplmesh-PROFILE-0831`. Override the documented name and port variables when
+Instance names default to `rdkeasymesh-PROFILE-0901` and
+`prplmesh-PROFILE-0901`. Override the documented name and port variables when
 multiple labs share a host.
 
 ## Archive contents and identity
@@ -93,8 +93,8 @@ multiple labs share a host.
 Each outer tar contains one directory:
 
 ```text
-STACK-0831-thin/
-|-- STACK-0831-COMMIT-thin-lxd.tar.zst  LXD VM backup
+STACK-0901-thin/
+|-- STACK-0901-COMMIT-thin-lxd.tar.zst  LXD VM backup
 |-- import.sh                            profile and site reconciliation
 |-- install-host.sh                      Ubuntu 22.04/24.04 LXD/KVM setup
 |-- README.md                            operator instructions
@@ -114,11 +114,11 @@ profile.
 Only these files need to be uploaded:
 
 ```text
-EasyMesh-LXD-0831/
-|-- rdkeasymesh-0831-thin.tar
-|-- rdkeasymesh-0831-thin.tar.sha256
-|-- prplmesh-0831-thin.tar
-`-- prplmesh-0831-thin.tar.sha256
+EasyMesh-LXD-0901/
+|-- rdkeasymesh-0901-thin.tar
+|-- rdkeasymesh-0901-thin.tar.sha256
+|-- prplmesh-0901-thin.tar
+`-- prplmesh-0901-thin.tar.sha256
 ```
 
 Google Drive is transport only. Do not rename or rebuild an uploaded tar
