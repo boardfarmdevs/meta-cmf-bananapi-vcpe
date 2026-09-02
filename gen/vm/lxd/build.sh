@@ -489,6 +489,7 @@ export_vm() {
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
@@ -523,7 +524,7 @@ EOF
     (
         cd "$bundle"
         sha256sum "$(basename "$output")" import.sh install-host.sh \
-            package-release.sh README.md release.env release.json trim-report.txt \
+            package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
     )
     ls -lh "$bundle"/*
@@ -627,6 +628,7 @@ export_thin_vm() {
     sed "s/0831/${release_id}/g" "$root/gen/vm/lxd/README.md" \
         > "$bundle/README.md"
     chmod 0644 "$bundle/README.md"
+    install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
@@ -659,7 +661,7 @@ EOF
     (
         cd "$bundle"
         sha256sum "$(basename "$output")" import.sh install-host.sh \
-            package-release.sh README.md release.env release.json trim-report.txt \
+            package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
     )
     ls -lh "$bundle"/*

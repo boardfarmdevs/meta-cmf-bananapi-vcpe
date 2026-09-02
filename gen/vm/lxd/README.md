@@ -200,7 +200,8 @@ release engineer may create the optional local rollback point with
 
 `export-thin` creates `artifacts/rdkeasymesh-0901-thin/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,
-this README, and `SHA256SUMS`. The VM is stopped before export so its nested
+this README, `RELEASE-NOTES.md`, and `SHA256SUMS`. The VM is stopped before
+export so its nested
 LXD database, radio state and filesystems are coherent. Create the single file
 for Google Drive with:
 
