@@ -1,120 +1,115 @@
 # Portable LXD VM releases
 
 The distribution format is a stopped, coherent LXD virtual-machine appliance.
-Two independent lab families use the same release contract:
+There is one universal thin download for each mesh implementation:
 
-| Stack | Profiles | Web interfaces |
+| Artifact | Profiles selected at import | Web interfaces |
 | --- | --- | --- |
-| RDK EasyMesh | 20, 50, 100 clients | EasyMesh `18889`, wmediumd `18890` |
-| prplMesh | 20, 50, 100 clients | topology adapter `8090`, Controller UI `8091` |
+| `rdkeasymesh-0831-thin.tar` | 20, 50, or 100 clients | EasyMesh `18889`, wmediumd `18890` |
+| `prplmesh-0831-thin.tar` | 20, 50, or 100 clients | topology adapter `8090`, Controller UI `8091` |
 
-Each client count is a separate appliance and is published in two flavors:
+The release contains the installed Ubuntu 24.04/Linux 7 VM, exact source,
+runtime inputs and one reusable nested-client image, but zero provisioned mesh
+nodes. Import requires `--profile 20`, `--profile 50`, or `--profile 100`.
+That choice sets the tested CPU/RAM limits and active hwsim pool, writes an
+immutable profile lock, and only then permits offline first-boot provisioning.
+There is no silent default and the selected appliance cannot be resized into a
+different profile later.
 
-- `ready` contains the complete provisioned nested roster for the fastest cold
-  start;
-- `thin` contains the installed host, exact source and local runtime inputs,
-  but zero provisioned mesh nodes. Its first boot builds the selected roster
-  entirely offline and therefore takes longer.
-
-Import never converts one profile into another. Stable radio identities, the
-hwsim pool size, wmediumd roster and resource limits remain profile-specific.
+Ready VMs remain useful as internal accepted builders and fast local recovery
+points. They are profile-specific because they contain complete rosters, but
+they are not the normal portable download.
 
 ## Release contents
 
-A downloadable `*-bundle.tar` contains one directory:
+Each outer tar contains one directory:
 
 ```text
-STACK-CLIENTS-DATE-COMMIT[-thin]-lxd/
-|-- STACK-CLIENTS-DATE-COMMIT[-thin]-lxd.tar.zst  LXD VM backup
-|-- import.sh                              portable import and proxy setup
-|-- install-host.sh                        Ubuntu 22.04/24.04 LXD/KVM setup
-|-- README.md                              empty-directory workflow
-|-- release.json                           machine-readable identity
-|-- release.env                            importer defaults
-`-- SHA256SUMS                             inner integrity manifest
+STACK-0831-thin/
+|-- STACK-0831-COMMIT-thin-lxd.tar.zst  LXD VM backup
+|-- import.sh                            profile, identity, network and proxy setup
+|-- install-host.sh                      Ubuntu 22.04/24.04 LXD/KVM setup
+|-- README.md                            empty-directory workflow
+|-- release.json                         machine-readable profiles and identity
+|-- release.env                          importer contract
+|-- trim-report.txt                      package cleanup and archive evidence
+`-- SHA256SUMS                           inner integrity manifest
 ```
 
-The adjacent `*-bundle.tar.sha256` authenticates the outer download. Neither
-artifact contains a fixed outer-host IP address, host source mount, Git
-credential or Google credential. Its checksum entry contains only the bundle
-filename, never the release host's absolute path.
+The adjacent `.tar.sha256` authenticates the outer download. Neither artifact
+contains a fixed outer-host address, source mount, Git credential or Google
+credential. Checksum entries use basenames rather than release-host paths.
 
-Before export, the builder removes both version-specific Secure-Boot settings
-from the stopped VM. This prevents a backup made on an older LXD host from
-retaining the retired `security.secureboot` key that current LXD rejects
-during import. Before first boot, the importer disables Secure Boot using
-`boot.mode=uefi-nosecureboot` or the guarded legacy fallback supported by its
-destination LXD. Release metadata is populated from the instance's actual CPU,
-memory and root-disk configuration rather than inferred profile defaults.
+The portable default is userspace wmediumd. The kernel medium is an explicit
+experimental performance backend and is not selected in these packages.
+
+## Empty-directory workflow
+
+Download one tar and its checksum into any empty directory:
+
+```sh
+sha256sum -c STACK-0831-thin.tar.sha256
+tar -xf STACK-0831-thin.tar
+cd STACK-0831-thin
+sha256sum -c SHA256SUMS
+sudo ./install-host.sh
+newgrp lxd
+./import.sh --profile 20
+```
+
+Use profile `50` or `100` only when the host has the resources declared in
+`release.json`. Site variables documented in the included README can select
+the LXD network/storage pool, outer-host address, ports, and instance name.
+
+The importer refuses to overwrite an existing instance. It reseeds portable
+VM identities, selects destination CPU/RAM, starts the unconfigured VM, and
+locks the requested profile while the nested inventory is still empty. RDK
+also reconciles the guest NIC to the selected site address before publishing
+its proxies. First-boot provisioning is then started asynchronously and can be
+followed with the printed journal and health commands.
+
+The common sparse logical disk supports the largest profile. Sparse capacity
+is not download size: a smaller profile consumes only the blocks it writes,
+while the destination storage pool must still support the declared logical
+maximum and normal operating headroom.
 
 ## Google Drive layout
 
-Use one release folder and preserve the filenames produced by the packager:
+Only these portable files are required:
 
 ```text
 EasyMesh-LXD-0831/
 |-- catalog.json
-|-- rdkeasymesh-{20,50,100}-...-lxd-bundle.tar
-|-- rdkeasymesh-{20,50,100}-...-lxd-bundle.tar.sha256
-|-- rdkeasymesh-{20,50,100}-...-thin-lxd-bundle.tar
-|-- rdkeasymesh-{20,50,100}-...-thin-lxd-bundle.tar.sha256
-|-- prplmesh-{20,50,100}-...-lxd-bundle.tar
-|-- prplmesh-{20,50,100}-...-lxd-bundle.tar.sha256
-|-- prplmesh-{20,50,100}-...-thin-lxd-bundle.tar
-`-- prplmesh-{20,50,100}-...-thin-lxd-bundle.tar.sha256
+|-- QUALIFICATION.md
+|-- rdkeasymesh-0831-thin.tar
+|-- rdkeasymesh-0831-thin.tar.sha256
+|-- prplmesh-0831-thin.tar
+`-- prplmesh-0831-thin.tar.sha256
 ```
 
-`catalog.json` lists the stack, profile, flavor, source commit, accepted
-runtime-base commit where applicable, size, SHA-256, release status, Drive
-file identifier and UI ports. Drive is only the transport; a release is
-identified by its checked metadata and checksum. Publish a direct download
-identifier only after uploading the immutable file.
-
-## Empty-directory workflow
-
-The operator downloads one profile and its checksum into an empty directory:
-
-```sh
-sha256sum -c DOWNLOADED-bundle.tar.sha256
-tar -xf DOWNLOADED-bundle.tar
-cd STACK-CLIENTS-DATE-COMMIT-lxd
-sha256sum -c SHA256SUMS
-sudo ./install-host.sh
-newgrp lxd
-./import.sh
-```
-
-`import.sh` selects the single VM backup beside it, detects the outer host's
-default IPv4 address, chooses an unused guest address, installs the UI proxies,
-starts the VM, and prints the monitor and health commands. Site overrides such
-as instance name, LXD network, host address and ports remain environment
-variables documented in the bundle README.
+Drive is transport only. `catalog.json`, the checked inner metadata and the
+outer SHA-256 identify a release. Publish a Drive identifier only after the
+immutable file has been uploaded and rechecked.
 
 ## Candidate versus accepted
 
-Packaging creates `status: candidate`. A release engineer changes the catalog
-status to `accepted` only after a clean import on another host passes:
+Packaging marks a bundle as `candidate`. The exact same outer artifact bytes
+must be imported independently with profiles 20, 50, and 100. Every run must
+prove:
 
-1. exact source, client, radio and process cardinality;
-2. cold reconstruction without an operator repair command;
-3. both HTTP health gates and complete topology;
-4. all-client data traffic and representative steering;
-5. configurator and optimizer restoration gates;
-6. a one-hour churn soak for that exact profile; and
-7. bounded CPU, memory, storage, logs and startup/shutdown time.
+1. zero initial nested mesh nodes and one verified local runtime image;
+2. no clone, pull, package download, or other external provisioning input;
+3. exact source, profile lock, radio, node, client and process cardinality;
+4. cold reconstruction without an operator repair command;
+5. complete topology, both SSIDs, three bands and all-client traffic;
+6. representative steering, metrics, configurator restore and optimizer gates;
+7. a one-hour churn campaign with bounded resources and no process, database,
+   VIF, kernel, or memory leak; and
+8. a warm VM restart with the profile and identities unchanged.
 
-A thin candidate additionally has to prove that its exported inventory is
-empty, the first boot performs no clone, pull or download, the final inventory
-matches the selected profile, and its pending marker is cleared only after the
-normal acceptance gates pass. A longer first boot is expected and is not a
-failure by itself.
-
-Failure in one profile does not demote another profile, but a 20-client result
-must never be used to label a 50- or 100-client artifact accepted. Userspace
-wmediumd remains the portable release default; the kernel medium is an
-explicit experimental selection.
-
-At the current evaluation point, the release tooling supports all three
-profiles. Acceptance evidence is still profile-specific: an artifact must not
-be uploaded as accepted until its one-hour campaign and foreign-host import
-have completed.
+The first-boot marker is cleared only after the normal acceptance suite passes.
+A longer thin first boot is expected and is not a failure by itself. Evidence
+and pass/fail state remain profile-specific, but the universal artifact becomes
+distributable only after all three selections pass. A rebuilt archive receives
+a new checksum and invalidates the earlier qualification even when its filename
+is unchanged.

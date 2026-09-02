@@ -16,7 +16,12 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 
 ## 0831
 
-- Made LXD VM the primary portable appliance and supplied immutable 20-, 50-, and 100-client profiles with faster bounded lifecycle operations.
+- Made LXD VM the primary portable appliance. One thin artifact per mesh stack
+  now selects and locks an immutable 20-, 50-, or 100-client profile at import,
+  instead of duplicating the installed VM in three downloads.
 - Added the optional kernel-medium research backend while retaining userspace wmediumd as the default, including common telemetry, tests, and performance/scale evaluation.
 - Fixed long-run AP-metrics memory growth, stale station ownership after roaming, medium/VIF ownership ambiguity, controller command lifetime, DHCP recovery, and cross-host appliance provisioning.
 - Delivered portable, checksum-verified LXD bundles and import acceptance procedures suitable for redistribution.
+- Fixed the common multichannel hwsim monitor-ACK null-channel fault and added
+  a live regression that rejects a kernel Oops, wmediumd death, or nl80211
+  deadlock.
