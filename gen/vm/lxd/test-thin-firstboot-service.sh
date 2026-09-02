@@ -39,6 +39,8 @@ grep -F 'accept_thin_provisioned_handoff' \
     "$root/gen/vm/scripts/guest/easymesh-lab-runtime" >/dev/null
 grep -F 'preserving $((client_count + 5)) running instances' \
     "$root/gen/vm/scripts/guest/easymesh-lab-runtime" >/dev/null
+grep -F 'normal runtime recovery required' \
+    "$root/gen/vm/scripts/guest/easymesh-thin-firstboot" >/dev/null
 
 if grep -Eq '^TimeoutStartSec=[0-9]' "$thin_unit"; then
     echo 'thin first-boot service has a fixed numeric start deadline' >&2
