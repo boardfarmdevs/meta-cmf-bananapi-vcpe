@@ -16,7 +16,32 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 
 ## 0831
 
-- Made LXD VM the primary portable appliance and supplied immutable 20-, 50-, and 100-client profiles with faster bounded lifecycle operations.
+- Made LXD VM the primary portable appliance. One thin artifact per mesh stack
+  now selects and locks an immutable 20-, 50-, or 100-client profile at import,
+  instead of duplicating the installed VM in three downloads.
 - Added the optional kernel-medium research backend while retaining userspace wmediumd as the default, including common telemetry, tests, and performance/scale evaluation.
 - Fixed long-run AP-metrics memory growth, stale station ownership after roaming, medium/VIF ownership ambiguity, controller command lifetime, DHCP recovery, and cross-host appliance provisioning.
 - Delivered portable, checksum-verified LXD bundles and import acceptance procedures suitable for redistribution.
+- Fixed the common multichannel hwsim monitor-ACK null-channel fault and added
+  a live regression that rejects a kernel Oops, wmediumd death, or nl80211
+  deadlock.
+- Reduced the portable handoff to `rdkeasymesh-0831-thin.tar` and
+  `prplmesh-0831-thin.tar`. Each archive requires an immutable 20-, 50-, or
+  100-client selection at import and provisions entirely from local inputs.
+- Made import wait for the nested LXD API before publishing the profile lock
+  and UI proxies, eliminating a first-boot race on a newly imported VM.
+
+## 0901
+
+- Eliminated the second whole-lab reconstruction after offline thin
+  provisioning. A boot-scoped, one-use handoff preserves the validated running
+  roster while retaining the normal final health audit and cold-start fallback.
+- Aligned the RDK and prplMesh controller topology presentation and wmediumd
+  Console, including filtering inactive reserve radios from the operational
+  graph without removing them from raw inventory.
+- Documented the MediaTek single-wiphy to three-logical-radio contract, its
+  hwsim projection, and the resulting patch, steering, metric, lifecycle and
+  performance boundaries.
+- Made portable release identifiers explicit in bundle metadata and import
+  defaults so a 0901 artifact creates clearly named 0901 instances while old
+  0831 bundles remain reproducible.

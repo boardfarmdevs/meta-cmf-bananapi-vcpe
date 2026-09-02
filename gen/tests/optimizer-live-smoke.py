@@ -21,6 +21,15 @@ from optimizer.policy import ThresholdPolicy
 from optimizer.state import PolicyState
 
 
+def selected_same_band_candidates(snapshot, selected_sta_macs):
+    """Return only candidates the policy requested for this observation."""
+    return [
+        item for item in snapshot.candidates
+        if item.sta_mac in selected_sta_macs
+        and item.band == snapshot.client(item.sta_mac).band
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8888")
@@ -49,13 +58,14 @@ def main() -> int:
             "interval cannot be negative"
         )
 
+    policy = ThresholdPolicy(load_policy(args.policy))
     provider = ControllerCandidateProvider(
         args.base_url,
         allow_simulated=True,
         request_attempts=args.candidate_attempts,
+        client_selector=policy.requires_candidate_measurement,
     )
     observer = ControllerObserver(args.base_url, candidate_provider=provider)
-    policy = ThresholdPolicy(load_policy(args.policy))
     state = PolicyState()
 
     for cycle in range(args.cycles):
@@ -81,10 +91,8 @@ def main() -> int:
             item.sta_mac for item in snapshot.clients
             if item.rcpi is None or item.metric_observed_at is None
         ]
-        same_band = [
-            item for item in snapshot.candidates
-            if item.band == snapshot.client(item.sta_mac).band
-        ]
+        selected = provider.last_selected_sta_macs
+        same_band = selected_same_band_candidates(snapshot, selected)
         missing_candidates = [
             f"{item.sta_mac}@{item.bssid}" for item in same_band
             if item.rcpi is None or item.metric_observed_at is None
@@ -114,6 +122,7 @@ def main() -> int:
             "clients": snapshot.health.clients,
             "same_band_candidates": len(same_band),
             "candidate_transactions": len(provider.last_raw),
+            "candidate_clients": len(selected),
             "maximum_metric_age_seconds": round(max_age, 3),
             "actions": sum(item.action == "steer" for item in evaluation.decisions),
             "reasons": sorted({item.reason for item in evaluation.decisions}),

@@ -4,13 +4,19 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
+release_id=${EASYMESH_RELEASE_ID:-0831}
+case "$release_id" in
+    [0-9][0-9][0-9][0-9]) ;;
+    *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
+esac
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
     | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 default_host_address=${default_host_address:-127.0.0.1}
 profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
-name=${EASYMESH_LXD_NAME:-rdkeasymesh-${profile_clients}-0831}
+release_name=$(easymesh_profile_release_name "$profile")
+name=${EASYMESH_LXD_NAME:-$release_name}
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
 memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
@@ -23,6 +29,7 @@ webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
 boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
@@ -43,6 +50,7 @@ Commands:
   check       run the complete lab acceptance audit
   snapshot    replace the accepted snapshot after a passing check
   export      check, stop and export a portable LXD VM backup bundle
+  export-thin check, remove provisioned nodes and export the universal offline bundle
   delete      delete only the named appliance VM after showing its identity
 
 Build inputs:
@@ -60,6 +68,7 @@ Common overrides:
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
   WMEDIUMD_CONSOLE_PORT=$console_port
+  EASYMESH_LXD_HTTP_READY_TIMEOUT=$http_ready_timeout
 EOF
 }
 
@@ -87,6 +96,29 @@ wait_agent() {
         sleep 2
     done
     echo "$name did not expose its LXD VM agent after 240 seconds" >&2
+    return 1
+}
+
+wait_http_ready() {
+    local label=$1 url=$2 retries
+    case "$http_ready_timeout" in
+        ''|*[!0-9]*|0)
+            echo "EASYMESH_LXD_HTTP_READY_TIMEOUT must be a positive integer" >&2
+            return 2
+            ;;
+    esac
+    # LXD's outer proxy may answer 503 briefly after the VM agent and the
+    # guest-side service are ready. Bound the wait independently from each
+    # connection/response attempt and require the real endpoint to return 2xx.
+    retries=$((http_ready_timeout / 2 + 1))
+    if curl -fsS --retry-all-errors --retry "$retries" --retry-delay 2 \
+        --retry-max-time "$http_ready_timeout" --connect-timeout 2 \
+        --max-time 10 "$url" >/dev/null; then
+        printf '%s ready: %s\n' "$label" "$url"
+        return 0
+    fi
+    printf '%s did not become ready within %ss: %s\n' \
+        "$label" "$http_ready_timeout" "$url" >&2
     return 1
 }
 
@@ -211,6 +243,11 @@ push_inputs() {
         [easymesh-labctl]=gen/vm/scripts/guest/easymesh-labctl
         [easymesh-health-audit]=gen/tests/health-audit.sh
         [easymesh-package-cleanup]=gen/vm/scripts/guest/easymesh-package-cleanup
+        [easymesh-prepare-thin-package]=gen/vm/scripts/guest/easymesh-prepare-thin-package
+        [easymesh-complete-thin-firstboot]=gen/vm/scripts/guest/easymesh-complete-thin-firstboot
+        [easymesh-thin-firstboot]=gen/vm/scripts/guest/easymesh-thin-firstboot
+        [easymesh-select-thin-profile]=gen/vm/scripts/guest/easymesh-select-thin-profile
+        [easymesh-thin-firstboot.service]=gen/vm/scripts/guest/easymesh-thin-firstboot.service
     )
     for file in "${!guest_assets[@]}"; do
         lxc file push --mode 0755 "$root/${guest_assets[$file]}" \
@@ -353,10 +390,10 @@ build_vm() {
         /usr/local/sbin/easymesh-labctl check
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
-    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
-        "http://$proxy_check_address:$webui_port/api/v1/topology" >/dev/null
-    curl -fsS --retry 12 --retry-delay 2 --max-time 10 \
-        "http://$proxy_check_address:$console_port/api/v1/health" >/dev/null
+    wait_http_ready "EasyMesh WebUI proxy" \
+        "http://$proxy_check_address:$webui_port/api/v1/topology"
+    wait_http_ready "wmediumd Console proxy" \
+        "http://$proxy_check_address:$console_port/api/v1/health"
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
@@ -415,6 +452,7 @@ snapshot_vm() {
 export_vm() {
     local short bundle output created actual_cpus actual_memory actual_disk actual_storage trim_report
     require_command jq
+    install -d "$export_dir"
     check_vm
     actual_cpus=$(lxc config get "$name" limits.cpu)
     actual_memory=$(lxc config get "$name" limits.memory)
@@ -435,8 +473,8 @@ export_vm() {
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
@@ -458,12 +496,14 @@ LAB_STACK=rdkeasymesh
 LAB_PROFILE=$profile
 LAB_CLIENTS=$profile_clients
 LAB_HWSIM_RADIOS=$profile_radios
-LAB_DEFAULT_NAME=$name
+LAB_DEFAULT_NAME=$release_name
 LAB_DEFAULT_CPUS=$actual_cpus
 LAB_DEFAULT_MEMORY=$actual_memory
 LAB_DEFAULT_DISK=$actual_disk
 LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$(git -C "$root" rev-parse HEAD)
+LAB_RELEASE_FLAVOR=ready
+LAB_FIRST_BOOT_PROVISIONING=false
 LAB_TRIMMED=true
 EOF
     jq -n \
@@ -471,13 +511,150 @@ EOF
         --argjson clients "$profile_clients" --argjson radios "$profile_radios" \
         --arg source_commit "$(git -C "$root" rev-parse HEAD)" \
         --arg created_at "$created" --arg archive "$(basename "$output")" \
-        --arg instance "$name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
+        --arg instance "$release_name" --arg cpus "$actual_cpus" --arg memory "$actual_memory" \
         --arg disk "$actual_disk" --arg build_storage "$actual_storage" \
         '{schema_version:1,stack:$stack,profile:$profile,clients:$clients,
           hwsim_radios:$radios,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,defaults:{instance:$instance,cpus:$cpus,memory:$memory,disk:$disk},
+          release_flavor:"ready",first_boot_provisioning:false,
           build:{storage_pool:$build_storage},
           trim:{applied:true,report:"trim-report.txt"},
+          status:"candidate"}' > "$bundle/release.json"
+    (
+        cd "$bundle"
+        sha256sum "$(basename "$output")" import.sh install-host.sh \
+            package-release.sh README.md release.env release.json trim-report.txt \
+            > SHA256SUMS
+    )
+    ls -lh "$bundle"/*
+}
+
+export_thin_vm() {
+    local short bundle output created actual_cpus actual_memory actual_disk actual_storage
+    local trim_report controller_name extender_name meta_commit wmediumd_sha assets
+    require_command jq
+    install -d "$export_dir"
+    [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
+    [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
+    check_vm
+    # One universal backup must have enough sparse logical capacity for the
+    # stress roster.  Profile selection changes CPU, RAM and the active radio
+    # pool at import; the common disk stays at the accepted maximum and only
+    # consumes blocks that first-boot provisioning actually writes.
+    lxc config device set "$name" root size 96GiB
+    actual_cpus=$(lxc config get "$name" limits.cpu)
+    actual_memory=$(lxc config get "$name" limits.memory)
+    actual_disk=$(lxc config device get "$name" root size)
+    actual_storage=$(lxc config device get "$name" root pool)
+    [ -n "$actual_cpus" ] && [ -n "$actual_memory" ] && [ -n "$actual_disk" ] \
+        && [ -n "$actual_storage" ] || {
+        echo "cannot determine actual resources for $name" >&2
+        exit 1
+    }
+    [ "$actual_disk" = 96GiB ] || {
+        echo "universal thin root disk did not expand to 96GiB: $actual_disk" >&2
+        exit 1
+    }
+
+    meta_commit=$(git -C "$root" rev-parse HEAD)
+    wmediumd_sha=$(sha256sum "$root/gen/wmediumd/wmediumd.patched" | awk '{print $1}')
+    controller_name=$(basename "$controller_image")
+    extender_name=$(basename "$extender_image")
+    assets=/home/easymesh/easymesh-assets
+    run_root install -d -o easymesh -g easymesh "$assets"
+    lxc file push "$controller_image" "$name$assets/$controller_name"
+    lxc file push "$extender_image" "$name$assets/$extender_name"
+    lxc exec "$name" -- chown easymesh:easymesh \
+        "$assets/$controller_name" "$assets/$extender_name"
+
+    # Install from the accepted checkout as well as the staged copies. This
+    # permits export-thin after a ready export removed the staging directory.
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-prepare-thin-package \
+        /usr/local/sbin/easymesh-prepare-thin-package
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-thin-firstboot \
+        /usr/local/sbin/easymesh-thin-firstboot
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-select-thin-profile \
+        /usr/local/sbin/easymesh-select-thin-profile
+    run_root install -m 0755 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-complete-thin-firstboot \
+        /usr/local/sbin/easymesh-complete-thin-firstboot
+    run_root install -m 0644 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-thin-firstboot.service \
+        /etc/systemd/system/easymesh-thin-firstboot.service
+    run_root install -m 0644 \
+        /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/scripts/guest/easymesh-lab.service \
+        /etc/systemd/system/easymesh-lab.service
+    run_root systemctl daemon-reload
+
+    trim_report=$(mktemp "$export_dir/.${name}.thin-trim.XXXXXX")
+    run_root env \
+        EASYMESH_REPO=/home/easymesh/git/meta-cmf-bananapi-vcpe \
+        CONTROLLER_IMAGE="$assets/$controller_name" \
+        EXTENDER_IMAGE="$assets/$extender_name" \
+        EXPECTED_REPO_HEAD="$meta_commit" \
+        EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \
+        EASYMESH_THIN_PROFILE_SELECTABLE=true \
+        /usr/local/sbin/easymesh-prepare-thin-package | tee "$trim_report"
+    run_root /usr/local/sbin/easymesh-package-cleanup thin | tee -a "$trim_report"
+    test "$(lxc exec "$name" -- lxc list -c n --format csv | awk '
+        /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+        END {print n+0}')" = 0
+    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-firstboot.template.env
+    lxc exec "$name" -- test -f /var/lib/easymesh-lab/thin-profile-selection.required
+    lxc exec "$name" -- test ! -e /var/lib/easymesh-lab/thin-firstboot.env
+    lxc exec "$name" -- lxc image info wlan-client-base >/dev/null
+
+    stop_vm
+    clear_secure_boot_config
+    short=$(git -C "$root" rev-parse --short=7 HEAD)
+    created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    bundle="$export_dir/rdkeasymesh-${release_id}-thin"
+    output="$bundle/rdkeasymesh-${release_id}-${short}-thin-lxd.tar.zst"
+    rm -rf -- "$bundle"
+    install -d "$bundle"
+    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
+        configure_no_secure_boot
+        return 1
+    fi
+    printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
+    configure_no_secure_boot
+    install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
+    install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
+    sed "s/0831/${release_id}/g" "$root/gen/vm/lxd/README.md" \
+        > "$bundle/README.md"
+    chmod 0644 "$bundle/README.md"
+    install -m 0644 "$trim_report" "$bundle/trim-report.txt"
+    rm -f -- "$trim_report"
+    cat > "$bundle/release.env" <<EOF
+LAB_STACK=rdkeasymesh
+LAB_RELEASE_ID=$release_id
+LAB_PROFILE_SELECTABLE=true
+LAB_SUPPORTED_PROFILES=20,50,100
+LAB_DEFAULT_DISK=96GiB
+LAB_BUILD_STORAGE=$actual_storage
+LAB_SOURCE_COMMIT=$meta_commit
+LAB_RELEASE_FLAVOR=thin
+LAB_FIRST_BOOT_PROVISIONING=true
+LAB_TRIMMED=true
+EOF
+    jq -n \
+        --arg stack rdkeasymesh \
+        --arg release_id "$release_id" \
+        --arg source_commit "$meta_commit" --arg created_at "$created" \
+        --arg archive "$(basename "$output")" \
+        --arg disk 96GiB --arg build_storage "$actual_storage" \
+        '{schema_version:2,stack:$stack,release_id:$release_id,profile_selectable:true,
+          supported_profiles:[20,50,100],source_commit:$source_commit,created_at:$created_at,
+          archive:$archive,release_flavor:"thin",first_boot_provisioning:true,
+          profiles:{"20":{name:"small",instance:("rdkeasymesh-20-"+$release_id),clients:20,hwsim_radios:32,cpus:6,memory:"8GiB"},
+                    "50":{name:"medium",instance:("rdkeasymesh-50-"+$release_id),clients:50,hwsim_radios:64,cpus:8,memory:"12GiB"},
+                    "100":{name:"stress",instance:("rdkeasymesh-100-"+$release_id),clients:100,hwsim_radios:128,cpus:12,memory:"20GiB"}},
+          defaults:{disk:$disk},
+          build:{storage_pool:$build_storage},trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
@@ -504,6 +681,7 @@ case "${1:-}" in
     check) check_vm ;;
     snapshot) snapshot_vm ;;
     export) export_vm ;;
+    export-thin) export_thin_vm ;;
     delete) delete_vm ;;
     -h|--help|help|'') usage ;;
     *) usage >&2; exit 2 ;;

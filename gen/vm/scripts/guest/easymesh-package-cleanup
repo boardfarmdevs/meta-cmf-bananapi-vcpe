@@ -8,6 +8,11 @@ set -euo pipefail
     echo "package cleanup must run as root" >&2
     exit 1
 }
+flavor=${1:-ready}
+case "$flavor" in
+    ready|thin) ;;
+    *) echo "invalid package flavor: $flavor (expected ready or thin)" >&2; exit 2 ;;
+esac
 
 root_used()
 {
@@ -24,12 +29,24 @@ printf 'trim_started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'root_used_bytes_before=%s\n' "$(root_used)"
 printf 'nested_images_before=%s\n' "$(nested_images | awk 'NF {n++} END {print n+0}')"
 
+# The importer installs a site-specific static address only after a foreign
+# LXD server has selected its managed bridge and free reservation.  Never
+# carry that build/import host address into the portable backup.
+rm -f /etc/netplan/99-easymesh-lxd-site.yaml \
+    /etc/netplan/99-easymesh-lxd-dhcp-mac.yaml
+
 systemctl stop easymesh-lab.service 2>/dev/null || true
 systemctl stop wmediumd-console.service 2>/dev/null || true
 docker stop dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 || true
 
 docker builder prune -af >/dev/null 2>&1 || true
-docker image prune -af >/dev/null 2>&1 || true
+# Keep tagged base and Boardfarm images in both release flavors.  A thin
+# appliance deliberately provisions its nested EasyMesh roster on first boot,
+# but that longer first boot must remain independent of a registry.  Removing
+# every unused image here drops the FROM-image tags after the Boardfarm
+# containers stop and turns a portable artifact into an implicit online
+# installer.  Dangling intermediates are safe to discard.
+docker image prune -f >/dev/null 2>&1 || true
 apt-get clean
 find /var/lib/apt/lists -xdev -mindepth 1 -maxdepth 1 -delete
 journalctl --rotate >/dev/null 2>&1 || true
@@ -41,14 +58,18 @@ journalctl --vacuum-size=16M >/dev/null 2>&1 || true
 find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 1 -delete 2>/dev/null || true
 find /var/log -type f \( -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) \
     -delete
-rm -rf /home/easymesh/easymesh-assets
+if [ "$flavor" = ready ]; then
+    rm -rf /home/easymesh/easymesh-assets
+fi
 
 # Fixed release profiles already contain every provisioned node. Their nested
 # LXD source-image cache is not needed for normal lifecycle or acceptance.
-while IFS= read -r fingerprint; do
-    [ -n "$fingerprint" ] || continue
-    lxc image delete "$fingerprint" >/dev/null
-done < <(nested_images)
+if [ "$flavor" = ready ]; then
+    while IFS= read -r fingerprint; do
+        [ -n "$fingerprint" ] || continue
+        lxc image delete "$fingerprint" >/dev/null
+    done < <(nested_images)
+fi
 
 sync
 printf 'fstrim_output_begin\n'

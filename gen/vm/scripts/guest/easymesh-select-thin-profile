@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec </dev/null
+
+state_dir=${EASYMESH_PROFILE_STATE_DIR:-/var/lib/easymesh-lab}
+template=$state_dir/thin-firstboot.template.env
+required=$state_dir/thin-profile-selection.required
+pending=$state_dir/thin-firstboot.env
+completed=$state_dir/thin-firstboot.completed.env
+lock=$state_dir/thin-profile.lock.env
+defaults=${EASYMESH_PROFILE_DEFAULTS:-/etc/default/easymesh-lab}
+modprobe_conf=${EASYMESH_PROFILE_MODPROBE_CONF:-/etc/modprobe.d/easymesh-hwsim.conf}
+test_mode=${EASYMESH_PROFILE_TEST_MODE:-false}
+
+usage() {
+    echo "usage: $0 20|50|100" >&2
+}
+
+case "${1:-}" in
+    20)
+        profile=small
+        clients=20
+        radios=32
+        ;;
+    50)
+        profile=medium
+        clients=50
+        radios=64
+        ;;
+    100)
+        profile=stress
+        clients=100
+        radios=128
+        ;;
+    -h|--help|'')
+        usage
+        exit 2
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+
+install -d -m 0755 "$state_dir" "$(dirname "$defaults")" \
+    "$(dirname "$modprobe_conf")"
+
+if [ -f "$lock" ]; then
+    # shellcheck disable=SC1090
+    . "$lock"
+    if [ "${HEALTH_EXPECT_CLIENTS:-}" = "$clients" ]; then
+        echo "thin profile already locked: $clients clients ($profile)"
+        exit 0
+    fi
+    echo "thin profile is already locked to ${HEALTH_EXPECT_CLIENTS:-unknown} clients" >&2
+    exit 1
+fi
+
+[ -f "$template" ] || {
+    echo "thin first-boot template is missing: $template" >&2
+    exit 1
+}
+[ -f "$required" ] || {
+    echo "this appliance is not awaiting thin profile selection" >&2
+    exit 1
+}
+[ ! -e "$pending" ] && [ ! -e "$completed" ] || {
+    echo "thin provisioning has already been selected or completed" >&2
+    exit 1
+}
+
+if [ "$test_mode" != true ]; then
+    current_instances=$(lxc list -c n --format csv | awk '
+        /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+        END {print n+0}')
+    [ "$current_instances" -eq 0 ] || {
+        echo "refusing profile selection with $current_instances provisioned lab instances" >&2
+        exit 1
+    }
+
+    # The universal backup may have been produced from any accepted builder
+    # profile.  No nested node exists at this point, so it is safe to replace
+    # that idle hwsim pool once with the selected pool before identities are
+    # provisioned.
+    systemctl stop easymesh-lab.service easymesh-thin-firstboot.service \
+        easymesh-hwsim-pool.service 2>/dev/null || true
+fi
+
+defaults_tmp=$defaults.tmp.$$
+modprobe_tmp=$modprobe_conf.tmp.$$
+pending_tmp=$pending.tmp.$$
+lock_tmp=$lock.tmp.$$
+trap 'rm -f -- "$defaults_tmp" "$modprobe_tmp" "$pending_tmp" "$lock_tmp"' EXIT
+
+cat > "$defaults_tmp" <<EOF
+EASYMESH_SCALE_PROFILE=$profile
+HEALTH_EXPECT_CLIENTS=$clients
+EOF
+chmod 0644 "$defaults_tmp"
+mv -f "$defaults_tmp" "$defaults"
+
+printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$radios" \
+    > "$modprobe_tmp"
+chmod 0644 "$modprobe_tmp"
+mv -f "$modprobe_tmp" "$modprobe_conf"
+
+if [ "$test_mode" != true ]; then
+    if [ -d /sys/module/mac80211_hwsim ]; then
+        modprobe -r mac80211_hwsim
+    fi
+    modprobe mac80211_hwsim
+    systemctl start easymesh-hwsim-pool.service
+    test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$radios"
+    test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = 3
+    test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = 5
+fi
+
+cat "$template" > "$pending_tmp"
+cat >> "$pending_tmp" <<EOF
+EASYMESH_SCALE_PROFILE=$profile
+HEALTH_EXPECT_CLIENTS=$clients
+HWSIM_RADIOS=$radios
+EOF
+chmod 0600 "$pending_tmp"
+
+cat > "$lock_tmp" <<EOF
+EASYMESH_SCALE_PROFILE=$profile
+HEALTH_EXPECT_CLIENTS=$clients
+HWSIM_RADIOS=$radios
+EOF
+chmod 0444 "$lock_tmp"
+
+# Publish the immutable lock and complete first-boot manifest only after the
+# selected host resources and radio pool are valid.  A failed earlier step is
+# therefore retryable without creating a partially selected appliance.
+mv -f "$lock_tmp" "$lock"
+mv -f "$pending_tmp" "$pending"
+rm -f "$required"
+trap - EXIT
+
+echo "thin profile locked: $clients clients ($profile), $radios hwsim radios"

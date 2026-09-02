@@ -35,6 +35,7 @@ lifecycle_started_ms=$(date +%s%3N)
 lifecycle_timing_file=
 lifecycle_phase=
 lifecycle_phase_started_ms=0
+thin_handoff=${EASYMESH_THIN_HANDOFF:-/run/easymesh-lab/thin-provisioned-handoff.env}
 
 case "$medium_backend" in
 userspace|kernel) ;;
@@ -698,10 +699,58 @@ capture_result() {
     chown -R "$lab_user:$lab_group" "$run"
 }
 
+accept_thin_provisioned_handoff() {
+    local expected_instances actual_instances running_instances repo_head
+
+    [ -s "$thin_handoff" ] || return 1
+    # shellcheck disable=SC1090
+    . "$thin_handoff"
+    : "${THIN_HANDOFF_CLIENTS:?missing THIN_HANDOFF_CLIENTS}"
+    : "${THIN_HANDOFF_INSTANCES:?missing THIN_HANDOFF_INSTANCES}"
+    : "${THIN_HANDOFF_REPO_HEAD:?missing THIN_HANDOFF_REPO_HEAD}"
+    [[ "$THIN_HANDOFF_CLIENTS" =~ ^[0-9]+$ ]]
+    [[ "$THIN_HANDOFF_INSTANCES" =~ ^[0-9]+$ ]]
+    [ "$THIN_HANDOFF_CLIENTS" -eq "$client_count" ]
+    expected_instances=$((client_count + 5))
+    [ "$THIN_HANDOFF_INSTANCES" -eq "$expected_instances" ]
+
+    actual_instances=$(lxc list -c n --format csv | awk '
+        /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ {n++}
+        END {print n+0}')
+    running_instances=$(lxc list -c ns --format csv | awk -F, '
+        $1 ~ /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ &&
+            $2 == "RUNNING" {n++}
+        END {print n+0}')
+    [ "$actual_instances" -eq "$expected_instances" ]
+    [ "$running_instances" -eq "$expected_instances" ]
+
+    repo_head=$(git -c safe.directory="${gen%/gen}" -C "${gen%/gen}" rev-parse HEAD)
+    [ "$repo_head" = "$THIN_HANDOFF_REPO_HEAD" ]
+    verify_medium_backend
+    [ "$(live_client_count)" -eq "$client_count" ]
+    [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+        'select count(*) from DeviceList;' 2>/dev/null)" -eq 5 ]
+}
+
 case "$action" in
 start)
     result=FAIL
     trap 'if [ "$result" != PASS ]; then capture_result "$result"; fi; rm -f "$lifecycle_timing_file"' EXIT
+    if [ -s "$thin_handoff" ]; then
+        begin_phase thin_provisioned_handoff
+        if accept_thin_provisioned_handoff; then
+            rm -f "$thin_handoff"
+            end_phase
+            result=PASS
+            write_lifecycle_timing "$result"
+            trap - EXIT
+            echo "EasyMesh thin first-boot handoff PASS: preserving $((client_count + 5)) running instances for final acceptance"
+            exit 0
+        fi
+        echo 'thin first-boot handoff validation failed; falling back to normal reconstruction' >&2
+        rm -f "$thin_handoff"
+        end_phase
+    fi
     begin_phase infrastructure
     systemctl start docker.service snap.lxd.daemon.service
     for attempt in $(seq 1 30); do

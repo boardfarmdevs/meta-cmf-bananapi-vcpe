@@ -9,11 +9,12 @@ tooling, deployment automation, and tests remain separate host infrastructure.
 
 ## Scope
 
-The current source series contains EasyMesh patches through `0123`, IEEE1905
+The current source series contains EasyMesh patches through `0145`, IEEE1905
 patches through `0006`, libwebconfig patches through `0012`, OneWifi patches
-through `0020`, and Wi-Fi HAL patches through `0030`, plus the log4c
-category-factory serialization fix. Never infer image content from the host
-checkout; record the image filename, hash, and source revision used to build it.
+through `0023`, Wi-Fi HAL patches through `0033`, host hwsim patches through
+`0008`, and wmediumd patches through `0019`, plus the log4c category-factory
+serialization fix. Never infer image content from the host checkout; record
+the image filename, hash, and source revision used to build it.
 
 ## Patch boundaries
 
@@ -69,25 +70,97 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - resolve a duplicate extender AL MAC to its Wi-Fi STA interface instead of
   rejecting DML initialization after `getifaddrs()` returns the bridge first.
 
-### hwsim and single-phy adaptations
+### Inherited MediaTek single-wiphy contract
 
-These must remain gated from a physical MediaTek build:
+The physical BPI platform already represents the integrated MediaTek device as
+one Linux wiphy projected by `FEATURE_SINGLE_PHY` into three RDK radios and
+three EasyMesh RUIDs. The 2.4, 5 and 6 GHz band PHY/MAC engines can operate
+concurrently while sharing device-level firmware, DMA, calibration and reset
+resources. This projection is inherited platform behavior, not a downstream
+hwsim workaround and not an EasyMesh-stack defect.
 
-- discover radios/interfaces without physical-platform phy-index assumptions;
-- suppress unsupported ACL and management subscriptions by capability;
-- project one wiphy into three logical radios;
-- use concurrent 20 MHz 2.4/5/6 GHz contexts;
-- establish the Linux 7.0 strict 6 GHz regulatory environment;
-- avoid assuming an operational MLD when hwsim is non-MLO; and
-- filter retained, inactive hwsim AP station rows before they become
-  contradictory EasyMesh association claims; and
-- refresh management-frame and EAPOL receive registrations after an hwsim AP
-  restart while retaining its live optional spurious-frame subscription; and
-- reconcile each successful OneWifi associated-client diagnostic as an
-  authoritative VAP snapshot, including the empty withdrawal case;
-- age hwsim-only stale AP station objects through hostapd's liveness probe
-  quickly enough that they cannot hide the next authorization edge; and
-- register and isolate simultaneous frequencies with wmediumd.
+The full ownership hierarchy is:
+
+```text
+device AL MAC
+  -> one Linux wiphy / base-device owner
+     -> three logical RDK radios and EasyMesh RUIDs
+        -> per-band AP and backhaul VIFs / BSSIDs
+           -> associated client identities
+```
+
+Consequently, no patch may assume that `wiphy == EasyMesh Radio`, or use a
+base-wiphy MAC where a RUID, BSSID, VIF or frequency-qualified link is
+required. The detailed platform model and its operational consequences are in
+[MediaTek single-wiphy radio model](single-wiphy-radio-model.md).
+
+### hwsim adaptations of that contract
+
+The RDK lab gives each BPI container one hwsim wiphy and makes it satisfy the
+same three-logical-radio contract. The following adaptations are virtual-lab
+behavior and must remain gated from a physical MediaTek image where noted:
+
+- accept the hwsim wiphy's host-assigned runtime phy index rather than the
+  physical interface map's literal `phy_index: 0` (`Wi-Fi HAL 0002/0003`);
+- apply hwsim-specific capability/default policy for HE/EHT, SAE and 6 GHz
+  while retaining strict-regulatory tri-band operation where Linux 7 supports
+  it (`OneWifi 0004` through `0008`);
+- let per-VIF `START_AP` establish concurrent channel contexts instead of
+  issuing a conflicting radio-wide `SET_WIPHY`, and clamp the validated
+  synthetic contexts to 20 MHz (`Wi-Fi HAL 0022`, `OneWifi 0008`);
+- suppress hwsim-unsupported ACL or receive subscriptions by build capability
+  and avoid treating a configured but unestablished MLD as live;
+- source frequency-qualified candidate RCPI from wmediumd's read-only metrics
+  endpoint only for `HWSIM_RADIO` (`Wi-Fi HAL 0024`);
+- filter or age retained hwsim AP station rows using inactivity and
+  medium-authoritative association ownership (`Wi-Fi HAL 0028`, `0030`,
+  `0033`);
+- restore management-frame/EAPOL registration and operstate after hwsim AP or
+  wiphy reconfiguration (`Wi-Fi HAL 0029`, `0031`, `0032`);
+- reconcile successful hwsim associated-client diagnostics as authoritative
+  VAP snapshots, including an empty withdrawal (`OneWifi 0020`); and
+- register, deliver, schedule and observe simultaneous frequency contexts in
+  the patched hwsim/wmediumd medium.
+
+`Wi-Fi HAL 0022` is guarded by `FEATURE_SINGLE_PHY`, because both physical and
+virtual builds use that platform organization. Its triggering behavior is the
+Linux/hwsim channel API, however; it must be validated separately before being
+proposed as generic MediaTek behavior. Conversely, the logical one-wiphy to
+three-radio projection itself must not be gated away from the physical build.
+
+### Single-wiphy patch-classification matrix
+
+| Boundary | Representative patches | Physical image applicability | Reason |
+| --- | --- | --- | --- |
+| Runtime phy enumeration | Wi-Fi HAL `0002`, `0003` | hwsim integration | A wiphy moved into an LXD namespace retains a nonzero host allocation index while the BPI map describes its sole device as index zero. |
+| Logical radio projection | inherited `FEATURE_SINGLE_PHY` platform code | required | One integrated MediaTek device backs three independently managed RDK/EasyMesh radios. |
+| Concurrent synthetic channels | Wi-Fi HAL `0022`; OneWifi `0008` | hwsim constraint, with shared single-phy code path | Per-VIF channel contexts work; a standalone radio-wide channel change conflicts with already active siblings. The 20 MHz clamp is not a physical capability limit. |
+| Candidate-link measurement | Wi-Fi HAL `0024` | `HWSIM_RADIO` only | Physical hardware must retain its native non-associated measurement provider; the lab reads frequency-qualified wmediumd SNR. |
+| Stale AP peer correction | Wi-Fi HAL `0028`, `0030`, `0033`; OneWifi `0020` | `HWSIM_RADIO` only | hwsim may retain an authorized kernel station after a silent roam; the virtual lab reconciles it with live snapshots and medium ownership. |
+| AP receive-path lifecycle | Wi-Fi HAL `0029`, `0031`, `0032` | `HWSIM_RADIO` only | hwsim registration sockets must be released and restored around AP/wiphy restart. |
+| Signal attribute fallback | Wi-Fi HAL `0025` | generic | `NL80211_STA_INFO_CHAIN_SIGNAL` is optional on any driver; aggregate signal is standard. |
+| Provider count and allocation ownership | OneWifi `0021` through `0023` | generic (`0021` consumes active-row semantics) | Live station counts and freeing every radio/VAP allocation are product correctness, not wiphy representation. |
+| Medium delivery and telemetry | hwsim `0001` through `0008`; wmediumd `0001` through `0019` | host lab only | The external simulator must carry frequency, base-radio owner, learned VIF, delivery outcome and authoritative association state. |
+
+This matrix is an ownership rule, not merely documentation. A generic memory,
+serialization, timer, model, provider or protocol bug remains generic even if
+hwsim made it easier to reproduce. A physical-only driver behavior likewise
+must not be copied into the simulator without an explicit fidelity goal and a
+testable contract.
+
+### Identity invariants across the patch set
+
+| Layer | Stable identity | May change at runtime | Must never be inferred from |
+| --- | --- | --- | --- |
+| LXD/hwsim host | permanent base-radio MAC/radio ID assigned to a container | namespace-local phy name | enumeration order after module reload |
+| Wi-Fi HAL/OneWifi | logical radio index, VAP index and RUID from the platform map | netdev state and channel context | the kernel phy number alone |
+| EasyMesh | AL MAC, RUID, BSSID and current STA owner | association and backhaul parent | base wiphy count or proximity |
+| wmediumd | configured base owner plus learned VIF and frequency | active link, learned BSSID and frame counters | a MAC pair without frequency |
+| optimizer | normalized device/radio/BSS/client identifiers | scores, candidates and actions | raw wiphy topology |
+
+Normal node restart must preserve these identities and must not rebuild the
+medium inventory. Recreating the hwsim module, base-radio assignment, RUID set
+or `/nvram` is provisioning or destructive recovery, not restart.
 
 ### Container integration
 
@@ -214,10 +287,36 @@ authority. Its dependency order is:
 59. reconcile authoritative controller client snapshots without retaining an
     omitted old owner; and
 60. resolve a steering candidate from its authoritative source BSS while the
-    transient per-radio STA map is being rebuilt.
+    transient per-radio STA map is being rebuilt;
+61. reject a fronthaul association owner learned only from an old metrics row;
+62. report BTM outcome from topology-synchronized Agent state rather than a
+    stale controller-side candidate;
+63. stage visible steering cues and shape star/branch/chain layouts without
+    losing the authoritative topology;
+64. reconcile full client snapshots across retained and live Agent models;
+65. complete upstream orchestration-command lifetimes at their owning state;
+66. bound DataElements device enumeration and its temporary command models;
+67. keep EasyMesh configuration-stage clones lightweight;
+68. turn authoritative Agent station snapshots into ordered topology deltas;
+69. bound controller station churn while accepting a real cross-band owner;
+70. preserve original association time across repeated full snapshots;
+71. reconcile an Agent snapshot only against the radio that reported it;
+72. complete local reconciliation before emitting its Topology Notification;
+73. scope a controller station deletion to the current owning Agent/BSS;
+74. preserve the reporting-radio filter in cloned station state;
+75. suppress withdrawn station rows from subsequent Topology Responses and
+    metrics processing;
+76. complete a candidate-link query when its protocol transaction is rejected
+    with an ACK rather than leaving the requester pending;
+77. serialize all candidate results as arrays, including zero and one result;
+78. apply an associated-STA metrics report to its exact BSS owner;
+79. reject signal samples that predate the current association epoch;
+80. retain an exact-owner backhaul sample through model reconciliation; and
+81. choose a controller-first landscape topology layout consistently across
+    RDK and prplMesh presentations.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0123`; the
+component or image build. The current source series ends at `0145`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
@@ -233,9 +332,12 @@ The small `ieee1905-em` series is ordered directly in
    entity through AL-SAP, because a transmitter does not receive its own
    multicast frame;
 4. refresh `last_seen` only from received remote evidence, never from local
-   query/response/notification state; and
+   query/response/notification state;
 5. publish the same convergence event when received evidence recreates an
-   expired neighbor.
+   expired neighbor; and
+6. forward a changed Topology Response to AL-SAP after updating the IEEE1905
+   neighbor model, and resolve its remote Agent through the receiving port
+   rather than incorrectly treating an interface MAC as an AL MAC.
 
 The series deliberately separates transport truth from controller policy. A
 neighbor that has not supplied received evidence for 60 seconds is removed,
@@ -274,6 +376,12 @@ Kernel-side hwsim patches:
 | --- | --- |
 | `0001-mac80211_hwsim-allow-multichannel-wmediumd.patch` | allow wmediumd registration with multiple channel contexts |
 | `0002-mac80211_hwsim-6ghz-strict-regd.patch` | backport strict `custom_03` behavior when building an older kernel generation; Linux 7 selects it natively with `regtest=5` |
+| `0003-mac80211_hwsim-optional-kernel-medium.patch` | add the opt-in in-kernel impaired-medium path while leaving userspace wmediumd and the stock perfect medium as defaults |
+| `0004-mac80211_hwsim-kernel-medium-link-matrix.patch` | provide double-buffered, frequency-band-qualified link matrices for atomic scenario changes |
+| `0005-mac80211_hwsim-kernel-medium-rate-per.patch` | add optional deterministic rate-aware packet-error behavior |
+| `0006-mac80211_hwsim-kernel-medium-timing-observability.patch` | add bounded delay/jitter queues and frame, airtime, drop and timing counters |
+| `0007-mac80211_hwsim-allow-128-static-radios.patch` | raise the validated static-radio bound for the 100-client stress profile |
+| `0008-mac80211_hwsim-fix-multichannel-monitor-ack.patch` | use the transmitted frame frequency when reporting multichannel monitor ACKs |
 
 wmediumd patches, in order:
 
@@ -293,9 +401,14 @@ wmediumd patches, in order:
 | `0012` | add atomic frequency-qualified SNR overrides with pair fallback and exact clear/readback semantics |
 | `0013` | add the multi-client read-only pair/frequency endpoint used by the hwsim HAL |
 | `0014` | add bounded host-only frame/outcome, active-link, radio/frequency, VIF and event telemetry for the Go Console |
+| `0015` | index configured pairs, VIF owners and active-link telemetry instead of scanning the complete matrix on hot frame paths |
+| `0016` | expose authoritative station-to-AP association ownership from observed protocol exchanges |
+| `0017` | resolve ownership queries through learned client and AP VIFs while preserving stable base-radio identities |
+| `0018` | page large configured-link dumps so control responses remain bounded at 50/100-client scale |
+| `0019` | return the original transmit frequency with TX status for multichannel radios whose legacy global channel pointer is unset |
 
 `gen/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
-`wmediumd-up.sh` runs its ten-test internal acceptance suite before launch.
+`wmediumd-up.sh` runs the medium's internal acceptance suite before launch.
 
 ## Build and acceptance
 

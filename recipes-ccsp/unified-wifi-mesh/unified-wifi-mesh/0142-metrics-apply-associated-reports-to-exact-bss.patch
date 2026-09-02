@@ -1,0 +1,174 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 1 Sep 2026 08:30:00 -0700
+Subject: [PATCH] metrics: apply associated reports to exact BSS owner
+
+An agent can continue reporting an old association briefly after a STA
+roams.  The cross-device resolver first looks up the exact STA+BSSID, but
+then falls back to the first row with the same STA address.  That fallback
+lets a stale old-BSS report overwrite the current owner's RCPI and observed
+timestamp.  Depending on report ordering, the API then alternates between
+old and current samples and the optimizer rejects an otherwise healthy
+topology as stale.
+
+Associated STA Link Metrics carries the reporting BSSID explicitly.  Treat
+that pair as the ownership key: search every controller data model for the
+exact STA+BSSID and ignore the report when that owner is no longer present.
+Metrics must describe an association; they must not redefine it.  Keep the
+cross-device exact lookup needed when the receiving radio state machine and
+the owning controller data model differ.
+
+Expose the single-model exact lookup as a side-effect-free helper and add a
+regression which resolves the exact current owner but rejects the same STA
+reported under a stale BSSID.  Rejection leaves the current row's timestamp
+and RCPI unchanged.
+
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ inc/em_metrics.h              | 12 ++++++++++
+ src/em/metrics/em_metrics.cpp | 26 +++++++++-------------
+ tests/test_l1_em_metrics.cpp  | 48 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 70 insertions(+), 16 deletions(-)
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index 2d10191..10cf2ef 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -680,6 +680,18 @@ public:
+        static bool is_sta_actively_associated(dm_easy_mesh_t *dm,
+                                               mac_address_t sta_mac);
+ 
++       /**
++        * Resolve the row which owns one Associated STA Link Metrics sample.
++        *
++        * The IEEE 1905 report identifies an association by both STA and BSSID.
++        * Do not fall back to a same-STA row on another BSS: an old agent can
++        * still emit a delayed report after a roam, and metrics must never
++        * redefine the controller's authoritative association ownership.
++        */
++       static dm_sta_t *find_assoc_metrics_owner(dm_easy_mesh_t *dm,
++                                                  mac_address_t sta_mac,
++                                                  bssid_t bssid);
++
+         unsigned short m_unassoc_sta_query_msg_id = 0;
+  
+        /**
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 2e217ee..11fbbb4 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -60,42 +60,36 @@ static dm_sta_t *find_metrics_sta(em_mgr_t *mgr, dm_easy_mesh_t *preferred,
+     dm_easy_mesh_t *candidate;
+     dm_sta_t *sta;
+ 
+     *owner = preferred;
+-    sta = preferred->find_sta(sta_mac, bssid);
++    sta = em_metrics_t::find_assoc_metrics_owner(preferred, sta_mac, bssid);
+     if (sta != NULL) {
+         return sta;
+     }
+ 
+     /* A metrics response is handled by the radio state machine that received
+      * it, while the controller keeps the associated STA in the owning
+      * device's data model.  Search all device models before treating a valid
+      * report as unknown. */
+     candidate = mgr->get_first_dm();
+     while (candidate != NULL) {
+-        sta = candidate->find_sta(sta_mac, bssid);
++        sta = em_metrics_t::find_assoc_metrics_owner(candidate, sta_mac,
++                                                     bssid);
+         if (sta != NULL) {
+             *owner = candidate;
+             return sta;
+         }
+         candidate = mgr->get_next_dm(candidate);
+     }
+ 
+-    /* Topology and AP metrics are independent CMDUs.  During a roam or
+-     * backhaul reparent, the STA can still be keyed by its previous BSSID.
+-     * The controller enforces one active association per STA, so its unique
+-     * address remains an authoritative fallback until topology catches up. */
+-    candidate = mgr->get_first_dm();
+-    while (candidate != NULL) {
+-        sta = candidate->find_sta(sta_mac);
+-        if (sta != NULL) {
+-            *owner = candidate;
+-            return sta;
+-        }
+-        candidate = mgr->get_next_dm(candidate);
+-    }
+-
+     return NULL;
+ }
+ 
++dm_sta_t *em_metrics_t::find_assoc_metrics_owner(dm_easy_mesh_t *dm,
++                                                  mac_address_t sta_mac,
++                                                  bssid_t bssid)
++{
++    return dm == NULL ? NULL : dm->find_sta(sta_mac, bssid);
++}
++
+ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+                                                     unsigned int tlv_len)
+ {
+diff --git a/tests/test_l1_em_metrics.cpp b/tests/test_l1_em_metrics.cpp
+index e6a40c2..76a8e08 100644
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -347,6 +347,54 @@ TEST_F(EmMetricsTest, UnassocQueryRejectsOnlyLiveLocalAssociation) {
+     dm.deinit();
+ }
+ 
++TEST_F(EmMetricsTest, AssociatedMetricsRequireExactStaAndBssidOwner) {
++    const char *sta = "02:00:00:00:0c:00";
++    const char *current_bssid = "02:00:00:10:00:02";
++    const char *stale_bssid = "02:00:00:10:00:01";
++    const char *radio = "02:00:00:20:00:02";
++    dm_easy_mesh_t receiving_dm{};
++    dm_easy_mesh_t owning_dm{};
++    mac_address_t sta_mac{};
++    bssid_t current_bssid_mac{};
++    bssid_t stale_bssid_mac{};
++
++    ASSERT_EQ(receiving_dm.init(), 0);
++    ASSERT_EQ(owning_dm.init(), 0);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta), sta_mac);
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>(current_bssid), current_bssid_mac);
++    dm_easy_mesh_t::string_to_macbytes(
++        const_cast<char *>(stale_bssid), stale_bssid_mac);
++
++    em_sta_info_t current = make_metrics_station(
++        sta, current_bssid, radio, true);
++    owning_dm.put_sta_info(&current, em_target_sta_map_consolidated);
++
++    /* The receiving radio may use a different device model, so callers still
++     * search all models.  Only the exact owner may accept the report. */
++    EXPECT_EQ(em_metrics_t::find_assoc_metrics_owner(
++        &receiving_dm, sta_mac, current_bssid_mac), nullptr);
++    dm_sta_t *owner = em_metrics_t::find_assoc_metrics_owner(
++        &owning_dm, sta_mac, current_bssid_mac);
++    ASSERT_NE(owner, nullptr);
++
++    owner->m_sta_info.rcpi = 158;
++    snprintf(owner->m_sta_info.timestamp,
++             sizeof(owner->m_sta_info.timestamp),
++             "%s", "2026-09-01T07:51:39Z");
++
++    /* A delayed report from the old BSS must not resolve to, or overwrite,
++     * the current association row. */
++    dm_sta_t *stale_owner = em_metrics_t::find_assoc_metrics_owner(
++        &owning_dm, sta_mac, stale_bssid_mac);
++    EXPECT_EQ(stale_owner, nullptr);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 158);
++    EXPECT_STREQ(owner->m_sta_info.timestamp, "2026-09-01T07:51:39Z");
++
++    receiving_dm.deinit();
++    owning_dm.deinit();
++}
++
+ namespace {
+ 
+ em_unassoc_query_list_t make_unassoc_ack_query(
+-- 
+2.43.0

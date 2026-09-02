@@ -1,0 +1,124 @@
+From 6ccdbfac6fb4613375357d2860d77d9d225b1784 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Tue, 1 Sep 2026 03:22:46 -0700
+Subject: [PATCH] metrics: retain exact-owner backhaul samples
+
+The association-epoch guard rejects samples older than a station's current
+connection.  Backhaul STA rows do not carry that connection age, however,
+so their periodic metrics were permanently rejected after a cold import.
+
+Reuse the established exact radio+BSSID BSS lookup and bypass the epoch
+comparison only when that owner is explicitly a backhaul BSS.  Unknown and
+fronthaul owners retain the existing guard unchanged.
+
+Extend the focused epoch regression to prove that a positive-age sample is
+still rejected for an exact fronthaul owner with zero connection age, then
+accepted when the same exact owner is classified as backhaul.  Add a
+unit-test-only forwarding method so the 0143 handler regression is actually
+compilable without changing production visibility.
+
+Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+---
+ inc/em_metrics.h              |  8 ++++++++
+ src/em/metrics/em_metrics.cpp |  7 ++++++-
+ tests/test_l1_em_metrics.cpp  | 32 +++++++++++++++++++++++++++++---
+ 3 files changed, 43 insertions(+), 4 deletions(-)
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index 6149698..eccc7cc 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -694,6 +694,14 @@ public:
+                                                   mac_address_t sta_mac,
+                                                   bssid_t bssid);
+ 
++#ifdef UNIT_TEST
++       int test_handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
++                                                   unsigned int tlv_len)
++       {
++           return handle_assoc_sta_link_metrics_tlv(buff, tlv_len);
++       }
++#endif
++
+         unsigned short m_unassoc_sta_query_msg_id = 0;
+  
+        /**
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 564116b..0b58bf4 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -139,7 +139,12 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         const unsigned int delta_ms = ntohl(metrics->time_delta_ms);
+         const uint64_t delta_seconds =
+             (static_cast<uint64_t>(delta_ms) + 999ULL) / 1000ULL;
+-        if (delta_seconds > sta->m_sta_info.last_conn_time) {
++        dm_bss_t *owner_bss = sta_dm->get_bss(
++            sta->m_sta_info.radiomac, sta->m_sta_info.bssid);
++        const bool backhaul_owner = owner_bss != NULL &&
++            owner_bss->get_bss_info()->id.haul_type == em_haul_type_backhaul;
++        if (!backhaul_owner &&
++                delta_seconds > sta->m_sta_info.last_conn_time) {
+             em_printfout("Ignoring pre-association STA metrics: sta=%s bssid=%s "
+                          "sample_age=%llu association_age=%u",
+                 util::mac_to_string(sta_metrics->sta_mac).c_str(),
+diff --git a/tests/test_l1_em_metrics.cpp b/tests/test_l1_em_metrics.cpp
+index 251dea4..65542c6 100644
+--- a/tests/test_l1_em_metrics.cpp
++++ b/tests/test_l1_em_metrics.cpp
+@@ -423,7 +423,7 @@ TEST_F(EmMetricsTest, AssociatedMetricsCannotPredateCurrentAssociation) {
+     DummyEmMetrics metrics(nullptr, &dm);
+     metric->rcpi = 158;
+     metric->time_delta_ms = htonl(47000);
+-    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++    EXPECT_EQ(metrics.test_handle_assoc_sta_link_metrics_tlv(
+         payload.data(), payload.size()), 0);
+ 
+     dm_sta_t *owner = dm.find_sta(current.id, current.bssid);
+@@ -434,7 +434,7 @@ TEST_F(EmMetricsTest, AssociatedMetricsCannotPredateCurrentAssociation) {
+     /* A sample measured during the current epoch is accepted. */
+     metric->rcpi = 118;
+     metric->time_delta_ms = htonl(1000);
+-    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++    EXPECT_EQ(metrics.test_handle_assoc_sta_link_metrics_tlv(
+         payload.data(), payload.size()), 0);
+     EXPECT_EQ(owner->m_sta_info.rcpi, 118);
+     const std::string current_timestamp = owner->m_sta_info.timestamp;
+@@ -443,11 +443,37 @@ TEST_F(EmMetricsTest, AssociatedMetricsCannotPredateCurrentAssociation) {
+     /* A late copy from the prior visit cannot regress the current epoch. */
+     metric->rcpi = 158;
+     metric->time_delta_ms = htonl(47000);
+-    EXPECT_EQ(metrics.handle_assoc_sta_link_metrics_tlv(
++    EXPECT_EQ(metrics.test_handle_assoc_sta_link_metrics_tlv(
+         payload.data(), payload.size()), 0);
+     EXPECT_EQ(owner->m_sta_info.rcpi, 118);
+     EXPECT_STREQ(owner->m_sta_info.timestamp, current_timestamp.c_str());
+ 
++    /* A zero connection age is not a generic exemption.  The same sample
++     * remains invalid when the exact owner is a fronthaul BSS. */
++    dm.m_num_bss = 1;
++    memcpy(dm.m_bss[0].m_bss_info.ruid.mac, current.radiomac,
++           sizeof(mac_address_t));
++    memcpy(dm.m_bss[0].m_bss_info.bssid.mac, current.bssid,
++           sizeof(mac_address_t));
++    dm.m_bss[0].m_bss_info.id.haul_type = em_haul_type_fronthaul;
++    owner->m_sta_info.last_conn_time = 0;
++    owner->m_sta_info.rcpi = 0;
++    owner->m_sta_info.timestamp[0] = '\0';
++    metric->rcpi = 98;
++    metric->time_delta_ms = htonl(5000);
++    EXPECT_EQ(metrics.test_handle_assoc_sta_link_metrics_tlv(
++        payload.data(), payload.size()), 0);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 0);
++    EXPECT_STREQ(owner->m_sta_info.timestamp, "");
++
++    /* Backhaul rows do not carry a connection age.  The exact radio+BSSID
++     * owner is sufficient to accept the identical associated-link sample. */
++    dm.m_bss[0].m_bss_info.id.haul_type = em_haul_type_backhaul;
++    EXPECT_EQ(metrics.test_handle_assoc_sta_link_metrics_tlv(
++        payload.data(), payload.size()), 0);
++    EXPECT_EQ(owner->m_sta_info.rcpi, 98);
++    EXPECT_STRNE(owner->m_sta_info.timestamp, "");
++
+     dm.deinit();
+ }
+ 

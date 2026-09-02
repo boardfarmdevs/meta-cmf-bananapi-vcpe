@@ -1,0 +1,15 @@
+[Unit]
+Description=Provision a thin EasyMesh appliance on its first boot
+ConditionPathExists=/var/lib/easymesh-lab/thin-firstboot.env
+After=network-online.target docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-hwsim-pool.service
+Requires=docker.service snap.lxd.daemon.service boardfarm-lab.service easymesh-hwsim-pool.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easymesh-thin-firstboot
+RemainAfterExit=yes
+# Provisioning duration scales with the selected profile and the outer host's
+# storage backend.  The provisioning scripts own their individual bounded
+# readiness gates, so a second fixed systemd deadline can kill a healthy
+# stress-profile deployment partway through creating its roster.
+TimeoutStartSec=infinity

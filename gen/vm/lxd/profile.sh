@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Profile metadata shared by the LXD-VM builder and release tooling.  A
-# portable appliance has one immutable client roster; changing profile means
-# importing a different appliance, not rewriting identities after boot.
+# Profile metadata shared by the LXD-VM builder and release tooling.  Ready
+# appliances have one immutable client roster.  The universal thin appliance
+# selects exactly one roster during import and locks it before provisioning.
 
 easymesh_profile_name() {
     case "${1:-20}" in
@@ -22,6 +22,16 @@ easymesh_profile_clients() {
         medium) printf '50\n' ;;
         stress) printf '100\n' ;;
     esac
+}
+
+easymesh_profile_release_name() {
+    printf 'rdkeasymesh-%s-%s\n' \
+        "$(easymesh_profile_clients "${1:-20}")" \
+        "${EASYMESH_RELEASE_ID:-0831}"
+}
+
+easymesh_thin_release_name() {
+    printf 'rdkeasymesh-%s-thin\n' "${EASYMESH_RELEASE_ID:-0831}"
 }
 
 easymesh_profile_radios() {
