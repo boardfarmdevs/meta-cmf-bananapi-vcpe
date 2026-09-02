@@ -63,20 +63,25 @@ associations, run configurator scenarios, or make optimizer decisions.
 
 ## Important model boundary
 
-wmediumd does not maintain Wi-Fi associations or EasyMesh topology. It starts
-with a complete set of potential directed radio pairs and processes actual
-802.11 transmissions. The UI must keep three concepts separate:
+wmediumd does not implement the Wi-Fi association state machine or EasyMesh
+topology. The laboratory patch does retain a deliberately narrow ownership
+ledger learned only from ACKed successful association/reassociation responses
+or valid ACKed ToDS/FromDS data. This lets observers reject multicast fan-out
+and stale old-AP traffic without treating packet activity as ownership. The UI
+must keep three concepts separate:
 
 1. **Configured potential links**: every radio pair to which a default,
    startup link or live override can apply.
 2. **Recently active medium paths**: radio/frequency paths on which wmediumd
    has actually seen frames during the selected time window.
-3. **Observed WLAN/EasyMesh relationships**: current client association and
-   backhaul parent obtained from the controller APIs.
+3. **Protocol-positive ownership**: current client-to-radio ownership from the
+   bounded wmediumd ledger; complete EasyMesh topology and backhaul parentage
+   still come from controller APIs.
 
-An EasyMesh association may be drawn over a recently active medium path, but
-the association must not be inferred from packet counts alone. Likewise, an
-unused pair with a configured 50 dB SNR is not a connection carrying traffic.
+A client association may be drawn over a recently active medium path only when
+the ownership ledger reports that edge. Multicast, packet counts and recency
+alone are never association evidence. Likewise, an unused pair with a
+configured 50 dB SNR is not a connection carrying traffic.
 
 ## Runtime interfaces
 
@@ -93,7 +98,8 @@ permissioned sockets:
 
 /run/meta-cmf-wmediumd/observer/telemetry.sock
     host-only, multi-client read-only endpoint; paged traffic telemetry,
-    radio/frequency state, active links, VIF ownership and event ring
+    radio/frequency state, active links, VIF ownership, protocol-positive
+    association ownership and event ring
 ```
 
 The `-R` read-only endpoint supplies daemon instance ID, control generation,
@@ -672,7 +678,8 @@ Current Phase 1/2 health uses authoritative daemon and collector counters:
 - current/peak queue depth and last/maximum queue delay;
 - modeled attempts, retries, receiver injections and multicast fan-out work;
 - tracked clone `EINVAL` versus other netlink errors;
-- active-link eviction and event-ring overruns; and
+- active-link eviction, informational event-ring overwrite counts, and actual
+  observer event-history gaps; and
 - observer collection freshness and event-history gaps.
 
 Phase 4 should add read-only process CPU/RSS/thread/fd sampling, kernel socket
