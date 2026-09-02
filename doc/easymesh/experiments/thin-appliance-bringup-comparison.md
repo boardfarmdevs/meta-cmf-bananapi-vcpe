@@ -161,7 +161,7 @@ then imported into clean 20-client VMs from the actual distribution tar files.
 | Item | RDK EasyMesh | prplMesh |
 | --- | --- | --- |
 | Artifact | `rdkeasymesh-0901-thin.tar` | `prplmesh-0901-thin.tar` |
-| Archive SHA-256 | `c08de65d5741e251548b35b61392ca830cb63e646bfc1b8a110156d0772e4383` | `8067495912458496be23030be2b05a212c0f8ff349c8da94ec2a5505bd98b955` |
+| Archive SHA-256 | `e3128133f79073036addc5f9027bd0edaeec6f22ef00eb0b609ffe322e788684` | `250dc99e7390a916984478f5269c168d3dc9fbd2705b5e83bca95cf1f5d144cd` |
 | Packaged source | `8753e4762537f263ddaa46fef48f7167c4e8ce99` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
 | Guest first-boot interval | 19 min 03 s | 16 min 13 s |
 | Final state | 25/25 running, acceptance pass | 25/25 running, acceptance pass |

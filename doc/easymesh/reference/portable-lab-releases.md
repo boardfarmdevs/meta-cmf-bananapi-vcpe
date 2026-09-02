@@ -11,8 +11,8 @@ Published 0901 identities:
 
 | Artifact | Bytes | SHA-256 | Source commit |
 | --- | ---: | --- | --- |
-| `rdkeasymesh-0901-thin.tar` | 2,075,002,880 | `c08de65d5741e251548b35b61392ca830cb63e646bfc1b8a110156d0772e4383` | `8753e4762537f263ddaa46fef48f7167c4e8ce99` |
-| `prplmesh-0901-thin.tar` | 1,816,176,640 | `8067495912458496be23030be2b05a212c0f8ff349c8da94ec2a5505bd98b955` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
+| `rdkeasymesh-0901-thin.tar` | 2,075,002,880 | `e3128133f79073036addc5f9027bd0edaeec6f22ef00eb0b609ffe322e788684` | `8753e4762537f263ddaa46fef48f7167c4e8ce99` |
+| `prplmesh-0901-thin.tar` | 1,816,176,640 | `250dc99e7390a916984478f5269c168d3dc9fbd2705b5e83bca95cf1f5d144cd` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
 
 There are no separate 20-, 50-, or 100-client downloads. The profile is an
 explicit, immutable import choice. Each archive contains an installed Ubuntu
@@ -98,6 +98,7 @@ STACK-0901-thin/
 |-- import.sh                            profile and site reconciliation
 |-- install-host.sh                      Ubuntu 22.04/24.04 LXD/KVM setup
 |-- README.md                            operator instructions
+|-- RELEASE-NOTES.md                     delivered checkpoint summary
 |-- release.json                         profiles and source identity
 |-- release.env                          importer contract
 |-- trim-report.txt                      package evidence
