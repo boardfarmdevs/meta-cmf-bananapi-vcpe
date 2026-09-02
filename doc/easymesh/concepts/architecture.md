@@ -213,7 +213,10 @@ one hwsim wiphy
 ```
 
 This is a hard invariant. Three physical wiphys are not equivalent and break
-OneWifi's single-phy assumptions.
+OneWifi's single-phy assumptions. See the
+[single-wiphy radio-model reference](../reference/single-wiphy-radio-model.md)
+for the MediaTek driver architecture and its consequences for the complete
+lab.
 
 The official lab uses Linux 7.0.0-28 with `radios=32 channels=3 regtest=5`.
 `regtest=5` selects the 6 GHz-capable `custom_03` regulatory domain. 2.4, 5 and

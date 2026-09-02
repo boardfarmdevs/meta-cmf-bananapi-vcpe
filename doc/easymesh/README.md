@@ -77,6 +77,7 @@ Reference documents are consulted when implementing or diagnosing a specific
 boundary:
 
 - [Consolidated patch set](reference/patch-set.md)
+- [MediaTek single-wiphy radio model](reference/single-wiphy-radio-model.md)
 - [Metrics reporting and APIs](reference/metrics.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)
 - [wmediumd internals](reference/wmediumd-internals.md)

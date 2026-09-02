@@ -30,3 +30,18 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   100-client selection at import and provisions entirely from local inputs.
 - Made import wait for the nested LXD API before publishing the profile lock
   and UI proxies, eliminating a first-boot race on a newly imported VM.
+
+## 0901
+
+- Eliminated the second whole-lab reconstruction after offline thin
+  provisioning. A boot-scoped, one-use handoff preserves the validated running
+  roster while retaining the normal final health audit and cold-start fallback.
+- Aligned the RDK and prplMesh controller topology presentation and wmediumd
+  Console, including filtering inactive reserve radios from the operational
+  graph without removing them from raw inventory.
+- Documented the MediaTek single-wiphy to three-logical-radio contract, its
+  hwsim projection, and the resulting patch, steering, metric, lifecycle and
+  performance boundaries.
+- Made portable release identifiers explicit in bundle metadata and import
+  defaults so a 0901 artifact creates clearly named 0901 instances while old
+  0831 bundles remain reproducible.
