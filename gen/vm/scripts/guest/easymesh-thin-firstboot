@@ -6,6 +6,7 @@ exec </dev/null
 pending=/var/lib/easymesh-lab/thin-firstboot.env
 started_file=/var/lib/easymesh-lab/thin-firstboot.started-at
 lock=/run/easymesh-thin-firstboot.lock
+handoff=/run/easymesh-lab/thin-provisioned-handoff.env
 
 [ -f "$pending" ] || exit 0
 exec 9>"$lock"
@@ -77,4 +78,28 @@ final_instances=$(lxc list -c n --format csv | awk '
     exit 1
 }
 
-echo "EasyMesh thin first-boot provisioning complete: $final_instances instances"
+# The provisioning helpers necessarily start each BPI/client while assigning
+# its permanent hwsim identity and waiting for the profile to converge.  Hand
+# that already-running state to the normal runtime unit instead of making its
+# ExecStart immediately stop and reconstruct the complete lab a second time.
+# The marker lives in /run and is consumed once.  A later service restart or
+# guest reboot therefore always follows the ordinary cold-start transaction.
+running_instances=$(lxc list -c ns --format csv | awk -F, '
+    $1 ~ /^(bpibroadband|bpiap(-[0-9]{3})?|wlan-client(-[0-9]{3})?)$/ &&
+        $2 == "RUNNING" {n++}
+    END {print n+0}')
+[ "$running_instances" -eq "$expected_instances" ] || {
+    echo "thin first boot left $running_instances running instances, expected $expected_instances" >&2
+    exit 1
+}
+install -d -m 0755 "$(dirname "$handoff")"
+handoff_tmp=$handoff.tmp.$$
+printf '%s\n' \
+    "THIN_HANDOFF_CLIENTS=$HEALTH_EXPECT_CLIENTS" \
+    "THIN_HANDOFF_INSTANCES=$expected_instances" \
+    "THIN_HANDOFF_REPO_HEAD=$EXPECTED_REPO_HEAD" \
+    > "$handoff_tmp"
+chmod 0644 "$handoff_tmp"
+mv -f "$handoff_tmp" "$handoff"
+
+echo "EasyMesh thin first-boot provisioning complete: $final_instances running instances; runtime handoff ready"

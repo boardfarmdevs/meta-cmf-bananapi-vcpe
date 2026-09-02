@@ -4,6 +4,11 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
+release_id=${EASYMESH_RELEASE_ID:-0831}
+case "$release_id" in
+    [0-9][0-9][0-9][0-9]) ;;
+    *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
+esac
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
     | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 default_host_address=${default_host_address:-127.0.0.1}
@@ -468,8 +473,8 @@ export_vm() {
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-0831-${short}-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-0831-${short}-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd"
+    output="$bundle/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
@@ -606,8 +611,8 @@ export_thin_vm() {
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-0831-thin"
-    output="$bundle/rdkeasymesh-0831-${short}-thin-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${release_id}-thin"
+    output="$bundle/rdkeasymesh-${release_id}-${short}-thin-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
@@ -619,11 +624,14 @@ export_thin_vm() {
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
-    install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    sed "s/0831/${release_id}/g" "$root/gen/vm/lxd/README.md" \
+        > "$bundle/README.md"
+    chmod 0644 "$bundle/README.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
 LAB_STACK=rdkeasymesh
+LAB_RELEASE_ID=$release_id
 LAB_PROFILE_SELECTABLE=true
 LAB_SUPPORTED_PROFILES=20,50,100
 LAB_DEFAULT_DISK=96GiB
@@ -635,15 +643,16 @@ LAB_TRIMMED=true
 EOF
     jq -n \
         --arg stack rdkeasymesh \
+        --arg release_id "$release_id" \
         --arg source_commit "$meta_commit" --arg created_at "$created" \
         --arg archive "$(basename "$output")" \
         --arg disk 96GiB --arg build_storage "$actual_storage" \
-        '{schema_version:2,stack:$stack,profile_selectable:true,
+        '{schema_version:2,stack:$stack,release_id:$release_id,profile_selectable:true,
           supported_profiles:[20,50,100],source_commit:$source_commit,created_at:$created_at,
           archive:$archive,release_flavor:"thin",first_boot_provisioning:true,
-          profiles:{"20":{name:"small",instance:"rdkeasymesh-20-0831",clients:20,hwsim_radios:32,cpus:6,memory:"8GiB"},
-                    "50":{name:"medium",instance:"rdkeasymesh-50-0831",clients:50,hwsim_radios:64,cpus:8,memory:"12GiB"},
-                    "100":{name:"stress",instance:"rdkeasymesh-100-0831",clients:100,hwsim_radios:128,cpus:12,memory:"20GiB"}},
+          profiles:{"20":{name:"small",instance:("rdkeasymesh-20-"+$release_id),clients:20,hwsim_radios:32,cpus:6,memory:"8GiB"},
+                    "50":{name:"medium",instance:("rdkeasymesh-50-"+$release_id),clients:50,hwsim_radios:64,cpus:8,memory:"12GiB"},
+                    "100":{name:"stress",instance:("rdkeasymesh-100-"+$release_id),clients:100,hwsim_radios:128,cpus:12,memory:"20GiB"}},
           defaults:{disk:$disk},
           build:{storage_pool:$build_storage},trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"

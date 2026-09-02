@@ -18,7 +18,7 @@ bundle=$(realpath "$bundle")
 parent=$(dirname "$bundle")
 leaf=$(basename "$bundle")
 case "$leaf" in
-    rdkeasymesh-0831-thin|prplmesh-0831-thin)
+    rdkeasymesh-[0-9][0-9][0-9][0-9]-thin|prplmesh-[0-9][0-9][0-9][0-9]-thin)
         default_output=$parent/$leaf.tar
         ;;
     *)

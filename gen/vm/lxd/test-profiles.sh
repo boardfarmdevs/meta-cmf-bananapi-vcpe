@@ -20,6 +20,10 @@ check medium medium 50 64 rdkeasymesh-50-0831
 check 100 stress 100 128 rdkeasymesh-100-0831
 check stress stress 100 128 rdkeasymesh-100-0831
 test "$(easymesh_thin_release_name)" = rdkeasymesh-0831-thin
+test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 20)" = \
+    rdkeasymesh-20-0901
+test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = \
+    rdkeasymesh-0901-thin
 if easymesh_profile_name 21 >/dev/null 2>&1; then
     echo 'invalid profile was accepted' >&2
     exit 1
@@ -48,6 +52,10 @@ mv "$tmp/test-release" "$tmp/rdkeasymesh-0831-thin"
 "$root/gen/vm/lxd/package-release.sh" "$tmp/rdkeasymesh-0831-thin" >/dev/null
 test -f "$tmp/rdkeasymesh-0831-thin.tar"
 test -f "$tmp/rdkeasymesh-0831-thin.tar.sha256"
+mv "$tmp/rdkeasymesh-0831-thin" "$tmp/rdkeasymesh-0901-thin"
+"$root/gen/vm/lxd/package-release.sh" "$tmp/rdkeasymesh-0901-thin" >/dev/null
+test -f "$tmp/rdkeasymesh-0901-thin.tar"
+test -f "$tmp/rdkeasymesh-0901-thin.tar.sha256"
 
 for clients in 20 50 100; do
     case "$clients" in

@@ -33,9 +33,16 @@ grep -Eq '^After=.*(^|[[:space:]])easymesh-thin-firstboot\.service([[:space:]]|$
 grep -Eq '^Requires=.*(^|[[:space:]])easymesh-thin-firstboot\.service([[:space:]]|$)' \
     "$lab_unit"
 
+grep -F 'thin-provisioned-handoff.env' \
+    "$root/gen/vm/scripts/guest/easymesh-thin-firstboot" >/dev/null
+grep -F 'accept_thin_provisioned_handoff' \
+    "$root/gen/vm/scripts/guest/easymesh-lab-runtime" >/dev/null
+grep -F 'preserving $((client_count + 5)) running instances' \
+    "$root/gen/vm/scripts/guest/easymesh-lab-runtime" >/dev/null
+
 if grep -Eq '^TimeoutStartSec=[0-9]' "$thin_unit"; then
     echo 'thin first-boot service has a fixed numeric start deadline' >&2
     exit 1
 fi
 
-echo 'PASS: thin first boot uses its internally bounded provisioning gates'
+echo 'PASS: thin first boot uses bounded provisioning and one-shot runtime handoff'

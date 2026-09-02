@@ -51,6 +51,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
+release_id=${LAB_RELEASE_ID:-0831}
+case "$release_id" in
+    [0-9][0-9][0-9][0-9]) ;;
+    *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
+esac
 if [ "$profile_selectable" = true ]; then
     case "$selected_clients" in
         20)
@@ -77,7 +82,7 @@ if [ "$profile_selectable" = true ]; then
             exit 2
             ;;
     esac
-    default_name="rdkeasymesh-${selected_clients}-0831"
+    default_name="rdkeasymesh-${selected_clients}-${release_id}"
 else
     [ -z "$selected_clients" ] || {
         echo "--profile is valid only for a profile-selectable thin release" >&2
@@ -88,7 +93,7 @@ else
     selected_radios=${LAB_HWSIM_RADIOS:-unknown}
     selected_cpus=${LAB_DEFAULT_CPUS:-6}
     selected_memory=${LAB_DEFAULT_MEMORY:-8GiB}
-    default_name=${LAB_DEFAULT_NAME:-rdkeasymesh-20-0831}
+    default_name=${LAB_DEFAULT_NAME:-rdkeasymesh-20-${release_id}}
 fi
 
 if [ -z "$backup" ]; then
