@@ -17,6 +17,26 @@ The guest kernel owns hwsim. This keeps the radio module, wiphys and medium
 lifecycle inside the appliance instead of crossing an outer system-container
 namespace.
 
+## Use the universal appliance
+
+For normal installation, start with `rdkeasymesh-0831-thin.tar` and its
+adjacent checksum in an empty directory. A source checkout and BPI image paths
+are not required:
+
+```sh
+sha256sum -c rdkeasymesh-0831-thin.tar.sha256
+tar -xf rdkeasymesh-0831-thin.tar
+cd rdkeasymesh-0831-thin
+sha256sum -c SHA256SUMS
+sudo ./install-host.sh
+newgrp lxd
+EASYMESH_WEBUI_HOST_IP=192.168.2.140 ./import.sh --profile 20
+```
+
+Choose `--profile 50` or `--profile 100` only when the host has the CPU, RAM,
+and storage declared in `release.json`. The choice is required and immutable.
+The remaining build and export sections are for release maintainers.
+
 ## Prepare an outer host
 
 On an Ubuntu 22.04 or 24.04 x86-64 host:
@@ -239,13 +259,16 @@ prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
 `EASYMESH_LXD_NETWORK`, `EASYMESH_LXD_STORAGE`, `EASYMESH_WEBUI_PORT`, and
 `WMEDIUMD_CONSOLE_PORT` when the defaults collide. The address and agent gate
 defaults to 120 seconds; `EASYMESH_LXD_ADDRESS_TIMEOUT` may raise that bounded
-deadline for a slow foreign host.
+deadline for a slow foreign host. After the outer VM agent is reachable, the
+importer separately waits for the nested LXD API before it publishes the
+profile lock or proxy devices. `EASYMESH_LXD_NESTED_READY_TIMEOUT` controls
+that bounded wait and defaults to the address timeout.
 
 When the host's default storage pool cannot hold the selected sparse disk,
 choose an existing pool explicitly for both build and import:
 
 ```sh
-EASYMESH_LXD_STORAGE=bpi-lab ./import.sh
+EASYMESH_LXD_STORAGE=bpi-lab ./import.sh --profile 20
 ```
 
 The importer validates the pool before creating the VM. The source host's

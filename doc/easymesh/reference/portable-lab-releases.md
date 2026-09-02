@@ -1,51 +1,30 @@
 # Portable LXD VM releases
 
-The distribution format is a stopped, coherent LXD virtual-machine appliance.
-There is one universal thin download for each mesh implementation:
+The 0831 handoff has exactly two portable downloads:
 
-| Artifact | Profiles selected at import | Web interfaces |
+| Artifact | Selectable clients | Default host ports |
 | --- | --- | --- |
-| `rdkeasymesh-0831-thin.tar` | 20, 50, or 100 clients | EasyMesh `18889`, wmediumd `18890` |
-| `prplmesh-0831-thin.tar` | 20, 50, or 100 clients | topology adapter `8090`, Controller UI `8091` |
+| `rdkeasymesh-0831-thin.tar` | 20, 50, or 100 | EasyMesh `18889`, wmediumd `18890` |
+| `prplmesh-0831-thin.tar` | 20, 50, or 100 | topology `8090`, Controller UI `8091` |
 
-The release contains the installed Ubuntu 24.04/Linux 7 VM, exact source,
-runtime inputs and one reusable nested-client image, but zero provisioned mesh
-nodes. Import requires `--profile 20`, `--profile 50`, or `--profile 100`.
-That choice sets the tested CPU/RAM limits and active hwsim pool, writes an
-immutable profile lock, and only then permits offline first-boot provisioning.
-There is no silent default and the selected appliance cannot be resized into a
-different profile later.
+Published 0831 identities:
 
-Ready VMs remain useful as internal accepted builders and fast local recovery
-points. They are profile-specific because they contain complete rosters, but
-they are not the normal portable download.
+| Artifact | Bytes | SHA-256 | Source commit |
+| --- | ---: | --- | --- |
+| `rdkeasymesh-0831-thin.tar` | 2,447,974,400 | `c090f63ec2d9dd350111b68077d6eb951e706dbbfe52c9692a2dd5402701c675` | `9729ca4ed89a15c91538292eaf41d6880dd97f29` |
+| `prplmesh-0831-thin.tar` | 1,777,039,360 | `9ef007df292742ebc8c36e9405d71810c8754e7f1f802baa58b68cd9bf45f598` | `4eb6bcc32beff12e90328660fcd10970a4694a16` |
 
-## Release contents
+There are no separate 20-, 50-, or 100-client downloads. The profile is an
+explicit, immutable import choice. Each archive contains an installed Ubuntu
+24.04/Linux 7 LXD VM, exact source and offline runtime inputs, but zero
+provisioned mesh nodes.
 
-Each outer tar contains one directory:
+Userspace wmediumd is the portable default. The kernel medium remains an
+optional research backend and is not enabled in these appliances.
 
-```text
-STACK-0831-thin/
-|-- STACK-0831-COMMIT-thin-lxd.tar.zst  LXD VM backup
-|-- import.sh                            profile, identity, network and proxy setup
-|-- install-host.sh                      Ubuntu 22.04/24.04 LXD/KVM setup
-|-- README.md                            empty-directory workflow
-|-- release.json                         machine-readable profiles and identity
-|-- release.env                          importer contract
-|-- trim-report.txt                      package cleanup and archive evidence
-`-- SHA256SUMS                           inner integrity manifest
-```
+## Install from an empty directory
 
-The adjacent `.tar.sha256` authenticates the outer download. Neither artifact
-contains a fixed outer-host address, source mount, Git credential or Google
-credential. Checksum entries use basenames rather than release-host paths.
-
-The portable default is userspace wmediumd. The kernel medium is an explicit
-experimental performance backend and is not selected in these packages.
-
-## Empty-directory workflow
-
-Download one tar and its checksum into any empty directory:
+Place one tar and its adjacent checksum in an empty directory, then run:
 
 ```sh
 sha256sum -c STACK-0831-thin.tar.sha256
@@ -57,59 +36,90 @@ newgrp lxd
 ./import.sh --profile 20
 ```
 
-Use profile `50` or `100` only when the host has the resources declared in
-`release.json`. Site variables documented in the included README can select
-the LXD network/storage pool, outer-host address, ports, and instance name.
+Replace `STACK` with `rdkeasymesh` or `prplmesh`. Select profile `50` or `100`
+only when the host has the resources declared in `release.json`. A missing or
+invalid profile is rejected; import never chooses one silently.
 
-The importer refuses to overwrite an existing instance. It reseeds portable
-VM identities, selects destination CPU/RAM, starts the unconfigured VM, and
-locks the requested profile while the nested inventory is still empty. RDK
-also reconciles the guest NIC to the selected site address before publishing
-its proxies. First-boot provisioning is then started asynchronously and can be
-followed with the printed journal and health commands.
+The importer:
 
-The common sparse logical disk supports the largest profile. Sparse capacity
-is not download size: a smaller profile consumes only the blocks it writes,
-while the destination storage pool must still support the declared logical
-maximum and normal operating headroom.
+1. verifies the destination LXD network and optional storage pool;
+2. imports and reseeds the VM without overwriting an existing instance;
+3. waits for the outer VM agent and the nested LXD API;
+4. writes the immutable 20-, 50-, or 100-client profile lock;
+5. exposes site-local UI proxy ports; and
+6. starts offline first-boot provisioning.
 
-## Google Drive layout
+First boot is longer than a normal restart because it creates the selected
+nested roster. It does not clone repositories, pull images, or require an
+operator recovery sequence. Later boots use normal reconstruction.
 
-Only these portable files are required:
+## Profiles
+
+| Stack | Profile | vCPU | RAM | hwsim radios | Sparse disk |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| RDK EasyMesh | 20 | 6 | 8 GiB | 32 | 96 GiB |
+| RDK EasyMesh | 50 | 8 | 12 GiB | 64 | 96 GiB |
+| RDK EasyMesh | 100 | 12 | 20 GiB | 128 | 96 GiB |
+| prplMesh | 20 | 6 | 8 GiB | 40 | 160 GiB |
+| prplMesh | 50 | 8 | 12 GiB | 72 | 160 GiB |
+| prplMesh | 100 | 12 | 20 GiB | 120 | 160 GiB |
+
+Sparse logical capacity is not download size. The destination storage pool
+must support the declared disk, while physical usage grows only as the selected
+profile writes data.
+
+## Site overrides
+
+The included README documents all variables. Common examples are:
+
+```sh
+EASYMESH_LXD_STORAGE=bpi-lab \
+EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
+  ./import.sh --profile 50
+```
+
+```sh
+PRPLMESH_LXD_STORAGE=bpi-lab \
+PRPLMESH_UI_HOST_IP=192.168.2.140 \
+  ./import.sh --profile 50
+```
+
+Instance names default to `rdkeasymesh-PROFILE-0831` and
+`prplmesh-PROFILE-0831`. Override the documented name and port variables when
+multiple labs share a host.
+
+## Archive contents and identity
+
+Each outer tar contains one directory:
+
+```text
+STACK-0831-thin/
+|-- STACK-0831-COMMIT-thin-lxd.tar.zst  LXD VM backup
+|-- import.sh                            profile and site reconciliation
+|-- install-host.sh                      Ubuntu 22.04/24.04 LXD/KVM setup
+|-- README.md                            operator instructions
+|-- release.json                         profiles and source identity
+|-- release.env                          importer contract
+|-- trim-report.txt                      package evidence
+`-- SHA256SUMS                           inner integrity manifest
+```
+
+The adjacent `.tar.sha256` verifies the outer download. `release.json` records
+the source commit and supported profiles. The packages contain no host source
+mount, Git credential, Google credential, fixed LAN address, or preselected
+profile.
+
+## Distribution layout
+
+Only these files need to be uploaded:
 
 ```text
 EasyMesh-LXD-0831/
-|-- catalog.json
-|-- QUALIFICATION.md
 |-- rdkeasymesh-0831-thin.tar
 |-- rdkeasymesh-0831-thin.tar.sha256
 |-- prplmesh-0831-thin.tar
 `-- prplmesh-0831-thin.tar.sha256
 ```
 
-Drive is transport only. `catalog.json`, the checked inner metadata and the
-outer SHA-256 identify a release. Publish a Drive identifier only after the
-immutable file has been uploaded and rechecked.
-
-## Candidate versus accepted
-
-Packaging marks a bundle as `candidate`. The exact same outer artifact bytes
-must be imported independently with profiles 20, 50, and 100. Every run must
-prove:
-
-1. zero initial nested mesh nodes and one verified local runtime image;
-2. no clone, pull, package download, or other external provisioning input;
-3. exact source, profile lock, radio, node, client and process cardinality;
-4. cold reconstruction without an operator repair command;
-5. complete topology, both SSIDs, three bands and all-client traffic;
-6. representative steering, metrics, configurator restore and optimizer gates;
-7. a one-hour churn campaign with bounded resources and no process, database,
-   VIF, kernel, or memory leak; and
-8. a warm VM restart with the profile and identities unchanged.
-
-The first-boot marker is cleared only after the normal acceptance suite passes.
-A longer thin first boot is expected and is not a failure by itself. Evidence
-and pass/fail state remain profile-specific, but the universal artifact becomes
-distributable only after all three selections pass. A rebuilt archive receives
-a new checksum and invalidates the earlier qualification even when its filename
-is unchanged.
+Google Drive is transport only. Do not rename or rebuild an uploaded tar
+without publishing its new adjacent checksum.

@@ -25,3 +25,8 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 - Fixed the common multichannel hwsim monitor-ACK null-channel fault and added
   a live regression that rejects a kernel Oops, wmediumd death, or nl80211
   deadlock.
+- Reduced the portable handoff to `rdkeasymesh-0831-thin.tar` and
+  `prplmesh-0831-thin.tar`. Each archive requires an immutable 20-, 50-, or
+  100-client selection at import and provisions entirely from local inputs.
+- Made import wait for the nested LXD API before publishing the profile lock
+  and UI proxies, eliminating a first-boot race on a newly imported VM.
