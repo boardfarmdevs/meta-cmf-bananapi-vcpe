@@ -1,0 +1,109 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Subject: [PATCH] controller: preserve negotiated peer profile
+
+AP-Autoconfiguration Search establishes the agent's EasyMesh profile. A
+profile-less Topology Response can subsequently arrive from the colocated
+ieee1905 responder during warm reconstruction. Treating that response as a
+fresh Profile-1 negotiation downgrades the AL node and every radio, after
+which valid Profile-3 WSC M1 retries fail validation and the BSS inventory
+cannot be reconstructed.
+
+The controller also has one global AL-node object but multiple agent peers.
+Using that global object's last profile to validate a radio-specific message
+makes concurrent agents overwrite one another. Resolve the peer profile from
+the radio's data model first and retain the AL node only as a final legacy
+fallback.
+
+An absent Profile TLV is not evidence of a downgrade. Preserve the profile
+already recorded in the device model, AL node, or local transaction; use
+Profile 1 only when no negotiated value exists.
+
+Upstream-Status: Pending
+---
+ src/em/config/em_configuration.cpp | 51 +++++++++++++++++++++++++++++++++------
+ 1 file changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2324,21 +2324,43 @@ em_profile_type_t em_configuration_t::get_peer_profile_from_al_em()
+ 
+ em_profile_type_t em_configuration_t::get_peer_profile_from_al_em()
+ {
+-    // Use the locally cached profile as a safe fallback for validation.
+-    em_profile_type_t fallback = (m_peer_profile == em_profile_type_reserved) ? em_profile_type_1 : m_peer_profile;
++    auto valid_profile = [](em_profile_type_t profile) {
++        return profile > em_profile_type_reserved && profile < em_profile_type_max;
++    };
++
++    // The controller owns one AL-node EM but communicates with multiple
++    // agents.  Therefore that global AL node cannot be the source of truth
++    // for a particular radio's peer.  Prefer the peer-specific data model
++    // and radio profile established during discovery/onboarding.
++    dm_easy_mesh_t *dm = get_data_model();
++    if (dm != nullptr) {
++        em_profile_type_t dm_profile = dm->get_device_info()->profile;
++        if (valid_profile(dm_profile)) {
++            return dm_profile;
++        }
++    }
++
++    em_profile_type_t radio_profile = get_profile_type();
++    if (valid_profile(radio_profile)) {
++        return radio_profile;
++    }
++
++    if (valid_profile(m_peer_profile)) {
++        return m_peer_profile;
++    }
+ 
+     em_mgr_t *mgr = get_mgr();
+     if (mgr == nullptr) {
+-        return fallback;
++        return em_profile_type_1;
+     }
+ 
+     em_t *al_em = mgr->get_al_node();
+     if (al_em == nullptr) {
+-        return fallback;
++        return em_profile_type_1;
+     }
+ 
+     em_profile_type_t al_profile = al_em->get_peer_profile();
+-    return (al_profile == em_profile_type_reserved) ? fallback : al_profile;
++    return valid_profile(al_profile) ? al_profile : em_profile_type_1;
+ }
+ 
+ bool em_configuration_t::remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
+@@ -2844,10 +2866,25 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+         m_peer_profile = profile;
+         em_printfout("Topology response received from %s with profile: %d", util::mac_to_string(src_al_mac).c_str(), m_peer_profile);
+     } else {
+-        // MultiAP profile TLV is mandatory for profile >= em_profile_type_2.
+-        // FALL back to profile 1 for backward compatibility with earlier EasyMesh specifications.
+-        m_peer_profile = em_profile_type_1;
+-        em_printfout("Topology response received from %s with no profile TLV, assuming profile: %d", util::mac_to_string(src_al_mac).c_str(), m_peer_profile);
++        // A profile-less response is valid for a legacy Profile-1 peer, but it
++        // is not evidence that an already negotiated Profile-2/3 peer has
++        // downgraded.  In particular, the colocated ieee1905 responder can
++        // race the EasyMesh response during warm reconstruction.  Preserve
++        // the profile recorded by AP-Autoconfiguration Search (and persisted
++        // in the device model) instead of poisoning every radio's WSC
++        // validation state with Profile 1.
++        em_profile_type_t preserved_profile = dm->m_device.m_device_info.profile;
++        if (preserved_profile == em_profile_type_reserved && al_em != nullptr) {
++            preserved_profile = al_em->get_peer_profile();
++        }
++        if (preserved_profile == em_profile_type_reserved) {
++            preserved_profile = m_peer_profile;
++        }
++        if (preserved_profile == em_profile_type_reserved) {
++            preserved_profile = em_profile_type_1;
++        }
++        m_peer_profile = preserved_profile;
++        em_printfout("Topology response received from %s with no profile TLV, preserving profile: %d", util::mac_to_string(src_al_mac).c_str(), m_peer_profile);
+     }
+     // Update the peer profile in the AL node
+     if (al_em != nullptr) {
+-- 
+2.43.0
