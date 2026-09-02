@@ -128,12 +128,11 @@ const landscapeStar = controller.topologyLandscapeLayout(
   landscapeNodes, landscapeStarEdges, 1600, 900
 );
 assert.equal(landscapeStar.size, landscapeNodes.length);
-assert.deepEqual(landscapeStar.get('controller'), { x: 0, y: 0 },
-  'two-level Controller -> colocated Agent -> extenders star was not detected');
-assert.ok(landscapeNodes.slice(1).every(node => {
-  const position = landscapeStar.get(node.id);
-  return position && Math.hypot(position.x, position.y) > 0;
-}), 'two-level star agents were not distributed around the Controller');
+const landscapeController = landscapeStar.get('controller');
+assert.ok(landscapeController, 'Controller is missing from the hierarchy');
+assert.ok(landscapeNodes.slice(1).every(node =>
+  landscapeStar.get(node.id).x > landscapeController.x),
+  'two-level star nodes were not placed after the Controller');
 assert.equal(new Set(landscapeNodes.slice(1).map(node => {
   const position = landscapeStar.get(node.id);
   return `${position.x.toFixed(3)},${position.y.toFixed(3)}`;
@@ -161,15 +160,13 @@ assert.ok(chainPositions[0].x < chainPositions[1].x &&
 const directStarEdges = landscapeNodes.slice(1).map(node => ({
   from: 'controller', to: node.id
 }));
-const centeredStar = controller.topologyLandscapeLayout(
+const directStar = controller.topologyLandscapeLayout(
   landscapeNodes, directStarEdges, 1600, 900
 );
-assert.deepEqual(centeredStar.get('controller'), { x: 0, y: 0 },
-  'star controller is not centered');
-assert.ok(landscapeNodes.slice(1).every(node => {
-  const position = centeredStar.get(node.id);
-  return position && (position.x !== 0 || position.y !== 0);
-}), 'star satellites were not distributed around the controller');
+const directController = directStar.get('controller');
+assert.ok(landscapeNodes.slice(1).every(node =>
+  directStar.get(node.id).x > directController.x),
+  'direct-star nodes were not placed after the Controller');
 
 const metricsUpdated = new Date().toISOString();
 controller.clients = [{
