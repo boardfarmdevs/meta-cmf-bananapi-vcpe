@@ -4,6 +4,11 @@ This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
 
+`hwsim-monitor-ack.sh` is a live Linux 7 multichannel regression. It briefly
+enables the normally-down `hwsim0` radiotap monitor, generates acknowledged
+client traffic, and rejects a kernel Oops, wmediumd death, or nl80211 deadlock.
+Run it only on a healthy lab whose monitor interface is down.
+
 ## Basic lab concepts
 
 ### Devices and containers
