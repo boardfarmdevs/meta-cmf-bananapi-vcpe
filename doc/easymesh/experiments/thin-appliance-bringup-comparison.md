@@ -1,202 +1,264 @@
-# Thin-appliance bring-up comparison
+# Controlled thin-appliance comparison
 
-## Purpose
+## Result
 
-This experiment compares first use of the universal 0831 RDK EasyMesh and
-prplMesh thin LXD appliances. It measures the complete path from starting the
-importer through provisioning and accepted service state. It is not a pure
-stack benchmark: the two guests ran on different hosts, and their radio and
-container models are intentionally different.
+The RDK EasyMesh and prplMesh 20-client thin appliances both reconstructed a
+complete lab from an external archive without an operator nudge. On the same
+rev140 host, run sequentially with identical VM allocations, prplMesh reached
+accepted state in 20 min 16.410 s and RDK reached it in 21 min 46.226 s. The
+89.816 s difference is 6.9% of the RDK result and is too small to establish a
+general performance ranking from one run.
 
-The comparison is useful for answering three operational questions:
+The experiment did expose meaningful architectural differences:
 
-1. Does a clean external artifact reconstruct without an operator nudge?
-2. Where is time spent before the first accepted lab is available?
-3. Does first-boot provisioning unnecessarily repeat normal runtime work?
+- RDK imported 2 min 37.753 s faster, but its guest first-boot work took
+  3 min 51 s longer.
+- The classified RDK processes used 525.34 MiB PSS; the classified prplMesh
+  processes used 243.99 MiB PSS. These groups are not component-for-component
+  equivalents, but the 53.6% reduction is large enough to justify deeper
+  attribution.
+- The outer prplMesh QEMU process had 2.21 GiB more PSS, despite its lower
+  classified process PSS. QEMU PSS includes guest RAM shared mappings and page
+  cache, so it is a capacity observation rather than application attribution.
+- The early steady-state CPU sample was higher for prplMesh, primarily in
+  wmediumd and hostapd. RDK spent less CPU in wmediumd in this short sample.
+- The final prplMesh distribution archive is 25.3% smaller than the RDK
+  archive.
 
-## Test inputs
+These results show that both appliances are operational. They do not show that
+one EasyMesh implementation is categorically faster, smaller, or more mature.
+
+## Controlled method
+
+Both tests ran on rev140, one at a time. The competing lab VM and build
+container were stopped before each run. Each appliance was imported from its
+distribution archive, assigned the 20-client profile, allowed to complete its
+own first-boot and acceptance gates, sampled twice, and then shut down and
+deleted before the other stack was started.
+
+| Condition | Value |
+| --- | --- |
+| Outer host | rev140, Intel Core i7-1260P, 16 logical CPUs, 62.4 GiB RAM |
+| Host software | Ubuntu kernel 5.15.0-139, LXD 5.21.7 LTS, ZFS storage |
+| Guest allocation | 6 vCPU, 8 GiB RAM |
+| Guest software | Ubuntu 24.04, Linux 7.0.0-30 |
+| Profile | 20 WLAN clients, five mesh nodes, 25 nested containers |
+| Simulated medium | userspace wmediumd |
+| Execution order | RDK first, prplMesh second; never concurrent |
+| Repetitions | one cold run per stack |
+
+The measured end-to-end interval starts immediately before the importer and
+ends when all stack-specific acceptance gates pass. Import time, guest
+first-boot time, and accepted-state detection were independently timestamped.
+
+## Reproducibility inputs
 
 | Item | RDK EasyMesh | prplMesh |
 | --- | --- | --- |
-| Artifact | `rdkeasymesh-0831-thin.tar` | `prplmesh-0831-thin.tar` |
-| Archive SHA-256 | `c090f63ec2d9dd350111b68077d6eb951e706dbbfe52c9692a2dd5402701c675` | `9ef007df292742ebc8c36e9405d71810c8754e7f1f802baa58b68cd9bf45f598` |
-| Packaged source | `9729ca4ed89a15c91538292eaf41d6880dd97f29` | `4eb6bcc32beff12e90328660fcd10970a4694a16` |
-| Outer host | rev150, Ryzen 7 8745HS, 8 cores/16 threads, 25 GiB RAM | rev120, i7-10710U, 6 cores/12 threads, 62 GiB RAM |
-| Guest | Ubuntu 24.04/Linux 7 LXD VM | Ubuntu 24.04/Linux 7 LXD VM |
-| Medium | userspace wmediumd | userspace wmediumd |
+| Archive | `rdkeasymesh-0902-thin.tar` | `prplmesh-0902-thin.tar` |
+| Archive size | 2.28 GiB | 1.70 GiB |
+| Archive SHA-256 | `bad1d3148b904ff393a286007548900fd43bc291199b1497279cc501e22225fa` | `e75c0ca932378eba8017108e6c68ab86b97e9554d3bff18ca9517f74651d951e` |
+| Inner image SHA-256 | `47a8ff809e0cad4bc10606f82178219651542d1da8fef4167288120166f1bec8` | `922975420288c44d76f0c1be5ddf186447928993756e442811ba8fc56c34b7e8` |
+| Package source | `108ac6559f1993a7388fa690c71476921e87c8dc` | `8d0c1f77dbddc316b21d1fac2105cd13f08c1d6a` |
+| Runtime base | same as package source | `55f1fb76e37d1bfb7f86524be297647d9267c4cb` |
 
-Both archives and their inner payloads passed their supplied SHA-256 checks.
-Any previous evaluation VM was deleted before each profile. The importers were
-started within one second of one another. The tests retained all protocol,
-traffic and stability acceptance gates supplied by each appliance.
+The final prplMesh archive was repacked after the successful run to identify
+the complete importer-fix revision. Its inner VM payload did not change; the
+inner-image hash above is the payload used for the test.
 
-## 20-client profile
+## Bring-up timing
 
-The 20-client run began at 2026-09-01 21:43:33 PDT.
+| Measurement | RDK EasyMesh | prplMesh | Difference |
+| --- | ---: | ---: | ---: |
+| Archive import and VM creation | 4 min 11.406 s | 6 min 49.159 s | RDK 2 min 37.753 s faster |
+| Import return to accepted state | 17 min 34.820 s | 13 min 27.251 s | prplMesh 4 min 07.569 s faster |
+| Recorded guest first boot | 16 min 49 s | 12 min 58 s | prplMesh 3 min 51 s faster |
+| Import start to accepted state | **21 min 46.226 s** | **20 min 16.410 s** | prplMesh 1 min 29.816 s faster |
+| Controlled shutdown | 22.933 s | 29.569 s | RDK 6.636 s faster |
 
-| Measurement | RDK EasyMesh | prplMesh |
-| --- | ---: | ---: |
-| Outer import/VM creation | 3 min 09 s | 7 min 33 s |
-| Guest first-boot provisioning | 25 min 09 s | 16 min 34 s |
-| Import start to accepted first boot | 28 min 22 s | 24 min 07 s |
-| Final nested instances | 25/25 running | 25/25 running |
-| Client traffic | 20/20 pass | 20/20 pass |
-| Mesh model | 5 devices, 15 radios, 50 BSS records | controller plus four agents accepted |
-| Client telemetry | 20/20 RCPI present | topology and steering acceptance pass |
-| Service restarts during accepted RDK runtime | zero | not directly comparable |
+Both guests finished with 25 of 25 nested containers running. The RDK
+first-boot report recorded zero initial and 25 final instances. Its runtime
+then consumed the one-use thin-provisioning handoff in 318 ms instead of
+performing a second reconstruction. prplMesh recorded one continuous staged
+transaction:
 
-RDK first provisioning created and started the complete roster. The service
-dependency chain then invoked its ordinary cold-start transaction, stopped the
-20 clients, and reconstructed the already running lab. That second transaction
-took 377.5 seconds, including a 120-second stability hold. Its measured phases
-were:
-
-| RDK phase | Time |
+| prplMesh phase | Elapsed |
 | --- | ---: |
-| Infrastructure | 0.2 s |
-| Quiesce and radio reset | 21.9 s |
-| Mesh launch | 2.0 s |
-| Controller readiness | 69.0 s |
-| Extender convergence | 40.8 s |
-| Metrics policy | 20.3 s |
-| Client start and readiness | 31.9 s |
-| Medium startup | 32.0 s |
-| Convergence and acceptance | 152.5 s |
-| Evidence | 7.1 s |
+| Define the thin inventory | 3 min 32.766 s |
+| Start and converge mesh | 6 min 54.240 s |
+| Start clients | 22.747 s |
+| Start wmediumd Console | 0.605 s |
+| Start topology adapter | 1.799 s |
+| Acceptance suite | 2 min 05.803 s |
+| Finalize | 0.224 s |
 
-prplMesh instead spent about 364 seconds defining the complete dormant
-inventory, onboarded four agents at a fixed cadence of approximately 89
-seconds, started all 20 clients in about 31 seconds, and completed roughly 155
-seconds of acceptance. It did not perform the same obvious whole-roster second
-reconstruction.
+The current RDK timing record exposes total first-boot time and the final
+handoff but not equivalent internal provisioning phases. Adding matching RDK
+phase boundaries is required before attributing its additional 231 seconds.
 
-## 20-client steady-state snapshot
+## Functional acceptance
 
-The following is a point-in-time snapshot after both first boots passed. PSS
-was not collected for every process, so guest `used` and outer LXD memory are
-capacity observations rather than per-component attribution.
+Both results are accepted runs, not merely `RUNNING` container counts.
+
+### RDK EasyMesh
+
+- 25/25 nested containers running;
+- five active mesh nodes, 15 radios, 50 BSS records, and 24 association
+  records in the controller model;
+- 20 live clients with unique controller ownership and expected IPv4
+  addresses;
+- 20/20 clients reaching the controller over the data plane;
+- fresh backhaul signal for all four extenders;
+- valid preserved NVRAM identity for every mesh node; and
+- zero OneWifi, agent, controller, or CLI service restarts.
+
+### prplMesh
+
+- 25/25 nested containers running;
+- one controller, four agents, and 20 clients in an accepted star topology;
+- ten `private_ssid` and ten `iot_ssid` clients;
+- four clients on 2.4 GHz, ten on 5 GHz, and six on 6 GHz;
+- representative private/5 GHz and IoT/6 GHz BTM steering passing with
+  physical association, NBAPI ownership, and BTM response in agreement;
+- 20/20 clients reaching the controller over the data plane; and
+- process-cardinality, runtime-footprint, provenance, Console, and Controller
+  UI gates passing.
+
+No packet capture was needed for the accepted runs because the topology,
+steering, telemetry, and traffic gates did not disagree. A capture should be
+triggered when one of those gates fails or when a timing outlier needs protocol
+attribution; capturing every successful run would add evidence volume without
+answering a current failure question.
+
+## Process memory at accepted state
+
+PSS is used for application attribution because it apportions shared pages.
+RSS is retained for operational familiarity but double-counts shared pages
+when summed. Values below were collected from every relevant process in every
+nested container plus the guest-host wmediumd, Console, topology adapter, and
+UI processes.
 
 | Measurement | RDK EasyMesh | prplMesh |
 | --- | ---: | ---: |
-| Outer LXD current memory | 4.79 GiB | 7.37 GiB |
-| Guest used memory | 2.18 GiB | 2.51 GiB |
-| Guest available memory | 5.50 GiB | 5.17 GiB |
-| Guest filesystem allocated bytes | 6.59 GB | 34.19 GB |
-| wmediumd CPU at snapshot | 9.7% | 17.0% |
-| wmediumd RSS | 3.3 MiB | 4.0 MiB |
-| Console RSS | 12.6 MiB | 12.4 MiB |
+| Classified processes | 43 | 46 |
+| Total PSS | **525.34 MiB** | **243.99 MiB** |
+| Total private memory | 502.39 MiB | 201.40 MiB |
+| Summed RSS | 636.55 MiB | 409.69 MiB |
+| Threads | 205 | 77 |
+| File descriptors | 617 | 987 |
+| Guest available memory | 5.54 GiB | 5.13 GiB |
+| Outer QEMU PSS | 5.83 GiB | 8.04 GiB |
 
-The higher prplMesh medium and guest footprint is consistent with its explicit
-per-band wiphy model. The RDK BPI model has one hwsim wiphy per mesh device and
-projects three logical RDK/EasyMesh radios from it. prplMesh uses separate
-virtual radios for its bands, so client count alone does not represent equal
-kernel-radio or medium state. See
-[MediaTek single-wiphy radio model](../reference/single-wiphy-radio-model.md).
+The principal classified PSS groups were:
 
-## 50-client profile
+| Process group | RDK EasyMesh | prplMesh |
+| --- | ---: | ---: |
+| Mesh agent processes | 145.48 MiB | 46.97 MiB |
+| Mesh controller | 34.97 MiB | 24.43 MiB |
+| CLI/WebUI | 83.77 MiB | 7.27 MiB controller UI + 21.38 MiB adapter |
+| Wi-Fi manager/AP daemon | 117.76 MiB OneWifi | 15.60 MiB hostapd |
+| Supplicants | 58.91 MiB | 102.44 MiB |
+| IEEE 1905 | 27.92 MiB | 11.79 MiB |
+| Database | 43.03 MiB | no separate database process |
+| wmediumd | 1.21 MiB | 2.02 MiB |
+| wmediumd Console | 12.29 MiB | 12.09 MiB |
 
-The 50-client run began at 2026-09-01 22:13:44 PDT.
+This table explains which components merit investigation; it is not a direct
+component equivalence. RDK projects three logical EasyMesh radios from one
+hwsim wiphy per BPI, while prplMesh uses distinct per-band wiphys and a
+different hostapd/supplicant process model. See
+[Single-wiphy radio model](../reference/single-wiphy-radio-model.md).
+
+## Early steady-state CPU sample
+
+The second snapshot was collected 60.830 s after the RDK snapshot and 81.642 s
+after the prplMesh snapshot. CPU is reported as average use of one logical CPU
+during that interval.
 
 | Measurement | RDK EasyMesh | prplMesh |
 | --- | ---: | ---: |
-| Outer import/VM creation | 2 min 53 s | 6 min 40 s |
-| Guest initial provisioning | 33 min 25 s | 29 min 02 s |
-| Import start to initial provisioned roster | 36 min 56 s | 35 min 42 s, accepted |
-| Final nested instances | 55/55 running | 55/55 running |
-| Result | **fail after duplicate reconstruction** | **pass** |
-| Import start to final result | 45 min 33 s | 35 min 42 s |
+| All classified processes | 17.0% | 26.3% |
+| As share of six-vCPU guest capacity | 2.8% | 4.4% |
+| wmediumd | 10.0% | 13.6% |
+| OneWifi or hostapd | 4.2% | 9.1% |
+| Mesh agents | 0.7% | 2.1% |
+| PSS change during interval | -6.15 MiB | +0.24 MiB |
 
-The RDK provisioning unit reached 55/55 running instances at 05:50:39Z. Its
-normal runtime then immediately stopped the roster, briefly reduced it to one
-running instance, and reconstructed all 55. The second transaction failed at
-05:59:16Z because the controller model did not converge before its bounded
-gate: 49 live topology clients and 53 associated records were present. This is
-not counted as an accepted 50-client result, even though the initial
-provisioning roster was complete.
+This short, early-life sample is suitable for detecting gross load and process
+growth. It is not an idle-power benchmark and should not be extrapolated to a
+long soak or a traffic-loaded profile.
 
-The redundant RDK transaction consumed another 8 minutes 37 seconds before
-failure. Before the final convergence timeout, its measured phases included
-30.1 seconds for quiesce/radio reset, 69.2 seconds for controller readiness,
-35.3 seconds for extenders, 20.2 seconds for metrics policy, 42.7 seconds for
-clients, and 53.7 seconds for medium reconstruction. None of those operations
-was necessary merely to validate the state just created by thin provisioning.
+## Appliance defects found during the comparison
 
-prplMesh finished at 05:49:26Z with all 55 instances and its complete
-first-boot acceptance marked `PASS`. Its steady-state point snapshot showed
-11.36 GiB outer LXD memory, 4.53 GiB guest used memory, 7.08 GiB guest
-available memory, and 70.85 GB allocated guest filesystem bytes. These larger
-values must be interpreted with its separate per-band virtual-wiphy model and
-different host, not as a direct RDK regression.
+The first three prplMesh import attempts exposed portable-appliance wrapper
+defects. They did not reach prplMesh protocol testing:
 
-## Elimination of RDK's second reconstruction
+1. The importer tried to override proxy devices that the trimmed backup did
+   not contain. Import now tolerates absent packaged proxies.
+2. LXD assigned a different guest management address while proxies retained
+   the image's old address. Import now discovers the running appliance address
+   and targets the proxies at it.
+3. The LXD agent became reachable before the guest had installed its default
+   route. Import now waits a bounded 120 seconds for management routing.
 
-The duplicate RDK transaction is an appliance lifecycle defect, not required
-EasyMesh convergence. The thin provisioning helpers must start each node to
-assign and validate its permanent hwsim identity. Throwing that accepted state
-away immediately adds latency and creates avoidable radio, protocol and model
-churn.
+The corrected import completed unattended with both external HTTP endpoints
+returning 200. Regression coverage exercises absent proxy devices, a changed
+address, and delayed route availability. The failed attempts are retained
+separately from the accepted evidence and are not included in timing or
+resource results.
 
-The corrected service path creates a one-use marker in `/run` after thin
-provisioning. The normal runtime accepts it only when all of these agree:
+## Interpretation and next measurements
 
-- selected client profile and exact `clients + 5` instance count;
-- every expected instance is running;
-- packaged repository revision is exact;
-- selected medium backend is healthy;
-- live WLAN client count is exact; and
-- the controller has exactly five mesh devices.
+The strongest conclusions from this run are operational:
 
-On success, the runtime consumes the marker and preserves the running roster;
-its existing `ExecStartPost` still performs the complete final lab health
-check. If any invariant fails, it consumes the invalid marker and executes the
-ordinary cold reconstruction. Because `/run` is volatile and the marker is
-one-use, later service restarts and guest reboots retain normal cold-start
-semantics.
+- both thin appliances are independently reconstructible and reach substantive
+  protocol and traffic acceptance;
+- RDK's former duplicate post-provisioning reconstruction is absent;
+- prplMesh spends longer importing but less time in guest provisioning;
+- RDK has materially higher classified application PSS;
+- prplMesh has higher outer VM residency and higher early CPU load; and
+- the packages and collectors are now suitable for repeated controlled trials.
 
-## 0901 artifact verification
+A decision-grade performance comparison should run at least five cold trials
+per stack, randomize their order, record median and spread, and add controlled
+idle and traffic-loaded windows. It should also add matching phase timing to
+RDK and outer-LXD cgroup accounting to both collectors. The 50- and 100-client
+profiles should use the same method only after the 20-client repetition is
+stable; scale results must not be mixed with different hosts or simultaneous
+VM contention.
 
-The corrected sources were packaged as the universal 0901 thin appliances and
-then imported into clean 20-client VMs from the actual distribution tar files.
+## Evidence and collection
 
-| Item | RDK EasyMesh | prplMesh |
-| --- | --- | --- |
-| Artifact | `rdkeasymesh-0901-thin.tar` | `prplmesh-0901-thin.tar` |
-| Archive SHA-256 | `e3128133f79073036addc5f9027bd0edaeec6f22ef00eb0b609ffe322e788684` | `250dc99e7390a916984478f5269c168d3dc9fbd2705b5e83bca95cf1f5d144cd` |
-| Packaged source | `8753e4762537f263ddaa46fef48f7167c4e8ce99` | `71102b3aae319d378c36c7bf80bca11cae0b5d59` |
-| Guest first-boot interval | 19 min 03 s | 16 min 13 s |
-| Final state | 25/25 running, acceptance pass | 25/25 running, acceptance pass |
+Raw evidence is retained on rev140 under:
 
-The RDK runtime validated the one-use handoff and completed its
-`thin_provisioned_handoff` phase in 352 ms. The nested roster remained at
-25/25 and the boot journal contained zero `quiesce_and_radio_reset` phases.
-The subsequent complete health audit reported five mesh devices, 20 live
-clients, unique association and IPv4 ownership for every client, fresh signal
-for all four backhauls, zero EasyMesh/OneWifi restarts, and successful traffic
-from every client.
+```text
+/home/rev/easymesh-comparison/0903/
+  host-baseline.txt
+  rdk/
+  prpl/
+  prpl-import-failure/
+  prpl-proxy-failure/
+  prpl-network-wait-failure/
+```
 
-prplMesh completed one continuous provisioning, mesh, client, Console and
-acceptance transaction. It did not stop or redefine the 25-node roster after
-creating it. Its final model contained the controller, four agents, 20 clients,
-both fronthaul SSIDs and clients on 2.4, 5 and 6 GHz.
+The common schema-v1 collector is available in both repositories:
 
-The public presentation contract also passed: RDK served the EasyMesh UI and
-wmediumd Console on ports 18889 and 18890; prplMesh served the wmediumd Console
-on 8090 and Controller UI on 8091. The prplMesh Console shipped the operational
-station filter that excludes reserve `spare` radios from graph presentation.
-Its bounded daemon event ring reported that older startup records had been
-overwritten; this degrades retained event history but did not affect topology,
-traffic, UI availability or first-boot acceptance.
+```text
+RDK:  gen/tests/lab-performance-snapshot.py
+prpl: tests/lab-performance-snapshot.py
+```
 
-## Conclusions
+Example from inside either appliance VM:
 
-- Both 20-client universal thin artifacts reconstructed a complete accepted lab
-  without an operator nudge.
-- Thin archive size alone did not predict first-use duration. Provisioning and
-  protocol gates dominated import time.
-- The different hosts and radio models prevent treating the elapsed-time or
-  memory columns as a controlled implementation benchmark.
-- The RDK duplicate lifecycle transaction was real, measurable, and removable
-  without weakening final acceptance.
-- The 0901 artifacts contain the handoff fix and the current prplMesh
-  Console/UI service layout; the 0831 results remain the measured baseline used
-  to demonstrate the lifecycle defect.
+```sh
+sudo ./gen/tests/lab-performance-snapshot.py \
+  --stack rdk --profile 20 --label ready --output /tmp/ready.json
+
+sudo ./tests/lab-performance-snapshot.py \
+  --stack prplmesh --profile 20 --label ready --output /tmp/ready.json
+```
+
+The two collector files are byte-identical. They record host memory, nested
+LXD state, normalized first-boot and lifecycle timing, per-process and grouped
+PSS/RSS/private/swap values, threads, file descriptors, and cumulative CPU
+seconds. A later snapshot provides a bounded CPU and memory delta.
