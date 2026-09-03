@@ -8,6 +8,8 @@ target=${2:?usage: ap-recovery.sh AP_CONTAINER AP_BSSID}
 mapfile -t clients < <(lxc list -c n --format csv \
     | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
+# shellcheck source=lib/observer-status.sh
+source "$repo/gen/tests/lib/observer-status.sh"
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-}
 if [[ -z $medium_backend && -r /etc/default/easymesh-lab ]]; then
     medium_backend=$(sed -n 's/^[[:space:]]*EASYMESH_MEDIUM_BACKEND=//p' \
@@ -31,6 +33,8 @@ ap_stopped=0
 impacted=()
 
 topology=$(curl -fsS "$topology_url")
+status_section "Extender outage and recovery: $ap"
+status_action "Resolving every BSSID and client currently owned by $ap."
 mapfile -t target_bssids < <(jq -r --arg target "${target,,}" '
     [.nodes[]?
       | select(any(.haulTypes[]?.BSSList[]?;
@@ -85,6 +89,7 @@ for client in "${clients[@]}"; do
     fi
 done
 [ "${#impacted[@]}" -gt 0 ]
+status_note "${#impacted[@]} client(s) will be observed during this outage."
 
 # A destructive recovery measurement is meaningful only from a coherent
 # baseline.  Refuse to attribute a pre-existing controller ownership mismatch
@@ -101,12 +106,14 @@ for client in "${impacted[@]}"; do
         exit 1
     }
 done
+status_pass "The baseline controller ownership agrees with every physical link."
 
 start=$(date +%s%3N)
 # This is an abrupt AP-loss test, so use LXD's forced stop. A graceful init
 # shutdown can spend more than a minute in the RDK service chain and report a
 # context deadline after the caller has already lost control of cleanup.
 ap_stopped=1
+status_action "Stopping $ap abruptly to model loss of the extender."
 lxc stop "$ap" --force >/dev/null
 echo "ap_stopped_ms=$(( $(date +%s%3N) - start ))"
 
@@ -127,6 +134,7 @@ for client in "${impacted[@]}"; do
 done
 echo "raw_ap_drop stale_links=$stale traffic_failures=$failed impacted=${#impacted[@]}"
 
+status_action "Injecting the hwsim link-loss indication for the ${#impacted[@]} affected client(s)."
 for client in "${impacted[@]}"; do
     lxc exec "$client" -- ip link set wlan0 down
     lxc exec "$client" -- ip link set wlan0 up
@@ -140,6 +148,7 @@ done
 start=$(date +%s%3N)
 connected=0
 old=99
+status_wait "Waiting up to 60s for every client to leave the failed BSS and reconnect."
 for _ in $(seq 1 120); do
     connected=0
     old=0
@@ -161,8 +170,10 @@ for _ in $(seq 1 120); do
     sleep 0.5
 done
 [ "$connected" -eq "${#clients[@]}" ] && [ "$old" -eq 0 ]
+status_pass "All ${#clients[@]} clients are associated away from the failed extender."
 
 traffic_failures=0
+status_action "Verifying gateway traffic from every WLAN client."
 for client in "${clients[@]}"; do
     if ! lxc exec "$client" -- ping -q -c 3 -W 1 10.0.0.1 >/dev/null; then
         traffic_failures=$((traffic_failures + 1))
@@ -170,8 +181,10 @@ for client in "${clients[@]}"; do
 done
 echo "post_drop_traffic_failures=$traffic_failures"
 [ "$traffic_failures" -eq 0 ]
+status_pass "All clients retain data-plane connectivity."
 model_start=$(date +%s%3N)
 model_mismatches=99
+status_wait "Waiting up to 60s for controller ownership to match the recovered links."
 for _ in $(seq 1 120); do
     model_mismatches=0
     mismatch_rows=()
@@ -198,11 +211,13 @@ echo "post_drop_model_ms=$(( $(date +%s%3N) - model_start )) mismatches=$model_m
 echo "offline_topology_nodes=$(curl -fsS "$topology_url" | jq '.nodes | length')"
 
 start=$(date +%s%3N)
+status_action "Starting $ap again with its preserved radio and EasyMesh identity."
 lxc start "$ap"
 ap_stopped=0
 services_ms=-1
 backhaul_ms=-1
 ready_ms=-1
+status_wait "Waiting up to 180s for OneWifi, backhaul and all six fronthaul BSSs."
 for _ in $(seq 1 180); do
     now=$(( $(date +%s%3N) - start ))
     if [ "$services_ms" -lt 0 ] \
@@ -229,8 +244,10 @@ for _ in $(seq 1 180); do
     sleep 1
 done
 [ "$ready_ms" -ge 0 ]
+status_pass "$ap has re-established services, backhaul and fronthaul BSSs."
 
 controller_ms=-1
+status_wait "Waiting up to 90s for the returning extender to reappear in the controller topology."
 for _ in $(seq 1 180); do
     if curl -fsS "$topology_url" \
         | jq -e --arg bssid "$target" \
@@ -242,6 +259,7 @@ for _ in $(seq 1 180); do
     sleep 0.5
 done
 [ "$controller_ms" -ge 0 ]
+status_pass "$ap rejoined the WebUI topology with its stable identity."
 
 medium_id_after=$(medium_identity)
 echo "medium_identity_after=$medium_id_after"
@@ -249,3 +267,4 @@ echo "medium_identity_after=$medium_id_after"
 lxc exec bpibroadband -- systemctl show em_ctrl em_cli \
     -p Id -p MainPID -p NRestarts --no-pager
 trap - EXIT
+status_pass "Extender outage/recovery passed without replacing the medium."

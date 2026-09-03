@@ -27,6 +27,7 @@ sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ActuatorError, ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
+from observer_status import action, note, passed, section, waiting  # noqa: E402
 
 
 REQUIRED_CAPABILITIES = {
@@ -660,8 +661,10 @@ class Carousel:
             "preflight", aps=[ap["node_name"] for ap in aps],
             clients=[client["label"] for client in clients], groups=scenario["groups"],
         )
-        print("\nOpen the Network Topology tab and watch the printed client labels.", flush=True)
-        print("Each BLACKOUT disconnects one group; ARRIVAL moves it to the next AP.\n", flush=True)
+        section(f"{args.ssid} client carousel")
+        note("Open the Network Topology tab and watch the named client groups.")
+        note("BLACKOUT removes a group's RF path; ARRIVAL exposes the next AP.")
+        note(f"Running {args.rounds or 'continuous'} round(s) across {len(aps)} mesh APs.")
 
         touched = {
             (client["tx_mac"], ap["tx_mac"])
@@ -710,6 +713,10 @@ class Carousel:
                         for client in group
                     }
                     generation += 1
+                    action(
+                        f"Forming group {group_index + 1}/{len(groups)} on "
+                        f"{aps[group_index]['node_name']}."
+                    )
                     control.apply(
                         generation,
                         matrix_updates(group, aps, targets,
@@ -730,6 +737,7 @@ class Carousel:
                         ),
                         f"carousel formation for group {group_index + 1}",
                     )
+                    passed(f"Group {group_index + 1} reached its initial AP in {elapsed} ms.")
                     self.recorder.write(
                         "formation_group_converged", elapsed_ms=elapsed,
                         group=group_index + 1, observation=formed,
@@ -747,6 +755,8 @@ class Carousel:
                 )
                 self.recorder.write("formation_converged", elapsed_ms=elapsed,
                                     observation=formed)
+                passed("All carousel groups are in the visible starting formation.")
+                waiting(f"Holding the formation for {args.formation_hold:g}s.")
                 self.hold(args.formation_hold)
 
                 round_index = 0
@@ -760,11 +770,11 @@ class Carousel:
                         source_ap = aps[source_index]
                         target_ap = aps[target_index]
                         labels = [client["label"] for client in group]
-                        print(
-                            f"BLACKOUT round={round_index} group={group_index + 1} "
-                            f"{','.join(labels)} {source_ap['node_name']} -> DISCONNECTED",
-                            flush=True,
+                        action(
+                            f"BLACKOUT round {round_index}: {','.join(labels)} leaves "
+                            f"{source_ap['node_name']}."
                         )
+                        note(f"Next destination will be {target_ap['node_name']}.")
                         blackout_targets = {client["container"]: None for client in group}
                         generation += 1
                         control.apply(
@@ -781,6 +791,10 @@ class Carousel:
                             group=group_index + 1, clients=labels,
                             source=source_ap["node_name"], target=target_ap["node_name"],
                         )
+                        waiting(
+                            f"Waiting up to {args.disconnect_timeout:g}s for the group "
+                            "to disappear from its old AP."
+                        )
                         elapsed, absent_state = self.wait_for(
                             args.disconnect_timeout,
                             lambda: (
@@ -791,6 +805,8 @@ class Carousel:
                             ),
                             f"{','.join(labels)} radio disconnect",
                         )
+                        passed(f"The group is disconnected after {elapsed} ms.")
+                        waiting(f"Holding the visible blackout for {args.blackout_hold:g}s.")
                         self.recorder.write(
                             "group_disconnected", elapsed_ms=elapsed, round=round_index,
                             group=group_index + 1, clients=labels,
@@ -798,10 +814,9 @@ class Carousel:
                         )
                         self.hold(args.blackout_hold)
 
-                        print(
-                            f"ARRIVAL  round={round_index} group={group_index + 1} "
-                            f"{','.join(labels)} DISCONNECTED -> {target_ap['node_name']}",
-                            flush=True,
+                        action(
+                            f"ARRIVAL round {round_index}: exposing "
+                            f"{target_ap['node_name']} to {','.join(labels)}."
                         )
                         targets = {
                             client["container"]: target_ap["container"] for client in group
@@ -818,6 +833,10 @@ class Carousel:
                             "arrival_applied", generation=generation, round=round_index,
                             group=group_index + 1, clients=labels,
                             target=target_ap["node_name"],
+                        )
+                        waiting(
+                            f"Waiting up to {args.connect_timeout:g}s for physical and "
+                            "WebUI ownership to converge."
                         )
                         elapsed, arrived = self.wait_for(
                             args.connect_timeout,
@@ -1084,7 +1103,10 @@ class Carousel:
         (output / "summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n"
         )
-        print(f"{outcome.upper()} artifacts={output}", flush=True)
+        if outcome == "passed":
+            passed(f"Client carousel completed and restored its baseline; artifacts={output}")
+        else:
+            print(f"{outcome.upper()} artifacts={output}", flush=True)
         if interrupted:
             raise InterruptedError(error_text)
         if failure:

@@ -9,8 +9,11 @@ set -euo pipefail
 
 exec </dev/null
 
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/observer-status.sh
+source "$here/lib/observer-status.sh"
 topology_url=${TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
-result_root=${MULTIHOP_RESULT_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)/tmp/test-results/multihop}
+result_root=${MULTIHOP_RESULT_ROOT:-$(cd "$here/../.." && pwd)/tmp/test-results/multihop}
 gateway=bpibroadband
 anchor=bpiap-003
 extenders=(bpiap-003 bpiap-002 bpiap-001 bpiap)
@@ -138,9 +141,11 @@ controller_bss_count() {
 wait_for_onboarding() {
     local container=$1 start now count=0 last_count=-1
     start=$(date +%s)
+    status_wait "Waiting up to ${wait_onboard_seconds}s for $container to publish its complete controller model."
     while :; do
         count=$(controller_bss_count "$container" 2>/dev/null || printf '0\n')
         if [ "$count" -ge 9 ]; then
+            status_pass "$container published $count BSS records to the controller."
             echo "onboarding_ready container=$container bss_records=$count elapsed_s=$(( $(date +%s) - start ))"
             return 0
         fi
@@ -163,6 +168,7 @@ force_mesh_ap() {
         printf '%s\n' "$bssid"
         return 0
     fi
+    status_action "Activating the lazy 5 GHz backhaul AP on parent $container."
     echo "force_backhaul_ap parent=$container"
     timeout 20 lxc exec "$container" -- rbuscli setvalues \
         Device.WiFi.AccessPoint.14.ForceApply boolean true >/dev/null
@@ -183,6 +189,7 @@ wait_for_link() {
     local child=$1 parent=$2 target=$3 start now actual="" child_sta stable=0
     child_sta=$(mesh_sta_mac "$child")
     start=$(date +%s)
+    status_wait "Waiting up to ${wait_link_seconds}s for $child to authenticate with $parent ($target) and pass traffic."
     while :; do
         actual=$(mesh_sta_bssid "$child" || true)
         if [ "$actual" = "$target" ] &&
@@ -190,6 +197,7 @@ wait_for_link() {
                 timeout 10 lxc exec "$child" -- ping -q -c 1 -W 2 10.0.0.1 >/dev/null; then
             stable=$((stable + 1))
             if [ "$stable" -ge 3 ]; then
+                status_pass "$child is stably connected through $parent."
                 echo "link_ready child=$child parent=$parent bssid=$actual authenticated=true stable_checks=$stable elapsed_s=$(( $(date +%s) - start ))"
                 return 0
             fi
@@ -215,6 +223,7 @@ set_parent() {
         force_mesh_ap "$parent" >/dev/null
         target=$(mesh_ap_bssid "$parent")
     fi
+    status_action "Changing the backhaul parent of $child to $parent ($target)."
     echo "select_parent child=$child parent=$parent bssid=$target"
     output=$(timeout 20 lxc exec "$child" -- rbuscli setvalues \
         Device.WiFi.STA.2.Bssid bytes "$(compact_mac "$target")" 2>&1) || {
@@ -262,6 +271,8 @@ apply_profile() {
     local profile=$1 child parent pair
     local -a pairs
     require_lab
+    status_section "Apply $profile backhaul topology"
+    status_note "Each child is changed and verified before the next relationship is applied."
     echo "apply_profile=$profile"
     mapfile -t pairs < <(profile_pairs "$profile")
     for pair in "${pairs[@]}"; do
@@ -332,11 +343,13 @@ wait_for_api_edge() {
     fi
     child_al=$(container_al_mac "$child")
     start=$(date +%s)
+    status_wait "Waiting up to ${wait_model_seconds}s for the controller/WebUI edge $parent -> $child."
     while ! api_has_edge "$parent_al" "$child_al" "$target"; do
         [ $(( $(date +%s) - start )) -lt "$wait_model_seconds" ] \
             || fail "controller did not publish $parent -> $child ($target)"
         sleep 2
     done
+    status_pass "Controller topology now shows $parent -> $child."
     echo "model_ready parent=$parent child=$child upstream_bssid=$target elapsed_s=$(( $(date +%s) - start ))"
 }
 
@@ -444,6 +457,7 @@ verify_controller_db() {
     expected_bss=$((10 * expected_devices))
     minimum_associated=$((minimum_clients + ${#extenders[@]}))
     start=$(date +%s)
+    status_wait "Waiting up to ${wait_model_seconds}s for complete device, radio, BSS and association counts."
 
     while :; do
         counts=$(controller_db_counts || true)
@@ -453,6 +467,7 @@ verify_controller_db() {
                 [ "$bss" -eq "$expected_bss" ] &&
                 [ "$associated" -ge "$minimum_associated" ]; then
             echo "database_ready devices=$devices radios=$radios bss=$bss associated=$associated"
+            status_pass "Controller database is complete: $devices devices, $radios radios, $bss BSSs."
             return 0
         fi
         [ $(( $(date +%s) - start )) -lt "$wait_model_seconds" ] ||
@@ -467,6 +482,8 @@ verify_profile() {
     require_lab
     enable_metrics_reporting
     gateway_bssid=$(mesh_ap_bssid "$gateway")
+    status_section "Verify $profile backhaul topology"
+    status_note "Checking physical parent links, forwarding, WebUI edges, backhaul signals, clients and database."
     echo "verify_profile=$profile gateway_bssid=$gateway_bssid"
     mapfile -t pairs < <(profile_pairs "$profile")
     for pair in "${pairs[@]}"; do
@@ -509,6 +526,7 @@ verify_profile() {
     [ "$failures" -eq 0 ] || fail "$profile verification reported $failures failure(s)"
     verify_clients
     verify_controller_db
+    status_pass "$profile topology passed every physical, model and traffic gate."
     echo "PASS profile=$profile"
 }
 
@@ -556,6 +574,8 @@ cold_test() {
     local profile=$1 child parent pair
     local -a pairs
     require_lab
+    status_section "Cold onboarding in $profile topology"
+    status_note "EasyMesh service starts are serialized so every agent completes onboarding before its child starts."
     echo "cold_onboarding_profile=$profile"
     trap unmask_all EXIT
     mapfile -t pairs < <(profile_pairs "$profile")
@@ -581,6 +601,7 @@ cold_test() {
         # physical hwsim wiphy to the host.  A forced stop can leave a second
         # netdev on that phy; the next LXD start then cannot rename its device
         # to wlan0.  Retain force only as the bounded fallback.
+        status_action "Stopping $child before rebuilding the topology."
         lxc stop "$child" --timeout 20 >/dev/null 2>&1 ||
             lxc stop "$child" --force >/dev/null
     done
@@ -594,6 +615,7 @@ cold_test() {
             || fail "$child did not stop cleanly before cold onboarding"
     done
 
+    status_action "Starting the anchor extender $anchor."
     lxc start "$anchor"
     for _ in $(seq 1 120); do
         timeout 10 lxc exec "$anchor" -- systemctl is-active --quiet onewifi 2>/dev/null \
@@ -607,6 +629,7 @@ cold_test() {
     for pair in "${pairs[@]}"; do
         read -r child parent <<< "$pair"
         [ "$child" = "$anchor" ] && continue
+        status_action "Starting $child and attaching it below $parent."
         lxc start "$child"
         for _ in $(seq 1 120); do
             timeout 10 lxc exec "$child" -- systemctl is-active --quiet onewifi 2>/dev/null \

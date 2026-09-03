@@ -68,6 +68,8 @@ topology_url=${EASYMESH_TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
 steering_url=${EASYMESH_STEERING_UI_URL:-${topology_url%/topology}/steering-event}
 controller=${EASYMESH_CONTROLLER:-bpibroadband}
 repo=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=tests/lib/observer-status.sh
+source "$repo/gen/tests/lib/observer-status.sh"
 bias_tool=$repo/gen/tests/steering-rf-bias.py
 identity_inventory=${EASYMESH_IDENTITY_INVENTORY:-/run/meta-cmf-wmediumd/identity-inventory.json}
 curl_connect_timeout=${EASYMESH_CURL_CONNECT_TIMEOUT:-2}
@@ -124,6 +126,8 @@ jq -e '.nodes | type == "array"' >/dev/null <<<"$topology" || {
 
 if [[ $sta_input =~ ^(sta|iot)-([[:xdigit:]]{2})$ ]]; then
     # The WebUI uses the fifth octet for the stable hwsim STA label.
+    requested_cohort=${BASH_REMATCH[1]}
+    requested_suffix=${BASH_REMATCH[2],,}
     sta=$(printf '02:00:00:00:%s:00' "${BASH_REMATCH[2],,}")
 elif [[ $sta_input =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
     sta=$sta_input
@@ -144,6 +148,17 @@ if ((${#source_rows[@]} != 1)); then
 fi
 IFS=$'\t' read -r source_name sta source_band source_ssid source_bssid source_channel \
     <<<"${source_rows[0]}"
+if [[ -n ${requested_cohort:-} ]]; then
+    case "$source_ssid" in
+        private_ssid) live_label=sta-$requested_suffix ;;
+        iot_ssid)     live_label=iot-$requested_suffix ;;
+        *)            live_label= ;;
+    esac
+    if [[ -n $live_label && $sta_input != "$live_label" ]]; then
+        echo "steer.sh: '$sta_input' does not exist; $sta is '$live_label' on $source_ssid" >&2
+        exit 1
+    fi
+fi
 target_band=${band_override:-$source_band}
 target_ssid=${ssid_override:-$source_ssid}
 
@@ -200,6 +215,9 @@ if ((target_is_name)) \
     exit 1
 fi
 
+status_section "EasyMesh steering: $sta_input to $target_name"
+status_note "Station $sta currently uses $source_name ($source_bssid)."
+status_note "Target BSSID $target_bssid carries $target_ssid on band $target_band."
 printf 'steer.sh: %s -> %s; STA=%s target_BSSID=%s SSID=%s band=%s\n' \
     "$sta_input" "$target_name" "$sta" "$target_bssid" "$target_ssid" "$target_band"
 if ((dry_run)); then
@@ -223,10 +241,11 @@ if ! lxc_exec_bounded 5 "$controller" -- true >/dev/null 2>&1; then
 fi
 
 if ((request_only)); then
-    echo "steer.sh: request-only mode; client acceptance and reassociation are not forced"
+    status_action "Using standards-only mode; no temporary RF preference will be applied."
     announce_steering planned
-    sleep "$preview_seconds"
+    status_wait_seconds "$preview_seconds" "highlighting $sta_input in the topology before the request"
     announce_steering moving
+    status_action "Sending the BTM steering request for $sta to $target_bssid."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
         /usr/bin/steer.sh "$sta" "$target_bssid"
     exit $?
@@ -338,6 +357,7 @@ restore_bias() {
         if timeout --signal=TERM --kill-after=2 20 \
                 "${bias_command[@]}" restore --state "$bias_state"; then
             bias_active=0
+            status_pass "Restored the exact pre-test RF matrix."
         else
             echo "steer.sh: WARNING: exact wmediumd RF restore failed; state retained at $bias_state" >&2
             return 1
@@ -358,12 +378,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "steer.sh: deterministic lab mode; client=$client source=$source_bssid target=$target_bssid frequency=${target_frequency}MHz"
+status_action "Resolved $sta_input to container $client and ${target_frequency} MHz."
 announce_steering planned
 steering_announced=1
-sleep "$preview_seconds"
+status_wait_seconds "$preview_seconds" "highlighting $sta_input before it moves"
 announce_steering moving
-echo "steer.sh: applying the temporary RF bias from stable radio identities"
+status_action "Making $target_name stronger than $source_name in the simulated medium."
 bias_args=(
     apply --client "$client" --source-bssid "$source_bssid"
     --target-bssid "$target_bssid" --state "$bias_state"
@@ -390,6 +410,7 @@ if ((bias_rc != 0)); then
 fi
 bias_active=1
 
+status_action "Scanning ${target_frequency} MHz so the station can see candidate $target_bssid."
 if ! lxc_exec_bounded 12 "$client" -- sh -c '
     frequency=$1
     target=$2
@@ -412,9 +433,10 @@ fi
 link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
 physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
-    echo "steer.sh: station reassociated during deterministic RF preparation; no BTM request is required"
+    status_pass "The station reassociated during RF preparation; no BTM request was needed."
 else
-    echo "steer.sh: target candidate is visible; submitting the EasyMesh BTM request"
+    status_pass "The target BSSID is present in the station scan cache."
+    status_action "Sending the EasyMesh BTM request for $sta to $target_bssid."
     set +e
     # The native command transport has a 30-second I/O bound and controller
     # commands are serialized.  Keep the outer deadline above that contract so
@@ -431,6 +453,7 @@ else
     }
 fi
 
+status_wait "Waiting up to 10s for the station to associate with $target_bssid."
 link=$(lxc_exec_bounded 15 "$client" -- sh -c '
     target=$1
     attempt=0
@@ -453,8 +476,10 @@ physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
     echo "steer.sh: station did not accept/reassociate to $target_bssid" >&2
     exit 1
 }
+status_pass "$sta_input is physically associated with $target_bssid."
 
 topology_converged=0
+status_wait "Waiting up to 6s for controller ownership and the WebUI topology to converge."
 for _ in $(seq 1 30); do
     current=$(curl --connect-timeout "$curl_connect_timeout" --max-time 3 \
         -fsS "$topology_url" 2>/dev/null || true)
@@ -476,4 +501,4 @@ done
 announce_steering completed
 steering_announced=0
 restore_bias
-echo "steer.sh: PASS $sta_input is physically and visibly associated with $target_name ($target_bssid)"
+status_pass "$sta_input is physically and visibly associated with $target_name ($target_bssid)."

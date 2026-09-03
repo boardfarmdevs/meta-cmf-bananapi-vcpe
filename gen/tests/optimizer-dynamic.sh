@@ -2,6 +2,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=lib/observer-status.sh
+source "$root/gen/tests/lib/observer-status.sh"
 mode=${1:-recommend}
 client=${2:-wlan-client-007}
 target=${3:-bpiap-001}
@@ -39,6 +41,8 @@ cleanup()
 trap cleanup EXIT
 
 cd "$root/gen/wmediumd/configurator"
+status_section "Closed-loop optimizer: $mode"
+status_action "Discovering live radio identities and association state."
 python3 -m wmdcfg.cli inventory -o "$inventory"
 
 readarray -t binding < <(python3 - "$inventory" "$client" "$target" <<'PY'
@@ -105,6 +109,7 @@ source=${binding[0]}
 target=${binding[1]}
 target_bssid=${binding[2]}
 
+status_action "Compiling the crossover world for $client: $source to $target ($target_bssid)."
 python3 -m wmdcfg.cli compile scenarios/optimizer-five-ap-crossover.wmd \
     --inventory "$inventory" \
     --bind "client=$client" \
@@ -115,11 +120,12 @@ python3 -m wmdcfg.cli compile scenarios/optimizer-five-ap-crossover.wmd \
     --bind "alternate_3=${binding[5]}" \
     -o "$plan"
 
-echo "optimizer stimulus: $client $source -> $target ($target_bssid)"
+status_action "Starting the dynamic wmediumd crossover stimulus."
+status_note "The source weakens while $target becomes the best candidate; exact RF state is restored at completion."
 "${scenario_command[@]}" "$plan" --backend "$medium_backend" \
     >"$scenario_log" 2>&1 &
 scenario_pid=$!
-sleep 2
+status_wait_seconds 2 "allowing the scenario control stream to become active"
 
 cd "$root/gen/optimizer"
 args=(
@@ -135,10 +141,17 @@ args=(
 if [ "$mode" = act ]; then
     args+=(--yes-act --max-actions 1)
 fi
+status_wait "Running six policy evaluations using controller-reported candidate metrics."
+if [ "$mode" = act ]; then
+    status_note "Action mode may send one BTM request when policy hold and hysteresis gates pass."
+else
+    status_note "Recommend mode records the decision but will not move the client."
+fi
 if ! python3 -m optimizer.cli "${args[@]}" >"$optimizer_log"; then
     tail -n 40 "$optimizer_log" >&2
     exit 1
 fi
+status_action "Waiting for the medium scenario to finish and restore its baseline."
 wait "$scenario_pid"
 scenario_pid=
 
@@ -160,7 +173,7 @@ fi
 
 summary=$(tail -1 "$scenario_log")
 jq -e '.outcome == "passed" and .restored == true' "$summary/summary.json" >/dev/null
-echo "PASS: RDK dynamic $mode used controller candidate metrics; scenario restored"
+status_pass "RDK dynamic $mode used controller candidate metrics and restored the scenario."
 echo "journal: $journal"
 echo "scenario: $summary"
 echo "optimizer output: $optimizer_log"

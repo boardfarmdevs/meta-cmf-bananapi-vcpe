@@ -23,6 +23,7 @@ sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
+from observer_status import action, note, passed, section, waiting  # noqa: E402
 
 
 def run(*args: str, check: bool = True) -> str:
@@ -235,6 +236,8 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=False)
     recorder = Recorder(output / "events.jsonl")
     inventory = discover()
+    section(f"Simulated RF outage: {args.extender}")
+    action("Discovering stable radio identities, associations and controller ownership.")
     (output / "inventory.json").write_text(json.dumps(inventory, indent=2, sort_keys=True) + "\n")
     radios = {item["container"]: item for item in inventory["radios"]}
     if args.extender not in radios or radios[args.extender]["kind"] != "mesh":
@@ -269,6 +272,7 @@ def main() -> int:
     if (not args.allow_preflight_disagreement
             and any(not item["agreed"] for item in initial_consistency)):
         raise RuntimeError("physical links and controller topology disagree before the test")
+    passed("Physical client links and controller topology agree at baseline.")
 
     services_before = {
         unit: service_state(unit) for unit in ("ieee1905_em_ctrl.service", "em_ctrl.service")
@@ -335,6 +339,10 @@ def main() -> int:
         ]
         try:
             if prepare_client is not None:
+                action(
+                    f"Pre-positioning {prepare_client['container']} on {args.extender} "
+                    "so the client impact is observable."
+                )
                 prepare_updates = []
                 for item in radios.values():
                     if item["kind"] != "mesh":
@@ -390,6 +398,7 @@ def main() -> int:
                     raise RuntimeError(
                         f"could not place {prepare_client['container']} on {args.extender}"
                     )
+                passed(f"The client reached {args.extender} in {prepared_ms} ms.")
 
                 generation += 1
                 prepare_restore = [
@@ -443,6 +452,10 @@ def main() -> int:
                 )
 
             generation += 1
+            action(
+                f"Removing the RF path between {args.extender} and "
+                f"{len(impacted)} associated client(s)."
+            )
             control.apply(generation, updates_for(client_pairs, args.outage_snr))
             recorder.write("client_rf_loss_applied", generation=generation, snr=args.outage_snr)
 
@@ -463,14 +476,23 @@ def main() -> int:
                     complete = complete and converged
                 return observations if complete else None
 
+            waiting(
+                f"Waiting up to {args.client_timeout}s for clients to move and the "
+                "topology to follow."
+            )
             move_ms, moved = wait_until(args.client_timeout, 0.5, clients_moved)
             recorder.write("clients_moved", elapsed_ms=move_ms, observations=moved)
             if move_ms < 0:
                 raise RuntimeError("affected clients did not move and converge in topology")
             summary["client_rf_loss"] = "passed"
+            passed(f"Affected clients moved to live APs in {move_ms} ms.")
 
             if not args.skip_full_outage:
                 generation += 1
+                action(
+                    f"Isolating every radio path to {args.extender}; its wireless "
+                    "backhaul should now disappear."
+                )
                 control.apply(generation, updates_for(all_pairs, args.outage_snr))
                 recorder.write("full_extender_rf_loss_applied", generation=generation,
                                snr=args.outage_snr)
@@ -487,12 +509,17 @@ def main() -> int:
                                disconnected=backhaul_ms >= 0, observation=backhaul)
                 if backhaul_ms < 0:
                     raise RuntimeError("extender backhaul did not fail under full RF isolation")
+                passed(f"The extender backhaul failed after {backhaul_ms} ms.")
 
                 def node_absent():
                     document = topology(args.topology_url)
                     ids = [str(node.get("id")).lower() for node in document.get("nodes", [])]
                     return {"topology_nodes": len(ids)} if node_id not in ids else None
 
+                waiting(
+                    f"Waiting up to {args.node_timeout}s for controller liveness aging "
+                    "to remove the extender."
+                )
                 absent_ms, absent = wait_until(args.node_timeout, 1.0, node_absent)
                 summary["extender_disappeared_from_api"] = absent_ms >= 0
                 recorder.write("extender_api_absence", elapsed_ms=absent_ms,
@@ -502,6 +529,7 @@ def main() -> int:
                 summary["full_extender_rf_loss"] = "passed"
         finally:
             generation += 1
+            action("Restoring every changed wmediumd link to its exact baseline value.")
             control.apply(generation, restore)
             restored = all(
                 control.get_link(item["source"], item["destination"])[1] == item["value"]
@@ -511,6 +539,7 @@ def main() -> int:
             recorder.write("medium_restored", generation=generation, verified=restored)
             if not restored:
                 raise RuntimeError("wmediumd baseline restoration failed")
+            passed("The original RF matrix has been restored exactly.")
 
     def extender_recovered():
         document = topology(args.topology_url)
@@ -520,10 +549,14 @@ def main() -> int:
         backhaul = "Connected to" in lxc(args.extender, "iw dev wifi1.3 link 2>/dev/null")
         return {"present": present, "backhaul": backhaul} if present and backhaul else None
 
+    waiting(
+        f"Waiting up to {args.recovery_timeout}s for backhaul and controller topology recovery."
+    )
     recovered_ms, recovered = wait_until(args.recovery_timeout, 1.0, extender_recovered)
     recorder.write("extender_recovered", elapsed_ms=recovered_ms, observation=recovered)
     if recovered_ms < 0:
         raise RuntimeError("extender did not recover after medium restoration")
+    passed(f"{args.extender} recovered after {recovered_ms} ms.")
 
     def clients_converged():
         document = topology(args.topology_url)
@@ -534,6 +567,10 @@ def main() -> int:
     # bounds how long the stack may take to regain agreement; it must not also
     # consume the continuous stability window.  Allowing their sum means a
     # stable interval has to begin within recovery_timeout seconds.
+    waiting(
+        f"Requiring all physical/API ownership to remain stable for "
+        f"{args.stability_window}s."
+    )
     convergence_ms, final_consistency = wait_stable(
         args.recovery_timeout + args.stability_window,
         1.0,
@@ -579,7 +616,7 @@ def main() -> int:
     summary["outcome"] = "passed"
     summary["services"] = services_after
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    print(f"PASS artifacts={output}")
+    passed(f"Extender RF outage and recovery passed; artifacts={output}")
     return 0
 
 

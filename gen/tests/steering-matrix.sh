@@ -17,6 +17,8 @@ while [ $# -gt 0 ]; do
 done
 case "$ssid" in private_ssid|iot_ssid) ;; *) echo "unsupported SSID: $ssid" >&2; exit 2;; esac
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
+# shellcheck source=lib/observer-status.sh
+source "$repo/gen/tests/lib/observer-status.sh"
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
 steering_frequency=${STEERING_FREQUENCY:-5180}
 steering_source_snr=${STEERING_SOURCE_SNR:-20}
@@ -167,6 +169,9 @@ if [ "${#clients[@]}" -eq 0 ] || [ "${#target_rows[@]}" -ne 5 ]; then
     echo "expected a non-empty $ssid cohort and 5 target agents; found ${#clients[@]} and ${#target_rows[@]}" >&2
     exit 1
 fi
+status_section "Commanded steering matrix"
+status_note "Testing ${#clients[@]} $ssid clients against ${#target_rows[@]} mesh targets for $rounds round(s)."
+status_note "Each move must agree at the station link, controller database and WebUI API."
 
 printf '%s\n' 'round,client,sta,target_name,source_bssid,target_bssid,command_rc,link_ms,db_ms,topology_ms,packet_loss,result,run_id,transaction_id,started_at_utc' > "$results"
 failures=0
@@ -184,6 +189,7 @@ for ((round=1; round <= rounds; round++)); do
         fi
         transaction_id=$(printf '%s-r%03d-c%03d' "$run_id" "$round" "$index")
         started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+        status_action "Round $round/$rounds: moving $client from $source to $target_name ($target)."
         printf '%s transaction=%s event=start client=%s sta=%s source=%s target=%s\n' \
             "$started_at" "$transaction_id" "$client" "$sta" "$source" "$target" \
             | tee -a "$events"
@@ -192,6 +198,7 @@ for ((round=1; round <= rounds; round++)); do
         rm -f "$bias_state"
         active_bias_state=$bias_state
         medium_restored=0
+        status_action "Applying a temporary RF preference for the target BSSID."
         "${bias_command[@]}" apply \
             --client "$client" --source-bssid "$source" \
             --target-bssid "$target" --state "$bias_state" \
@@ -202,8 +209,10 @@ for ((round=1; round <= rounds; round++)); do
             | tee -a "$commands"
         prime_candidate_scan "$client" "$target" "$steering_frequency" \
             | tee -a "$commands"
+        status_pass "Candidate $target is visible to $client."
 
         ping_file=$(mktemp)
+        status_action "Starting continuity traffic and sending the BTM request."
         lxc exec "$client" -- ping -q -i 0.1 -c 100 -W 2 10.0.0.1 \
             >"$ping_file" 2>&1 &
         ping_pid=$!
@@ -215,6 +224,7 @@ for ((round=1; round <= rounds; round++)); do
         set -e
 
         link_ms=-1
+        status_wait "Waiting up to 10s for the physical WLAN association."
         for _ in $(seq 1 100); do
             actual=$(client_bssid "$client" 1 || true)
             if [ "$actual" = "$target" ]; then
@@ -226,6 +236,7 @@ for ((round=1; round <= rounds; round++)); do
 
         db_ms=-1
         topology_ms=-1
+        status_wait "Waiting up to 10s for controller and WebUI ownership convergence."
         for _ in $(seq 1 100); do
             if [ "$db_ms" -lt 0 ]; then
                 db_bssid=$(lxc exec bpibroadband -- mysql -N -ubpi -proot \
@@ -252,6 +263,7 @@ for ((round=1; round <= rounds; round++)); do
             --state "$bias_state" | tee -a "$commands"
         active_bias_state=
         medium_restored=1
+        status_pass "Restored the pre-test medium state."
 
         wait "$ping_pid" || true
         loss=$(sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p' "$ping_file")
@@ -272,7 +284,10 @@ for ((round=1; round <= rounds; round++)); do
             "$command_rc" "$link_ms" "$db_ms" "$topology_ms" "${loss:-unknown}" "$result" \
             "$run_id" "$transaction_id" "$started_at" \
             | tee -a "$results"
-        sleep 1
+        if [ "$result" = PASS ]; then
+            status_pass "$client reached $target_name; link=${link_ms}ms DB=${db_ms}ms WebUI=${topology_ms}ms loss=${loss:-unknown}."
+        fi
+        status_wait_seconds 1 "allowing the topology to settle before the next move"
     done
 done
 
@@ -283,7 +298,7 @@ restore_medium
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" \
     -eq "$expected_total_clients" ]
-echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
+status_pass "Steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed."
 echo "results: $results"
 echo "events: $events"
 echo "commands: $commands"

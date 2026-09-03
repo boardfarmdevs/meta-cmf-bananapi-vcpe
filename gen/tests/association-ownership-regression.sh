@@ -46,6 +46,8 @@ done
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
+# shellcheck source=lib/observer-status.sh
+source "$here/lib/observer-status.sh"
 steer="$repo/gen/steer.sh"
 results=${results:-$repo/tmp/test-results/association-ownership.csv}
 mkdir -p "$(dirname "$results")"
@@ -73,6 +75,8 @@ printf '%s\n' \
     'round,target,target_bssid,convergence_seconds,stability_seconds,result' >"$results"
 passes=0
 total=$((rounds * ${#targets[@]}))
+status_section "Association ownership stability"
+status_note "Testing $sta across ${#targets[@]} target(s) for $rounds round(s)."
 
 for round in $(seq 1 "$rounds"); do
     for target in "${targets[@]}"; do
@@ -85,10 +89,11 @@ for round in $(seq 1 "$rounds"); do
         [ -n "$target_bssid" ] \
             || { echo "cannot resolve target BSSID from: $dry_run" >&2; exit 1; }
 
-        echo "round $round: $sta/$mac -> $target ($target_bssid)"
+        status_action "Round $round/$rounds: steering $sta/$mac to $target ($target_bssid)."
         $steer "$sta" "$target"
 
         converged=-1
+        status_wait "Waiting up to ${convergence}s for physical and API ownership to converge."
         for second in $(seq 0 "$convergence"); do
             physical=$(physical_bssid || true)
             api=$(api_bssid || true)
@@ -105,6 +110,7 @@ for round in $(seq 1 "$rounds"); do
             exit 1
         fi
 
+        status_wait "Requiring the new ownership to remain stable for ${stability}s."
         for second in $(seq 1 "$stability"); do
             sleep 1
             physical=$(physical_bssid || true)
@@ -120,8 +126,8 @@ for round in $(seq 1 "$rounds"); do
         printf '%s,%s,%s,%s,%s,PASS\n' \
             "$round" "$target" "$target_bssid" "$converged" "$stability" >>"$results"
         passes=$((passes + 1))
-        echo "PASS: converged in ${converged}s; stable for ${stability}s"
+        status_pass "Converged in ${converged}s and remained stable for ${stability}s."
     done
 done
 
-echo "association ownership regression PASSED $passes/$total; results=$results"
+status_pass "Association ownership regression passed $passes/$total; results=$results"

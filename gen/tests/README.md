@@ -92,6 +92,20 @@ Tests that modify wmediumd record the initial matrix and restore the exact
 values in a `finally`/exit path. Client placement may nevertheless change as a
 result of roaming and can take additional time to converge.
 
+### Observer-facing status
+
+Demo and live-scenario entry points explain each action before performing it:
+
+- bright cyan `==>` messages identify a change or command being issued;
+- bright yellow `...` messages state what convergence is being awaited and
+  its bound;
+- bright green `OK:` messages identify an achieved gate;
+- blue section and note messages give the scenario context.
+
+Status messages use stderr so CSV, JSON and command-substitution stdout remain
+machine-readable. Colors are enabled only on an interactive terminal. Set
+`NO_COLOR=1` to retain the same messages without ANSI color sequences.
+
 ## Before running live tests
 
 Confirm that the lab and API are healthy:
