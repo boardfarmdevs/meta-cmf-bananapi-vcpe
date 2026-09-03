@@ -801,3 +801,21 @@ Preserve a failed test's timestamped artifact directory before redeploying.
 For RF tests, first confirm the recorded `medium_restored` result. For a stopped
 AP test, confirm the cleanup restart. Then use `health-audit.sh` and the
 topology WebUI to establish the post-test baseline.
+
+## Comparable performance snapshot
+
+Run the common collector as root inside the outer lab VM after a lifecycle
+gate. It reads the most recent lifecycle timing record and uses
+`smaps_rollup`, so PSS is not inflated by counting shared pages once for every
+process:
+
+```sh
+sudo gen/tests/lab-performance-snapshot.py \
+  --stack rdk --profile 20 --label ready \
+  --output /var/tmp/rdk-ready.json
+```
+
+The schema records the outer VM's memory and load, nested LXD cardinality,
+cumulative lifecycle milestones, relevant process details, and PSS/RSS,
+private memory, swap, threads and file-descriptor totals by functional group.
+Use the same profile and label in the prplMesh lab for direct comparison.
