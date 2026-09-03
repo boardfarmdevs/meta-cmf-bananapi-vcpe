@@ -5,9 +5,10 @@
 Bounded parallel lifecycle management reduced complete 25-container cold
 reconstruction from 15 minutes 18 seconds to 6 minutes 21 seconds, and the
 55-container reconstruction from 26 minutes 8 seconds to 6 minutes 50 seconds.
-Overlapping controller and extender container boot, while retaining all
-protocol gates, reduced the accepted transactions again to 5 minutes 52 seconds
-and 6 minutes 31 seconds respectively.
+An overlap experiment reduced the measured transactions again to 5 minutes 52
+seconds and 6 minutes 31 seconds respectively. A later 0902 clean-build reboot
+exposed an ordering race hidden by those point measurements, so overlap is no
+longer the appliance default.
 Complete shutdown now takes 32 to 43 seconds rather than 95 to 127 seconds.
 
 These are complete service transactions, not just `lxc start` latency. Start
@@ -15,7 +16,7 @@ time includes controller and extender readiness, all client associations and
 DHCP leases, medium startup, metrics convergence, a 120-second stability hold,
 traffic verification, zero-restart checks, and evidence capture.
 
-| Profile | Medium | Serial | Gated parallel | Overlap | Total reduction | Parallel stop |
+| Profile | Medium | Serial | Gated parallel | Experimental overlap | Total reduction | Parallel stop |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | 5 mesh + 20 clients (25 containers) | userspace wmediumd | 917.6 s | 381.2 s | 352.2 s | 61.6% | 31.7 s |
 | 5 mesh + 50 clients (55 containers) | experimental kernel medium | 1568.3 s | 409.6 s | 390.6 s | 75.1% | 42.7 s |
@@ -29,14 +30,14 @@ result is a long-duration 50-client soak claim.
 
 ## Implementation
 
-The runtime preserves its dependency gates. The default `overlap` mode launches
-the controller and four extender containers together, waits for controller
-readiness, then evaluates all extender readiness gates concurrently:
+The runtime preserves its dependency gates. The default `gated` mode starts and
+accepts the controller before launching the four extenders in parallel, then
+evaluates all extender readiness gates concurrently:
 
 ```text
 Boardfarm WAN and hwsim ownership
-  -> controller and four extender containers launched concurrently
-  -> controller readiness
+  -> controller launched and accepted
+  -> four extender containers launched concurrently
   -> four extender readiness gates evaluated concurrently
   -> exact 5-device / 15-radio / 50-BSS model
   -> clients started and checked in bounded cohorts
@@ -61,8 +62,22 @@ They can be overridden through the corresponding `EASYMESH_*` environment
 variables. Parallelism is bounded so a larger profile does not issue an
 uncontrolled burst of LXD, network-namespace, DHCP, or controller operations.
 No client starts until all extenders and the complete mesh model are ready.
-`EASYMESH_START_MODE=gated` retains the earlier controller-first launch for
-diagnosis.
+`EASYMESH_START_MODE=overlap` retains the controller/extender overlap only as
+an explicit experiment.
+
+## 0902 release decision
+
+During a clean 0902 appliance reboot, overlap restored the full 5-device,
+15-radio, 50-BSS model and all 20 fronthaul clients, but the controller retained
+only 20 associated STA rows instead of 24. All four wireless backhaul links
+were physically connected; their bSTA association rows were absent because the
+extenders associated while the colocated controller Agent was still starting.
+The same appliance reconstructed all four bSTA rows when run controller-first.
+
+The 0902 release therefore defaults to `gated`. Extenders still start and pass
+readiness in parallel after the controller gate, retaining most of the measured
+speedup without accepting an incomplete topology model. The overlap numbers
+above remain useful experimental evidence, not a release acceptance claim.
 
 An additional `burst` experiment launched all 55 containers in 13.6 seconds,
 but it was rejected: clients started before BSS readiness, only 44 of 50
@@ -107,12 +122,13 @@ dominant cost.
 
 ## Acceptance observed
 
-Both final runs completed without an operator nudge. Each reached five mesh
+The measured gated runs completed without an operator nudge. Each reached five mesh
 devices, fifteen radios, fifty BSS records, the exact expected associated STA
 count, nonzero RCPI for every WLAN client, working gateway traffic for every
 client, and zero OneWifi/EasyMesh service restarts. Parallel extender onboarding
 passed repeatedly on both medium backends.
 
 These are single-run point measurements on rev140 LXD virtual machines. They
-establish a large deterministic improvement, but they are not percentile data
-and do not replace repeated reboot or long-duration soak acceptance.
+establish a large deterministic improvement, but they are not percentile data.
+The later 0902 overlap failure is exactly why point measurements do not replace
+repeated reboot or long-duration soak acceptance.

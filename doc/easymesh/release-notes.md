@@ -55,3 +55,8 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   and ownership-safe JSON and client-stat cleanup.
 - Verified the five recipes that originally failed during fetch or patch and
   compiled the four affected Wi-Fi/EasyMesh components successfully.
+- Locked the successful `kirkstone`/`rdk-next` source state to immutable commit
+  IDs so later builds do not silently consume moving RDK Central branches.
+- Restored controller-first appliance startup after clean reboot acceptance
+  proved that controller/extender overlap can miss all four backhaul STA model
+  rows even though their physical links are connected.
