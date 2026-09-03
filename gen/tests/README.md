@@ -816,6 +816,7 @@ sudo gen/tests/lab-performance-snapshot.py \
 ```
 
 The schema records the outer VM's memory and load, nested LXD cardinality,
-cumulative lifecycle milestones, relevant process details, and PSS/RSS,
-private memory, swap, threads and file-descriptor totals by functional group.
-Use the same profile and label in the prplMesh lab for direct comparison.
+normalized thin first-boot start/finish time, cumulative lifecycle milestones,
+relevant process details, and PSS/RSS, private memory, swap, threads and
+file-descriptor totals by functional group. Use the same profile and label in
+the prplMesh lab for direct comparison.
