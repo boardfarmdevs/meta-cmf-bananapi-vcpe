@@ -56,6 +56,26 @@ stations and can be observed, steered and subjected to wmediumd RF scenarios.
 
 ## Provisioning
 
+The distributable LXD appliance locks one profile during first import. Ordinary
+operation must not convert a running 20-client appliance into 50 or 100 clients
+with the pool helper. Import a separate VM and select the desired profile as
+described in [portable lab releases](../../reference/portable-lab-releases.md).
+The commands below are engineering/provisioning interfaces and are not the
+normal appliance lifecycle.
+
+To inspect plans in an appliance, enter the outer VM as root and then use its
+repository:
+
+```sh
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
+
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe/gen
+```
+
+The first two commands run on the outer host; the `cd` and all commands below
+run inside the VM. Root is needed for the snap-packaged nested LXD client.
+
 Preview a profile without changing the lab:
 
 ```sh
@@ -65,7 +85,7 @@ cd gen
 ./wlan-client-pool.sh plan --profile stress
 ```
 
-Create or resume the current profile:
+On a development host, create or resume the selected engineering profile:
 
 ```sh
 ./wlan-client-pool.sh up --profile small
@@ -90,7 +110,7 @@ an old global WLAN address before invoking BusyBox `udhcpc`, preventing a
 recovery retry from retaining the prior lease as a secondary address. The hook
 is refreshed even when an older `wlan-client-base` image alias is reused.
 
-To remove the selected profile's clients:
+On a development host, remove the selected profile's clients:
 
 ```sh
 ./wlan-client-pool.sh down --profile small

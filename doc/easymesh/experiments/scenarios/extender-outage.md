@@ -46,12 +46,23 @@ changed.
 
 ## Dedicated acceptance test
 
-Run this inside the VM after the normal lab health check:
+From the outer host, enter the appliance VM as root, then run the test after the
+normal lab health check. Substitute the actual VM name when necessary:
 
 ```sh
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
+
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe
-sudo gen/tests/wmediumd-extender-outage.py --extender bpiap-003
+gen/tests/health-audit.sh
+gen/tests/wmediumd-extender-outage.py --extender bpiap-003
+gen/tests/health-audit.sh
 ```
+
+The first two commands run on the outer host; the commands after the blank line
+run inside the VM. Root is required for nested LXD inspection. The LXD suffix
+does not determine the WebUI `Extender-N` label; preflight prints the persistent
+node identity and impacted clients.
 
 The test discovers the active hwsim transmitter identities and the extender's
 private BSSIDs; no MAC address is hard-coded. If the selected extender owns no
@@ -105,21 +116,39 @@ station/fronthaul pairs and protects backhaul:
 ```sh
 cd gen/wmediumd/configurator
 python3 -m wmdcfg.cli inventory -o /tmp/inventory.json
+
+client=wlan-client-005
+bssid=$(jq -r --arg c "$client" \
+  '.radios[] | select(.container == $c) | .associated_bssid' \
+  /tmp/inventory.json)
+source_ap=$(jq -r --arg b "$bssid" \
+  '.radios[] | select(.kind == "mesh")
+   | select(any(.interfaces[]; (.mac | ascii_downcase) ==
+       ($b | ascii_downcase))) | .container' \
+  /tmp/inventory.json | head -1)
+recovery_ap=$(jq -r --arg source "$source_ap" \
+  '.radios[] | select(.kind == "mesh" and .container != $source)
+   | .container' /tmp/inventory.json | head -1)
+
+printf 'client=%s source=%s recovery=%s\n' \
+  "$client" "$source_ap" "$recovery_ap"
 python3 -m wmdcfg.cli compile scenarios/client-extender-outage.wmd \
     --inventory /tmp/inventory.json \
-    --bind client=wlan-client-005 \
-    --bind source_ap=bpiap-003 \
-    --bind recovery_ap=bpiap-002 \
+    --bind client="$client" \
+    --bind source_ap="$source_ap" \
+    --bind recovery_ap="$recovery_ap" \
     -o /tmp/client-extender-outage.plan.json
-sudo python3 -m wmdcfg.cli run /tmp/client-extender-outage.plan.json \
+python3 -m wmdcfg.cli run /tmp/client-extender-outage.plan.json \
     --output-root /tmp/wmdcfg-runs
 ```
 
-`source_ap` must be the client's current AP at preflight. The destination is not
-selected by EasyMesh during autonomous recovery; the supplicant selects from
-the RF candidates. Give `recovery_ap` a clear advantage and verify the observed
-BSSID. Configurator language v1 deliberately cannot isolate mesh backhaul, so
-the dedicated acceptance test uses `ControlClient` directly for that phase.
+`source_ap` must be the client's current AP at preflight, which is why the
+example discovers it instead of hard-coding a container. The destination is
+not selected by EasyMesh during autonomous recovery; the supplicant selects
+from the RF candidates. Give `recovery_ap` a clear advantage and verify the
+observed BSSID. Configurator language v1 deliberately cannot isolate mesh
+backhaul, so the dedicated acceptance test uses `ControlClient` directly for
+that phase.
 
 ## Required behavior
 

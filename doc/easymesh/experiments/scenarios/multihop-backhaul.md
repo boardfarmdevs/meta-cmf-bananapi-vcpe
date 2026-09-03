@@ -59,7 +59,22 @@ labels from persistent AL identities; it does not use the container suffix.
 
 ## Run the test
 
-Run from the repository root on a lab host:
+The portable appliance is an outer LXD VM containing the nested BPI and client
+containers. Enter it as root from the outer host, then run from the repository
+root. Substitute the actual VM name when necessary:
+
+```sh
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
+
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
+gen/tests/health-audit.sh
+```
+
+The first two commands run on the outer host; subsequent commands run inside
+the VM. Root is needed for the snap-packaged nested LXD client.
+
+Inspect and exercise all three live trees:
 
 ```sh
 ./gen/tests/multihop-backhaul.sh status
@@ -85,6 +100,7 @@ Return all extenders to direct gateway backhaul with:
 
 ```sh
 ./gen/tests/multihop-backhaul.sh restore
+./gen/tests/health-audit.sh
 ```
 
 The script discovers every current BSSID.  It does not embed generated hwsim
