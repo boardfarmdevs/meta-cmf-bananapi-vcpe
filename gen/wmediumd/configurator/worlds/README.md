@@ -10,7 +10,8 @@ The drawing represents:
 - the floor plan and fixed-loss walls;
 - the gateway, extenders, and static or mobile stations;
 - the complete path followed by each mobile station;
-- the best serving fronthaul link for every present station; and
+- one direction-independent best serving fronthaul link for every present
+  station; and
 - optional AP-to-AP backhaul links.
 
 Link colours use the selected band's SNR: red is weak, amber is intermediate,

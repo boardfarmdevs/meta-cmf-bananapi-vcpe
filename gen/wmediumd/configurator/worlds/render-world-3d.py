@@ -93,19 +93,30 @@ def draw_paths(ax, world):
         ax.plot(xs, ys, [0.02] * len(xs), color=MOBILE_STA, alpha=0.35, linewidth=1.0, linestyle="--", zorder=3)
 
 
-def best_fronthaul(gen, band):
+def best_fronthaul(world, gen, band):
     """Return {station: (ap, snr)} for the strongest present fronthaul link."""
     best = {}
     present = gen["present"]
+    roles = world["roles"]
     for link in gen["links"]:
         if link["link_class"] != "fronthaul":
             continue
         src, dst = link["source_role"], link["destination_role"]
         if not (present.get(src, True) and present.get(dst, True)):
             continue
+        # World plans contain both directions of every RF pair.  Normalize the
+        # endpoints by role so a reverse STA -> AP record cannot be mistaken
+        # for an AP whose "station" is an extender.  That mistake rendered a
+        # short orphan link from each AP post into empty space.
+        if roles.get(src) == "station" and roles.get(dst) != "station":
+            sta, ap = src, dst
+        elif roles.get(dst) == "station" and roles.get(src) != "station":
+            sta, ap = dst, src
+        else:
+            continue
         snr = link["snr_db_by_band"][band]
-        if dst not in best or snr > best[dst][1]:
-            best[dst] = (src, snr)
+        if sta not in best or snr > best[sta][1]:
+            best[sta] = (ap, snr)
     return best
 
 
@@ -148,7 +159,7 @@ def draw_nodes_and_links(ax, world, gen, band, show_backhaul):
             ax.plot([x0, x1], [y0, y1], [AP_HEIGHT, AP_HEIGHT],
                     color=snr_colour(link["snr_db_by_band"][band]), linewidth=1.0, alpha=0.5, linestyle=":", zorder=4)
 
-    for sta, (ap, snr) in best_fronthaul(gen, band).items():
+    for sta, (ap, snr) in best_fronthaul(world, gen, band).items():
         (x0, y0), (x1, y1) = positions[ap], positions[sta]
         ax.plot([x0, x1], [y0, y1], [AP_HEIGHT, STA_HEIGHT],
                 color=snr_colour(snr), linewidth=1.4, alpha=0.9, zorder=5)
