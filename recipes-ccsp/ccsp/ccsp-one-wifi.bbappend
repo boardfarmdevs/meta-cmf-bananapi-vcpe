@@ -32,6 +32,7 @@ WIFI_EM_ASSOC_RECONCILE_PATCH := "${THISDIR}/${BPN}/0020-hwsim-reconcile-live-as
 WIFI_ASSOC_ACTIVE_PROVIDER_PATCH := "${THISDIR}/${BPN}/0021-assoc-provider-omit-inactive-cache-rows.patch"
 WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH := "${THISDIR}/${BPN}/0022-ap-metrics-count-live-provider-stations.patch"
 WIFI_EM_AP_METRICS_CLEANUP_PATCH := "${THISDIR}/${BPN}/0023-ap-metrics-release-every-radio-vap-allocation.patch"
+WIFI_EM_ASSOC_RESTORE_PATCH := "${THISDIR}/${BPN}/0024-hwsim-reactivate-live-associated-client-cache.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -214,6 +215,13 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: releasing all per-radio AP-metrics VAP arrays")
     with open(d.getVar('WIFI_EM_AP_METRICS_CLEANUP_PATCH'), 'rb') as f:
         apply_layer_patch(f)
+    # The hwsim live-snapshot reconciler could mark an idle association
+    # inactive, but never restored the event-backed entry when traffic made
+    # the station visible in the HAL snapshot again.  Make live reconciliation
+    # symmetric so full EasyMesh snapshots recover reachable clients.
+    bb.note("meta-cmf-bananapi-vcpe: restoring live hwsim associations in OneWifi cache")
+    with open(d.getVar('WIFI_EM_ASSOC_RESTORE_PATCH'), 'rb') as f:
+        apply_layer_patch(f)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -249,6 +257,8 @@ python do_patch_append() {
             'radio->vaps.num_vaps && i < MAX_NUM_VAP_PER_RADIO' in
             wifi_em_source):
         bb.fatal('meta-cmf-bananapi-vcpe: AP-metrics allocation cleanup patch is incomplete; clean ccsp-one-wifi and retry')
+    if 'live snapshot restored associated client' not in wifi_em_source:
+        bb.fatal('meta-cmf-bananapi-vcpe: associated-client reactivation patch is incomplete; clean ccsp-one-wifi and retry')
 }
 
 # The *_PATCH variables above hold absolute paths, and being referenced from
@@ -269,6 +279,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_CLIENT_STATS_RELEASE_PATCH \
     WIFI_EM_ASSOC_RECONCILE_PATCH WIFI_ASSOC_ACTIVE_PROVIDER_PATCH \
     WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH WIFI_EM_AP_METRICS_CLEANUP_PATCH"
+do_patch[vardepsexclude] += "WIFI_EM_ASSOC_RESTORE_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"
@@ -291,6 +302,7 @@ do_patch[file-checksums] += "${WIFI_EM_ASSOC_RECONCILE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_ACTIVE_PROVIDER_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_CLEANUP_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_ASSOC_RESTORE_PATCH}:True"
 
 # See patch 0004 header: mac80211_hwsim can't beacon HE(802.11ax)/EHT(802.11be), so
 # init_radio_config_default()'s BananaPi-R4 HE/EHT defaults are gated off under this.
