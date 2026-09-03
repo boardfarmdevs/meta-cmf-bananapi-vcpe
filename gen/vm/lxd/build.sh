@@ -488,7 +488,9 @@ export_vm() {
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
-    install -m 0644 "$root/gen/vm/lxd/README.md" "$bundle/README.md"
+    sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" \
+        "$root/gen/vm/lxd/README.md" > "$bundle/README.md"
+    chmod 0644 "$bundle/README.md"
     install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
@@ -625,7 +627,7 @@ export_thin_vm() {
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
-    sed "s/0831/${release_id}/g" "$root/gen/vm/lxd/README.md" \
+    sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" "$root/gen/vm/lxd/README.md" \
         > "$bundle/README.md"
     chmod 0644 "$bundle/README.md"
     install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"

@@ -5,7 +5,7 @@ performance and kernel-debug reference.
 
 ```text
 Ubuntu 22.04/24.04 host + LXD/KVM
-`-- rdkeasymesh-CLIENTS-0901 (Ubuntu 24.04/Linux 7 LXD VM)
+`-- rdkeasymesh-CLIENTS-@EASYMESH_RELEASE_ID@ (Ubuntu 24.04/Linux 7 LXD VM)
     |-- Docker: Boardfarm DHCP/NAT and br-wan101
     |-- nested LXD: controller, four extenders, 20/50/100-client roster
     |-- hwsim + multichannel wmediumd
@@ -19,14 +19,14 @@ namespace.
 
 ## Use the universal appliance
 
-For normal installation, start with `rdkeasymesh-0901-thin.tar` and its
+For normal installation, start with `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` and its
 adjacent checksum in an empty directory. A source checkout and BPI image paths
 are not required:
 
 ```sh
-sha256sum -c rdkeasymesh-0901-thin.tar.sha256
-tar -xf rdkeasymesh-0901-thin.tar
-cd rdkeasymesh-0901-thin
+sha256sum -c rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar.sha256
+tar -xf rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar
+cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
@@ -106,7 +106,7 @@ therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 ```
 
 Ready builder profiles `20`, `50`, and `100` create separate instances named
-`rdkeasymesh-PROFILE-0901`. The universal thin release asks for one of those
+`rdkeasymesh-PROFILE-@EASYMESH_RELEASE_ID@`. The universal thin release asks for one of those
 profiles during import and locks it before any nested node is created. The
 profile cannot be changed after selection; import the universal artifact again
 to create a different profile. The builder detects the address
@@ -133,7 +133,7 @@ VMs also default to LXD `boot.autostart=true`; disable it explicitly when an
 outer host must not start the VM after reboot:
 
 ```sh
-lxc config set rdkeasymesh-20-0901 boot.autostart false
+lxc config set rdkeasymesh-20-@EASYMESH_RELEASE_ID@ boot.autostart false
 ```
 
 ## Ready builders and the universal thin release
@@ -145,7 +145,7 @@ The release has two forms with different purposes:
   but it is not the normal portable download.
   Its first start reconstructs the accepted lab immediately, but the download
   grows with the client count.
-- `rdkeasymesh-0901-thin.tar` is the one portable download. It retains the
+- `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` is the one portable download. It retains the
   installed VM, exact source, controller/extender archives,
   and one reusable WLAN-client image, but contains zero provisioned lab
   instances. `./import.sh --profile 20|50|100` selects CPU, memory and the
@@ -198,7 +198,7 @@ write LXD pools duplicate the complete VM disk. On a copy-on-write pool, a
 release engineer may create the optional local rollback point with
 `./build.sh snapshot`; it is excluded from the portable export.
 
-`export-thin` creates `artifacts/rdkeasymesh-0901-thin/` containing
+`export-thin` creates `artifacts/rdkeasymesh-@EASYMESH_RELEASE_ID@-thin/` containing
 one zstd-compressed instance backup, importer, installer, release metadata,
 this README, `RELEASE-NOTES.md`, and `SHA256SUMS`. The VM is stopped before
 export so its nested
@@ -206,10 +206,10 @@ LXD database, radio state and filesystems are coherent. Create the single file
 for Google Drive with:
 
 ```sh
-EASYMESH_RELEASE_ID=0901 ./package-release.sh artifacts/rdkeasymesh-0901-thin
+EASYMESH_RELEASE_ID=@EASYMESH_RELEASE_ID@ ./package-release.sh artifacts/rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 ```
 
-This creates the requested `rdkeasymesh-0901-thin.tar` and adjacent
+This creates the requested `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` and adjacent
 `.sha256`. Upload those two files. Google Drive
 is transport only; the checksum and `release.json` identify the release. The
 outer checksum records only the bundle filename, so verification works from
@@ -233,9 +233,9 @@ Download the universal release into any empty working directory, verify and
 extract it:
 
 ```sh
-sha256sum -c rdkeasymesh-0901-thin.tar.sha256
-tar -xf rdkeasymesh-0901-thin.tar
-cd rdkeasymesh-0901-thin
+sha256sum -c rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar.sha256
+tar -xf rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar
+cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 sha256sum -c SHA256SUMS
 ```
 
@@ -280,17 +280,17 @@ Monitor the first imported cold reconstruction (replace `20` with the selected
 profile):
 
 ```sh
-lxc console rdkeasymesh-20-0901 --show-log
-lxc exec rdkeasymesh-20-0901 -- journalctl -fu easymesh-lab.service
-lxc exec rdkeasymesh-20-0901 -- /usr/local/sbin/easymesh-labctl check
+lxc console rdkeasymesh-20-@EASYMESH_RELEASE_ID@ --show-log
+lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- journalctl -fu easymesh-lab.service
+lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- /usr/local/sbin/easymesh-labctl check
 ```
 
 Follow both provisioning and normal runtime gates:
 
 ```sh
-lxc exec rdkeasymesh-20-0901 -- \
+lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- \
   journalctl -fu easymesh-thin-firstboot.service -u easymesh-lab.service
-lxc exec rdkeasymesh-20-0901 -- \
+lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- \
   jq . /var/lib/easymesh-lab/thin-firstboot-report.json
 ```
 
