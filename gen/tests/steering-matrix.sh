@@ -299,6 +299,7 @@ topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" \
     -eq "$expected_total_clients" ]
 status_pass "Steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed."
+echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
 echo "results: $results"
 echo "events: $events"
 echo "commands: $commands"

@@ -127,7 +127,9 @@ for round in $(seq 1 "$rounds"); do
             "$round" "$target" "$target_bssid" "$converged" "$stability" >>"$results"
         passes=$((passes + 1))
         status_pass "Converged in ${converged}s and remained stable for ${stability}s."
+        echo "PASS: converged in ${converged}s; stable for ${stability}s"
     done
 done
 
 status_pass "Association ownership regression passed $passes/$total; results=$results"
+echo "association ownership regression PASSED $passes/$total; results=$results"

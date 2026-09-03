@@ -68,3 +68,4 @@ for run in $(seq 1 "$runs"); do
 done
 
 status_pass "P0 cold reconstruction passed $passed/$runs; artifacts=$campaign_dir"
+echo "P0 cold reconstruction PASSED $passed/$runs; artifacts=$campaign_dir"

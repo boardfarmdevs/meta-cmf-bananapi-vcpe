@@ -1105,8 +1105,7 @@ class Carousel:
         )
         if outcome == "passed":
             passed(f"Client carousel completed and restored its baseline; artifacts={output}")
-        else:
-            print(f"{outcome.upper()} artifacts={output}", flush=True)
+        print(f"{outcome.upper()} artifacts={output}", flush=True)
         if interrupted:
             raise InterruptedError(error_text)
         if failure:

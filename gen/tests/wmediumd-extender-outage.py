@@ -617,6 +617,7 @@ def main() -> int:
     summary["services"] = services_after
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     passed(f"Extender RF outage and recovery passed; artifacts={output}")
+    print(f"PASS artifacts={output}")
     return 0
 
 

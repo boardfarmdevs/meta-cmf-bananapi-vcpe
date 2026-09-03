@@ -502,3 +502,4 @@ announce_steering completed
 steering_announced=0
 restore_bias
 status_pass "$sta_input is physically and visibly associated with $target_name ($target_bssid)."
+echo "steer.sh: PASS $sta_input is physically and visibly associated with $target_name ($target_bssid)"

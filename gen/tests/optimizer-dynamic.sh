@@ -174,6 +174,7 @@ fi
 summary=$(tail -1 "$scenario_log")
 jq -e '.outcome == "passed" and .restored == true' "$summary/summary.json" >/dev/null
 status_pass "RDK dynamic $mode used controller candidate metrics and restored the scenario."
+echo "PASS: RDK dynamic $mode used controller candidate metrics; scenario restored"
 echo "journal: $journal"
 echo "scenario: $summary"
 echo "optimizer output: $optimizer_log"
