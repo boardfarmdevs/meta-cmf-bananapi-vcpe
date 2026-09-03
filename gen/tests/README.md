@@ -104,7 +104,8 @@ Demo and live-scenario entry points explain each action before performing it:
 
 Status messages use stderr so CSV, JSON and command-substitution stdout remain
 machine-readable. Colors are enabled only on an interactive terminal. Set
-`NO_COLOR=1` to retain the same messages without ANSI color sequences.
+`EASYMESH_COLOR=always` to force them through a nested console or
+`EASYMESH_COLOR=never`/`NO_COLOR=1` for plain text.
 
 ## Before running live tests
 

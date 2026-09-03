@@ -6,14 +6,21 @@ import os
 import sys
 
 
-_COLOR = sys.stderr.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+_MODE = os.environ.get("EASYMESH_COLOR", "auto")
+if _MODE not in {"auto", "always", "never"}:
+    raise RuntimeError("EASYMESH_COLOR must be auto, always or never")
+_COLOR = _MODE == "always" or (
+    _MODE == "auto"
+    and (sys.stdout.isatty() or sys.stderr.isatty())
+    and not os.environ.get("NO_COLOR")
+)
 _RESET = "\033[0m" if _COLOR else ""
 _COLORS = {
-    "section": "\033[1;94m" if _COLOR else "",
-    "action": "\033[1;96m" if _COLOR else "",
-    "wait": "\033[1;93m" if _COLOR else "",
-    "pass": "\033[1;92m" if _COLOR else "",
-    "note": "\033[1;94m" if _COLOR else "",
+    "section": "\033[1;38;5;75m" if _COLOR else "",
+    "action": "\033[1;38;5;51m" if _COLOR else "",
+    "wait": "\033[1;38;5;226m" if _COLOR else "",
+    "pass": "\033[1;38;5;46m" if _COLOR else "",
+    "note": "\033[1;38;5;75m" if _COLOR else "",
 }
 
 
