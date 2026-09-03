@@ -337,6 +337,10 @@ lxc config device add "$name" wmediumd-console proxy nat=true \
 if [ "$profile_selectable" = true ]; then
     # Return after starting the potentially long offline provisioning job.
     # The checksummed first-boot report and labctl gate provide completion.
+    # Profile selection removes the file tested by ConditionPathExists in
+    # easymesh-lab.service.  systemd can retain the earlier failed condition
+    # result from boot, so reload the unit state before asking it to start.
+    lxc exec "$name" -- systemctl daemon-reload
     lxc exec "$name" -- systemctl reset-failed easymesh-thin-firstboot.service \
         easymesh-lab.service
     lxc exec "$name" -- systemctl --no-block start easymesh-lab.service

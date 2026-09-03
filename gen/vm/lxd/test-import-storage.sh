@@ -163,8 +163,16 @@ select_line=$(grep -nF \
 proxy_line=$(grep -nF \
     'config device add rdkeasymesh-20-0831 easymesh-webui proxy ' \
     "$log" | tail -1 | cut -d: -f1)
+reload_line=$(grep -nF \
+    'exec rdkeasymesh-20-0831 -- systemctl daemon-reload ' \
+    "$log" | tail -1 | cut -d: -f1)
+start_line=$(grep -nF \
+    'exec rdkeasymesh-20-0831 -- systemctl --no-block start easymesh-lab.service ' \
+    "$log" | tail -1 | cut -d: -f1)
 test "$ready_line" -lt "$select_line"
 test "$select_line" -lt "$proxy_line"
+test "$proxy_line" -lt "$reload_line"
+test "$reload_line" -lt "$start_line"
 
 : > "$log"
 printf '0\n' > "$ready_count"
