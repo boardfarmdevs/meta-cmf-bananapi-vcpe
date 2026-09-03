@@ -27,7 +27,7 @@ WIFI_NASTA_RESPONSE_NAME_PATCH := "${THISDIR}/${BPN}/0015-nasta-label-response-s
 WIFI_STA_BSSID_SET_PATCH := "${THISDIR}/${BPN}/0016-rbus-apply-mesh-sta-bssid.patch"
 WIFI_STA_STATUS_PUBLISH_PATCH := "${THISDIR}/${BPN}/0017-publish-mesh-sta-on-connection-change.patch"
 WIFI_STA_PARENT_CACHE_PATCH := "${THISDIR}/${BPN}/0018-cache-confirmed-mesh-sta-parent.patch"
-WIFI_EM_EVENT_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0019-easymesh-release-encoded-event-data.patch"
+WIFI_EM_CLIENT_STATS_RELEASE_PATCH := "${THISDIR}/${BPN}/0019-easymesh-release-removed-client-stats.patch"
 WIFI_EM_ASSOC_RECONCILE_PATCH := "${THISDIR}/${BPN}/0020-hwsim-reconcile-live-associated-client-snapshots.patch"
 WIFI_ASSOC_ACTIVE_PROVIDER_PATCH := "${THISDIR}/${BPN}/0021-assoc-provider-omit-inactive-cache-rows.patch"
 WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH := "${THISDIR}/${BPN}/0022-ap-metrics-count-live-provider-stations.patch"
@@ -181,12 +181,11 @@ python do_patch_append() {
         bb.note("meta-cmf-bananapi-vcpe: caching confirmed live mesh-STA parents")
         with open(d.getVar('WIFI_STA_PARENT_CACHE_PATCH'), 'rb') as f:
             apply_layer_patch(f)
-    # webconfig_encode() returns a separately allocated encoded buffer.  The
-    # periodic EasyMesh metrics publishers released only their wrapper, leaking
-    # one report every interval.  Release encoded data through the webconfig
-    # ownership API, including error and less-frequent report paths.
-    bb.note("meta-cmf-bananapi-vcpe: releasing encoded EasyMesh event buffers")
-    with open(d.getVar('WIFI_EM_EVENT_OWNERSHIP_PATCH'), 'rb') as f:
+    # Fresh OneWifi already releases encoded EasyMesh event buffers on success
+    # and publish errors (RDKBWIFI-498).  Its disassociation path still removes
+    # a client-stat cache allocation without freeing the returned object.
+    bb.note("meta-cmf-bananapi-vcpe: releasing removed EasyMesh client-stat entries")
+    with open(d.getVar('WIFI_EM_CLIENT_STATS_RELEASE_PATCH'), 'rb') as f:
         apply_layer_patch(f)
     # The HAL's diagnostic snapshot filters hwsim station objects retained on
     # an old AP after a roam.  Reconcile that live snapshot with OneWifi's
@@ -222,9 +221,15 @@ python do_patch_append() {
     wifi_em = os.path.join(s, 'source/apps/em/wifi_em.c')
     with open(wifi_em, 'r', encoding='utf-8') as f:
         wifi_em_source = f.read()
-    if (wifi_em_source.count('webconfig_data_free(data);') < 7 or
-            wifi_em_source.count('webconfig_data_free(wb_data);') < 3):
-        bb.fatal('meta-cmf-bananapi-vcpe: EasyMesh encoded-event ownership patch is incomplete; clean ccsp-one-wifi and retry')
+    if (wifi_em_source.count('free(data->u.encoded.raw);') < 5 or
+            wifi_em_source.count('free(wb_data->u.encoded.raw);') < 2):
+        bb.fatal('meta-cmf-bananapi-vcpe: upstream EasyMesh encoded-event ownership fix is missing')
+    disassoc_start = wifi_em_source.find('static int em_handle_disassoc_device(')
+    disassoc_end = wifi_em_source.find('static int em_handle_sta_conn_status(',
+                                       disassoc_start)
+    if (disassoc_start < 0 or disassoc_end < 0 or
+            'free(stats);' not in wifi_em_source[disassoc_start:disassoc_end]):
+        bb.fatal('meta-cmf-bananapi-vcpe: removed EasyMesh client-stat release patch is incomplete; clean ccsp-one-wifi and retry')
     assoc_stats = os.path.join(s, 'source/stats/wifi_stats_assoc_client.c')
     with open(assoc_stats, 'r', encoding='utf-8') as f:
         assoc_stats_source = f.read()
@@ -261,7 +266,7 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_EM_DUPLICATE_AL_MAC_PATCH WIFI_EM_AP_METRICS_RADIO_INDEX_PATCH \
     WIFI_EM_CLIENT_UPTIME_PATCH WIFI_NASTA_RESPONSE_NAME_PATCH \
     WIFI_STA_BSSID_SET_PATCH WIFI_STA_STATUS_PUBLISH_PATCH \
-    WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_EVENT_OWNERSHIP_PATCH \
+    WIFI_STA_PARENT_CACHE_PATCH WIFI_EM_CLIENT_STATS_RELEASE_PATCH \
     WIFI_EM_ASSOC_RECONCILE_PATCH WIFI_ASSOC_ACTIVE_PROVIDER_PATCH \
     WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH WIFI_EM_AP_METRICS_CLEANUP_PATCH"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
@@ -281,7 +286,7 @@ do_patch[file-checksums] += "${WIFI_NASTA_RESPONSE_NAME_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_BSSID_SET_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_STATUS_PUBLISH_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_STA_PARENT_CACHE_PATCH}:True"
-do_patch[file-checksums] += "${WIFI_EM_EVENT_OWNERSHIP_PATCH}:True"
+do_patch[file-checksums] += "${WIFI_EM_CLIENT_STATS_RELEASE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_ASSOC_RECONCILE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_ASSOC_ACTIVE_PROVIDER_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH}:True"

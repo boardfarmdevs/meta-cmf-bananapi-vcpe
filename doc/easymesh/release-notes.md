@@ -45,3 +45,18 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 - Made portable release identifiers explicit in bundle metadata and import
   defaults so a 0901 artifact creates clearly named 0901 instances while old
   0831 bundles remain reproducible.
+
+## 0902
+
+- Rebased the complete RDK EasyMesh lab layer onto a fresh current RDK Central
+  checkout and removed recipe patches whose fixes are now present upstream.
+- Refreshed the remaining OneWifi, Wi-Fi HAL and Unified Wi-Fi Mesh patches to
+  their current source locations, including correct topology-response parsing
+  and ownership-safe JSON and client-stat cleanup.
+- Verified the five recipes that originally failed during fetch or patch and
+  compiled the four affected Wi-Fi/EasyMesh components successfully.
+- Locked the successful `kirkstone`/`rdk-next` source state to immutable commit
+  IDs so later builds do not silently consume moving RDK Central branches.
+- Restored controller-first appliance startup after clean reboot acceptance
+  proved that controller/extender overlap can miss all four backhaul STA model
+  rows even though their physical links are connected.

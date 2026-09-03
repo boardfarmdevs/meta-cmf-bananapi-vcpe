@@ -104,19 +104,10 @@ C++ layer.
  
      switch r.Method {
          case http.MethodGet:
-@@ -3434,7 +3445,7 @@
-             controllerValue := getTreeValue(resetTree, "ControllerID")
- 
-             // Interface MACs
--            interfacesList := C.get_network_tree_by_key(resetTree, C.CString("List"))
-+            interfacesList := getNetworkTreeByKey(resetTree, "List")
-             macOptions := getInterfacePrefence(interfacesList)
- 
-             // Parse NetworkSSIDList
-@@ -3627,7 +3638,7 @@
+@@ -3606,7 +3618,7 @@
   */
  func getConfiguredHauls(tree *C.em_network_node_t) []HaulConfig {
-     var haulConfigs []HaulConfig
+     haulConfigs := []HaulConfig{}
 -    networkssidListNode := C.get_network_tree_by_key(tree, C.CString("NetworkSSIDList"))
 +    networkssidListNode := getNetworkTreeByKey(tree, "NetworkSSIDList")
      if networkssidListNode == nil {

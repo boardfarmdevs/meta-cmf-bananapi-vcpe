@@ -9,38 +9,38 @@ mode) and mandate PMF for WPA3 (required on 6 GHz), in BOTH the AP and STA branc
 ---
 --- a/source/webconfig/wifi_easymesh_translator.c
 +++ b/source/webconfig/wifi_easymesh_translator.c
-@@ -3059,6 +3059,18 @@
-                         if(vap->u.bss_info.security.mode == wifi_security_mode_wpa3_transition) {
-                             vap->u.bss_info.security.mfp = wifi_mfp_cfg_optional;
-                         }
-+                        /* meta-cmf-bananapi-vcpe: keep the cipher coherent with the
-+                           M2-provisioned security mode. This per-radio apply sets .mode from
-+                           the M2 auth type but left .encr at the stale decoded value
-+                           (AES-GCMP-256), which is invalid for WPA2 and made
-+                           encode_security_object() reject the private subdoc. AES/CCMP is a
-+                           valid pairwise cipher for every WPA/WPA2/WPA3 (SAE) mode. Also
-+                           mandate PMF for WPA3 (required on 6 GHz). */
-+                        vap->u.bss_info.security.encr = wifi_encryption_aes;
-+                        if (vap->u.bss_info.security.mode == wifi_security_mode_wpa3_personal ||
-+                            vap->u.bss_info.security.mode == wifi_security_mode_wpa3_enterprise) {
-+                            vap->u.bss_info.security.mfp = wifi_mfp_cfg_required;
-+                        }
-                         snprintf(vap->u.bss_info.ssid, sizeof(vap->u.bss_info.ssid), "%s", radio_config->ssid[k]);
-                         snprintf(vap->u.bss_info.security.u.key.key,
-                             sizeof(vap->u.bss_info.security.u.key.key), "%s", radio_config->password[k]);
-@@ -3068,6 +3080,15 @@
-                         if(vap->u.sta_info.security.mode == wifi_security_mode_wpa3_transition) {
-                             vap->u.sta_info.security.mfp = wifi_mfp_cfg_optional;
-                         }
-+                        /* meta-cmf-bananapi-vcpe: coherent cipher/PMF for the backhaul STA too
-+                           (mesh_sta) -- same stale-GCMP-256 issue as the AP path above, which
-+                           made encode_mesh_sta_object() reject the 5 GHz subdoc. WPA2-PSK uses
-+                           AES/CCMP, so this matches the live backhaul. */
-+                        vap->u.sta_info.security.encr = wifi_encryption_aes;
-+                        if (vap->u.sta_info.security.mode == wifi_security_mode_wpa3_personal ||
-+                            vap->u.sta_info.security.mode == wifi_security_mode_wpa3_enterprise) {
-+                            vap->u.sta_info.security.mfp = wifi_mfp_cfg_required;
-+                        }
-                         snprintf(vap->u.sta_info.ssid, sizeof(vap->u.sta_info.ssid), "%s", radio_config->ssid[k]);
-                         snprintf(vap->u.sta_info.security.u.key.key,
-                             sizeof(vap->u.sta_info.security.u.key.key), "%s", radio_config->password[k]);
+@@ -3443,6 +3443,18 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_object(webconfig_subdoc
+                             if(vap->u.bss_info.security.mode == wifi_security_mode_wpa3_transition) {
+                                 vap->u.bss_info.security.mfp = wifi_mfp_cfg_optional;
+                             }
++                            /* meta-cmf-bananapi-vcpe: keep the cipher coherent with the
++                               M2-provisioned security mode. This per-radio apply sets .mode from
++                               the M2 auth type but left .encr at the stale decoded value
++                               (AES-GCMP-256), which is invalid for WPA2 and made
++                               encode_security_object() reject the private subdoc. AES/CCMP is a
++                               valid pairwise cipher for every WPA/WPA2/WPA3 (SAE) mode. Also
++                               mandate PMF for WPA3 (required on 6 GHz). */
++                            vap->u.bss_info.security.encr = wifi_encryption_aes;
++                            if (vap->u.bss_info.security.mode == wifi_security_mode_wpa3_personal ||
++                                vap->u.bss_info.security.mode == wifi_security_mode_wpa3_enterprise) {
++                                vap->u.bss_info.security.mfp = wifi_mfp_cfg_required;
++                            }
+                             snprintf(vap->u.bss_info.ssid, sizeof(vap->u.bss_info.ssid), "%s", radio_config->ssid[k]);
+                             snprintf(vap->u.bss_info.security.u.key.key,
+                                 sizeof(vap->u.bss_info.security.u.key.key), "%s", radio_config->password[k]);
+@@ -3452,6 +3464,15 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_object(webconfig_subdoc
+                             if(vap->u.sta_info.security.mode == wifi_security_mode_wpa3_transition) {
+                                 vap->u.sta_info.security.mfp = wifi_mfp_cfg_optional;
+                             }
++                            /* meta-cmf-bananapi-vcpe: coherent cipher/PMF for the backhaul STA too
++                               (mesh_sta) -- same stale-GCMP-256 issue as the AP path above, which
++                               made encode_mesh_sta_object() reject the 5 GHz subdoc. WPA2-PSK uses
++                               AES/CCMP, so this matches the live backhaul. */
++                            vap->u.sta_info.security.encr = wifi_encryption_aes;
++                            if (vap->u.sta_info.security.mode == wifi_security_mode_wpa3_personal ||
++                                vap->u.sta_info.security.mode == wifi_security_mode_wpa3_enterprise) {
++                                vap->u.sta_info.security.mfp = wifi_mfp_cfg_required;
++                            }
+                             snprintf(vap->u.sta_info.ssid, sizeof(vap->u.sta_info.ssid), "%s", radio_config->ssid[k]);
+                             snprintf(vap->u.sta_info.security.u.key.key,
+                                 sizeof(vap->u.sta_info.security.u.key.key), "%s", radio_config->password[k]);

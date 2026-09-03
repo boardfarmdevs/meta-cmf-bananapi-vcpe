@@ -1,40 +1,29 @@
 From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
 Subject: [PATCH] controller: commit the validated topology response profile
 
-The Topology Response handler parsed and validated the agent's Profile TLV but
-stored it only in m_peer_profile.  The device data model could therefore retain
-an uninitialized profile until its topology-triggered database update.  MariaDB
-then rejected the DeviceList insert, leaving a fully synchronized agent visible
-in the in-memory topology but absent from the persistent device inventory.
+The current Topology Response handler robustly parses the Profile TLV, falls
+back to Profile 1 when it is absent or invalid, and updates the AL node. It
+does not copy that negotiated value into the device data model, so persistence
+can retain a reserved or stale profile.
 
-Reject out-of-range profile values explicitly and copy the validated profile
-to the device data model before any topology response fields are persisted.
-The value comes from the agent's protocol response; no local profile is guessed.
+Commit the already validated/fallback profile before topology fields are
+persisted.
 
+Upstream-Status: Pending
 ---
- src/em/config/em_configuration.cpp | 9 +++++++++
- 1 file changed, 9 insertions(+)
+ src/em/config/em_configuration.cpp | 1 +
+ 1 file changed, 1 insertion(+)
 
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
-index 80cab11..2904c4c 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -2457,7 +2457,16 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
- 		return -1;
- 	}
- 
-+    if ((profile != em_profile_type_1) &&
-+            (profile != em_profile_type_2) &&
-+            (profile != em_profile_type_3)) {
-+        printf("%s:%d: Invalid profile %d in topology response, dropping\n",
-+            __func__, __LINE__, static_cast<int>(profile));
-+        return -1;
-+    }
-+
- 	m_peer_profile = profile;
-+    dm->m_device.m_device_info.profile = profile;
-     
- 	if (em_msg_t(em_msg_type_topo_resp, m_peer_profile, buff, len).validate(errors) == 0) {
-         printf("%s:%d: topology response msg validation failed\n", __func__, __LINE__);
+@@ -2514,6 +2514,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+     if (al_em != nullptr) {
+         al_em->set_peer_profile(m_peer_profile);
+     }
++    dm->m_device.m_device_info.profile = m_peer_profile;
+     if (em_msg_t(em_msg_type_topo_resp, m_peer_profile, buff, len).validate(errors) == 0) {
+         em_printfout("topology response msg validation failed, ignoring message");
+         return -1;
 -- 
-2.34.1
+2.43.0

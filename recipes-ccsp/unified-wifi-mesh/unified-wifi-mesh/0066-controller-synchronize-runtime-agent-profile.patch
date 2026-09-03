@@ -3,18 +3,12 @@ From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
 Date: Thu, 20 Aug 2026 19:00:00 -0700
 Subject: [PATCH] controller: synchronize profile on every agent radio
 
-The Topology Response path persisted the validated Multi-AP profile in the
-device data model, but the controller radio objects retained the profile with
-which they happened to be created.  When a radio was created before the
-asynchronous device-profile commit completed, it remained Profile 1 or
-reserved.  AP Metrics Responses from the Profile-3 agent were then rejected
-because their valid Profile-2/3 TLVs appeared forbidden to that stale radio
-object.
+The current handler updates the AL node and persistent device after validating
+the peer's Topology Response profile. Controller radio objects can still retain
+the profile with which they happened to be created, causing valid Profile-2/3
+metrics TLVs to be rejected.
 
-After validating the peer's Topology Response profile, apply it to every
-controller radio object belonging to that agent as well as to the persistent
-device model.  The protocol-reported profile is authoritative and all radios
-of one Multi-AP Agent share it.
+Apply the negotiated profile to every controller radio belonging to the agent.
 
 Upstream-Status: Pending
 Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
@@ -25,23 +19,22 @@ Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -2468,6 +2468,17 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
- 
- 	m_peer_profile = profile;
-     dm->m_device.m_device_info.profile = profile;
+@@ -2515,6 +2515,16 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+         al_em->set_peer_profile(m_peer_profile);
+     }
+     dm->m_device.m_device_info.profile = m_peer_profile;
 +
-+    // A radio object can be created before the asynchronous device-model
-+    // commit records the profile.  Keep every runtime radio for this Agent in
-+    // sync with the validated profile carried by the Topology Response.
++    // A radio can be created before the asynchronous device-model commit
++    // records the profile. Keep every runtime radio for this Agent in sync.
 +    std::vector<em_t *> agent_radios;
 +    get_mgr()->get_all_em_for_al_mac(src_al_mac, agent_radios);
 +    for (auto *radio : agent_radios) {
 +        if (radio != nullptr) {
-+            radio->set_profile_type(profile);
++            radio->set_profile_type(m_peer_profile);
 +        }
 +    }
-     
- 	if (em_msg_t(em_msg_type_topo_resp, m_peer_profile, buff, len).validate(errors) == 0) {
-         printf("%s:%d: topology response msg validation failed\n", __func__, __LINE__);
+     if (em_msg_t(em_msg_type_topo_resp, m_peer_profile, buff, len).validate(errors) == 0) {
+         em_printfout("topology response msg validation failed, ignoring message");
+         return -1;
 -- 
 2.43.0

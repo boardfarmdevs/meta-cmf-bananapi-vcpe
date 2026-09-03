@@ -33,7 +33,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0029-cli-release-native-tree-allocations.patch \
     file://0030-db-drain-result-sets-before-early-return.patch \
     file://0031-association-refresh-topology-before-publish.patch \
-    file://0032-sta-decode-reassociation-capabilities.patch \
     file://0033-sta-retain-capability-on-empty-roam-report.patch \
     file://0034-cli-serialize-native-command-execution.patch \
     file://0035-cli-remove-unused-command-data-model-init.patch \
@@ -128,8 +127,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0125-steering-report-from-topology-synchronized-state.patch \
     file://0126-cli-stage-steering-and-shape-layout.patch \
     file://0127-controller-reconcile-client-snapshot-across-agent-models.patch \
-    file://0128-orch-complete-upstream-command-lifetime-fixes.patch \
-    file://0129-controller-bound-dataelements-device-enumeration.patch \
     file://0130-controller-lightweight-em-config-stage-clones.patch \
     file://0131-agent-emit-station-snapshot-topology-deltas.patch \
     file://0132-controller-bound-station-churn-and-honor-cross-band.patch \
@@ -146,6 +143,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0143-metrics-reject-pre-association-samples.patch \
     file://0144-metrics-retain-exact-owner-backhaul-samples.patch \
     file://0145-cli-use-controller-first-topology-layout.patch \
+    file://0146-controller-scope-bss-list-delete.patch \
+    file://0147-controller-preserve-negotiated-profile.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 
@@ -659,7 +658,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -669,8 +668,11 @@ SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli-nvram.
 # tracks the patched libemcli ABI automatically. Controller-only: libemcli.so is
 # packaged only in the broadband config. Usage + JSON schema in
 # doc/easymesh/container-hwsim-bringup-testing.md and demo/steering-demo.sh.
+# The pre-start helper normally belongs to the redundant stock CLI package, so
+# install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
+    install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
     cp -rf ${WORKDIR}/static/. ${D}/usr/ccsp/EasyMesh/static/
     # The helper archive supplies the cross-built Go binary and its baseline

@@ -22,10 +22,14 @@ measurement transaction.
 diff --git a/inc/em_metrics.h b/inc/em_metrics.h
 --- a/inc/em_metrics.h
 +++ b/inc/em_metrics.h
-@@ -641,2 +641,3 @@ class em_metrics_t {
+@@ -655,6 +655,7 @@ class em_metrics_t {
+         *
+         * @note Used for ACK tracking and response correlation.
          */
-         unsigned short m_unassoc_sta_query_msg_id = 0;
 +public:
+         unsigned short m_unassoc_sta_query_msg_id = 0;
+ 
+        /**
 diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
 --- a/src/agent/em_agent.cpp
 +++ b/src/agent/em_agent.cpp

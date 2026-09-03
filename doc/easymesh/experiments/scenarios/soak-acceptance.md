@@ -62,20 +62,48 @@ memory behavior.
 
 ## Run and monitor
 
+The portable lab has an outer LXD VM and nested lab containers. Enter the VM as
+root before starting a soak; substitute the actual instance name:
+
+```sh
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
+
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
+gen/tests/health-audit.sh
+```
+
+The first two commands run on the outer host. The remaining commands in this
+document run inside the VM. Root is required because the snap-packaged nested
+LXD client cannot reliably be invoked by a non-root systemd transient unit.
+
+Before a duration campaign, run one bounded shakedown. This proves the complete
+harness and one outage workload but is not duration acceptance:
+
+```sh
+gen/tests/p0-churn-soak.py \
+  --duration 900 \
+  --max-workloads 1 \
+  --sample-interval 30 \
+  --settle 5 \
+  --workload outage \
+  --expected-clients 20 \
+  --output-root /var/tmp/easymesh-soak-shakedown
+```
+
 Create a writable evidence namespace and start one persistent transient
-systemd unit per target. Run it as the lab account so LXD and the wmediumd
-control socket use the same permissions as normal scenarios:
+systemd unit per target:
 
 ```sh
 SOAK_ID=current
 SOAK_OUTPUT=/var/tmp/easymesh-soak/$SOAK_ID
-SOAK_REPO=/path/to/meta-cmf-bananapi-vcpe
+SOAK_REPO=/home/easymesh/git/meta-cmf-bananapi-vcpe
 
-sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0755 "$SOAK_OUTPUT"
-sudo systemd-run \
+install -d -o root -g root -m 0755 "$SOAK_OUTPUT"
+systemd-run \
   --unit="easymesh-soak-$SOAK_ID" \
   --description="EasyMesh 12-hour RF churn acceptance $SOAK_ID" \
-  --uid="$(id -un)" \
+  --uid=root \
   --property="WorkingDirectory=$SOAK_REPO" \
   --setenv="EASYMESH_REPO=$SOAK_REPO" \
   /usr/bin/python3 "$SOAK_REPO/gen/tests/p0-churn-soak.py" \
@@ -86,14 +114,14 @@ sudo systemd-run \
     --outage-every 3 \
     --output-root "$SOAK_OUTPUT"
 
-sudo systemctl status "easymesh-soak-$SOAK_ID.service"
-sudo journalctl -fu "easymesh-soak-$SOAK_ID.service"
+systemctl status "easymesh-soak-$SOAK_ID.service"
+journalctl -fu "easymesh-soak-$SOAK_ID.service"
 ```
 
 For foreground diagnosis, the underlying command is:
 
 ```sh
-sudo /usr/bin/python3 <repo>/gen/tests/p0-churn-soak.py \
+/usr/bin/python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/p0-churn-soak.py \
   --duration 43200 \
   --sample-interval 60 \
   --settle 30 \
@@ -111,35 +139,43 @@ An interrupted run remains useful diagnostic evidence but is not acceptance.
 `gen/tests/scale-soak-campaign.sh` owns the complete sequence. It stops the
 lab, selects the required 32-, 64-, or 128-radio pool, provisions the exact
 client cohort, proves a clean reconstruction, runs the duration-bound soak,
-and records every transition. Qualify the complete sequence with one hour per
-profile before starting the extended campaign:
+and records every transition.
+
+This campaign mutates the radio pool and client inventory. It is an engineering
+host workflow and must not be run inside a profile-locked distributable
+appliance. For portable use, import one independent VM for each 20-, 50-, or
+100-client profile and run the single-profile soak above in each VM, changing
+`--expected-clients` to the locked profile count. On a dedicated mutable
+engineering host, set `ENGINEERING_REPO` to that checkout and qualify the
+complete sequence with one hour per profile before starting the extended
+campaign:
 
 ```sh
-sudo systemd-run \
+ENGINEERING_REPO=/path/to/meta-cmf-bananapi-vcpe
+systemd-run \
   --unit=easymesh-scale-soak \
   --collect \
   --property=Type=exec \
   /usr/bin/env EASYMESH_SOAK_PROFILE_SECONDS=3600 \
-  /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/scale-soak-campaign.sh
+  "$ENGINEERING_REPO/gen/tests/scale-soak-campaign.sh"
 ```
 
 Only after all three one-hour summaries pass, run the 12-hour-per-profile,
 36-hour long-duration campaign:
 
 ```sh
-sudo systemd-run \
+systemd-run \
   --unit=easymesh-scale-soak \
   --collect \
   --property=Type=exec \
   /usr/bin/env EASYMESH_SOAK_PROFILE_SECONDS=43200 \
-  /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/tests/scale-soak-campaign.sh
+  "$ENGINEERING_REPO/gen/tests/scale-soak-campaign.sh"
 
-sudo systemctl status easymesh-scale-soak.service
-sudo journalctl -fu easymesh-scale-soak.service
+systemctl status easymesh-scale-soak.service
+journalctl -fu easymesh-scale-soak.service
 ```
 
-Evidence is written below
-`/home/easymesh/easymesh-evidence/scale-soak/TIMESTAMP/`. The `small`,
+Evidence is written below the runner's configured evidence root. The `small`,
 `medium`, and `stress` directories correspond to 20, 50, and 100 clients.
 The runner attempts every requested profile even when an earlier profile
 fails, then returns a failing campaign result with all failed profiles named.

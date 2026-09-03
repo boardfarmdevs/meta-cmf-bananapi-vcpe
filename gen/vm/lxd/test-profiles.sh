@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
+grep -Fq 'RELEASE-NOTES.md' "$root/gen/vm/lxd/build.sh"
 
 check() {
     local input=$1 name=$2 clients=$3 radios=$4 release_name=$5

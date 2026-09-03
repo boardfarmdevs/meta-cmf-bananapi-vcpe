@@ -15,10 +15,19 @@ deleting device identities. Do not run two RF scenarios at once: each is a
 writer to the same wmediumd control socket. All clean test exits restore the
 medium they captured.
 
-Run steering, RF scenarios, audits, and Docker commands as the `rev` user. The
-lab grants that user access through the LXD, Docker, and wmediumd control-socket
-groups. `sudo` is reserved for the complete lifecycle command because that
-runtime changes host networking, services, and container ownership state.
+The portable lab has two LXD layers:
+
+```text
+outer Linux host
+  `-- rdkeasymesh-PROFILE-RELEASE  (LXD virtual machine)
+        `-- bpibroadband, bpiap-* and wlan-client-* (nested containers)
+```
+
+Run the commands in this guide from a root shell **inside the appliance VM**.
+The nested LXD client is installed as a snap; a non-root process in this VM can
+be refused by snap process tracking even when it belongs to the `lxd` group.
+Root is required for nested container lifecycle, not for the EasyMesh protocol
+itself. Do not run the commands against LXD on the outer host by mistake.
 
 These demonstrations show mechanisms and observability. The manual steer is a
 real EasyMesh Client Steering Request and 802.11v BTM exchange, but no current
@@ -26,17 +35,31 @@ demo proves an autonomous optimizer or a novel steering policy.
 
 ## Prepare the room
 
-Enter the canonical checkout on the lab host or appliance VM:
+On the outer host, identify the imported VM and enter it. This example is the
+20-client 0902 appliance; substitute the actual instance name:
+
+```sh
+lxc list
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
+```
+
+All remaining shell blocks run inside that VM:
 
 ```sh
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 ```
 
-Open the WebUI from the lab LAN and select **Network Topology**:
+Open the WebUI from the lab LAN and select **Network Topology**. The standard
+outer-host proxy ports are:
 
 ```text
-http://HOST:PORT
+EasyMesh WebUI:     http://OUTER_HOST:18889/
+wmediumd Console:   http://OUTER_HOST:18890/
 ```
+
+The ports may have been changed during import. From the outer host,
+`lxc config device show "$VM"` displays the effective `listen` addresses.
 
 The page refreshes live topology every two seconds. Click **Optimize Layout**
 once if a tidier starting arrangement is useful. It changes only the drawing.
@@ -75,6 +98,9 @@ repair policy delivery before the demo. It is not a wmediumd failure.
 
 If any gate fails, do not conceal it with an ad-hoc process restart. Use the
 full reconstruction procedure at the end of this document and rerun preflight.
+Run the same audit after every demonstration. Do not begin another medium
+writer until the previous command has exited, reported verified restoration,
+and the audit passes.
 
 ## Demo 1: manually steer a named client
 
@@ -110,11 +136,17 @@ gen/steer.sh sta-03 extender-2
 
 The dry run is useful during narration: it prints the resolved STA MAC, target
 BSSID, SSID and band without sending anything. By default the adapter keeps the
-client on its current SSID and band. A deliberate band change is explicit:
+client on its current SSID and band. A deliberate band change is explicit; the
+2.4 GHz form below is accepted in the 0902 small profile:
 
 ```sh
-gen/steer.sh --band 6 sta-03 extender-2
+gen/steer.sh --band 2.4 sta-03 extender-2
 ```
+
+A 6 GHz request uses `--band 6`, but only a target BSSID present in the
+client's live candidate scan is valid. The adapter fails before sending a BTM
+request when that candidate is absent. This is an important test result, not a
+reason to bypass the scan gate.
 
 After the command, independently inspect the real station and controller API:
 
@@ -175,13 +207,17 @@ notifications and controller/WebUI convergence at scale.
 
 ### Operator actions
 
-Return to **Network Topology** and run one complete rotation:
+Return to **Network Topology**. For the most repeatable visual demonstration,
+start with the IoT cohort:
 
 ```sh
-gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 1
+gen/tests/wmediumd-client-carousel.py --ssid iot_ssid --rounds 1
 ```
 
-Repeat with `--ssid iot_ssid` to move the ten IoT-icon clients independently.
+Repeat with `--ssid private_ssid` to exercise the private cohort. That cohort
+contains deliberately band-fixed 2.4 and 6 GHz clients, so it is also a stronger
+candidate-visibility test. A fixed-band client that cannot see the requested
+destination makes the scenario fail and restore; it is not silently skipped.
 
 The terminal announces each group with the same labels shown in the WebUI:
 
@@ -225,8 +261,11 @@ Keep **Network Topology** open and run:
 gen/tests/wmediumd-extender-outage.py --extender bpiap-003
 ```
 
-`bpiap-003` is the node labelled `Extender-4` in the current five-AP lab.
-Allow roughly three minutes. The main visual sequence is:
+The `Extender-N` label is assigned from the live persistent EasyMesh identity;
+do not infer it from the LXD suffix. The test prints the selected container,
+node identity and affected clients at preflight. Allow roughly four minutes,
+including the 75-second post-recovery stability gate. The main visual sequence
+is:
 
 ```text
 affected phones move away
@@ -254,9 +293,10 @@ traffic, and 75 seconds of physical/API placement agreement after recovery.
 
 ### Scope and safety
 
-This is an identity-preserving reconstruction, not a fresh deployment. It
-stops wmediumd, all 20 clients, all four extenders and `bpibroadband`; the
-optional command also stops the two Boardfarm WAN/DHCP provider containers.
+This is an identity-preserving reconstruction inside the VM, not a fresh
+deployment and not an outer-VM restart. It stops wmediumd, all 20 clients, all
+four extenders and `bpibroadband`. The Boardfarm WAN/DHCP provider containers
+remain running unless the optional command stops them separately.
 It does not delete LXD instances, profiles, `/nvram`, databases, Docker
 networks or images. Do not use `bpi.sh -F` for this demonstration because `-F`
 intentionally creates new logical device identities.
@@ -264,15 +304,7 @@ intentionally creates new logical device identities.
 ### Bring it down
 
 ```sh
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
-demo_runtime=gen/vm/scripts/guest/easymesh-lab-runtime
-
-sudo env \
-  EASYMESH_LAB_USER=rev \
-  EASYMESH_LAB_HOME=/home/rev \
-  EASYMESH_GEN="$PWD/gen" \
-  EASYMESH_ACCEPTANCE_STATE="$PWD/tmp/test-results/demo-reconstruction" \
-  bash "$demo_runtime" stop
+time systemctl stop easymesh-lab.service
 
 # Optional: include the two Boardfarm WAN/DHCP providers in the outage.
 docker stop dhcp-cpe1 wan-cpe1
@@ -282,7 +314,7 @@ Check the stopped state:
 
 ```sh
 lxc list -c ns --format table
-gen/wmediumd/wmediumd-up.sh status || true
+/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/wmediumd-up.sh status || true
 docker ps --format '{{.Names}}' | grep -E '^(dhcp|wan)-cpe1$' || true
 ```
 
@@ -292,25 +324,22 @@ WebUI is unavailable while `bpibroadband` is stopped.
 
 ### Bring it up
 
-Use the same runtime command with `start`; it starts the named Boardfarm
-providers if necessary and enforces controller, extender, client and medium
-ordering. Allow roughly 10 minutes, including its two-minute stability window:
+Start the appliance unit. It starts the named Boardfarm providers if necessary
+and owns the complete nested lifecycle. In another VM shell, follow its journal.
+Allow up to 10 minutes, including the two-minute stability window:
 
 ```sh
-mkdir -p tmp/test-results/demo-reconstruction
-sudo env \
-  EASYMESH_LAB_USER=rev \
-  EASYMESH_LAB_HOME=/home/rev \
-  EASYMESH_GEN="$PWD/gen" \
-  EASYMESH_ACCEPTANCE_STATE="$PWD/tmp/test-results/demo-reconstruction" \
-  bash "$demo_runtime" start \
-  | tee tmp/test-results/demo-reconstruction/latest-start.txt
+time systemctl start easymesh-lab.service
+
+# Run from a second shell while start is pending.
+journalctl -fu easymesh-lab.service
 ```
 
-This is intentionally not a fast parallel start. It waits for the WAN provider,
-controller tri-band state, each extender's complete onboarding, all 20 clients,
-the `5/15/50/24` model, a two-minute stability window, zero service restarts and
-20/20 traffic. On success it prints:
+Startup is parallel only inside dependency-safe stages. It waits for the WAN
+provider, controller tri-band state, four extenders started and validated in
+parallel, all clients started with bounded parallelism, wmediumd self-tests,
+the `5/15/50/24` model, fresh metrics, a two-minute stability window, zero
+service restarts and 20/20 traffic. On success the journal prints:
 
 ```text
 EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=20/20 metrics=20/20 associated=24 restarts=0
@@ -323,11 +352,23 @@ mkdir -p tmp/test-results/demo
 gen/tests/health-audit.sh | tee tmp/test-results/demo/post-reconstruction.txt
 ```
 
-The reconstructed graph must contain the same six mesh nodes and ten named
+The reconstructed graph must contain the same six mesh nodes and 20 named
 clients. The AP BSSIDs and device identities are preserved because this is a
 warm reconstruction of existing containers. Use the fresh-build/deployment
 procedure in [operations](operations.md) only when new images or new logical
 identities are required.
+
+A non-zero `systemctl start` is a failed reconstruction even if some containers
+are running. Preserve the unit journal and the automatically captured evidence
+below `/home/easymesh/.local/state/easymesh-lab/reboot-acceptance/`. Correct
+whole-unit recovery is one new bounded transaction, not individual daemon
+nudges:
+
+```sh
+systemctl reset-failed easymesh-lab.service
+systemctl start easymesh-lab.service
+gen/tests/health-audit.sh
+```
 
 ## Recovery if a demo is interrupted incorrectly
 
@@ -336,7 +377,7 @@ their normal error paths. If a terminal or host is killed before cleanup can
 run, stop all experiments and restore the known all-strong baseline once:
 
 ```sh
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 SNR=40 gen/wmediumd/wmediumd-up.sh up
 gen/tests/health-audit.sh
 ```

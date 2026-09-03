@@ -8,8 +8,9 @@ Network Topology page remains open. Each move contains a real disconnect
 interval followed by deterministic RF placement at the next AP.
 
 This is the easiest scenario to correlate by eye because the test prints the
-same stable labels that the WebUI displays: `STA-03` for private clients and
-`IOT-03` for IoT clients.
+same stable labels that the WebUI displays. In the accepted 20-client profile,
+private labels are `STA-03` through `STA-0E`; the globally indexed IoT cohort
+is `IOT-0F` through `IOT-18`.
 
 It is not an optimizer or steering-policy test. The script never calls
 `steer.sh`. It uses atomic wmediumd SNR generations to make one destination the
@@ -61,20 +62,30 @@ separate from the visual scenario.
 
 ## Run it
 
-Open the WebUI Network Topology tab first and optionally click **Optimize
-Layout** once. Then run on the lab host/VM:
+The portable lab has an outer LXD VM and nested lab containers. Enter the VM as
+root from the outer host; substitute its actual name when necessary:
 
 ```sh
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe
-gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
+VM=rdkeasymesh-20-0902
+lxc exec "$VM" -- bash
 ```
 
-Inside a distributable VM the repository is normally under `/home/easymesh`:
+Run all remaining commands inside the VM. Root is needed because the scripts
+inspect nested LXD containers through the snap-packaged client:
 
 ```sh
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe
-gen/tests/wmediumd-client-carousel.py --ssid private_ssid --rounds 2
+gen/tests/health-audit.sh
+gen/tests/wmediumd-client-carousel.py --ssid iot_ssid --rounds 2
+gen/tests/health-audit.sh
 ```
+
+Open the WebUI Network Topology tab before starting and optionally click
+**Optimize Layout** once. The IoT cohort is the preferred visual demonstration.
+Use `--ssid private_ssid` for the stronger tri-band variant; that cohort
+includes one 2.4 GHz-pinned and one 6 GHz-pinned client. A fixed-band target
+that is absent from the candidate scan causes a bounded failure and exact
+cleanup rather than a false pass.
 
 Two rounds move every client twice and then return all clients to their
 preflight APs. For a continuous demonstration, use:
@@ -94,7 +105,7 @@ Useful controls:
 --ssid private_ssid        select private clients (use iot_ssid for IoT)
 --blackout-hold 4          seconds to leave clients visibly absent
 --arrival-hold 4           seconds to leave clients visibly at the new AP
---disconnect-timeout 30    deadline for real and controller disassociation
+--disconnect-timeout 30    deadline for physical station disassociation
 --connect-timeout 60       deadline for real and controller reassociation
 --strong-snr 45            reachable destination value
 --outage-snr -20           unreachable link value
@@ -125,7 +136,10 @@ and client `iw` state prove that a real disconnect occurred between parents.
 
 The script does not infer success from elapsed time. It advances only after
 both the client's `iw` association and the controller topology agree. A stale
-or zero-node API response cannot satisfy an arrival transition.
+or zero-node API response cannot satisfy an arrival transition. During final
+cleanup, per-group restoration events are intermediate observations and may
+still contain mixed placement. Only the later `placement_restored` event and
+the final `PASSED` line establish complete restoration.
 
 ## Evidence and cleanup
 
@@ -146,4 +160,5 @@ preflight client placement restoration. Backhaul pairs are never touched,
 wmediumd is never restarted, and cleanup leaves every client interface up.
 
 Any disagreement between the physical association, controller model and API is
-a hard failure. Preserve the complete run directory for diagnosis.
+a hard failure. Preserve the complete run directory for diagnosis and do not
+start another writer until `gen/tests/health-audit.sh` passes.

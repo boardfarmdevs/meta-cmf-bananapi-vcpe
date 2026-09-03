@@ -19,8 +19,8 @@ also handles short stream reads and EINTR, validates the declared size before
 allocation, and leaves any following frame queued for the next indication.
 
 ---
- src/al-sap/al_service_access_point.cpp | 48 +++++++++++++++++++++++++---------
- 1 file changed, 36 insertions(+), 12 deletions(-)
+ src/al-sap/al_service_access_point.cpp | 47 +++++++++++++++++++++++++---------
+ 1 file changed, 36 insertions(+), 11 deletions(-)
 
 diff --git a/src/al-sap/al_service_access_point.cpp b/src/al-sap/al_service_access_point.cpp
 index 095ef51..4574926 100644
@@ -96,10 +96,5 @@ index 095ef51..4574926 100644
              #endif
              return fragment; // Return immediately, as no reassembly is needed
          }
-@@ -270,4 +295,3 @@ AlServiceDataUnit AlServiceAccessPoint::serviceAccessPointDataIndication() {
-     return message;
- }
- 
--
 -- 
 2.43.0

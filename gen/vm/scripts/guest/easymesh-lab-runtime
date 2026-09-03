@@ -20,7 +20,12 @@ kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
 medium_runtime=/run/meta-cmf-wmediumd
 kernel_metrics_socket=$medium_runtime/metrics/control.sock
 kernel_metrics_unit=easymesh-kernel-metrics.service
-start_mode=${EASYMESH_START_MODE:-overlap}
+# Controller-first launch is the appliance contract.  Starting the extenders
+# in parallel with the controller can let their backhaul associations complete
+# before the colocated OneWifi agent has published an authoritative associated-
+# client snapshot.  The physical links then work, but the controller model can
+# miss all four bSTA ownership rows after a warm reconstruction.
+start_mode=${EASYMESH_START_MODE:-gated}
 extender_start_parallelism=${EASYMESH_EXTENDER_START_PARALLELISM:-4}
 extender_ready_parallelism=${EASYMESH_EXTENDER_READY_PARALLELISM:-4}
 extender_stop_parallelism=${EASYMESH_EXTENDER_STOP_PARALLELISM:-4}

@@ -3,6 +3,8 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/observer-status.sh
+source "$here/lib/observer-status.sh"
 
 usage() {
     cat <<'EOF'
@@ -54,4 +56,7 @@ case "$1" in
         ;;
 esac
 
+status_section "Backhaul topology scenario: $profile"
+status_action "Applying the $profile parent map and validating onboarding, signals and traffic."
+status_note "The selected topology remains active after a successful test."
 exec "$here/multihop-backhaul.sh" test "$profile"

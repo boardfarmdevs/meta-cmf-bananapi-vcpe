@@ -26,7 +26,19 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
 index 1111111..2222222 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -2481,6 +2481,99 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+@@ -2509,30 +2509,123 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
+     unsigned int tmp_len;
+     int ret = 0;
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+     bool found_op_bss = false;
+     bool found_profile = false;
+     bool found_bss_config_rprt = false;
+     bool found_ap_mld = false;
+     unsigned int assoc_sta_mld_count = 0;
+     em_profile_type_t profile = em_profile_type_reserved;
+ 	dm_easy_mesh_t *dm;
+     em_t *al_em = nullptr;
+     em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *>(buff);
      uint8_t *src_al_mac = hdr->src;
      
  	dm = get_data_model();
@@ -123,9 +135,21 @@ index 1111111..2222222 100644
 +        device_cursor += total_len;
 +        device_remaining -= total_len;
 +    }
+     if (em_mgr_t *mgr = get_mgr()) {
+         al_em = mgr->get_al_node();
+     }
  
      tlv =  reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
      tmp_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+         
+     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
+         if (tlv->type != em_tlv_type_profile) {
+             tmp_len -= static_cast<unsigned int> (sizeof(em_tlv_t) + htons(tlv->len));
+             tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+ 
+             continue;
+ 
+         } else {
 @@ -6474,7 +6567,10 @@ void em_configuration_t::fill_media_data(em_media_spec_data_t *spec, dm_bss_t *b
          memcpy(spec->network_memb, bss_info->bssid.mac, sizeof(mac_address_t));
          spec->role = EM_MEDIA_WIFI_ROLE_AP;

@@ -3,6 +3,8 @@ set -euo pipefail
 
 exec </dev/null
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
+# shellcheck source=lib/observer-status.sh
+source "$repo/gen/tests/lib/observer-status.sh"
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
 ping_count=${HEALTH_PING_COUNT:-10}
 ping_interval=${HEALTH_PING_INTERVAL:-1}
@@ -26,6 +28,8 @@ expected_associated=$((expected_clients + expected_devices - 1))
 [[ "$ping_exec_timeout" =~ ^[1-9][0-9]*$ ]] \
     || { echo "HEALTH_PING_EXEC_TIMEOUT must be a positive integer" >&2; exit 2; }
 
+status_section "Topology and controller model"
+status_action "Reading the live WebUI topology."
 echo TOPOLOGY
 curl -fsS http://127.0.0.1:8888/api/v1/topology | jq -r '
     .nodes[] | [.name, .id, ([.haulTypes[]?.BSSList[]?] | length),
@@ -60,6 +64,8 @@ echo "fresh=$fresh_edges/$wireless_edges"
 [ "$wireless_edges" = "$((expected_devices - 1))" ] || model_fail=1
 [ "$fresh_edges" = "$wireless_edges" ] || model_fail=1
 
+status_section "Identity persistence"
+status_action "Checking every mesh node's preserved NVRAM binding."
 echo NVRAM_BINDINGS
 nvram_fail=0
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
@@ -79,6 +85,8 @@ for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
     fi
 done
 
+status_section "Client ownership"
+status_action "Comparing each physical association with controller/WebUI ownership."
 echo ASSOCIATION_OWNERSHIP
 clients_json=$(mktemp)
 trap 'rm -f "$clients_json" "$topology_json"' EXIT
@@ -102,6 +110,7 @@ while read -r client; do
 done < <(lxc list -c n --format csv |
     grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 
+status_action "Checking that every WLAN client owns one unique IPv4 address."
 echo IPV4_OWNERSHIP
 ipv4_fail=0
 declare -A ipv4_owner=()
@@ -125,6 +134,8 @@ while read -r client; do
 done < <(lxc list -c n --format csv |
     grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 
+status_section "Service stability"
+status_action "Checking EasyMesh and OneWifi restart counters."
 echo RESTARTS
 restart_fail=0
 for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
@@ -142,6 +153,8 @@ for unit in em_ctrl em_cli; do
     [ "$restarts" = 0 ] || restart_fail=1
 done
 
+status_section "End-to-end traffic"
+status_wait "Sending $ping_count packets from every client in parallel; maximum allowed loss is ${ping_max_loss}%."
 echo CONNECTIVITY
 traffic_fail=0
 declare -a traffic_pids=()
@@ -212,3 +225,4 @@ free -h | sed -n '1,2p'
     echo "FAIL: one or more BPI NVRAM bind sources are missing or empty" >&2
     exit 1
 }
+status_pass "Health audit passed: model, identities, ownership, services and traffic are coherent."

@@ -1,0 +1,32 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Tue, 25 Aug 2026 13:20:00 -0700
+Subject: [PATCH] wifi_em: release removed client-stat cache entries
+
+hash_map_remove() transfers ownership of the removed AP-metrics client-stat
+entry to the caller.  The disassociation path discarded that returned pointer,
+leaking one entry for every client departure.
+
+The fresh upstream OneWifi revision already releases the encoded EasyMesh
+event buffers covered by the earlier version of this patch (cd27b70c,
+RDKBWIFI-498).  Retain only this independent, still-missing cache fix so the
+layer neither duplicates nor double-frees the upstream ownership changes.
+
+Upstream-Status: Pending
+---
+ source/apps/em/wifi_em.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+index 01cf2e5..0b5481a 100644
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -1678,6 +1678,7 @@ static int em_handle_disassoc_device(wifi_app_t *app, void *arg)
+     }
+     wifi_util_dbg_print(WIFI_EM, "%s:%d: Sta Mac %s disassociated\n", __func__,
+         __LINE__, sta_mac_str);
++    free(stats);
+ 
+     to_mac_str((unsigned char *)assoc_data->dev_stats.cli_MACAddress, client_mac);
+     sta_client_info_t *t_sta_data = (sta_client_info_t *)hash_map_remove(
+-- 
+2.43.0

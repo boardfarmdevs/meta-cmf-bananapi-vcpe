@@ -20,6 +20,10 @@ medium restoration before accepting the result.
 | How is an optimizer evaluated across deterministic worlds? | [Optimizer scenarios](optimizer-scenarios.md) | replay inputs, decisions, scores, action outcomes |
 | How do I add an optimizer input or algorithm? | [Optimizer development](optimizer-development.md) | tests, schemas, journals, live ladder |
 
+The command-by-command 0902 appliance check, including bounded failures that
+must not be hidden during a demonstration, is recorded in
+[0902 scenario validation](results/scenario-validation-0902.md).
+
 ## Common lifecycle
 
 ```text

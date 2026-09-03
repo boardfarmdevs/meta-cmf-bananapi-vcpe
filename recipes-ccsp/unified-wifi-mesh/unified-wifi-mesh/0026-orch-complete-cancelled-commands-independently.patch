@@ -3,30 +3,25 @@ Subject: [PATCH] orch: complete cancelled commands independently
 
 When a duplicate WSC M1 arrives, remove_em_config_cmd_for_em() cancels the
 radio's current em_config command before the controller submits the new M2
-transaction.  It sets the candidate to em_orch_state_cancel, but orchestrate()
-only handles pending, progress and fini.  The cancelled candidate therefore
+transaction. It sets the candidate to em_orch_state_cancel, but orchestrate()
+only handles pending, progress and fini. The cancelled candidate therefore
 never completes, never returns to idle and permanently prevents the replacement
 em_config command from becoming active.
 
-The controller-side workaround forced wsc_m2_sent radios directly to
-topo_sync_pending from a sibling's state machine.  Live traces showed it firing
-0.6-5 ms after M2, proving it was bypassing this orchestration deadlock rather
-than recovering a timed-out radio.
-
-Treat cancel as a terminal orchestration state.  Also compute completion per
-active command: the old accumulator retained a false result from one command
-while inspecting every later command, so an unrelated incomplete transaction
-could prevent a fully-finished command from being retired.
+Treat cancel as a terminal orchestration state. The current upstream source
+already resets the completion accumulator for every active command, so that
+part of the original local patch is no longer required.
 
 Upstream-Status: Pending
 ---
- src/orch/em_orch.cpp | 5 +++--
- 1 file changed, 3 insertions(+), 2 deletions(-)
+ src/orch/em_orch.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
 
 diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index 5a41969..42d963b 100644
 --- a/src/orch/em_orch.cpp
 +++ b/src/orch/em_orch.cpp
-@@ -336,6 +336,8 @@ bool em_orch_t::orchestrate(em_cmd_t *pcmd, em_t *em)
+@@ -338,6 +338,8 @@ bool em_orch_t::orchestrate(em_cmd_t *pcmd, em_t *em)
      } else if (orch_state == em_orch_state_fini) {
          // em_printfout("em:%s Detected in fini state", mac_str);
          done = true;
@@ -35,21 +30,5 @@ diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
      }
  
      return done;
-@@ -517,7 +519,6 @@ void em_orch_t::handle_timeout()
-     signed int i, j; 
-     unsigned int cnt;
-     bool eligible_to_move = false;
--    bool ret = true;
- 
-     // go through pending queue and check if the commands can be moved to active
-     for (i = static_cast<int>(queue_count(m_pending)) - 1; i >= 0; i--) {
-@@ -554,6 +555,7 @@ void em_orch_t::handle_timeout()
-     // go through active queue and check command states
-     for (i = static_cast<int>(queue_count(m_active)) - 1; i >= 0; i--) {
-         pcmd = static_cast<em_cmd_t *>(queue_peek(m_active, static_cast<unsigned int>(i)));
-+        bool ret = true;
- 		//printf("%s:%d: Cmd: %s, em candidates: %d\n", __func__, __LINE__, 
- 					//em_cmd_t::get_cmd_type_str(pcmd->m_type), queue_count(pcmd->m_em_candidates));
-         for (j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; j >= 0; j--) {
 -- 
 2.43.0
