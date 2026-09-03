@@ -33,6 +33,7 @@ WIFI_ASSOC_ACTIVE_PROVIDER_PATCH := "${THISDIR}/${BPN}/0021-assoc-provider-omit-
 WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH := "${THISDIR}/${BPN}/0022-ap-metrics-count-live-provider-stations.patch"
 WIFI_EM_AP_METRICS_CLEANUP_PATCH := "${THISDIR}/${BPN}/0023-ap-metrics-release-every-radio-vap-allocation.patch"
 WIFI_EM_ASSOC_RESTORE_PATCH := "${THISDIR}/${BPN}/0024-hwsim-reactivate-live-associated-client-cache.patch"
+WIFI_ACTION_FRAME_QUEUE_PATCH := "${THISDIR}/${BPN}/0025-prioritize-and-validate-action-frame-requests.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -221,6 +222,12 @@ python do_patch_append() {
     # symmetric so full EasyMesh snapshots recover reachable clients.
     bb.note("meta-cmf-bananapi-vcpe: restoring live hwsim associations in OneWifi cache")
     with open(d.getVar('WIFI_EM_ASSOC_RESTORE_PATCH'), 'rb') as f:
+        apply_layer_patch(f)
+    # Steering action frames must not be discarded behind telemetry or report
+    # success when the OneWifi control queue rejected them.  Validate the
+    # RBUS payload, prioritize the command, and propagate queue admission.
+    bb.note("meta-cmf-bananapi-vcpe: hardening action-frame queue admission")
+    with open(d.getVar('WIFI_ACTION_FRAME_QUEUE_PATCH'), 'rb') as f:
         apply_layer_patch(f)
 
     # GNU patch -N can return success after skipping later hunks when an older

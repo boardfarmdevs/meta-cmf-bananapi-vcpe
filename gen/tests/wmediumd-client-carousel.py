@@ -307,7 +307,7 @@ def prime_candidate_scans(
     clients: list[dict], aps_by_container: dict[str, dict],
     targets: dict[str, str], attempts: int = 3,
 ) -> None:
-    """Put each selected target BSS into the pinned-band client's scan cache."""
+    """Resolve each selected target BSS to the client's ESS in its scan cache."""
     for client in clients:
         target_name = targets[client["container"]]
         target = aps_by_container[target_name]
@@ -322,15 +322,19 @@ def prime_candidate_scans(
                 "BSS for the selected SSID"
             )
         frequencies = sorted(set(candidates.values()))
+        ssid = str(client["ssid"])
+        ssid_hex = ssid.encode().hex()
         last_error = "target BSS absent"
         for attempt in range(1, attempts + 1):
             outputs = []
             errors = []
-            for frequency in frequencies:
+            resolved = False
+            for bssid, frequency in sorted(candidates.items()):
                 request = subprocess.run(
                     (
                         "lxc", "exec", client["container"], "--", "wpa_cli",
                         "-i", "wlan0", "scan", f"freq={frequency}",
+                        f"bssid={bssid}", f"ssid {ssid_hex}",
                     ),
                     check=False,
                     text=True,
@@ -342,27 +346,47 @@ def prime_candidate_scans(
                         or f"wpa_cli scan failed for {frequency}MHz"
                     )
                     continue
-                time.sleep(0.5)
-                result = subprocess.run(
-                    (
-                        "lxc", "exec", client["container"], "--", "wpa_cli",
-                        "-i", "wlan0", "scan_results",
-                    ),
-                    check=False,
-                    text=True,
-                    capture_output=True,
-                )
-                outputs.append(result.stdout.lower())
-                if result.returncode:
-                    errors.append(result.stderr.strip())
-            output = "\n".join(outputs)
-            if any(bssid in output for bssid in candidates):
+                for _ in range(20):
+                    result = subprocess.run(
+                        (
+                            "lxc", "exec", client["container"], "--", "wpa_cli",
+                            "-i", "wlan0", "scan_results",
+                        ),
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                    )
+                    outputs.append(result.stdout)
+                    if result.returncode:
+                        errors.append(result.stderr.strip())
+                    if any(
+                        len(fields := line.split("\t")) >= 5
+                        and fields[0].lower() == bssid
+                        and fields[4] == ssid
+                        for line in result.stdout.splitlines()
+                    ):
+                        resolved = True
+                        break
+                    time.sleep(0.1)
+                if resolved:
+                    break
+            if resolved:
                 break
+            output = "\n".join(outputs)
+            rf_visible = any(
+                len(fields := line.split("\t")) >= 1
+                and fields[0].lower() in candidates
+                for line in output.splitlines()
+            )
             last_error = (
                 "; ".join(error for error in errors if error)
-                or "target BSS absent at "
-                + ",".join(str(value) for value in frequencies)
-                + "MHz via wpa_supplicant"
+                or (
+                    f"target BSS RF-visible but ESS identity {ssid!r} unresolved"
+                    if rf_visible else
+                    "target BSS absent at "
+                    + ",".join(str(value) for value in frequencies)
+                    + "MHz via wpa_supplicant"
+                )
             )
             if attempt < attempts:
                 time.sleep(float(attempt))

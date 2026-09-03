@@ -6,6 +6,13 @@ Every accepted `wlan-client[-NNN]` uses the committed
 Transition Management Request, return a BTM Response and reassociate to the
 requested BSS.
 
+The build also carries
+`0001-wnm-select-hidden-bss-by-current-ssid.patch`. Hidden BSS discovery can
+legitimately leave both an empty-SSID Beacon entry and a full-SSID Probe
+Response entry for one BSSID. The patch makes WNM candidate selection prefer
+the entry matching the current ESS instead of depending on BSS-cache order.
+It does not infer an SSID or relax the normal network-profile checks.
+
 The former manual flow—building into one client's `/tmp` and swapping the
 stock Alpine daemon—is obsolete. `gen/wlan-client.sh` now builds a reusable
 `wlan-client-base` LXD image containing:
@@ -50,7 +57,7 @@ The committed binary is the reproducible runtime input:
 
 ```text
 file     gen/wpa_supplicant/wpa_supplicant-wnm
-SHA-256 23af2fbf6ef96731b9fda55142775e6d49430d92b09ccba6349de21e14651c46
+SHA-256 d2a468bb22d6cb822f42a2df089146a462a22ea3f891093935031c86a7d86b94
 config   gen/wpa_supplicant/wpa_supplicant-wnm.config
 ```
 
@@ -61,8 +68,9 @@ gen/wpa_supplicant/build-wnm-supplicant.sh wlan-client
 ```
 
 The build helper temporarily raises the selected client's memory limit,
-downloads and verifies wpa_supplicant 2.10, compiles it with the recorded
-configuration, and copies the result back to the host-side committed path.
+downloads and verifies wpa_supplicant 2.10, applies the recorded hidden-BSS
+candidate-selection patch, compiles it with the recorded configuration, and
+copies the result back to the host-side committed path.
 After reviewing the binary and hash change, rebuild the reusable client image:
 
 ```sh

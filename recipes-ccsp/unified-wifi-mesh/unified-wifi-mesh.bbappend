@@ -145,6 +145,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0145-cli-use-controller-first-topology-layout.patch \
     file://0146-controller-scope-bss-list-delete.patch \
     file://0147-controller-preserve-negotiated-profile.patch \
+    file://0148-agent-report-local-btm-dispatch-failures.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

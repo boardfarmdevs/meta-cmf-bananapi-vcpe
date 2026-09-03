@@ -411,31 +411,63 @@ fi
 bias_active=1
 
 status_action "Scanning ${target_frequency} MHz so the station can see candidate $target_bssid."
-if ! lxc_exec_bounded 12 "$client" -- sh -c '
+set +e
+lxc_exec_bounded 12 "$client" -- sh -c '
     frequency=$1
     target=$2
+    ssid=$3
+    ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
     attempt=0
     while [ "$attempt" -lt 3 ]; do
-        request=$(wpa_cli -i wlan0 scan "freq=$frequency" 2>/dev/null || true)
-        sleep 1
-        scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
-        if [ "$request" = OK ] && printf "%s\n" "$scan" | grep -Fqi "$target"; then
-            exit 0
+        request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
+            "bssid=$target" "ssid $ssid_hex" 2>/dev/null || true)
+        elapsed=0
+        while [ "$elapsed" -lt 20 ]; do
+            scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+            if [ "$request" = OK ] && printf "%s\n" "$scan" | \
+                awk -F "\t" -v b="$target" -v s="$ssid" '\''
+                    tolower($1) == tolower(b) && $5 == s { found = 1 }
+                    END { exit found ? 0 : 1 }
+                '\''; then
+                exit 0
+            fi
+            sleep 0.1
+            elapsed=$((elapsed + 1))
+        done
+        if [ "$request" != OK ]; then
+            sleep 0.5
         fi
+        request=
+        scan=
         attempt=$((attempt + 1))
-        sleep 1
     done
-    exit 1
-' sh "$target_frequency" "$target_bssid" >/dev/null 2>&1; then
-    echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan" >&2
-    exit 1
+
+    # Report a more precise failure boundary to the caller. Exit 2 means the
+    # BSSID is RF-visible, but no cache record resolves it to the target ESS.
+    scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+    if printf "%s\n" "$scan" | awk -F "\t" -v b="$target" '\''
+        tolower($1) == tolower(b) { found = 1 }
+        END { exit found ? 0 : 1 }
+    '\''; then
+        exit 2
+    fi
+' sh "$target_frequency" "$target_bssid" "$target_ssid" >/dev/null 2>&1
+scan_rc=$?
+set -e
+if ((scan_rc != 0)); then
+    if ((scan_rc == 2)); then
+        echo "steer.sh: target $target_bssid is RF-visible, but its hidden ESS identity '$target_ssid' was not resolved; no BTM request was sent" >&2
+    else
+        echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan; no BTM request was sent" >&2
+    fi
+    exit "$scan_rc"
 fi
 link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
 physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
     status_pass "The station reassociated during RF preparation; no BTM request was needed."
 else
-    status_pass "The target BSSID is present in the station scan cache."
+    status_pass "The target BSSID and ESS identity are present in the station scan cache."
     status_action "Sending the EasyMesh BTM request for $sta to $target_bssid."
     set +e
     # The native command transport has a 30-second I/O bound and controller

@@ -9,9 +9,9 @@ tooling, deployment automation, and tests remain separate host infrastructure.
 
 ## Scope
 
-The current source series contains EasyMesh patches through `0145`, IEEE1905
+The current source series contains EasyMesh patches through `0148`, IEEE1905
 patches through `0006`, libwebconfig patches through `0012`, OneWifi patches
-through `0023`, Wi-Fi HAL patches through `0033`, host hwsim patches through
+through `0025`, Wi-Fi HAL patches through `0034`, host hwsim patches through
 `0008`, and wmediumd patches through `0019`, plus the log4c category-factory
 serialization fix. Never infer image content from the host checkout; record
 the image filename, hash, and source revision used to build it.
@@ -32,6 +32,12 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - write the decrypted final AES block into the caller buffer;
 - bound BTM action-frame allocation;
 - serialize steering from the command parameters and use the source VAP;
+- request normal 802.11 acknowledgement and retry handling for unicast action
+  frames instead of applying `DONT_WAIT_FOR_ACK` to BTM Requests;
+- validate and prioritize OneWifi action-frame commands and report a rejected
+  queue admission instead of returning unconditional RBUS success;
+- preserve signed Agent BTM-dispatch results and log the STA, source BSS,
+  target BSS, VAP, and RBUS outcome;
 - restore steering state and route ACK/BTM reports to the right transaction;
 - refresh registrar crypto for every M1;
 - publish association changes, including returning clients;
@@ -68,7 +74,12 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - detect the non-root SNMP subagent from the root self-heal path so the
   15-minute monitor cannot multiply daemon and wrapper processes; and
 - resolve a duplicate extender AL MAC to its Wi-Fi STA interface instead of
-  rejecting DML initialization after `getifaddrs()` returns the bridge first.
+  rejecting DML initialization after `getifaddrs()` returns the bridge first;
+  and
+- select an already-discovered `(BSSID, current SSID)` scan-cache entry for a
+  WNM transition candidate before falling back to a BSSID-only lookup, so a
+  hidden beacon record cannot mask its matching directed Probe Response
+  record.
 
 ### Inherited MediaTek single-wiphy contract
 
@@ -138,6 +149,7 @@ three-radio projection itself must not be gated away from the physical build.
 | Candidate-link measurement | Wi-Fi HAL `0024` | `HWSIM_RADIO` only | Physical hardware must retain its native non-associated measurement provider; the lab reads frequency-qualified wmediumd SNR. |
 | Stale AP peer correction | Wi-Fi HAL `0028`, `0030`, `0033`; OneWifi `0020` | `HWSIM_RADIO` only | hwsim may retain an authorized kernel station after a silent roam; the virtual lab reconciles it with live snapshots and medium ownership. |
 | AP receive-path lifecycle | Wi-Fi HAL `0029`, `0031`, `0032` | `HWSIM_RADIO` only | hwsim registration sockets must be released and restored around AP/wiphy restart. |
+| BTM transmit reliability | Wi-Fi HAL `0034`; OneWifi `0025`; EasyMesh `0148` | generic | A unicast action frame needs 802.11 ACK/retry handling; queue admission and local dispatch failures must not be reported as success. |
 | Signal attribute fallback | Wi-Fi HAL `0025` | generic | `NL80211_STA_INFO_CHAIN_SIGNAL` is optional on any driver; aggregate signal is standard. |
 | Provider count and allocation ownership | OneWifi `0021` through `0023` | generic (`0021` consumes active-row semantics) | Live station counts and freeing every radio/VAP allocation are product correctness, not wiphy representation. |
 | Medium delivery and telemetry | hwsim `0001` through `0008`; wmediumd `0001` through `0019` | host lab only | The external simulator must carry frequency, base-radio owner, learned VIF, delivery outcome and authoritative association state. |
@@ -191,6 +203,7 @@ copying a list from documentation:
 | 1905 | `recipes-ccsp/ieee1905/ieee1905-em.bbappend` | build/startup, AL-SAP transport and topology-change notification |
 | BPI system integration | `recipes-rdkb/sysint-broadband/sysint-broadband.bbappend` | self-heal process detection and installed-script corrections |
 | SNMP protocol agent | `recipes-ccsp/ccsp/ccsp-snmp-pa.bbappend` | idempotent cross-user subagent replacement |
+| Lab station supplicant | `gen/wpa_supplicant/` | WNM-capable client build and exact-ESS hidden-BSS candidate lookup |
 
 Patch headers contain the failure trace, packet/log evidence, and ownership
 rationale.
@@ -313,10 +326,12 @@ authority. Its dependency order is:
 79. reject signal samples that predate the current association epoch;
 80. retain an exact-owner backhaul sample through model reconciliation; and
 81. choose a controller-first landscape topology layout consistently across
-    RDK and prplMesh presentations.
+    RDK and prplMesh presentations; and
+82. preserve signed local BTM-dispatch failures and emit a correlation tuple
+    for the Agent-to-OneWifi action-frame handoff.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0145`; the
+component or image build. The current source series ends at `0148`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering

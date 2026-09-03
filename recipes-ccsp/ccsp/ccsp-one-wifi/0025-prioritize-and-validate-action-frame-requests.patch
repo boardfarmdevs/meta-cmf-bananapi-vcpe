@@ -1,0 +1,141 @@
+From 1edd27ca29f64f615b0db616d031d60c2966dbd8 Mon Sep 17 00:00:00 2001
+From: EasyMesh Lab <easymesh-lab@localhost>
+Date: Thu, 3 Sep 2026 17:01:00 -0700
+Subject: [PATCH] onewifi: make action-frame queue admission reliable
+
+Raw action-frame writes reported RBUS success even when OneWifi rejected the event because its control queue was full. The action event was also classified as ordinary traffic, and its asynchronous consumer trusted the embedded frame length without checking it against the queued allocation.
+
+Validate the RBUS method instance and payload, propagate queue-admission failure, prioritize action-frame commands, and log both enqueue and HAL acceptance. This makes the remaining asynchronous boundary observable and prevents steering control traffic from being discarded behind telemetry.
+---
+ source/core/wifi_ctrl_queue_handlers.c | 24 +++++++++++++++
+ source/core/wifi_ctrl_rbus_handlers.c  | 41 ++++++++++++++++++++++++--
+ source/core/wifi_events.c              |  2 +-
+ 3 files changed, 63 insertions(+), 4 deletions(-)
+
+diff --git a/source/core/wifi_ctrl_queue_handlers.c b/source/core/wifi_ctrl_queue_handlers.c
+index 0a69ecc..42b4357 100644
+--- a/source/core/wifi_ctrl_queue_handlers.c
++++ b/source/core/wifi_ctrl_queue_handlers.c
+@@ -4275,6 +4275,22 @@ void process_send_action_frame_command(void *data, unsigned int len)
+ 
+     params = (action_frame_params_t *)data;
+ 
++    if (params->frame_len == 0 || params->frame_len > len - sizeof(action_frame_params_t)) {
++        wifi_util_error_print(WIFI_CTRL,
++            "%s:%d Invalid action-frame payload: ap_index=%u frame_len=%u payload=%u\n",
++            __func__, __LINE__, params->ap_index, params->frame_len,
++            len - (unsigned int)sizeof(action_frame_params_t));
++        return;
++    }
++
++    wifi_util_info_print(WIFI_CTRL,
++        "%s:%d Sending action frame: ap_index=%u "
++        "dest=%02x:%02x:%02x:%02x:%02x:%02x frame_len=%u\n",
++        __func__, __LINE__, params->ap_index,
++        params->dest_addr[0], params->dest_addr[1], params->dest_addr[2],
++        params->dest_addr[3], params->dest_addr[4], params->dest_addr[5],
++        params->frame_len);
++
+     if (wifi_sendActionFrameExt(params->ap_index, params->dest_addr, params->frequency,
+             params->wait_time_ms, params->frame_data, params->frame_len)) {
+ 
+@@ -4286,6 +4302,14 @@ void process_send_action_frame_command(void *data, unsigned int len)
+         return;
+     }
+ 
++    wifi_util_info_print(WIFI_CTRL,
++        "%s:%d HAL accepted action frame: ap_index=%u "
++        "dest=%02x:%02x:%02x:%02x:%02x:%02x frame_len=%u\n",
++        __func__, __LINE__, params->ap_index,
++        params->dest_addr[0], params->dest_addr[1], params->dest_addr[2],
++        params->dest_addr[3], params->dest_addr[4], params->dest_addr[5],
++        params->frame_len);
++
+     return;
+ }
+ 
+diff --git a/source/core/wifi_ctrl_rbus_handlers.c b/source/core/wifi_ctrl_rbus_handlers.c
+index e5318c2..b3eadc2 100644
+--- a/source/core/wifi_ctrl_rbus_handlers.c
++++ b/source/core/wifi_ctrl_rbus_handlers.c
+@@ -4237,6 +4237,7 @@ bus_error_t send_action_frame(char *name, raw_data_t *p_data, bus_user_data_t *u
+     char *pTmp = NULL;
+     unsigned int idx = 0;
+     int ret;
++    action_frame_params_t *params;
+     unsigned int num_of_radios = getNumberRadios();
+ 
+     if (!name) {
+@@ -4252,15 +4253,49 @@ bus_error_t send_action_frame(char *name, raw_data_t *p_data, bus_user_data_t *u
+         return bus_error_invalid_input;
+     }
+ 
+-    ret = sscanf(name, "Device.WiFi.AccessPoint.%d.RawFrame.Mgmt.Action.Tx", &idx);
+-    if (ret != 1 || idx > num_of_radios * MAX_NUM_VAP_PER_RADIO) {
++    ret = sscanf(name, "Device.WiFi.AccessPoint.%u.RawFrame.Mgmt.Action.Tx", &idx);
++    if (ret != 1 || idx == 0 || idx > num_of_radios * MAX_NUM_VAP_PER_RADIO) {
+         wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid index : %s\r\n", __func__, __LINE__, name);
+         return bus_error_invalid_event;
+     }
+ 
+     len = p_data->raw_data_len;
+-    push_event_to_ctrl_queue((char *)pTmp, len, wifi_event_type_command,
++    if (len < sizeof(action_frame_params_t) + 1) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid action-frame parameter size: %u\n",
++            __func__, __LINE__, len);
++        return bus_error_invalid_input;
++    }
++
++    params = (action_frame_params_t *)pTmp;
++    if (params->frame_len == 0 || params->frame_len > len - sizeof(action_frame_params_t) ||
++        params->ap_index >= num_of_radios * MAX_NUM_VAP_PER_RADIO || params->ap_index + 1 != idx) {
++        wifi_util_error_print(WIFI_CTRL,
++            "%s:%d Invalid action frame: method_index=%u ap_index=%u frame_len=%u payload=%u\n",
++            __func__, __LINE__, idx, params->ap_index, params->frame_len,
++            len - (unsigned int)sizeof(action_frame_params_t));
++        return bus_error_invalid_input;
++    }
++
++    ret = push_event_to_ctrl_queue((char *)pTmp, len, wifi_event_type_command,
+         wifi_event_type_send_action_frame, NULL);
++    if (ret != RETURN_OK) {
++        wifi_util_error_print(WIFI_CTRL,
++            "%s:%d Failed to enqueue action frame: ap_index=%u "
++            "dest=%02x:%02x:%02x:%02x:%02x:%02x frame_len=%u\n",
++            __func__, __LINE__, params->ap_index,
++            params->dest_addr[0], params->dest_addr[1], params->dest_addr[2],
++            params->dest_addr[3], params->dest_addr[4], params->dest_addr[5],
++            params->frame_len);
++        return bus_error_out_of_resources;
++    }
++
++    wifi_util_info_print(WIFI_CTRL,
++        "%s:%d Enqueued action frame: ap_index=%u "
++        "dest=%02x:%02x:%02x:%02x:%02x:%02x frame_len=%u\n",
++        __func__, __LINE__, params->ap_index,
++        params->dest_addr[0], params->dest_addr[1], params->dest_addr[2],
++        params->dest_addr[3], params->dest_addr[4], params->dest_addr[5],
++        params->frame_len);
+ 
+     return bus_error_success;
+ }
+diff --git a/source/core/wifi_events.c b/source/core/wifi_events.c
+index cf26b90..b0c29df 100644
+--- a/source/core/wifi_events.c
++++ b/source/core/wifi_events.c
+@@ -227,6 +227,7 @@ bool is_high_priority_event(wifi_event_subtype_t sub_type)
+     case wifi_event_exec_start:
+     case wifi_event_exec_stop:
+     case wifi_event_exec_timeout:
++    case wifi_event_type_send_action_frame:
+         return true;
+     default:
+         return false;
+@@ -992,4 +993,3 @@ void events_update_clientdiagdata(unsigned int num_devs, int vap_idx, wifi_assoc
+     }
+     pthread_mutex_unlock(&ctrl->events_bus_data.events_bus_lock);
+ }
+-
+-- 
+2.53.0
+

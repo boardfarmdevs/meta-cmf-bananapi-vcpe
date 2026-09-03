@@ -168,13 +168,15 @@ success.
    visual preview, and mark the client as moving.
 5. Snapshot the selected client's affected frequency-qualified links.
 6. Atomically apply target `60`, source `20`, and all others `-20 dB`.
-7. Ask the supplicant to scan the target frequency and require the target
-   BSSID to appear in its scan results.
+7. Ask the supplicant for an active scan qualified by target frequency,
+   BSSID, and SSID. Require one scan-cache record containing both the exact
+   BSSID and expected ESS identity.
 8. If RF preparation already caused reassociation, skip the unnecessary BTM
    request. Otherwise run `/usr/bin/steer.sh STA_MAC TARGET_BSSID` inside
    `bpibroadband`.
-9. The controller sends the EasyMesh Client Steering Request, and the serving
-   Agent sends the station-facing BTM Request.
+9. The controller sends the EasyMesh Client Steering Request. The serving
+   Agent acknowledges receipt, builds the station-facing BTM Request, and
+   submits it through OneWifi's prioritized raw-action-frame queue.
 10. Wait up to ten seconds for `iw dev wlan0 link` to show the exact target
     BSSID.
 11. Wait for the controller and WebUI topology to show the same ownership.
@@ -183,6 +185,95 @@ success.
 Controller command execution is bounded and is not blindly retried after an
 ambiguous timeout because the controller may already have transmitted the
 request.
+
+## Hidden-SSID candidate handling
+
+`iot_ssid` is intentionally hidden. A hidden beacon can create a scan-cache
+record with an empty SSID, while a matching directed Probe Request and Probe
+Response create a second record for the same BSSID with `iot_ssid`. Packet and
+station-cache evidence from the rev140 20-client lab demonstrated both records
+at the same time.
+
+The AP path was not the failed boundary: the target received a Probe Request
+containing `iot_ssid` and transmitted a Probe Response containing the complete
+SSID. hwsim and wmediumd delivered that exchange correctly.
+
+The stock wpa_supplicant 2.10 WNM path selected a BTM candidate with a
+BSSID-only lookup. When that lookup returned the empty hidden-beacon record,
+the existing and correct same-ESS check rejected the candidate even though an
+SSID-qualified record was present. The lab's recorded supplicant patch changes
+only candidate lookup order:
+
+1. look up `(candidate BSSID, current SSID)`;
+2. fall back to the legacy BSSID-only lookup if no such record exists;
+3. retain the existing SSID, security, profile, and policy checks.
+
+The patch does not invent an SSID, trust a nominated BSSID blindly, weaken the
+ESS boundary, force a roam, or make `iot_ssid` visible. It is built by
+`gen/wpa_supplicant/build-wnm-supplicant.sh` and installed as
+`/usr/local/sbin/wpa_supplicant-wnm` in lab client containers.
+
+The serving Agent also gives the BTM candidate list 50 beacon intervals of
+validity. At the lab's 100 TU beacon interval this is about five seconds,
+rather than the former 102 ms. This permits a standards-compliant station to
+finish an active scan; it does not extend the host script's verification
+timeout or make the request mandatory.
+
+## BTM delivery and acknowledgement
+
+The EasyMesh 1905 ACK confirms that the serving Agent received the Client
+Steering Request. It does not prove that the later 802.11 action frame was
+admitted to OneWifi's asynchronous queue, accepted by nl80211, delivered over
+the medium, or accepted by the station. The host wrapper therefore continues
+to verify the physical association and controller ownership independently.
+
+The original Wi-Fi HAL passed `noack=1` for every action frame. For a unicast
+BTM Request this set `NL80211_ATTR_DONT_WAIT_FOR_ACK`, suppressing normal
+802.11 acknowledgement/retry behavior and turning a transient loss into a
+silent steering miss. The corrected path requests acknowledgement for unicast
+action frames while retaining no-ACK behavior for multicast/broadcast frames.
+
+OneWifi now treats raw action-frame commands as high priority, validates the
+RBUS method instance and embedded payload length, and returns an error when
+queue admission fails. The Agent preserves signed dispatch results and logs a
+correlation tuple containing the station, source BSSID, target BSSID, source
+VAP, and RBUS result. These changes do not redefine the standard 1905 ACK as
+an over-the-air completion; they make the asynchronous boundaries reliable
+and diagnosable.
+
+Acceptance on the rev140 20-client lab after the lookup change included:
+
+- four consecutive cold-cache moves of one hidden-SSID station;
+- ten further cold-cache moves of one instrumented hidden-SSID station;
+- one complete hidden `iot_ssid` matrix with 10 of 10 passes before the
+  delivery hardening;
+- a two-round hidden `iot_ssid` matrix with 20 of 20 passes after the HAL,
+  OneWifi, and Agent delivery hardening;
+- two additional back-and-forth hidden-SSID moves with a cold scan cache;
+- a post-change eligible `private_ssid` matrix with 8 of 8 passes; and
+- a final health audit with model counts `5/15/50/24`, 20 of 20 physical
+  associations matching controller ownership, zero service restarts, and
+  zero packet loss in the ten-packet reachability check from every client.
+
+Each matrix pass required agreement between the physical association,
+controller database, and WebUI topology, followed by exact RF restoration.
+The separate OneWifi live-snapshot reactivation fix is required so a station
+that moved successfully cannot remain absent from the controller model.
+
+The three delivery patches built successfully in both the
+`qemux86bpibroadband` and `qemux86bpiap` component builds before deployment.
+A management-frame capture during the hidden-SSID moves showed:
+
+- directed Probe Responses carrying the complete `iot_ssid`;
+- WNM BTM Requests from the serving AP to the selected station; and
+- WNM BTM Responses from the station to the serving AP.
+
+The Agent and OneWifi logs correlated the same operations through Agent
+dispatch, OneWifi high-priority queue admission, queue consumption, and HAL
+acceptance. No queue rejection or local dispatch failure occurred in the
+acceptance runs. The capture intentionally establishes management-frame
+delivery, not the lower-level ACK itself; the HAL source and deployed binary
+establish that unicast requests use the acknowledged nl80211 transmit path.
 
 ## Request-only mode
 
@@ -217,10 +308,16 @@ The stage reported by the script narrows the failing boundary:
 
 - **RF-bias failure:** identity discovery, medium control, generation or
   readback problem; no steering request is sent.
-- **Target absent from scan:** target BSS discovery, channel, hidden-SSID probe
-  handling, or simulated frame-delivery problem.
+- **Target absent from scan:** target BSS discovery, channel, or simulated
+  frame-delivery problem.
+- **Target RF-visible but ESS identity unresolved:** the hidden-BSS directed
+  probe/response or scan-cache reporting path is incomplete.
 - **Controller command timeout/failure:** controller command transport or
   serialized `libemcli` path problem; an ambiguous timeout is not retried.
+- **Controller success but no BTM on air:** the 1905 request was acknowledged,
+  but the Agent-to-OneWifi queue, HAL, nl80211, or medium delivery boundary
+  failed. Inspect the BTM dispatch and action-frame queue records; command
+  success alone is not air-delivery evidence.
 - **BTM refusal with status 7:** the station found no suitable candidate. A
   strong wmediumd target does not override ESS, security, band or client-policy
   validation.

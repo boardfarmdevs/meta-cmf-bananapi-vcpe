@@ -271,7 +271,10 @@ def test_carousel_reads_pinned_or_current_client_frequency():
 
 def test_carousel_primes_the_selected_ap_on_the_client_band():
     carousel = load_script("wmediumd-client-carousel.py")
-    client = {"container": "wlan-client-008", "frequency": 2437, "band": "2.4"}
+    client = {
+        "container": "wlan-client-008", "frequency": 2437,
+        "band": "2.4", "ssid": "private_ssid",
+    }
     aps = {
         "bpiap-002": {
             "bsses": {
@@ -296,13 +299,19 @@ def test_carousel_primes_the_selected_ap_on_the_client_band():
             [client], aps, {"wlan-client-008": "bpiap-002"}
         )
 
-    assert scan.call_args_list[0].args[0][-1] == "freq=2437"
+    assert scan.call_args_list[0].args[0][-3:] == (
+        "freq=2437", "bssid=02:00:00:e4:c3:c8",
+        "ssid 707269766174655f73736964",
+    )
     assert scan.call_args_list[1].args[0][-1] == "scan_results"
 
 
 def test_carousel_scans_the_target_aps_actual_same_band_frequency():
     carousel = load_script("wmediumd-client-carousel.py")
-    client = {"container": "wlan-client-009", "frequency": 5955, "band": "6"}
+    client = {
+        "container": "wlan-client-009", "frequency": 5955,
+        "band": "6", "ssid": "private_ssid",
+    }
     aps = {
         "bpiap": {
             "bsses": {
@@ -327,8 +336,39 @@ def test_carousel_scans_the_target_aps_actual_same_band_frequency():
             [client], aps, {"wlan-client-009": "bpiap"}
         )
 
-    assert scan.call_args_list[0].args[0][-1] == "freq=6135"
+    assert scan.call_args_list[0].args[0][-3:] == (
+        "freq=6135", "bssid=02:00:00:a5:b9:eb",
+        "ssid 707269766174655f73736964",
+    )
     assert scan.call_args_list[1].args[0][-1] == "scan_results"
+
+
+def test_carousel_does_not_accept_an_empty_hidden_bss_cache_entry():
+    carousel = load_script("wmediumd-client-carousel.py")
+    client = {
+        "container": "wlan-client-019", "frequency": 5180,
+        "band": "5", "ssid": "iot_ssid",
+    }
+    aps = {"bpiap-002": {"bsses": {"02:00:00:3a:26:05": 5180}}}
+    requested = subprocess.CompletedProcess(["lxc", "exec"], 0, "OK\n", "")
+    empty = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0,
+        "02:00:00:3a:26:05\t5180\t-31\t[ESS]\t\n", "",
+    )
+    resolved = subprocess.CompletedProcess(
+        ["lxc", "exec"], 0,
+        "02:00:00:3a:26:05\t5180\t-31\t[ESS]\tiot_ssid\n", "",
+    )
+
+    with patch.object(
+        carousel.subprocess, "run", side_effect=[requested, empty, resolved]
+    ) as scan, patch.object(carousel.time, "sleep"):
+        carousel.prime_candidate_scans(
+            [client], aps, {"wlan-client-019": "bpiap-002"}
+        )
+
+    assert scan.call_count == 3
+    assert scan.call_args_list[0].args[0][-1] == "ssid 696f745f73736964"
 
 
 def test_carousel_requires_exact_controller_bssid_agreement():
