@@ -27,7 +27,8 @@ selected band, draws movement trails, and can show the simulated backhaul.
 Clicking a node lists its current peers with distance, wall loss, and
 bidirectional SNR for 2.4, 5, and 6 GHz.
 
-The public viewer is deployed from this directory by GitHub Actions:
+The public viewer is published as a static site from the repository's
+`gh-pages` branch:
 
 <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/>
 
