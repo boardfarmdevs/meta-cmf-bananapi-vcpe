@@ -348,7 +348,19 @@ gen/steer.sh --band 6 sta-05 extender-2
 
 # Send the standards path without RF assistance
 gen/steer.sh --request-only sta-05 extender-2
+
+# Give every currently connected client one valid topology-derived target
+gen/steer-soak.sh
+
+# Issue an exact number of sequential topology-derived steers
+gen/steer-soak.sh 50
 ```
+
+`steer-soak.sh` refreshes the live source, SSID, band and compatible target
+before every move, then calls this single-steer adapter. It supports the full
+2.4/5/6 GHz client roster. It differs from `steering-matrix.sh`, which is a
+fixed 5 GHz cohort acceptance/timing test, and from the carousel, which drives
+RF roaming without sending BTM requests.
 
 ## What this test proves
 

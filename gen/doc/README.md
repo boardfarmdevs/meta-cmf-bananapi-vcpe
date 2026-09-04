@@ -19,6 +19,7 @@ Do not duplicate host setup or acceptance procedures here.
 | `wlan-client.sh` | deploy a WNM/802.11v-capable station |
 | `wlan-client/wlan.start` | idempotent in-client association and DHCP replacement hook |
 | `steer.sh` | resolve WebUI names such as `sta-03` and `extender-2`, then issue a directed EasyMesh steer |
+| `steer-soak.sh` | repeatedly select valid moves from the current topology and invoke `steer.sh` |
 | `hwsim/build-hwsim.sh` | build/load the validated multichannel hwsim module |
 | `wmediumd/build-wmediumd.sh` | apply the pinned wmediumd patch series and build |
 | `wmediumd/wmediumd-up.sh` | generate, test and start/stop the shared medium |

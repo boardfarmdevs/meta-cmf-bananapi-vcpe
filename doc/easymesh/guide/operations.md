@@ -94,6 +94,7 @@ gen/hwsim/                         build/load patched hwsim
 gen/wmediumd/wmediumd-up.sh        generate/start/stop the medium
 gen/wmediumd/configurator/         compile and run RF scenarios
 gen/steer.sh                       host-side steering convenience wrapper
+gen/steer-soak.sh                  repeated live-topology steering driver
 gen/tests/steering-matrix.sh       portable ten-client steering acceptance
 gen/tests/health-audit.sh          topology, restart and traffic audit
 gen/tests/p0-cold-reconstruction.sh repeatable managed cold-reconstruction gate
