@@ -10,8 +10,11 @@ presentation. Start here:
   implementation decisions.
 - [Viewer reference](viewer.md) — stimulus-only viewer controls and visual
   conventions.
-- [Interactive room plan](interactive-room-plan.md) — staged development for
-  scripted, live drag-driven and hybrid demonstrations.
+- [Interactive room manual](interactive-room-manual.md) — current live RF
+  controls, destination movement, recording, restoration and diagnostics.
+- [Interactive room architecture and improvement plan](interactive-room-plan.md)
+  — governing single-writer, causality, state, security, recovery and phased
+  acceptance design.
 
 The normal entry point is `gen/demo/room-demo`. The RDK Network Topology view
 remains the authority for the controller's current association model, while

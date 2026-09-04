@@ -25,6 +25,11 @@ The room position is simulated truth. Association, RCPI, candidate metrics,
 optimizer decisions, BTM acceptance, topology, and traffic remain observed
 truth. Moving an icon never directly moves it to a different AP.
 
+Predicted geometry SNR, applied/read-back wmediumd SNR, associated-link RCPI,
+and candidate RCPI are separate values with separate directions, timestamps
+and ages. A fresh controller value becomes the primary network observation;
+it never replaces or relabels the room prediction.
+
 ## Start the interactive room
 
 Run inside the RDK appliance VM:
@@ -63,13 +68,16 @@ present. A static viewer remains labeled **PREVIEW ONLY**.
 2. Drag a client across the floor.
 3. Watch the spatial panel for coordinates, distance, walls, wall loss,
    predicted SNR, current AP, strongest AP, and measured RCPI.
-4. Release the pointer to force delivery of the exact final position.
+4. Release the pointer to submit the one authoritative final position.
 5. Watch the event list for `RF position applied`, then watch measured RCPI,
    optimizer state, and the cyan observed-association line.
 
-Pointer motion is smooth and local at display rate. Requests are coalesced to
-at most five writes per second, serialized, and revision checked. Every
-accepted update is read back before the server advances its room revision.
+Pointer motion is a smooth browser-local ghost preview at display rate and
+does not write RF. Pointer-up sends one revision-checked position command. The
+server quantizes it to the 5 cm room grid, applies only changed RF keys in one
+generation, and reads them back before advancing its room revision. If the
+position changes geometrically but none of the integer SNR values changes, it
+records an RF no-op and does not advance the medium generation.
 
 ## Walk to a destination
 
@@ -78,8 +86,8 @@ accepted update is read back before the server advances its room revision.
 3. Click the destination on the room floor.
 
 The purple path and marker show the route. The server owns the movement after
-the click, interpolates constant-speed positions, and applies at most five RF
-generations per second. The browser follows accepted server events; throttling,
+the click, interpolates constant-speed positions, and applies bounded RF
+generations independently of browser rendering. The browser follows accepted server events; throttling,
 closing, or reloading that browser therefore cannot distort the route. Use
 **Pause walk**, **Resume walk**, or **Cancel walk** at any point. Cancelling
 freezes the client at its last applied position.
@@ -102,10 +110,12 @@ and controller ownership recover.
 
 ## Reset and multi-browser behavior
 
-**Reset role** restores that client's session-start position and presence.
-**Reset all** restores every changed client through ordinary revisioned RF
-transactions. Neither command recreates radios, containers, identities, or
-the lab.
+The current transitional controls use **Reset role** for that client's
+session-start position/presence and **Reset all** for every changed client.
+They use ordinary revisioned RF transactions and never recreate radios,
+containers or identities. The accepted interface will separate **Undo**,
+**Clear overrides**, and **Stop and restore**, because those operations have
+different meanings in hybrid mode.
 
 Only one browser can enter Interact mode. A second browser receives a clear
 lease-owner conflict and remains an observer. The lease renews while the

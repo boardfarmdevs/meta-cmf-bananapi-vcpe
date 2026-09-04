@@ -7,11 +7,12 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from optimizer.actuator import SteerActuator
 from optimizer.candidates import CandidateMetricsError, ControllerCandidateProvider
 from optimizer.config import load_policy
+from optimizer.model import parse_time
 from optimizer.observer import ControllerObserver
 from optimizer.policy import ThresholdPolicy
 from optimizer.state import PolicyState
@@ -87,6 +88,7 @@ class LiveConductor:
         mode: str,
         repo_root: Path,
         base_url: str = "http://127.0.0.1:8888",
+        room_state: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         if mode not in {"stimulus", "recommend", "act"}:
             raise ValueError(f"unsupported demo mode {mode!r}")
@@ -96,6 +98,7 @@ class LiveConductor:
         self.mode = mode
         self.repo_root = repo_root
         self.base_url = base_url
+        self.room_state = room_state
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
         self.errors: list[str] = []
@@ -104,6 +107,8 @@ class LiveConductor:
         self.action_successes = 0
         self.verification_successes = 0
         self._error_lock = threading.Lock()
+        self._controller_lock = threading.Lock()
+        self._candidate_active = threading.Event()
         self._role_by_mac = {
             value["radio_permanent_mac"].lower(): role
             for role, value in plan["bindings"].items()
@@ -308,8 +313,17 @@ class LiveConductor:
             return
         observer = ControllerObserver(self.base_url)
         while not self.stop_event.is_set() and self._active():
+            if self._candidate_active.is_set():
+                if self._sleep(0.2):
+                    break
+                continue
             try:
-                snapshot = observer.observe()
+                if not self._controller_lock.acquire(timeout=0.5):
+                    continue
+                try:
+                    snapshot = observer.observe()
+                finally:
+                    self._controller_lock.release()
                 self.store.emit(
                     "network.snapshot", self._time(), self._network_payload(snapshot),
                     producer="network",
@@ -402,10 +416,97 @@ class LiveConductor:
         interval = float(optimizer["interval_seconds"])
         window_start, window_end = [int(value) for value in optimizer["action_window_ms"]]
         maximum_actions = int(optimizer["max_actions"])
+        observed_epoch: int | None = None
         while not self.stop_event.is_set() and self._active():
             cycle_started = time.monotonic()
             try:
-                snapshot = observer.observe()
+                room_before = self.room_state() if self.room_state else None
+                if room_before is not None:
+                    epoch = int(room_before["environment_epoch"])
+                    stable_for = room_before.get("stable_for_seconds")
+                    if observed_epoch != epoch:
+                        state = PolicyState()
+                        observed_epoch = epoch
+                        self.store.emit(
+                            "optimizer.environment.changed", self._time(),
+                            {
+                                "environment_epoch": epoch,
+                                "world_revision": room_before["revision"],
+                                "policy_hold_reset": True,
+                            },
+                            producer="optimizer",
+                        )
+                    if room_before.get("movement_active") or stable_for is None or stable_for < 2:
+                        self.store.emit(
+                            "optimizer.measurement.waiting", self._time(),
+                            {
+                                "reason": (
+                                    "movement_active" if room_before.get("movement_active")
+                                    else "rf_settle_interval"
+                                ),
+                                "environment_epoch": epoch,
+                                "world_revision": room_before["revision"],
+                                "stable_for_seconds": stable_for,
+                            },
+                            producer="optimizer",
+                        )
+                        if self._sleep(0.5):
+                            break
+                        continue
+                self._candidate_active.set()
+                with self._controller_lock:
+                    snapshot = observer.observe()
+                room_after = self.room_state() if self.room_state else None
+                if room_before is not None and room_after is not None:
+                    before_key = (
+                        room_before["revision"],
+                        room_before["environment_epoch"],
+                        room_before["daemon"]["instance_id"],
+                        room_before["daemon"]["generation"],
+                    )
+                    after_key = (
+                        room_after["revision"],
+                        room_after["environment_epoch"],
+                        room_after["daemon"]["instance_id"],
+                        room_after["daemon"]["generation"],
+                    )
+                    if before_key != after_key or room_after.get("movement_active"):
+                        state = PolicyState()
+                        self.store.emit(
+                            "observation.inconsistent_rf_epoch", self._time(),
+                            {
+                                "start": before_key,
+                                "end": after_key,
+                                "movement_active": room_after.get("movement_active"),
+                            },
+                            producer="optimizer",
+                        )
+                        continue
+                    hero_observation = next(
+                        (item for item in snapshot.clients if item.sta_mac == self.hero_mac),
+                        None,
+                    )
+                    applied_at = room_after.get("last_rf_applied_at")
+                    observed_at = (
+                        hero_observation.metric_observed_at
+                        if hero_observation is not None else None
+                    )
+                    if applied_at and observed_at:
+                        applied_time = parse_time(applied_at)
+                        metric_time = parse_time(observed_at)
+                        if metric_time <= applied_time:
+                            self.store.emit(
+                                "optimizer.measurement.waiting", self._time(),
+                                {
+                                    "reason": "fresh_current_link_metric",
+                                    "environment_epoch": room_after["environment_epoch"],
+                                    "world_revision": room_after["revision"],
+                                    "rf_applied_at": applied_at,
+                                    "metric_observed_at": observed_at,
+                                },
+                                producer="optimizer",
+                            )
+                            continue
                 prior = state
                 evaluation = policy.evaluate(snapshot, prior)
                 decision = next(
@@ -485,6 +586,8 @@ class LiveConductor:
             except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
                 self._record_error("optimizer", error, fatal=True)
                 return
+            finally:
+                self._candidate_active.clear()
             elapsed = time.monotonic() - cycle_started
             if self._sleep(max(0.1, interval - elapsed)):
                 break

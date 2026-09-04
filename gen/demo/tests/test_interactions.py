@@ -155,6 +155,36 @@ class InteractiveMediumSessionTests(unittest.TestCase):
                 position=[7, 2], final=True,
             )
 
+    def test_same_quantized_position_commits_without_an_rf_generation(self):
+        generation = self.client.generation
+        apply_count = len(self.client.applied)
+        result = self.session.position(
+            "sta_01", token=self.lease["token"], expected_revision=0,
+            position=[2.01, 2.01], final=True,
+        )
+        self.assertEqual(result["position"], [2.0, 2.0])
+        self.assertEqual(result["changed_link_count"], 0)
+        self.assertEqual(self.client.generation, generation)
+        self.assertEqual(len(self.client.applied), apply_count)
+        self.assertEqual(self.store.all()[-1]["kind"], "rf.generation.noop")
+
+    def test_external_generation_contaminates_without_committing_position(self):
+        self.client.generation += 1
+        with self.assertRaisesRegex(ActuatorError, "unexpected external medium change"):
+            self.session.position(
+                "sta_01", token=self.lease["token"], expected_revision=0,
+                position=[8, 2], final=True,
+            )
+        snapshot = self.session.snapshot()
+        self.assertEqual(snapshot["revision"], 0)
+        self.assertEqual(snapshot["roles"]["sta_01"]["position"], [2.0, 2.0])
+        self.assertIn("unexpected external medium change", snapshot["fault"])
+        self.assertIn(
+            "medium.external_write_detected",
+            [item["kind"] for item in self.store.all()],
+        )
+        self.assertFalse(self.session.close())
+
     def test_presence_uses_the_minimum_snr_and_release_freezes_state(self):
         result = self.session.presence(
             "sta_01", token=self.lease["token"], expected_revision=0,

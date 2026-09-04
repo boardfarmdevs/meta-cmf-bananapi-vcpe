@@ -333,11 +333,10 @@ labels, trails, scenario links, and backhaul controls remain available.
 Changing the display band changes only visualization of Golden World SNR. It
 does not change client or AP configuration.
 
-The **Interactive room** card provides the first safe interaction milestone.
-It is intentionally marked **PREVIEW ONLY**: its controls change browser state,
-not wmediumd, controller telemetry, client association, or the recorded run.
-This makes it safe to learn and demonstrate the geometry before enabling the
-live control path.
+The **Interactive room** card is **LIVE RF** when the writable room service is
+running and **PREVIEW ONLY** when viewing a static world. In live mode, a drag
+previews locally until pointer-up; pointer-up applies one atomic wmediumd
+transaction. Association still changes only through station/EasyMesh behavior.
 
 To place a client directly:
 
@@ -364,15 +363,15 @@ For visible movement at a defined speed:
 The **Move to…** button performs the same operation for the selected client.
 Press Escape to cancel destination selection or an in-progress preview move.
 
-Right-click and choose **Disappear**, or use the card button, to preview an
-RF-absent role. **Reappear** restores its visible presence at the retained
-preview position. This does not test controller aging yet. Switch back to
+Right-click and choose **Disappear**, or use the card button, to make a role
+RF-absent by applying the minimum SNR on all affected links. **Reappear**
+recomputes its links at the retained position and allows normal recovery.
+Switch back to
 **Camera** to orbit or shift-pan without moving a client.
 
-Phase 2 will send these position and presence intents through a lease/revision
-API, compile the changed radio pairs, apply an atomic wmediumd generation, and
-replace preview values with measured telemetry. Until then, a preview is never
-evidence that RF or association changed.
+Predicted geometry, applied/read-back SNR and measured controller RCPI remain
+separate. A browser preview is never evidence that RF or association changed;
+the committed event and subsequent network observation are the evidence.
 
 ### 8.5 Companion Network Topology signal meter
 
@@ -441,9 +440,11 @@ curl -N 'http://127.0.0.1:8891/api/demo/events?after=100'
 ```
 
 The common event envelope includes `run_id`, global `sequence`, wall-clock
-`recorded_at`, authoritative `world_time_ms`, `producer`, `kind`, and
-`payload`. Runner-local sequence numbers are retained as
-`payload.producer_sequence`. HTTP `POST` returns 405.
+`recorded_at`, monotonic `run_elapsed_ms`, `scenario_time_ms`, compatibility
+`world_time_ms`, `producer`, `kind`, `payload`, and event-chain hashes.
+Runner-local sequence numbers are retained as `payload.producer_sequence`.
+Scripted/replay servers reject writes; the interactive service exposes only
+its bounded lease/revision control routes.
 
 ## 11. Evidence and offline replay
 

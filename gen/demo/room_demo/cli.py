@@ -271,13 +271,13 @@ def _interactive(args) -> int:
     run_id = f"{timestamp}-{manifest['name']}-interactive"
     runner = Runner(plan, args.socket, args.output_root, run_id=run_id)
     store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl")
-    conductor = LiveConductor(
-        store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
-        base_url=args.base_url,
-    )
     interactions = InteractiveMediumSession(
         store, world, layout, plan, args.socket,
         lease_seconds=args.lease_seconds,
+    )
+    conductor = LiveConductor(
+        store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
+        base_url=args.base_url, room_state=interactions.snapshot,
     )
     server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER, interactions)
     stop_event = threading.Event()

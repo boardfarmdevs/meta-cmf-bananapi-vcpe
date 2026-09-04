@@ -1,365 +1,737 @@
-# Interactive room demonstration plan
+# Interactive room architecture and improvement plan
 
-## Goal
+## Purpose
 
-Extend the existing closed-loop room demonstration so the same presentation can
-run from a precooked Golden World, from live operator movement, or from a
-combination of both.
+The room demonstration is a closed-loop EasyMesh experiment, not a topology
+animation. It supports precooked Golden Worlds, live operator movement, a
+combination of scripted and manual movement, and evidence-only replay.
 
-The operator can drag a bound client, extender or gateway in the room. The
-viewer immediately previews the new radio geometry, while the server computes
-and atomically applies the authoritative per-band link changes to wmediumd.
-The mesh implementation must then report the resulting measurements through
-its normal telemetry path. The optimizer may recommend or execute a steer, and
-the viewer shows the measured transition and verified outcome.
+The browser may preview geometry, but it must not manufacture controller
+telemetry or visually assert that an association changed. Room geometry is
+compiled into RF conditions, wmediumd applies those conditions to real hwsim
+frames, the mesh reports measurements through its normal telemetry path, and
+the optimizer reasons only from those measurements. A steering result is
+successful only after physical association, controller ownership and traffic
+have been independently verified.
 
-The demonstration must never manufacture controller telemetry or visually move
-a client between APs merely because its room position changed.
+The target causal chain is:
+
+```text
+operator or scenario intent
+          |
+          v
+authoritative room position/presence
+          |
+          v
+one applied and read-back wmediumd generation
+          |
+          v
+fresh controller measurement from the new RF epoch
+          |
+          v
+optimizer reason and recommendation
+          |
+          v
+optional, explicitly armed EasyMesh/BTM request
+          |
+          v
+verified association + controller convergence + traffic
+```
+
+This document is the governing improvement plan. Where the current
+implementation differs, the difference is identified as transitional work and
+must be removed before broader interactive controls are accepted.
+
+## Non-negotiable design rules
+
+1. One `RoomEngine` owns all mutable room state and is the only RF writer.
+2. HTTP handlers validate and enqueue commands; they never mutate wmediumd.
+3. State is committed only after an atomic medium apply and exact readback.
+4. An unexplained medium generation or instance change contaminates the run.
+5. Predicted SNR, applied SNR and controller RCPI remain separate truths.
+6. Optimizer observations are usable only within one stable environment epoch.
+7. Association changes only through normal Wi-Fi and EasyMesh behavior.
+8. `private_ssid` and hidden `iot_ssid` stay distinct end-to-end.
+9. Recommendation is the default. Actuation is immutable per run and bounded.
+10. The complete pre-run RF state is restored exactly, including after faults.
+11. Every requested, rejected, committed and verified transition is auditable.
+12. Live, reconnect and replay state are produced by the same state reducer.
 
 ## Presentation modes
 
 | Mode | Movement source | RF changes | Steering authority |
 |---|---|---|---|
-| Scripted | Precooked scenario timeline | Applied by the configurator runner | stimulus, recommend or act |
-| Interactive | Operator drag operations | Applied from live world geometry | recommend by default; explicit act |
-| Hybrid | Scenario timeline plus operator overrides | Script continues around leased overrides | recommend by default; explicit act |
-| Replay | Recorded evidence only | None | None |
+| Scripted | Precooked scenario clock | `RoomEngine` composes and applies scenario state | off, recommend or bounded act |
+| Interactive | Operator commands | `RoomEngine` applies accepted live state | recommend by default; bounded act only when process permits it |
+| Hybrid | Scenario plus leased manual overlays | `RoomEngine` composes both once per tick | recommend by default; bounded act only when process permits it |
+| Replay | Recorded event journal/evidence | none | none |
 
-A live interaction can be recorded as keyframes and exported as a valid world
-scenario. This makes an improvised demonstration reproducible and allows a
-useful session to become a new regression test.
+An interactive clip can be exported as a valid world scenario and replayed as
+a regression test. Recording does not disable the permanent audit journal.
 
-## Closed-loop contract
+## Authoritative RoomEngine
 
-```text
-pointer drag
-    |
-    +--> browser preview: position and predicted signal only
-    |
-    '--> room server: validated position intent + world revision
-             |
-             +--> geometry engine
-             |      distance, walls, band model, deterministic noise
-             |
-             +--> configurator compiler
-             |      role bindings -> frequency-qualified radio pairs
-             |
-             '--> one atomic wmediumd generation
-                         |
-                         v
-               frames experience new RF conditions
-                         |
-                         v
-             agent/controller telemetry path
-                         |
-                         v
-                  reference optimizer
-                   /             \
-             recommend          explicit act
-                |                    |
-                |               steering API/BTM
-                |                    |
-                '------> topology observation
-                              |
-                              v
-                   verified association and traffic
-```
-
-The browser's predicted meter is visually distinguished from measured
-controller RCPI. Once a fresh measurement arrives, it replaces the preview.
-If the two disagree, both values remain visible in the detail panel.
-
-## Interaction model
-
-Only roles already present in the active binding inventory are draggable.
-
-During a drag, the browser updates position and predicted signal at animation
-rate without writing to the medium. The browser sends throttled position
-intents, at most five per second, and always sends the final pointer-up
-position. The server:
-
-1. validates the role, room boundary and active run;
-2. rejects stale requests using the expected world revision;
-3. calculates link loss for every affected band and obstruction;
-4. compiles only the changed radio pairs;
-5. applies one atomic generation through the existing control socket;
-6. reads the generation back and emits the accepted position and RF delta;
-7. waits for normal mesh telemetry and optimizer evaluation.
-
-Moving a client changes its links to all AP radios and relevant peers. Moving
-an AP or extender changes every affected fronthaul and backhaul pair. The
-initial milestone limits live dragging to clients so cost and behavior remain
-easy to bound.
-
-### Drag-time spatial feedback
-
-Dragging must make the physical model understandable without opening another
-view. A compact panel anchored next to the selected role shows, live:
-
-- current room coordinates and distance moved;
-- distance to the associated AP and to the strongest candidate AP;
-- the straight-line path to each of those APs;
-- number and names of walls crossed by each path;
-- wall loss, free-space/path loss and predicted SNR for the selected band;
-- current measured RCPI and the age of that measurement; and
-- the three best candidates, ordered by predicted signal.
-
-The intersected wall segments are highlighted while dragging. Distances and
-wall counts are geometric predictions; measured telemetry remains visually
-separate. The panel follows the role but is kept inside the viewport so it
-cannot obscure the pointer or fall off the screen.
-
-### Destination movement at a selected speed
-
-The operator can right-click a role, select **Move**, and then click a
-destination in the room. Before movement begins, the viewer shows the proposed
-path, total distance, walls crossed, selected speed and estimated arrival
-time. The operator can use a preset speed or enter a value in metres per
-second.
-
-The server turns the requested route into time-based position keyframes and
-uses the same geometry and wmediumd application path as a precooked scenario.
-It does not teleport the role or manipulate its association directly. During
-movement, the role follows the path at the selected speed while distance
-remaining, elapsed time, crossed walls, predicted link values and observed
-mesh state update continuously. The movement can be paused, resumed or
-cancelled. Cancelling freezes the role at its last accepted position.
-
-Direct dragging remains available for immediate placement. Destination
-movement is the preferred presentation control when the audience should see a
-realistic RF crossover, optimizer hold time and subsequent steering decision.
-Both forms of movement produce recordable scenario keyframes.
-
-### Presence and reappearance
-
-Every bound role has an explicit `present` state. **Disappear** atomically
-drives all of that role's wmediumd links below the usable threshold while the
-container, stable radio identity and inventory entry remain intact. This
-simulates leaving the room or complete RF isolation. It must not delete the
-role or directly remove it from the controller model.
-
-The room view immediately marks the role as RF absent. The topology view then
-shows the independently observed consequences: link loss, client recovery and
-controller aging. Keeping these two states separate makes controller liveness
-behavior visible instead of manufacturing it in the presentation.
-
-**Reappear** restores the role at a selected position, recomputes all affected
-links and allows normal discovery, association and EasyMesh onboarding to
-occur. The operator can position an absent role before making it present. Both
-actions are scenario keyframes and are recordable and replayable.
-
-A separate expert-only **Power off/on** action may later stop and start the
-corresponding container. It tests lifecycle recovery and is not equivalent to
-RF disappearance.
-
-A movement lease prevents two browsers from controlling the same role. A
-second observer remains read-only. Losing the lease or closing the run freezes
-the role at its last accepted position; stopping the run restores the complete
-pre-run RF matrix.
-
-## Server API and events
-
-Keep the existing read-only endpoints:
-
-- `GET /api/demo/current`
-- `GET /api/demo/world`
-- `GET /api/demo/events`
-
-Add a narrowly scoped interaction API:
-
-- `POST /api/demo/interactions/lease`
-- `PUT /api/demo/roles/{role}/position`
-- `POST /api/demo/roles/{role}/move`
-- `POST /api/demo/movements/{movement}/pause`
-- `POST /api/demo/movements/{movement}/resume`
-- `DELETE /api/demo/movements/{movement}`
-- `PUT /api/demo/roles/{role}/presence`
-- `DELETE /api/demo/interactions/lease`
-- `POST /api/demo/recording/start`
-- `POST /api/demo/recording/stop`
-- `GET /api/demo/recording/world`
-
-A position request contains the lease, expected world revision, coordinates,
-optional transition duration and client request sequence. The reply contains
-the accepted revision, authoritative position, wmediumd generation and changed
-link count.
-
-New ordered events include:
-
-- `interaction.lease.acquired`
-- `interaction.position.previewed`
-- `interaction.position.accepted`
-- `interaction.position.rejected`
-- `interaction.movement.started`
-- `interaction.movement.progress`
-- `interaction.movement.completed`
-- `interaction.movement.cancelled`
-- `interaction.presence.changed`
-- `rf.generation.applied`
-- `telemetry.position.effect.observed`
-- `optimizer.recommendation`
-- `steering.requested`
-- `steering.verified`
-
-All events use the current evidence sequence and run identifier.
-
-## Script and live-movement integration
-
-The world model becomes a mutable overlay above an immutable scenario:
+The current interactive session serializes work with a lock, but HTTP request
+threads can still enter its mutation path. That is transitional. The accepted
+architecture is an actor-like engine with one ordered command queue:
 
 ```text
-base scenario keyframes
-          +
-operator position overrides
-          +
-optional recorded live keyframes
-          |
-          v
-authoritative world state at time T
+browser commands ---------\
+                            \
+scripted clock ticks --------> RoomEngine command queue
+                             |        |
+presence and movement -------/        v
+                              compose authoritative state
+                                       |
+                                       v
+                             canonical geometry module
+                                       |
+                                       v
+                                 MediumSession
+                              one socket / one writer
+                                       |
+                              atomic apply + readback
+                                       |
+                                       v
+                             commit state and emit event
 ```
 
-In hybrid mode, an operator override leases a role and temporarily supersedes
-its scripted path. The UI offers three explicit resolutions:
+The `RoomEngine` owns:
 
-- resume the original path at the current scenario time;
-- rejoin the original path over a selected transition time;
-- keep manual control for the rest of the run.
+- authoritative role positions and presence;
+- immutable base scenario plus manual overlays;
+- scenario clock and movement jobs;
+- per-role control state and leases;
+- world revision and environment epoch;
+- recording and state reduction; and
+- optimizer gating state.
 
-Recording samples accepted positions, simplifies the path within a configured
-error tolerance, preserves significant RF/steering event times, and exports
-the same scenario schema consumed by the current configurator.
+Its internal `MediumSession` owns:
 
-## Recommended interactive controls
+- the control connection and medium instance identifier;
+- the expected medium generation;
+- the complete captured baseline and touched-key set;
+- serialized atomic writes and readback verification;
+- medium ownership/lock renewal; and
+- exact restoration.
 
-The useful room controls, in implementation order, are:
+Hybrid control is state composition, not a second writer. A leased role uses
+its manual overlay while scripted positions continue for unleased roles.
+Releasing an override explicitly chooses one of:
 
-1. select, inspect, drag, or send a role to a destination at a chosen speed;
-2. disappear and reappear a client, extender or gateway;
-3. pause, resume and change the speed of scripted time;
-4. choose optimizer authority: observe, recommend or explicitly act;
-5. start or stop a client traffic pattern and show its offered/actual rate;
-6. open or close a modeled door and enable, move or edit a wall;
-7. apply a band-specific interference or outage region;
-8. capture a named snapshot, undo/redo an edit and reset the scene; and
-9. record, annotate, export and replay the complete interaction.
+- resume the base scenario at current scenario time;
+- rejoin it over a selected transition; or
+- remain manual for the rest of the run.
 
-The UI should also offer a link-budget inspection mode. Selecting any two
-roles explains distance, obstructions, per-band loss, applied wmediumd SNR,
-measured telemetry and whether frames have recently crossed that link. This is
-more useful than adding many independent knobs whose effects are difficult to
-explain.
+An unexpected generation advance emits `medium.external_write_detected` and
+freezes or aborts the experiment. It is not silently retried. All RF-writing
+tools must honor the same host-wide lock. A future daemon protocol should add
+an owner token with acquire, renew, apply and release/restore operations.
+
+## Independent state machines and clocks
+
+The room cannot represent all control with one overall `state` value. The
+normalized state has independent dimensions:
+
+```text
+run_state:             preparing | ready | running | restoring | passed | failed
+scenario_clock_state:  playing | paused | stopped
+interaction_state:     unowned | leased
+role.control_state:    scripted | manual | moving | rejoining | absent
+optimizer_authority:   observe | recommend | act-capable
+act_arm_state:         disarmed | armed-until-T
+```
+
+Pausing scripted time must not set `run_state=paused`; the server, telemetry
+and leases continue to run.
+
+Every event carries both:
+
+- `run_elapsed_ms`: monotonic elapsed time since process start, never paused;
+- `scenario_time_ms`: position on the scenario clock, which may pause or vary.
+
+UTC `recorded_at` remains the evidence timestamp. Measurements additionally
+carry their own observed timestamp and age.
+
+## Ordering, causality and commit semantics
+
+Three counters have different meanings and must never be overloaded:
+
+| Identifier | Meaning |
+|---|---|
+| `sequence` | total order in the evidence journal |
+| `world_revision` | optimistic-concurrency version of authoritative room state |
+| `medium_generation` | generation accepted by the current wmediumd instance |
+
+Commands and events also carry, where applicable:
+
+- `command_id` or `intent_id` for idempotency;
+- `client_request_sequence` for browser ordering;
+- `causation_id` and `correlation_id` for end-to-end transactions;
+- `lease_id`; and
+- `medium_instance_id`.
+
+The engine calculates a proposed state and RF delta, applies it, reads it back,
+then commits the role state and increments `world_revision`. A failed or
+mismatched apply leaves authoritative state and revision unchanged.
+
+An accepted position event is conceptually:
+
+```json
+{
+  "kind": "room.position.committed",
+  "sequence": 417,
+  "run_elapsed_ms": 72842,
+  "scenario_time_ms": 65000,
+  "world_revision": 19,
+  "medium_instance_id": "wmediumd-instance-X",
+  "medium_generation": 883,
+  "causation_id": "command-934",
+  "payload": {
+    "role": "sta_mobile_01",
+    "position_m": [15.2, 8.4],
+    "changed_link_keys": 24,
+    "telemetry_state": "awaiting_fresh_measurement"
+  }
+}
+```
+
+Persisted interaction events use intent/commit/reject terminology:
+
+- `interaction.position.intent`
+- `room.position.committed`
+- `room.position.rejected`
+
+A browser-local ghost is not a persisted `previewed` event because it was not
+accepted by the server.
+
+## Drag and movement semantics
+
+### Direct placement
+
+The accepted default is commit-on-drop:
+
+```text
+pointer motion: local ghost + predicted geometry, no RF write
+pointer-up:     one final idempotent position command
+server:         one atomic RF transaction and readback
+viewer:         reconcile solid authoritative role to committed position
+```
+
+This avoids write storms, stale telemetry streams and dropped final positions.
+An expert live-drag option may later apply at one or two Hz using latest-wins
+coalescing. A final pointer-up command is marked `final=true` and is never
+coalesced away.
+
+Accepted coordinates are quantized to a defined grid, initially 5 or 10 cm.
+If geometry changes but integer applied SNR values do not, record a committed
+RF no-op without creating a new medium generation.
+
+For five APs and three bands, moving one client affects no more than:
+
+```text
+5 APs * 3 bands * 2 directions = 30 frequency-qualified link keys
+```
+
+That limit, and the fact that no unrelated keys change, is a tested invariant.
+
+### Destination movement
+
+Right-click **Move**, then choose a destination and speed. The server owns the
+movement clock and emits fixed-time keyframes. Useful presets are 0.5 m/s,
+1.2 m/s and 1.8 m/s. Pause, resume and cancel act on that server movement;
+cancel freezes the last committed position.
+
+RF rays are straight lines and may cross attenuation walls. A person's route
+must eventually use a walkable visibility graph or room/door waypoints and not
+pass through walls. The viewer draws movement paths and RF rays differently.
+Until navigation geometry exists, free drag is explicitly labelled **RF
+placement mode**.
+
+### Presence
+
+Disappear drives all links for the role below the usable threshold while
+preserving its container and identity. Reappear recomputes links at its current
+position and lets normal discovery/association occur. Container power cycling
+is a separate expert lifecycle test.
+
+## Canonical geometry
+
+Geometry must not be duplicated from private helpers. Extract a public module,
+for example `wmdcfg/geometry.py`, with pure functions for:
+
+- position validation and quantization;
+- distance and deterministic wall intersections;
+- path loss and directed per-band SNR;
+- affected links for a moved role; and
+- position interpolation at a scenario time.
+
+The Golden World compiler, RoomEngine and tests use this module. The browser
+may use a JavaScript implementation for display-rate preview, but Python is
+authoritative. Generated parity fixtures cover random positions, every band,
+wall crossings and asymmetric source gains. State and evidence expose a
+`geometry_model_hash` so version drift is detectable.
+
+Wall endpoints, collinear motion and positions on a wall need deterministic
+rules. Coordinates are quantized and placement is either rejected within a
+small wall-clearance distance or snapped consistently to one side. Wall-loss
+transitions must not flicker.
+
+Link direction is explicit. The display keeps both:
+
+- AP to STA predicted SNR, useful for downlink visualization; and
+- STA to AP predicted SNR, relevant to an EasyMesh candidate AP hearing a STA.
+
+## Measurement causality and optimizer gating
+
+Every successful RF mutation starts a new `environment_epoch`. Telemetry from
+an earlier epoch remains visible with age/stale status but is not actionable.
+
+After a commit, the conductor:
+
+1. marks previous measurements stale for optimizer use;
+2. suspends action while drag or destination movement is active;
+3. resets the hero client's policy hold state;
+4. waits for an associated-link metric received after the RF apply;
+5. waits for the position to remain stable for the settle interval;
+6. starts candidate collection with the current revision and generation;
+7. discards the complete result if either changes before completion; and
+8. permits recommendation/action only from the fresh stable epoch.
+
+A candidate observation records generation and revision at both start and end.
+Mixed observations emit `observation.inconsistent_rf_epoch` and are never fed
+to policy evaluation.
+
+The UI makes latency part of the story:
+
+```text
+POSITION COMMITTED
+RF GENERATION APPLIED AND VERIFIED
+WAITING FOR FRESH CURRENT-LINK TELEMETRY
+COLLECTING CANDIDATE MEASUREMENTS
+POLICY HOLDING: 3.4 / 5.0 s
+RECOMMENDATION READY
+```
+
+While a client is continuously moving, show current-link telemetry and perform
+active candidate collection only at deliberate stable waypoints or after it
+stops.
+
+Controller access also needs one scheduler:
+
+1. steering and verification;
+2. active candidate measurement;
+3. passive topology/client refresh;
+4. full periodic health sample.
+
+Passive polling pauses while an active candidate transaction owns the
+serialized controller adapter. The viewer retains the last valid snapshot and
+shows its age.
+
+## Permanent visual truth layers
+
+Never replace one measurement class with another. The inspector retains:
+
+| Lane | Unit | Source |
+|---|---|---|
+| Predicted geometry | SNR dB | canonical room model |
+| Applied medium | SNR dB and generation | wmediumd readback |
+| Associated signal | RCPI and derived dBm | controller telemetry |
+| Candidate signal | RCPI and derived dBm | EasyMesh candidate query |
+
+Each has direction, timestamp and age. Predicted values are never relabelled as
+measured values.
+
+The room uses:
+
+- a translucent ghost for local drag preview;
+- a solid marker for the last authoritative position;
+- a dashed modeled-best link;
+- a solid controller-observed association;
+- a distinct animated optimizer-target link; and
+- a short RF-apply pulse between commit and fresh telemetry.
+
+Association changes are attributed as `optimizer_steer`, `client_autonomous`,
+`link_loss_recovery` or `unknown`. A BSSID change without an active steering
+transaction emits `association.changed_uncommanded` and is never presented as
+optimizer success.
+
+## Private and IoT cohorts
+
+Both networks are a permanent part of the presentation:
+
+```text
+private_ssid: 10 clients
+iot_ssid:     10 clients, hidden
+```
+
+They use distinct shapes/outlines and fixed cohort colors. Signal quality uses
+links, halos or gauges rather than changing identity color. The viewer offers
+All, Private and IoT filters, persistent 10/10 counters, same-SSID candidate
+counts and an explanation when a BSS is excluded for belonging to the other
+network.
+
+The initial capability matrix is:
+
+| Operation | Private hero | Hidden IoT client |
+|---|---|---|
+| Drag/place | yes | yes |
+| Destination movement | yes | yes |
+| Predicted/applied RF | yes | yes |
+| Current-link telemetry | yes | yes |
+| Disappear/reappear | yes | yes |
+| Optimizer recommendation | yes | optional observe-only |
+| BTM actuation | yes | disabled until hidden-candidate steering is accepted |
+
+The actuation restriction is enforced server-side. Once hidden-SSID directed
+probe/BTM behavior passes its regression suite, enabling IoT action becomes a
+manifest capability change rather than a new path.
+
+## Presenter and engineering views
+
+The same state stream supports two layouts.
+
+Presenter mode emphasizes the hero client, actual/modelled/target links, a
+small current-versus-target chart, traffic continuity, whole-lab health and
+plain-language policy narration. Non-hero clients are dimmed, not removed.
+
+Engineering mode adds top-down editing, exact coordinates, directional link
+budgets, role/medium revisions, lease and movement state, candidate transaction
+details, raw reason codes and measurement ages.
+
+Both modes include accessible, redundant encodings: shape plus color, visible
+focus, keyboard nudging, reduced motion and textual state. A rolling 60-120
+second hero chart shows current RCPI, best measured target, threshold, actions
+and association changes.
+
+## Actuation boundary and transaction evidence
+
+Actuation capability is immutable per process:
+
+- a process started in recommend mode can never be elevated by a browser;
+- an act-capable process requires the command-line safety confirmation; and
+- the browser can arm one action for a short period, initially 30 seconds.
+
+Movement leases never authorize steering. The action gate requires:
+
+- act-capable run and live one-shot operator arm;
+- no active movement;
+- stable world revision and environment epoch;
+- successful RF readback;
+- fresh current and candidate measurements from that epoch;
+- an eligible optimizer recommendation; and
+- remaining action budget.
+
+Before submitting, revalidate source BSSID, target SSID/band, target freshness,
+revision/generation and absence of an uncommanded move.
+
+The steering path should produce structured events with one transaction ID:
+
+1. optimizer recommendation;
+2. operator arm/confirmation;
+3. Client Steering Request submitted;
+4. 1905 ACK observed or unavailable;
+5. BTM request observed or unavailable;
+6. BTM response status observed or unavailable;
+7. physical BSSID change;
+8. controller ownership convergence;
+9. traffic verification; and
+10. cooldown.
+
+Unknown stages remain explicitly unknown. Terminal strings are not parsed as
+proof; `steer.sh` or its adapter should expose structured JSON events.
+
+## State reducer and reconnect contract
+
+`GET /api/demo/current` evolves to a normalized state rather than only “latest
+event by kind”:
+
+```json
+{
+  "schema": "easymesh.room-demo.state.v2",
+  "run_id": "...",
+  "run_state": "running",
+  "clocks": {},
+  "world_revision": 19,
+  "environment_epoch": 7,
+  "medium": {},
+  "roles": {},
+  "leases": {},
+  "movements": {},
+  "recording": {},
+  "optimizer": {},
+  "network": {},
+  "capabilities": []
+}
+```
+
+Events are reduced into this state. The same reducer drives live state, SSE
+reconnect, replay, undo, override clearing and named snapshots. Replaying the
+complete journal must reproduce the final state hash exactly.
+
+The viewer keeps three positions per role:
+
+- immutable `basePosition` from the scenario;
+- authoritative `acceptedPosition` from reduced server state; and
+- local `previewPosition` used only while interacting.
+
+The loaded Golden World is never edited in place.
+
+## Write API and security
+
+Read-only observer access and operator mutation access are separate. Write
+access uses:
+
+- loopback binding by default and explicit LAN operator exposure;
+- a random run-scoped bearer token printed or written by the CLI;
+- same-origin mutation checks and no permissive CORS;
+- strict `application/json`, a small body limit and unknown-field rejection;
+- finite numeric and room-boundary validation;
+- role allowlists and capability checks;
+- idempotent `command_id` values;
+- per-role movement leases with monotonic expiry; and
+- `ETag`/`If-Match` world-revision concurrency.
+
+Useful responses are:
+
+| Status | Meaning |
+|---|---|
+| 200 | committed or duplicate result returned |
+| 202 | command or movement queued |
+| 409/412 | revision conflict |
+| 410 | run no longer active |
+| 422 | invalid state/position/path |
+| 423 | role lease conflict |
+| 503 | medium unavailable, restoring or contaminated |
+
+Lease acquisition returns a `lease_id`. The client renews it explicitly every
+few seconds using `POST /api/demo/interactions/lease/{lease_id}/renew`.
+Expiration stops a destination movement, freezes the last committed position
+and discards only local preview; it does not reset the room.
+
+HTTP threads only enqueue commands. The serialized queue supports commands
+such as `SetPosition`, `MoveRole`, `SetPresence`, `PauseMovement`,
+`ReleaseOverride` and `ClearOverrides`.
+
+## Audit, recording and replay
+
+The audit journal is always on for the complete run. Start/stop recording only
+selects the clip exported as scenario keyframes.
+
+The journal records requested, duplicate, stale and rejected commands; lease
+changes; commits and RF no-ops; medium generations; presence; movement;
+telemetry; recommendations; actions; verification; reset and undo operations.
+
+Events are hash-chained with `previous_event_hash` and `event_hash`. Completion
+writes and prints a root evidence digest.
+
+The unsimplified accepted-position stream is retained. Export simplification
+must pin:
+
+- presence transitions;
+- wall-crossing changes;
+- integer RF changes;
+- predicted-best AP changes;
+- optimizer eligibility/hold/action times;
+- association changes; and
+- operator annotations.
+
+The exported scenario declares maximum position and RF error. It is recompiled
+and compared with recorded applied generations before being accepted.
+
+Three reset operations remain distinct:
+
+- **Undo**: revert the last committed interaction;
+- **Clear overrides**: return to base scenario state at current scenario time;
+- **Stop and restore**: end the run and restore the pre-run RF baseline.
+
+## Crash-resistant restoration
+
+Before the first RF write, persist a checksummed recovery record, for example:
+
+```text
+/run/easymesh-room-demo/recovery.json
+```
+
+It contains run ID, medium instance ID, inventory/geometry hashes, captured
+generation, baseline, touched keys, last committed generation and recovery
+state. A recovery command and preferably a small supervisor or systemd
+`ExecStopPost` path can restore after worker failure. Never restore a baseline
+into a restarted or differently inventoried medium instance.
+
+Normal SIGTERM, exceptions and completed sessions still restore through the
+live `MediumSession`. SIGKILL/power-loss recovery is an explicit acceptance
+case, not an assumption.
+
+## Guided demonstration
+
+Freeform control is useful for engineering; a presentation needs a repeatable
+guided story. The first guide is **Office to living room**:
+
+1. select the private laptop;
+2. move it to the highlighted destination at normal walking speed;
+3. wait for fresh current-link and candidate telemetry;
+4. inspect the optimizer reason and optionally arm one action;
+5. verify association, ownership and traffic; and
+6. clear overrides or stop/restore.
+
+A pause near the RF boundary deliberately exposes hold/hysteresis behavior.
+One short second act can disappear/reappear an IoT sensor while preserving the
+hidden IoT cohort. IoT remains observe-only until its steering acceptance gate
+passes.
+
+## Scale and atomic capacity
+
+Client movement has a small bounded delta. Moving an AP at 100 clients can
+require about 600 directed three-band fronthaul keys plus backhaul changes.
+Before enabling gateway/extender movement, preflight verifies:
+
+```text
+required update count <= daemon atomic max_updates
+```
+
+If not, the UI disables that action and explains why. Splitting one conceptual
+AP move across visible generations is not accepted as atomic behavior.
 
 ## Delivery phases
 
-### Current implementation status
+### Current transitional implementation
 
-Phase 1, client live-RF actuation, server-owned destination movement, and
-record/export are implemented on the RDK interactive-room branch. Static
-worlds remain safely labeled **PREVIEW ONLY**.
-Running `room-demo interactive` adds a green **LIVE RF** state with a
-single-writer renewable lease, optimistic revisions, throttled/serialized
-position updates, atomic all-band wmediumd application, per-generation
-readback, RF disappearance/reappearance, ordered evidence, and exact baseline
-restore. The verified source layout supplies room dimensions and propagation;
-the signed Golden World remains immutable.
+The RDK interactive branch already provides real RF application, exact
+baseline restoration, server-owned destination movement, leases/revisions,
+presence, recording/export, ordered SSE and a working room viewer. All 20 real
+clients remain active. This is a valuable prototype, not the final control
+architecture.
 
-Live controls currently cover all bound clients. Constant-speed destination
-walks continue at the server and can be paused, resumed or cancelled without
-making the browser an RF clock. Accepted movements and presence changes can be
-recorded and downloaded as a compiled `wmdcfg.world-plan.v1` file. Gateway and
-extender motion, hybrid takeover/rejoin, full-room editing, and optimizer
-authority beyond the existing bounded hero policy remain subsequent delivery
-work.
+Known transitional gaps are:
 
-### Phase 1: safe interactive preview
+- mutation is protected by a lock but still entered from HTTP worker threads;
+- state snapshots retain latest events instead of full reduced room state;
+- one clock and event schema v1 are still used;
+- geometry imports a private compiler helper;
+- environment-epoch telemetry gating is incomplete;
+- security relies mainly on the movement lease rather than a run token;
+- crash recovery covers normal process cleanup, not a killed process; and
+- recording exists before the full audit/reducer/replay equivalence contract.
 
-- Add draggable client roles and room-boundary constraints.
-- Show predicted per-AP signal and the strongest candidate.
-- Add destination movement, preview presence and reset controls.
-- Add server lease/revision handling before enabling any RF write.
-- Do not change wmediumd.
-- Unit-test browser-independent geometry and movement now; add stale-revision
-  and multi-browser ownership tests with the server lease API.
+Default dragging is now preview-only with one RF commit on pointer-up. This
+removes the highest-rate contradiction while the foundation is refactored.
 
-Exit criterion: dragging remains smooth, deterministic and incapable of
+### Phase 0: ownership and state foundation
+
+- Introduce `RoomEngine`, serialized commands and `MediumSession`.
+- Extract the public canonical geometry module and parity fixtures.
+- Add separate run/scenario clocks and state dimensions.
+- Add world revision, environment epoch and complete causal identifiers.
+- Implement normalized state v2 and one reducer for live/replay.
+- Add idempotency, per-role leases/renewal and secure mutation authorization.
+- Persist crash-recovery metadata before the first write.
+- Reject unexpected external generations.
+
+Exit criterion: all mutations are single-writer, replay reproduces the state
+hash, stale/duplicate/faulted commands cannot advance the medium or world, and
+kill recovery is demonstrable.
+
+### Phase 1: preview-only interaction
+
+- Top-down operator view and presentation view.
+- Ghost dragging and server-side preview validation.
+- Canonical directional geometry, walls and three-band link budget.
+- Cohort identity, filters and 10/10 counters.
+- No RF writes.
+
+Exit criterion: preview is smooth, deterministic, accessible and incapable of
 changing the lab.
 
-### Phase 2: live RF actuation
+### Phase 2: commit-on-drop live RF
 
-- Compile each accepted client position into frequency-qualified SNR updates.
-- Apply role disappearance and reappearance as atomic RF generations.
-- Apply changed pairs as one atomic wmediumd generation.
-- Rate-limit and coalesce drag updates.
-- Read back every generation.
-- Restore the exact original RF matrix on stop, error or process termination.
+- Private hero first, then all movable clients.
+- Quantized pointer-up commit and RF no-op detection.
+- Exact <=30-key client delta, atomic apply/readback and commit-after-readback.
+- Presence/reappearance and telemetry settle state.
+- Exact stop/restore and fault recovery.
 
-Exit criterion: moving or hiding one client changes only its intended RF
-pairs, measured RCPI and liveness follow, reappearance recovers normally,
-traffic remains bounded, and restore is byte-for-byte exact.
+Exit criterion: only intended keys change, controller measurement follows,
+traffic stays within limits and restoration is byte-for-byte exact.
 
-### Phase 3: optimizer loop
+### Phase 3: guided movement and recommendation
 
-- Feed only controller-reported current and candidate measurements to the
-  optimizer.
-- Present current AP, candidate ranking, hold time and reason codes.
-- Keep recommendation as the default authority.
-- Add an explicit operator-confirmed BTM action.
-- Verify physical association, controller ownership and traffic.
+- Server-owned walkable destination paths and speed presets.
+- Pause/resume/cancel and stable measurement waypoints.
+- Controller scheduler and environment-epoch observation guard.
+- Current/candidate history chart and human-readable reasons.
+- Recommendation only.
 
-Exit criterion: dragging across a boundary produces an understandable,
-repeatable recommendation and an optional verified steer.
+Exit criterion: the guided story consistently reaches a fresh, stable,
+auditable recommendation without mixed-epoch measurements.
 
-### Phase 4: hybrid scripted control and recording
+### Phase 4: one confirmed action and complete replay
 
-- Allow live takeover of a role during a precooked scenario.
-- Implement resume, rejoin and remain-manual behavior.
-- Record accepted movements as keyframes.
-- Export and replay the generated world and evidence.
-- Add a one-command regression test for an exported session.
+- Immutable act-capable run and 30-second one-shot browser arm.
+- Structured EasyMesh/BTM transaction events.
+- Reassociation attribution and pre-action revalidation.
+- Physical, controller and traffic verification.
+- Hash-chained audit, final digest and replay equivalence.
 
-Exit criterion: a live improvised path can be exported, replayed and produce
-the same RF crossover within declared tolerances.
+Exit criterion: at most one request-only BTM action produces a fully explained
+verified outcome, and replay reconstructs it without RF writes.
 
-### Phase 5: full-room editing
+### Phase 5: recording and hybrid takeover
 
-- Permit extenders and the gateway to move.
-- Recompute affected backhaul as well as fronthaul links.
-- Add wall creation, movement and attenuation editing.
-- Add undo/redo and named scene snapshots.
-- Make calculation cost and write coalescing safe for 20, 50 and 100 clients.
+- Base-plus-overlay composition through the same engine.
+- Resume/rejoin/remain-manual transitions.
+- Separate scenario/run clocks under pause and takeover.
+- Significant-event-preserving simplification and export validation.
+- One-command replay regression.
 
-Exit criterion: topology, candidate ranking and backhaul consequences remain
-correct under bounded interactive changes at every supported scale.
+Exit criterion: an improvised path can be exported and replayed with declared
+position/RF tolerances and identical final reduced state.
 
-## Safety and usability requirements
+### Phase 6: full-room controls and scale
 
-- Default to recommend mode; act requires an explicit per-run confirmation.
-- Never infer a completed steer from geometry or predicted signal.
-- Clearly label predicted, applied and measured values.
-- Retain the last confirmed medium generation and controller snapshot.
-- Reject controls when the medium instance or inventory generation changes.
-- Coalesce pointer motion without dropping the final position.
-- Preserve observer-only browsers while one operator holds a lease.
-- Restore RF on every normal and abnormal exit.
-- Include a prominent Reset Scene action that restores the scenario state,
-  not lab provisioning or device identity.
-- Store every live control operation in the normal evidence bundle.
+- Gateway/extender motion after atomic-capacity preflight.
+- Backhaul effects, doors, walls and interference regions.
+- Traffic controls, named snapshots and undo/redo.
+- 20-, 50- and 100-client capacity and UI tests.
 
-## Initial implementation slice
+Exit criterion: all controls remain bounded, atomic and understandable at each
+supported scale.
 
-Start with one 5 GHz private client in the existing five-agent room:
+## Acceptance tests
 
-1. drag the hero client;
-2. see distance, crossed walls and predicted signal to every AP;
-3. apply its changed wmediumd pairs at pointer-up;
-4. observe fresh controller RCPI;
-5. disappear and reappear it at a new position;
-6. show the optimizer recommendation;
-7. optionally confirm one BTM steer;
-8. verify association and traffic;
-9. restore the starting RF matrix;
-10. export the movement and presence changes as a scenario.
+The release gate includes unit, fake-medium, integration, browser and live
+tests. It proves at least:
 
-This uses the current viewer, world geometry, role bindings, atomic control
-plane, optimizer and evidence recorder. It adds interaction rather than a
-second demonstration architecture.
+- one client changes exactly its expected directed frequency keys and no
+  unrelated key;
+- stale revision and duplicate idempotency keys produce no extra generation;
+- lease acquire/renew/expire/conflict and final pointer-up semantics;
+- readback mismatch does not commit state;
+- unexpected generation or medium restart contaminates the run;
+- movement invalidates an in-flight candidate cycle and resets hold;
+- no BTM can be sent while movement is active;
+- IoT cannot be actuated while observe-only;
+- private and IoT candidate inventories never cross SSID boundaries;
+- SSE reconnect reconstructs every role, lease, movement and presence state;
+- replay reaches the same final reduced-state hash as live operation;
+- SIGTERM and supervised worker death restore the exact eligible baseline;
+- browser ghost and authoritative position remain visually distinct;
+- presenter and engineering layouts pass visual regression and accessibility
+  checks;
+- all 20 clients remain present as 10 private plus 10 IoT;
+- act mode produces no more than one action; and
+- a complete run ends with 5 devices, 15 radios, 50 BSS entries, at least 24
+  associations, passing traffic and zero monitored service restarts.
+
+## Completion definition
+
+The room demo is complete when an observer can follow, without hidden repair
+steps:
+
+```text
+intent -> geometry -> applied RF -> fresh telemetry -> optimizer reason
+       -> optional bounded BTM -> verified network result -> exact restore
+```
+
+Every arrow must be backed by separately labelled live state and replayable
+evidence. That causal clarity is more important than adding additional knobs.

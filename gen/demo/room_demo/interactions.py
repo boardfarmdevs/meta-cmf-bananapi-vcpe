@@ -9,8 +9,9 @@ import time
 from typing import Any, Callable
 
 from wmdcfg.actuator import ActuatorError, ControlClient
-from wmdcfg.runner import FREQUENCY_CAPABILITIES, Runner
-from wmdcfg.world import _link, compile_world
+from wmdcfg.geometry import directed_link, quantize_position
+from wmdcfg.runner import FREQUENCY_CAPABILITIES
+from wmdcfg.world import compile_world
 
 from .events import EventStore
 
@@ -57,10 +58,14 @@ class InteractiveMediumSession:
         self._instance_id: str | None = None
         self._generation = 0
         self._revision = 0
+        self._environment_epoch = 0
+        self._last_rf_apply_monotonic: float | None = None
+        self._last_rf_applied_at: str | None = None
         self._started_at = time.monotonic()
         self._lease: dict[str, Any] | None = None
         self._last_update_at = 0.0
         self._baseline: dict[tuple[str, str, int], tuple[int, bool]] = {}
+        self._applied_values: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._restored = False
         self._faulted: str | None = None
         self._closing = False
@@ -132,24 +137,26 @@ class InteractiveMediumSession:
                         f"daemon limit is {status.max_updates}"
                     )
                 self._capture_baseline(initial_updates)
-                generation, applied = Runner._apply_generation(
-                    client, self._generation, initial_updates, True
-                )
-                self._generation = generation
+                applied = self._apply_generation(initial_updates)
                 for item in applied:
                     _, value, overridden = client.get_frequency_link(
                         item["source"], item["destination"], item["frequency_mhz"]
                     )
                     if value != item["value"] or overridden != item["override"]:
                         raise ActuatorError("initial interactive generation readback mismatch")
+                    key = (item["source"], item["destination"], item["frequency_mhz"])
+                    self._applied_values[key] = (item["value"], item["override"])
+                self._mark_rf_committed()
                 self.store.emit(
                     "rf.generation.applied", 0,
                     {
                         "revision": 0,
                         "role": None,
                         "cause": "interactive-initial-state",
+                        "daemon_instance_id": self._instance_id,
                         "daemon_generation": self._generation,
                         "changed_link_count": len(applied),
+                        "environment_epoch": self._environment_epoch,
                     },
                     producer="interaction",
                 )
@@ -159,7 +166,8 @@ class InteractiveMediumSession:
                         "revision": self._revision,
                         "allowed_roles": list(self._allowed_roles),
                         "daemon_instance_id": status.instance_id,
-                        "daemon_generation": status.generation,
+                        "daemon_generation": self._generation,
+                        "environment_epoch": self._environment_epoch,
                     },
                     producer="interaction",
                 )
@@ -197,6 +205,16 @@ class InteractiveMediumSession:
                 "schema": "easymesh.room-demo.interactions.v1",
                 "enabled": self._client is not None,
                 "revision": self._revision,
+                "environment_epoch": self._environment_epoch,
+                "last_rf_applied_at": self._last_rf_applied_at,
+                "stable_for_seconds": (
+                    None if self._last_rf_apply_monotonic is None else
+                    round(time.monotonic() - self._last_rf_apply_monotonic, 3)
+                ),
+                "movement_active": any(
+                    value["status"] in {"running", "paused"}
+                    for value in self._movements.values()
+                ),
                 "allowed_roles": list(self._allowed_roles),
                 "roles": copy.deepcopy(self._roles),
                 "lease": lease or {"held": False},
@@ -322,7 +340,8 @@ class InteractiveMediumSession:
                 400, "outside_room",
                 f"position must be inside 0..{width:g} by 0..{height:g} metres",
             )
-        return [round(point[0], 3), round(point[1], 3)]
+        quantized = quantize_position(point, quantum_m=0.05)
+        return [quantized[0], quantized[1]]
 
     def position(
         self,
@@ -346,7 +365,9 @@ class InteractiveMediumSession:
             try:
                 result = self._apply_role(role, "position", client_sequence=client_sequence)
             except Exception:
-                if self._faulted is None:
+                if self._faulted is None or self._faulted.startswith(
+                    "unexpected external medium change:"
+                ):
                     self._roles[role] = previous
                 raise
             self._last_update_at = now
@@ -372,7 +393,9 @@ class InteractiveMediumSession:
             try:
                 return self._apply_role(role, "presence", client_sequence=client_sequence)
             except Exception:
-                if self._faulted is None:
+                if self._faulted is None or self._faulted.startswith(
+                    "unexpected external medium change:"
+                ):
                     self._roles[role] = previous
                 raise
 
@@ -721,7 +744,9 @@ class InteractiveMediumSession:
                             client_sequence=movement["client_sequence"],
                         )
                     except Exception as error:
-                        if self._faulted is None:
+                        if self._faulted is None or self._faulted.startswith(
+                            "unexpected external medium change:"
+                        ):
                             self._roles[movement["role"]] = previous
                         movement["status"] = "failed"
                         movement["reason"] = str(error)
@@ -843,11 +868,11 @@ class InteractiveMediumSession:
         ):
             ap = self._nodes[ap_role]
             ap_binding = self.plan["bindings"][ap_role]
-            down = _link(
+            down = directed_link(
                 ap, station, positions, present, self.layout, {"seed": 0},
                 self._revision + 1, "fronthaul",
             )
-            up = _link(
+            up = directed_link(
                 station, ap, positions, present, self.layout, {"seed": 0},
                 self._revision + 1, "fronthaul",
             )
@@ -879,7 +904,49 @@ class InteractiveMediumSession:
                 })
         if not updates:
             raise InteractionError(500, "no_links", f"role {role!r} resolved no live RF links")
+        if len(updates) > 30:
+            raise InteractionError(
+                422,
+                "client_delta_too_large",
+                f"role {role!r} resolved {len(updates)} RF keys; client limit is 30",
+            )
         return updates, summary
+
+    def _apply_generation(self, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply exactly the expected next generation under exclusive ownership."""
+        assert self._client is not None
+        status = self._client.status()
+        if (
+            status.instance_id != self._instance_id
+            or status.generation != self._generation
+        ):
+            reason = (
+                "unexpected external medium change: "
+                f"expected instance={self._instance_id} generation={self._generation}, "
+                f"observed instance={status.instance_id} generation={status.generation}"
+            )
+            self._faulted = reason
+            self.store.emit(
+                "medium.external_write_detected",
+                self._world_time(),
+                {
+                    "expected_instance_id": self._instance_id,
+                    "observed_instance_id": status.instance_id,
+                    "expected_generation": self._generation,
+                    "observed_generation": status.generation,
+                },
+                producer="interaction",
+            )
+            raise ActuatorError(reason)
+        generation = self._generation + 1
+        applied = self._client.apply_frequency(generation, updates)
+        self._generation = generation
+        return applied
+
+    def _mark_rf_committed(self) -> None:
+        self._environment_epoch += 1
+        self._last_rf_apply_monotonic = time.monotonic()
+        self._last_rf_applied_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
     def _capture_baseline(self, updates: list[dict[str, Any]]) -> None:
         assert self._client is not None
@@ -895,22 +962,33 @@ class InteractiveMediumSession:
     ) -> dict[str, Any]:
         assert self._client is not None
         updates, links = self._links_for_role(role)
+        changed = [
+            item
+            for item in updates
+            if self._applied_values.get(
+                (item["source"], item["destination"], item["frequency_mhz"])
+            ) != (item["value"], item["override"])
+        ]
         applied_started = False
         try:
             self._capture_baseline(updates)
-            generation, applied = Runner._apply_generation(
-                self._client, self._generation, updates, True
-            )
-            applied_started = True
-            self._generation = generation
-            readback = []
-            for item in applied:
-                _, value, overridden = self._client.get_frequency_link(
-                    item["source"], item["destination"], item["frequency_mhz"]
-                )
-                readback.append({**item, "value": value, "override": overridden})
-            if readback != applied:
-                raise ActuatorError("interactive generation readback mismatch")
+            if changed:
+                applied = self._apply_generation(changed)
+                applied_started = True
+                readback = []
+                for item in applied:
+                    _, value, overridden = self._client.get_frequency_link(
+                        item["source"], item["destination"], item["frequency_mhz"]
+                    )
+                    readback.append({**item, "value": value, "override": overridden})
+                if readback != applied:
+                    raise ActuatorError("interactive generation readback mismatch")
+                for item in applied:
+                    key = (item["source"], item["destination"], item["frequency_mhz"])
+                    self._applied_values[key] = (item["value"], item["override"])
+                self._mark_rf_committed()
+            else:
+                applied = []
             self._revision += 1
             self._record_frame(role)
         except Exception as error:
@@ -927,20 +1005,24 @@ class InteractiveMediumSession:
             "change": change,
             "client_sequence": client_sequence,
             "daemon_generation": self._generation,
+            "environment_epoch": self._environment_epoch,
             "changed_link_count": len(applied),
             "links": links,
         }
         self.store.emit(
-            f"interaction.{change}.accepted", self._world_time(), payload,
+            f"room.{change}.committed", self._world_time(), payload,
             producer="interaction",
         )
         self.store.emit(
-            "rf.generation.applied", self._world_time(),
+            "rf.generation.applied" if applied else "rf.generation.noop",
+            self._world_time(),
             {
                 "revision": self._revision,
                 "role": role,
                 "cause": change,
+                "daemon_instance_id": self._instance_id,
                 "daemon_generation": self._generation,
+                "environment_epoch": self._environment_epoch,
                 "changed_link_count": len(applied),
             },
             producer="interaction",
@@ -955,6 +1037,22 @@ class InteractiveMediumSession:
                 "rf.restore.started", self._world_time(),
                 {"touched_links": len(self._baseline)}, producer="interaction",
             )
+            if self._faulted and self._faulted.startswith(
+                "unexpected external medium change:"
+            ):
+                self._restored = False
+                self.store.emit(
+                    "rf.restore.completed",
+                    self._world_time(),
+                    {
+                        "verified": False,
+                        "reason": "medium ownership was lost; automatic restore suppressed",
+                        "daemon_generation": self._generation,
+                        "restored_links": 0,
+                    },
+                    producer="interaction",
+                )
+                return False
             restored = True
             if self._baseline:
                 updates = [
@@ -968,9 +1066,7 @@ class InteractiveMediumSession:
                     for (source, destination, frequency), (value, overridden)
                     in sorted(self._baseline.items())
                 ]
-                self._generation, _ = Runner._apply_generation(
-                    self._client, self._generation, updates, True
-                )
+                self._apply_generation(updates)
                 for item in updates:
                     key = (item["source"], item["destination"], item["frequency_mhz"])
                     _, value, overridden = self._client.get_frequency_link(*key)

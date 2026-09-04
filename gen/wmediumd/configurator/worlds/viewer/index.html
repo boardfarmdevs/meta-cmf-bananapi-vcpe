@@ -365,7 +365,6 @@
         const point = floorPoint(e);
         if (point) {
           setPositionOverride(interaction.drag.role, point);
-          schedulePosition(interaction.drag.role, point, false);
           update();
         }
         return;
@@ -597,6 +596,10 @@
   }
   function schedulePosition(role, point, final) {
     if (!interactiveLiveMode || !interaction.leaseToken) return;
+    // Dragging is a browser-local geometry preview.  The default live-room
+    // contract makes exactly one authoritative RF request at pointer-up.
+    // Destination movement remains server-timed; a future expert live-drag
+    // option may use this coalescer at a deliberately low cadence.
     interaction.pendingPosition = {role, position: point.slice(), final: !!final};
     const elapsed = performance.now() - interaction.lastPositionSentAt;
     if (final || elapsed >= 200) {
@@ -1567,8 +1570,8 @@
     if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
     if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
-    if (event.kind === 'interaction.position.accepted') return displayRole(p.role) + ' RF position applied';
-    if (event.kind === 'interaction.presence.accepted') return displayRole(p.role) + (p.present ? ' reappeared' : ' disappeared');
+    if (event.kind === 'room.position.committed') return displayRole(p.role) + ' RF position applied';
+    if (event.kind === 'room.presence.committed') return displayRole(p.role) + (p.present ? ' reappeared' : ' disappeared');
     if (event.kind === 'interaction.movement.started') return displayRole(p.movement.role) + ' started walking';
     if (event.kind === 'interaction.movement.paused') return displayRole(p.movement.role) + ' walk paused';
     if (event.kind === 'interaction.movement.resumed') return displayRole(p.movement.role) + ' walk resumed';
@@ -1598,8 +1601,8 @@
       verificationState = event.payload;
       actionPulseUntil = performance.now() + 6000;
     } else if (event.kind === 'demo.mark') storyState = event.payload.label;
-    else if (event.kind === 'interaction.position.accepted' ||
-             event.kind === 'interaction.presence.accepted') {
+    else if (event.kind === 'room.position.committed' ||
+             event.kind === 'room.presence.committed') {
       const p = event.payload || {};
       interaction.revision = Math.max(interaction.revision, Number(p.revision || 0));
       if (canInteractWith(p.role)) {
