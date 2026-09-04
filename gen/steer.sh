@@ -170,6 +170,22 @@ scan_target_candidate() {
     status_pass "The target BSSID and ESS identity are present in the station scan cache."
 }
 
+wait_target_association() {
+    local seconds=$1
+    lxc_exec_bounded "$((seconds + 2))" "$client" -- sh -c '
+        target=$1
+        count=$2
+        while [ "$count" -gt 0 ]; do
+            current=$(iw dev wlan0 link 2>/dev/null |
+                awk '\''/Connected to/{value=tolower($3)} END{print value}'\'')
+            [ "$current" = "$target" ] && exit 0
+            sleep 1
+            count=$((count - 1))
+        done
+        exit 1
+    ' sh "$target_bssid" "$seconds" >/dev/null 2>&1
+}
+
 operating_tuple_for_frequency() {
     local band=$1 frequency=$2 channel opclass
 
@@ -453,6 +469,14 @@ if ((request_only)); then
     status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
         /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" gentle
+    status_wait_seconds 4 "allowing the client to accept the graceful BTM request"
+    if wait_target_association 1; then
+        status_pass "The station accepted the graceful BTM request."
+        exit 0
+    fi
+    status_action "The client did not accept the graceful request; escalating to a disassociation-imminent BTM while retaining the same measured target."
+    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
     exit $?
 fi
 
