@@ -82,6 +82,53 @@ def test_lab_operating_class_mapping_is_frequency_qualified():
     assert operating_class("6", 5) == 131
 
 
+def test_simulated_provider_uses_live_channel_over_controller_requested_channel():
+    calls = []
+
+    def request(_url, payload):
+        calls.append(payload)
+        return {
+            "success": True,
+            "provider": "hwsim-wmediumd-read-only",
+            "simulated": True,
+            "metrics": [{
+                "agent_al": AGENT,
+                "ruid": RADIO,
+                "sta": STA,
+                "opclass": 131,
+                "channel": 1,
+                "rcpi": 54,
+                "received_at_ms": 1787342400123,
+            }],
+        }
+
+    provider = ControllerCandidateProvider(
+        "http://controller",
+        requester=request,
+        allow_simulated=True,
+        simulated_control_channels={"2.4": 6, "5": 36, "6": 1},
+    )
+    six_client = replace(client(), band="6")
+    six_candidate = replace(inventory(), band="6")
+    six_bss = [{
+        **bsses()[0],
+        "band": 3,
+        "channel": 37,
+    }]
+
+    measured = list(provider(
+        (six_client,), (six_candidate,), six_bss,
+        "2026-08-21T20:00:01.000Z",
+    ))
+
+    query = calls[0]["UnassocStaQueryList"][0]
+    assert query == {
+        "opclass": 131,
+        "channels": [{"channel": 1, "sta_macs": [STA]}],
+    }
+    assert measured[0].rcpi == 54
+
+
 def test_provider_batches_query_and_maps_ruid_to_exact_bssid():
     calls = []
 

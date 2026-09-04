@@ -135,6 +135,39 @@ def _rssi(rcpi: int | None) -> int | None:
     return None if rcpi is None else int(round(rcpi / 2 - 110))
 
 
+def _channel_for_frequency(band: str, frequency_mhz: int) -> int:
+    """Translate the compiled live hwsim frequency to its 20 MHz channel."""
+    if band == "2.4":
+        return 14 if frequency_mhz == 2484 else (frequency_mhz - 2407) // 5
+    if band == "5":
+        return (frequency_mhz - 5000) // 5
+    if band == "6":
+        return (frequency_mhz - 5950) // 5
+    raise ValueError(f"unsupported compiled radio band {band!r}")
+
+
+def _simulated_control_channels(plan: dict[str, Any]) -> dict[str, int]:
+    """Return one authoritative live channel per simulated fronthaul band."""
+    result: dict[str, int] = {}
+    aps = [
+        value for value in plan["bindings"].values()
+        if value["role_type"] == "fronthaul_ap"
+    ]
+    for band in ("2.4", "5", "6"):
+        frequencies = {
+            int(value["fronthaul_frequencies_mhz"][band])
+            for value in aps
+            if band in value.get("fronthaul_frequencies_mhz", {})
+        }
+        if len(frequencies) != 1:
+            raise ValueError(
+                f"room requires one live hwsim frequency for {band} GHz; "
+                f"found {sorted(frequencies)}"
+            )
+        result[band] = _channel_for_frequency(band, frequencies.pop())
+    return result
+
+
 class LiveConductor:
     """Join live controller truth, optimizer state, traffic and health to one run."""
 
@@ -615,6 +648,7 @@ class LiveConductor:
                 (self.interactive or client.sta_mac == self.hero_mac)
                 and policy.requires_candidate_measurement(client, observed_at)
             ),
+            simulated_control_channels=_simulated_control_channels(self.plan),
         )
         observer = ControllerObserver(self.base_url, candidate_provider=provider)
         verify_observer = ControllerObserver(self.base_url)

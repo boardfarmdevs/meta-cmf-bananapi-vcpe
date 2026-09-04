@@ -21,10 +21,12 @@ JsonRequester = Callable[[str, dict[str, Any]], dict[str, Any]]
 ClientSelector = Callable[[ClientObservation, str], bool]
 
 # The hwsim lab deliberately uses one fixed 20 MHz control channel per band.
-# The controller's current model exposes Band but leaves Radio.Channel at zero;
-# this mapping is therefore only legal behind the explicit simulated-provider
-# opt-in.  A physical deployment must report its actual operating channel.
-LAB_CONTROL_CHANNELS = {"2.4": 6, "5": 36, "6": 5}
+# OneWifi can retain its requested 6 GHz channel (37) in controller telemetry
+# even when the single-wiphy hwsim AP is actually live on channel 1. Candidate
+# RCPI must query the frequency that wmediumd is controlling. This mapping is
+# legal only behind explicit simulated-provider opt-in; the room conductor
+# replaces it with channels derived from the live compiled radio inventory.
+LAB_CONTROL_CHANNELS = {"2.4": 6, "5": 36, "6": 1}
 
 # The unified-wifi-mesh data model stores at most EM_MAX_UNASSOC_STA (eight)
 # response entries.  Sending a larger request makes the current Agent omit a
@@ -114,6 +116,7 @@ class ControllerCandidateProvider:
         request_attempts: int = 1,
         retry_delay_seconds: float = 0.25,
         client_selector: ClientSelector | None = None,
+        simulated_control_channels: dict[str, int] | None = None,
     ) -> None:
         if max_parallel_agents < 1:
             raise ValueError("max_parallel_agents must be positive")
@@ -128,17 +131,30 @@ class ControllerCandidateProvider:
         self.request_attempts = request_attempts
         self.retry_delay_seconds = retry_delay_seconds
         self.client_selector = client_selector
+        self.override_simulated_control_channels = (
+            simulated_control_channels is not None
+        )
+        self.simulated_control_channels = {
+            normalize_band(band): int(channel)
+            for band, channel in (
+                simulated_control_channels or LAB_CONTROL_CHANNELS
+            ).items()
+        }
         self.last_raw: list[dict[str, Any]] = []
         self.last_rejected_candidate_keys: set[tuple[str, str]] = set()
         self.last_selected_sta_macs: set[str] = set()
 
     def _channel(self, raw: dict[str, Any]) -> int:
+        band = normalize_band(raw.get("band"))
         channel = int(raw.get("channel") or 0)
+        if (
+            self.allow_simulated
+            and band in self.simulated_control_channels
+            and (self.override_simulated_control_channels or channel <= 0)
+        ):
+            return self.simulated_control_channels[band]
         if channel > 0:
             return channel
-        band = normalize_band(raw.get("band"))
-        if self.allow_simulated and band in LAB_CONTROL_CHANNELS:
-            return LAB_CONTROL_CHANNELS[band]
         raise CandidateMetricsError(
             f"BSS {raw.get('bssid', '<unknown>')} has no operating channel; "
             "the controller must report it for a physical candidate query"

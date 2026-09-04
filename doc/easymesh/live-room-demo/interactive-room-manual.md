@@ -221,7 +221,9 @@ this closed loop:
 4. require serving-link telemetry newer than the RF application (for the
    complete roster on startup, or the moved client after an edit);
 5. collect same-SSID, same-band candidate measurements for all 20 clients
-   without allowing the room to change during that transaction;
+   without allowing the room to change during that transaction. In simulated
+   mode, the query channel is derived from the compiled live hwsim frequency,
+   not a stale requested channel retained in controller configuration;
 6. apply the gain and five-second hold policy to every client;
 7. select at most one client, preferring the largest measured RCPI gain;
 8. enter one RoomEngine-owned steering transaction. The already-selected
