@@ -90,10 +90,40 @@
   .line-key { display:inline-block; width:24px; height:0; vertical-align:4px; margin-right:5px; border-top:3px solid #05a9cf; }
   .line-key.dashed { border-top:2px dashed #777; }
   .line-key.target { border-color:#f0ad00; }
+  .interaction-card { border-color: #b9a4ca; background: #fbf8ff; }
+  .preview-badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #6f3e8e; color: #fff; font-size: 10px; font-weight: 750; letter-spacing: .05em; }
+  .interaction-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  .interaction-actions button { padding: 4px 7px; }
+  #interactionSummary { margin-top: 7px; font-size: 12px; }
+  #interactionSummary b { color: #5d3278; }
+  #interactionHelp { margin-top: 6px; color: var(--muted); font-size: 11px; }
+  .speed-row { display: grid; grid-template-columns: 1fr 108px; gap: 8px; align-items: center; margin-top: 8px; }
+  .speed-row select { width: 100%; }
   main { position: relative; overflow: hidden; }
   canvas { display: block; }
   #hint { position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: var(--muted); }
   #err { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); max-width: 480px; background: #fff; border: 1px solid var(--rule); padding: 16px 20px; display: none; }
+  #spatialHud {
+    position: absolute; display: none; pointer-events: none; z-index: 20;
+    width: 244px; padding: 8px 10px; border-radius: 7px;
+    color: #fff; background: rgba(38, 31, 43, .92); box-shadow: 0 4px 18px rgba(0,0,0,.22);
+    font-size: 11px; line-height: 1.35;
+  }
+  #spatialHud .hud-title { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; }
+  #spatialHud .hud-grid { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; margin-top: 5px; }
+  #spatialHud .hud-grid b { text-align: right; font-variant-numeric: tabular-nums; }
+  #spatialHud .candidate { margin-top: 4px; color: #dfcfeb; overflow-wrap: anywhere; }
+  #roleMenu {
+    position: absolute; display: none; z-index: 30; min-width: 172px;
+    border: 1px solid #94869c; border-radius: 6px; background: #fff;
+    box-shadow: 0 5px 22px rgba(0,0,0,.22); padding: 5px;
+  }
+  #roleMenu strong { display: block; padding: 4px 7px 5px; font-size: 12px; }
+  #roleMenu button { display: block; width: 100%; border: 0; text-align: left; padding: 5px 7px; }
+  #roleMenu button:hover { background: #eee7f3; }
+  main.interact canvas { cursor: crosshair; }
+  main.interact.dragging canvas { cursor: grabbing; }
+  main.awaiting-destination canvas { cursor: copy; }
   @media (max-width: 760px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
     aside { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 45vh; }
@@ -147,6 +177,30 @@
     <label class="check"><input type="checkbox" id="showSta" checked> Station names</label>
   </div>
 
+  <div class="card interaction-card" id="interactionCard">
+    <h2>Interactive room <span class="preview-badge">PREVIEW ONLY</span></h2>
+    <div class="seg" role="group" aria-label="pointer mode">
+      <button id="cameraMode" aria-pressed="true">Camera</button>
+      <button id="interactMode">Interact</button>
+    </div>
+    <div class="speed-row">
+      <span>Destination speed</span>
+      <select id="moveSpeed" aria-label="destination movement speed">
+        <option value="0.6">0.6 m/s stroll</option>
+        <option value="1.4" selected>1.4 m/s walk</option>
+        <option value="3">3.0 m/s run</option>
+      </select>
+    </div>
+    <div id="interactionSummary">Select <b>Interact</b>, then drag a client.</div>
+    <div class="interaction-actions">
+      <button id="moveSelected" disabled>Move to…</button>
+      <button id="presenceSelected" disabled>Disappear</button>
+      <button id="resetSelected" disabled>Reset role</button>
+      <button id="resetAll">Reset all</button>
+    </div>
+    <div id="interactionHelp">Right-click a client for movement and presence controls. This milestone changes only the browser preview; wmediumd remains unchanged.</div>
+  </div>
+
   <hr>
   <div id="inspector">
     <h2>Selected node</h2>
@@ -168,10 +222,18 @@
 </aside>
 <main>
   <div id="hint">drag to orbit · wheel to zoom · shift-drag to pan · space plays</div>
+  <div id="spatialHud"></div>
+  <div id="roleMenu">
+    <strong id="roleMenuTitle">Client</strong>
+    <button data-role-action="move">Move to destination…</button>
+    <button data-role-action="presence">Disappear</button>
+    <button data-role-action="reset">Reset preview</button>
+  </div>
   <div id="err"></div>
 </main>
 
 <script src="vendor/three.min.js"></script>
+<script src="interaction-model.js"></script>
 <script>
 (function () {
   'use strict';
@@ -193,6 +255,8 @@
   const $ = (s) => document.querySelector(s);
   const err = (msg) => { const e = $('#err'); e.style.display = 'block'; e.textContent = msg; };
   if (typeof THREE === 'undefined') { err('The bundled three.js renderer failed to load.'); return; }
+  if (typeof RoomInteractionModel === 'undefined') { err('The interactive room model failed to load.'); return; }
+  const interactionModel = RoomInteractionModel;
 
   // ---- state ---------------------------------------------------------------
   let world = null;          // parsed world plan
@@ -211,6 +275,15 @@
   let storyState = 'Waiting for the conductor…';
   let recentEvents = [], replayEvents = [], replayIndex = 0, replayAppliedTime = -1;
   let actionPulseUntil = 0;
+  const interaction = {
+    mode: 'camera',
+    overrides: {},
+    drag: null,
+    movement: null,
+    awaitingDestination: null,
+    menuRole: null,
+    hudRole: null,
+  };
   if (liveMode || replayMode) document.body.classList.add('live-presentation');
 
   // ---- scene ---------------------------------------------------------------
@@ -236,8 +309,43 @@
   (function bindOrbit() {
     let drag = null;
     const el = renderer.domElement;
-    el.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.shiftKey || e.button === 2 }; el.setPointerCapture(e.pointerId); });
+    el.addEventListener('pointerdown', (e) => {
+      hideRoleMenu();
+      if (e.button !== 0) return;
+      if (interaction.mode === 'interact') {
+        if (interaction.awaitingDestination) {
+          const point = floorPoint(e);
+          if (point) startDestinationMovement(interaction.awaitingDestination, point);
+          return;
+        }
+        const role = pickedRole(e);
+        if (role && canInteractWith(role)) {
+          selected = role;
+          interaction.hudRole = role;
+          interaction.drag = {
+            role,
+            pointerId: e.pointerId,
+            start: effectivePosition(role, frameAt(tMs)).slice(),
+          };
+          interaction.movement = null;
+          main.classList.add('dragging');
+          el.setPointerCapture(e.pointerId);
+          update();
+          return;
+        }
+      }
+      drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.shiftKey || e.button === 2 };
+      el.setPointerCapture(e.pointerId);
+    });
     el.addEventListener('pointermove', (e) => {
+      if (interaction.drag) {
+        const point = floorPoint(e);
+        if (point) {
+          setPositionOverride(interaction.drag.role, point);
+          update();
+        }
+        return;
+      }
       if (!drag) return;
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
@@ -251,9 +359,26 @@
       }
       drag.x = e.clientX; drag.y = e.clientY; placeCamera();
     });
-    el.addEventListener('pointerup', (e) => { if (drag && !drag.moved) pick(e); drag = null; });
+    el.addEventListener('pointerup', (e) => {
+      if (interaction.drag) {
+        interaction.drag = null;
+        main.classList.remove('dragging');
+        update();
+        return;
+      }
+      if (drag && !drag.moved) pick(e);
+      drag = null;
+    });
     el.addEventListener('wheel', (e) => { e.preventDefault(); orbit.r = Math.min(90, Math.max(6, orbit.r * (1 + e.deltaY * 0.0012))); placeCamera(); }, { passive: false });
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const role = pickedRole(e);
+      if (!role || !canInteractWith(role)) { hideRoleMenu(); return; }
+      selected = role;
+      interaction.hudRole = role;
+      showRoleMenu(role, e.clientX, e.clientY);
+      update();
+    });
   })();
 
   function resize() {
@@ -290,14 +415,66 @@
     if (!b || !fr.n.present[role] || !fr.g.present[role]) return a;
     return [a[0] + (b[0] - a[0]) * fr.f, a[1] + (b[1] - a[1]) * fr.f];
   }
+  function effectivePosition(role, fr) {
+    const override = interaction.overrides[role];
+    return override && override.position ? override.position : posAt(role, fr);
+  }
+  function effectivePresent(role, g) {
+    const override = interaction.overrides[role];
+    return override && typeof override.present === 'boolean' ? override.present : !!g.present[role];
+  }
+  function canInteractWith(role) {
+    return !!world && world.roles[role] === 'station';
+  }
+  function setPositionOverride(role, point) {
+    const previous = interaction.overrides[role] || {};
+    interaction.overrides[role] = Object.assign({}, previous, {
+      position: interactionModel.clampPosition(world, point),
+    });
+    interaction.hudRole = role;
+  }
+  function setPresenceOverride(role, present) {
+    const previous = interaction.overrides[role] || {};
+    interaction.overrides[role] = Object.assign({}, previous, {present: !!present});
+    interaction.hudRole = role;
+  }
+  function resetRoleOverride(role) {
+    delete interaction.overrides[role];
+    if (interaction.movement && interaction.movement.role === role) interaction.movement = null;
+    if (interaction.awaitingDestination === role) {
+      interaction.awaitingDestination = null;
+      main.classList.remove('awaiting-destination');
+    }
+  }
+  function predictedFor(role, point, g) {
+    return interactionModel.predictLinks(world, g, role, point, band);
+  }
   // Strongest present AP->station link on the band, per station (downlink).
-  function bestServing(g) {
+  function bestServing(g, positions = null) {
     const best = {};
     for (const l of g.links) {
       if (l.link_class !== 'fronthaul' || !isAp(l.source_role)) continue;
-      if (!g.present[l.source_role] || !g.present[l.destination_role]) continue;
+      if (!effectivePresent(l.source_role, g) || !effectivePresent(l.destination_role, g)) continue;
+      if (interaction.overrides[l.destination_role] && positions) continue;
       const s = l.snr_db_by_band[band];
       if (!best[l.destination_role] || s > best[l.destination_role].snr) best[l.destination_role] = { ap: l.source_role, snr: s, link: l };
+    }
+    if (positions) {
+      for (const role of Object.keys(interaction.overrides)) {
+        if (!canInteractWith(role) || !effectivePresent(role, g) || !positions[role]) continue;
+        const links = predictedFor(role, positions[role], g);
+        if (!links.length) continue;
+        const strongest = links[0];
+        best[role] = {
+          ap: strongest.role,
+          snr: strongest.snr_db,
+          link: {
+            link_class: 'fronthaul', source_role: strongest.role, destination_role: role,
+            distance_m: strongest.distance_m, wall_loss_db: strongest.wall_loss_db,
+            snr_db_by_band: {[band]: strongest.snr_db}, preview: true,
+          },
+        };
+      }
     }
     return best;
   }
@@ -381,9 +558,8 @@
   function buildWorld() {
     clearWorld();
     const root = new THREE.Group();
-    const allPos = world.generations.flatMap((g) => Object.values(g.positions));
-    const W = Math.max(20, Math.ceil(Math.max(...allPos.map((p) => p[0])) + 1));
-    const H = Math.max(14, Math.ceil(Math.max(...allPos.map((p) => p[1])) + 1));
+    const size = interactionModel.roomSize(world);
+    const W = size.width, H = size.height;
 
     // floor + grid
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshLambertMaterial({ color: COL.floor }));
@@ -394,6 +570,7 @@
     root.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(gridPts), new THREE.LineBasicMaterial({ color: COL.grid })));
 
     // walls
+    const walls = [];
     for (const w of world.walls || []) {
       const [x0, y0] = w.start, [x1, y1] = w.end;
       const len = Math.hypot(x1 - x0, y1 - y0);
@@ -401,7 +578,8 @@
         new THREE.MeshLambertMaterial({ color: COL.wall, transparent: true, opacity: 0.55 }));
       m.position.copy(P((x0 + x1) / 2, (y0 + y1) / 2, WALL_H / 2));
       m.rotation.y = -Math.atan2(y1 - y0, x1 - x0);
-      root.add(m);
+      m.userData.wall = w;
+      root.add(m); walls.push(m);
       const ft = makeFloorText(w.name + '  ' + w.loss_db + ' dB', x0, y0, x1, y1, 0.5);
       if (ft) root.add(ft);
     }
@@ -447,10 +625,25 @@
     );
     const backhaul = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.45 }));
     const trails = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: COL.mobile, transparent: true, opacity: 0.45 }));
-    root.add(links, actual, target, backhaul, trails);
+    const preview = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.95, depthTest: false}));
+    preview.renderOrder = 8;
+    const movePath = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({color: 0x6f3e8e, dashSize: 0.35, gapSize: 0.16, transparent: true, opacity: 0.9, depthTest: false}));
+    movePath.renderOrder = 8;
+    const destination = new THREE.Mesh(
+      new THREE.RingGeometry(0.28, 0.42, 28),
+      new THREE.MeshBasicMaterial({color: 0x6f3e8e, side: THREE.DoubleSide, depthTest: false}));
+    destination.rotation.x = -Math.PI / 2;
+    destination.position.y = 0.025;
+    destination.visible = false;
+    destination.renderOrder = 9;
+    root.add(links, actual, target, backhaul, trails, preview, movePath, destination);
 
     scene.add(root);
-    world3d = { root, nodes, pickables, links, actual, target, backhaul, trails, W, H };
+    world3d = { root, nodes, pickables, walls, links, actual, target, backhaul, trails, preview, movePath, destination, W, H };
     orbit.target.set(W / 2, 0, -H / 2); orbit.r = Math.max(W, H) * 1.5; placeCamera();
   }
 
@@ -479,14 +672,16 @@
     if (!world3d) return;
     const fr = frameAt(tMs), g = fr.g;
     const { nodes } = world3d;
-    const best = bestServing(g);
     const pos = {};
     const showSta = $('#showSta').checked;
 
+    for (const role in nodes) pos[role] = effectivePosition(role, fr);
+    const best = bestServing(g, pos);
+
     for (const role in nodes) {
       const n = nodes[role];
-      const present = !!g.present[role];
-      const p = posAt(role, fr); pos[role] = p;
+      const present = effectivePresent(role, g);
+      const p = pos[role];
       n.grp.position.copy(P(p[0], p[1], 0));
       n.grp.visible = true;
       const mat = n.head.material;
@@ -581,10 +776,171 @@
     }
     setSegments(world3d.trails, tp);
 
+    renderInteractionOverlays(g, pos, best);
+
     $('#tnow').textContent = (tMs / 1000).toFixed(1) + ' s';
     $('#scrub').value = Math.round(tMs / world.duration_ms * 1000);
-    renderInspector(g, best);
+    renderInspector(g, best, pos);
+    renderInteractionControls(g, pos, best);
     renderLivePanels();
+  }
+
+  function observedClient(role) {
+    return networkState && (networkState.clients || []).find((item) => item.role === role);
+  }
+  function displayRole(role) {
+    if (!role) return 'none';
+    if (role === 'gateway') return 'Agent-1';
+    if (role.startsWith('extender_')) return 'Extender-' + role.slice(9);
+    const observed = observedClient(role);
+    if (observed && observed.sta_mac) {
+      const suffix = observed.sta_mac.split(':')[4];
+      return (observed.cohort === 'iot' ? 'iot-' : 'sta-') + suffix;
+    }
+    return shortRole(role);
+  }
+  function associatedRole(role, g) {
+    const observed = observedClient(role);
+    if (observed && observed.connected_role) return observed.connected_role;
+    let strongest = null;
+    for (const link of g.links || []) {
+      if (link.link_class !== 'fronthaul' || link.destination_role !== role || !isAp(link.source_role)) continue;
+      const snr = Number(link.snr_db_by_band && link.snr_db_by_band[band]);
+      if (!strongest || snr > strongest.snr) strongest = {role: link.source_role, snr};
+    }
+    return strongest && strongest.role;
+  }
+  function wallNames(link) {
+    return link && link.walls && link.walls.length
+      ? link.walls.map((wall) => wall.name).join(', ') : 'none';
+  }
+  function rolePreview(role, g, pos) {
+    if (!role || !canInteractWith(role) || !pos[role]) return null;
+    const candidates = predictedFor(role, pos[role], g);
+    const associated = associatedRole(role, g);
+    return {
+      role,
+      point: pos[role],
+      candidates,
+      strongest: candidates[0] || null,
+      associated: candidates.find((item) => item.role === associated) || null,
+      associatedRole: associated,
+    };
+  }
+  function renderInteractionOverlays(g, pos) {
+    const role = interaction.hudRole || (canInteractWith(selected) ? selected : null);
+    const previewActive = interaction.mode === 'interact' || !!interaction.overrides[role];
+    const preview = previewActive ? rolePreview(role, g, pos) : null;
+    const points = [], colors = [];
+    const highlightedWalls = new Set();
+    for (const wall of world3d.walls) {
+      wall.material.color.setHex(COL.wall);
+      wall.material.opacity = 0.55;
+    }
+    if (preview && effectivePresent(role, g)) {
+      const links = [];
+      if (preview.strongest) links.push({item: preview.strongest, color: new THREE.Color(0x6f3e8e)});
+      if (preview.associated && preview.associated.role !== preview.strongest.role) {
+        links.push({item: preview.associated, color: new THREE.Color(0x05a9cf)});
+      }
+      for (const entry of links) {
+        const peer = pos[entry.item.role];
+        if (!peer) continue;
+        points.push(peer[0], AP_H + 0.34, -peer[1], preview.point[0], STA_H + 0.34, -preview.point[1]);
+        colors.push(entry.color.r, entry.color.g, entry.color.b, entry.color.r, entry.color.g, entry.color.b);
+        for (const wall of entry.item.walls) highlightedWalls.add(wall.name);
+      }
+      for (const wall of world3d.walls) {
+        if (highlightedWalls.has(wall.userData.wall.name)) {
+          wall.material.color.setHex(0xf0ad00);
+          wall.material.opacity = 0.82;
+        }
+      }
+    }
+    setSegments(world3d.preview, points, colors);
+
+    const movement = interaction.movement;
+    const path = [];
+    if (movement && pos[movement.role]) {
+      path.push(pos[movement.role][0], 0.05, -pos[movement.role][1],
+        movement.destination[0], 0.05, -movement.destination[1]);
+      world3d.destination.position.copy(P(movement.destination[0], movement.destination[1], 0.025));
+      world3d.destination.visible = true;
+    } else {
+      world3d.destination.visible = false;
+    }
+    setSegments(world3d.movePath, path);
+  }
+
+  function renderInteractionControls(g, pos) {
+    const role = interaction.hudRole || (canInteractWith(selected) ? selected : null);
+    const preview = rolePreview(role, g, pos);
+    const selectedUsable = !!preview;
+    $('#moveSelected').disabled = !selectedUsable;
+    $('#presenceSelected').disabled = !selectedUsable;
+    $('#resetSelected').disabled = !selectedUsable || !interaction.overrides[role];
+    if (!preview) {
+      $('#interactionSummary').innerHTML = interaction.mode === 'interact'
+        ? 'Click or drag a <b>client</b> in the room.'
+        : 'Select <b>Interact</b>, then drag a client.';
+      $('#spatialHud').style.display = 'none';
+      return;
+    }
+    const present = effectivePresent(role, g);
+    $('#presenceSelected').textContent = present ? 'Disappear' : 'Reappear';
+    const override = interaction.overrides[role];
+    const movement = interaction.movement && interaction.movement.role === role
+      ? interaction.movement : null;
+    let state = present ? (override ? 'preview moved' : 'scenario position') : 'RF absent preview';
+    if (movement) state = 'moving · ' + movement.speed_mps.toFixed(1) + ' m/s';
+    if (interaction.awaitingDestination === role) state = 'click a destination';
+    $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · ' + esc(state);
+
+    const base = posAt(role, frameAt(tMs));
+    const moved = Math.hypot(preview.point[0] - base[0], preview.point[1] - base[1]);
+    const measured = observedClient(role) || {};
+    const age = measured.metric_age_seconds != null ? measured.metric_age_seconds
+      : measured.age_s != null ? measured.age_s : measured.sample_age_s;
+    const strongest = preview.strongest;
+    const associated = preview.associated;
+    let movementRow = '';
+    if (movement) {
+      const remaining = Math.hypot(
+        movement.destination[0] - preview.point[0], movement.destination[1] - preview.point[1]);
+      movementRow = '<span>Destination</span><b>' + remaining.toFixed(1) + ' m · ' +
+        Math.ceil(remaining / movement.speed_mps) + ' s</b>';
+    }
+    const hud = $('#spatialHud');
+    hud.innerHTML = '<div class="hud-title"><span>' + esc(displayRole(role)) + '</span><span>' + esc(band) + ' GHz</span></div>' +
+      '<div class="hud-grid"><span>Position</span><b>' + preview.point[0].toFixed(1) + ', ' + preview.point[1].toFixed(1) + ' m</b>' +
+      '<span>Moved</span><b>' + moved.toFixed(1) + ' m</b>' + movementRow +
+      '<span>Associated AP</span><b>' + esc(displayRole(preview.associatedRole)) + '</b>' +
+      '<span>Distance / walls</span><b>' + (associated ? associated.distance_m.toFixed(1) + ' m / ' + associated.wall_count : 'N/A') + '</b>' +
+      '<span>Wall loss</span><b>' + (associated ? associated.wall_loss_db.toFixed(1) + ' dB' : 'N/A') + '</b>' +
+      '<span>Predicted SNR</span><b>' + (associated ? associated.snr_db + ' dB' : 'N/A') + '</b>' +
+      '<span>Measured</span><b>' + (measured.rcpi == null ? 'N/A' : 'RCPI ' + esc(measured.rcpi)) + '</b>' +
+      '<span>Metric age</span><b>' + (age == null ? 'N/A' : Number(age).toFixed(1) + ' s') + '</b>' +
+      '<span>Strongest AP</span><b>' + esc(strongest ? displayRole(strongest.role) : 'none') + '</b>' +
+      '<span>Best path</span><b>' + (strongest ? strongest.distance_m.toFixed(1) + ' m / ' + strongest.wall_count + ' walls' : 'N/A') + '</b></div>' +
+      '<div class="candidate">Walls: ' + esc(associated ? wallNames(associated) : 'unknown') + '<br>Best candidates: ' +
+      preview.candidates.slice(0, 3).map((item) => esc(displayRole(item.role)) + ' ' + item.snr_db + ' dB').join(' · ') + '</div>';
+    hud.style.display = interaction.mode === 'interact' ? 'block' : 'none';
+    if (hud.style.display === 'block') positionSpatialHud(role);
+  }
+
+  function positionSpatialHud(role) {
+    if (!world3d || !world3d.nodes[role]) return;
+    const node = world3d.nodes[role];
+    const point = node.grp.position.clone();
+    point.y += node.h + 0.8;
+    point.project(camera);
+    const hud = $('#spatialHud');
+    const width = main.clientWidth, height = main.clientHeight;
+    const x = (point.x * 0.5 + 0.5) * width;
+    const y = (-point.y * 0.5 + 0.5) * height;
+    const hw = hud.offsetWidth || 244, hh = hud.offsetHeight || 180;
+    hud.style.left = Math.max(8, Math.min(width - hw - 8, x + 18)) + 'px';
+    hud.style.top = Math.max(8, Math.min(height - hh - 8, y - hh / 2)) + 'px';
   }
 
   function esc(value) {
@@ -647,28 +1003,44 @@
   }
 
   // ---- inspector -----------------------------------------------------------
-  function renderInspector(g, best) {
+  function renderInspector(g, best, positions) {
     const box = $('#inspector');
     if (!selected) { box.innerHTML = '<h2>Selected node</h2><div class="empty">Click a station or agent to list its links at the current generation.</div>'; return; }
-    const present = g.present[selected];
-    const rows = g.links.filter((l) => l.source_role === selected || l.destination_role === selected)
+    const present = effectivePresent(selected, g);
+    let rows = g.links.filter((l) => l.source_role === selected || l.destination_role === selected)
       .map((l) => {
         const peer = l.source_role === selected ? l.destination_role : l.source_role;
         const dir = l.source_role === selected ? '→' : '←';
         return { peer, dir, l };
       });
+    const previewed = !!interaction.overrides[selected] && canInteractWith(selected);
+    if (previewed && positions[selected]) {
+      rows = predictedFor(selected, positions[selected], g).map((item) => ({
+        peer: item.role,
+        dir: '←',
+        l: {
+          link_class: 'fronthaul', distance_m: item.distance_m,
+          wall_loss_db: item.wall_loss_db,
+          snr_db_by_band: {'2.4': '—', '5': '—', '6': '—', [band]: item.snr_db},
+        },
+      }));
+    }
     // keep only present peers, group by peer, order by class then peer name
     const present_rows = rows.filter((r) => g.present[r.peer]).sort((a, b) => a.l.link_class.localeCompare(b.l.link_class) || a.peer.localeCompare(b.peer) || a.dir.localeCompare(b.dir));
     const bestAp = best[selected] && best[selected].ap;
     let html = '<h2>' + selected + ' <span style="font-weight:400;color:var(--muted)">' + world.roles[selected] + '</span></h2>';
-    html += '<div class="sub">generation t = ' + (g.time_ms / 1000).toFixed(1) + ' s' + (present ? '' : ' <span class="warn">absent</span>') + '</div>';
+    html += '<div class="sub">generation t = ' + (g.time_ms / 1000).toFixed(1) + ' s' +
+      (present ? '' : ' <span class="warn">absent</span>') +
+      (previewed ? ' <span class="preview-badge">PREVIEW</span>' : '') + '</div>';
     if (!present_rows.length) { html += '<div class="empty">No present links at this generation.</div>'; box.innerHTML = html; return; }
     html += '<table><thead><tr><th>peer</th><th></th><th>m</th><th>wall</th><th>2.4</th><th>5</th><th>6</th></tr></thead><tbody>';
     for (const r of present_rows) {
       const s = r.l.snr_db_by_band;
       const isBest = !isAp(selected) && r.peer === bestAp && r.dir === '←';
       html += '<tr' + (isBest ? ' class="best"' : '') + '><td>' + r.peer + '</td><td>' + r.dir + '</td><td>' + r.l.distance_m + '</td><td>' + r.l.wall_loss_db + '</td>'
-        + ['2.4', '5', '6'].map((b) => '<td class="snr" style="background:#' + snrColor(s[b]).getHexString() + '">' + s[b] + '</td>').join('') + '</tr>';
+        + ['2.4', '5', '6'].map((b) => Number.isFinite(Number(s[b]))
+          ? '<td class="snr" style="background:#' + snrColor(s[b]).getHexString() + '">' + s[b] + '</td>'
+          : '<td>—</td>').join('') + '</tr>';
     }
     html += '</tbody></table><div class="sub" style="margin-top:6px">← is the downlink into this node, → the uplink out of it. Bold row is the best serving link on ' + band + ' GHz.</div>';
     box.innerHTML = html;
@@ -676,19 +1048,53 @@
 
   // ---- picking -------------------------------------------------------------
   const ray = new THREE.Raycaster(); ray.params.Points = { threshold: 0.3 };
-  function pick(e) {
-    if (!world3d) return;
+  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  function pointerCoordinates(e) {
     const r = renderer.domElement.getBoundingClientRect();
-    const m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1);
+  }
+  function pickedRole(e) {
+    if (!world3d) return null;
+    const m = pointerCoordinates(e);
     ray.setFromCamera(m, camera);
     const hits = ray.intersectObjects(world3d.pickables, false);
-    selected = hits.length ? hits[0].object.userData.role : null;
+    return hits.length ? hits[0].object.userData.role : null;
+  }
+  function floorPoint(e) {
+    if (!world3d) return null;
+    ray.setFromCamera(pointerCoordinates(e), camera);
+    const hit = new THREE.Vector3();
+    if (!ray.ray.intersectPlane(floorPlane, hit)) return null;
+    return interactionModel.clampPosition(world, [hit.x, -hit.z]);
+  }
+  function pick(e) {
+    selected = pickedRole(e);
+    if (canInteractWith(selected)) interaction.hudRole = selected;
     update();
+  }
+  function showRoleMenu(role, clientX, clientY) {
+    const menu = $('#roleMenu'), rect = main.getBoundingClientRect();
+    interaction.menuRole = role;
+    $('#roleMenuTitle').textContent = displayRole(role);
+    const present = effectivePresent(role, frameAt(tMs).g);
+    menu.querySelector('[data-role-action=presence]').textContent = present ? 'Disappear' : 'Reappear';
+    menu.style.display = 'block';
+    const mw = menu.offsetWidth || 172, mh = menu.offsetHeight || 110;
+    menu.style.left = Math.max(5, Math.min(main.clientWidth - mw - 5, clientX - rect.left)) + 'px';
+    menu.style.top = Math.max(5, Math.min(main.clientHeight - mh - 5, clientY - rect.top)) + 'px';
+  }
+  function hideRoleMenu() {
+    $('#roleMenu').style.display = 'none';
+    interaction.menuRole = null;
   }
 
   // ---- loading -------------------------------------------------------------
   function loadWorld(w) {
     world = w; tMs = 0; selected = null; playing = false; $('#play').textContent = 'Play';
+    for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
+    interaction.drag = interaction.movement = interaction.awaitingDestination = interaction.hudRole = null;
+    main.classList.remove('awaiting-destination', 'dragging');
     $('#worldmeta').textContent = w.name + ' — ' + w.counts.agents + ' agents, ' + w.counts.stations + ' stations, '
       + w.generations.length + ' generations every ' + (w.tick_ms / 1000) + ' s';
     $('#tmax').textContent = 'of ' + (w.duration_ms / 1000).toFixed(0) + ' s';
@@ -735,6 +1141,103 @@
     band = b.dataset.band; document.querySelectorAll('[data-band]').forEach((x) => x.setAttribute('aria-pressed', x === b)); update();
   }));
   ['#showLinks', '#showBackhaul', '#showTrails', '#showSta'].forEach((id) => $(id).addEventListener('change', update));
+
+  function setInteractionMode(mode) {
+    interaction.mode = mode;
+    interaction.drag = null;
+    if (mode !== 'interact') interaction.awaitingDestination = null;
+    main.classList.toggle('interact', mode === 'interact');
+    main.classList.toggle('awaiting-destination', !!interaction.awaitingDestination);
+    main.classList.remove('dragging');
+    $('#cameraMode').setAttribute('aria-pressed', mode === 'camera');
+    $('#interactMode').setAttribute('aria-pressed', mode === 'interact');
+    $('#hint').textContent = mode === 'interact'
+      ? 'drag a client · right-click for movement/presence · switch to Camera to orbit'
+      : (liveMode ? 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan'
+        : 'drag to orbit · wheel to zoom · shift-drag to pan · space plays');
+    update();
+  }
+  function beginDestinationSelection(role) {
+    if (!canInteractWith(role)) return;
+    selected = role;
+    interaction.hudRole = role;
+    interaction.movement = null;
+    interaction.awaitingDestination = role;
+    setInteractionMode('interact');
+    main.classList.add('awaiting-destination');
+    $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · click its destination in the room';
+  }
+  function startDestinationMovement(role, destination) {
+    const fr = frameAt(tMs);
+    const start = effectivePosition(role, fr).slice();
+    const target = interactionModel.clampPosition(world, destination);
+    const speedMps = Number($('#moveSpeed').value);
+    const durationMs = interactionModel.movementDurationMs(start, target, speedMps);
+    interaction.awaitingDestination = null;
+    main.classList.remove('awaiting-destination');
+    setPositionOverride(role, start);
+    if (durationMs < 40) {
+      setPositionOverride(role, target);
+      interaction.movement = null;
+    } else {
+      interaction.movement = {
+        role, start, destination: target, speed_mps: speedMps,
+        duration_ms: durationMs, started_at: performance.now(),
+      };
+    }
+    update();
+  }
+  function togglePresence(role) {
+    if (!canInteractWith(role)) return;
+    const present = effectivePresent(role, frameAt(tMs).g);
+    setPresenceOverride(role, !present);
+    if (present && interaction.movement && interaction.movement.role === role) interaction.movement = null;
+    update();
+  }
+  function resetAllInteractions() {
+    for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
+    interaction.movement = null;
+    interaction.awaitingDestination = null;
+    main.classList.remove('awaiting-destination', 'dragging');
+    update();
+  }
+  function advanceMovement(now) {
+    const movement = interaction.movement;
+    if (!movement) return false;
+    const fraction = (now - movement.started_at) / movement.duration_ms;
+    setPositionOverride(movement.role,
+      interactionModel.interpolate(movement.start, movement.destination, fraction));
+    if (fraction >= 1) interaction.movement = null;
+    return true;
+  }
+
+  $('#cameraMode').addEventListener('click', () => setInteractionMode('camera'));
+  $('#interactMode').addEventListener('click', () => setInteractionMode('interact'));
+  $('#moveSelected').addEventListener('click', () => beginDestinationSelection(interaction.hudRole || selected));
+  $('#presenceSelected').addEventListener('click', () => togglePresence(interaction.hudRole || selected));
+  $('#resetSelected').addEventListener('click', () => {
+    const role = interaction.hudRole || selected;
+    if (role) resetRoleOverride(role);
+    update();
+  });
+  $('#resetAll').addEventListener('click', resetAllInteractions);
+  $('#roleMenu').addEventListener('click', (event) => {
+    const action = event.target.dataset.roleAction;
+    const role = interaction.menuRole;
+    if (!action || !role) return;
+    hideRoleMenu();
+    if (action === 'move') beginDestinationSelection(role);
+    else if (action === 'presence') togglePresence(role);
+    else if (action === 'reset') { resetRoleOverride(role); update(); }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    hideRoleMenu();
+    interaction.awaitingDestination = null;
+    interaction.movement = null;
+    main.classList.remove('awaiting-destination', 'dragging');
+    update();
+  });
 
   function setLiveStatus(state, detail = '') {
     const badge = $('#liveStatus');
@@ -874,17 +1377,29 @@
   // ---- loop ----------------------------------------------------------------
   function loop(now) {
     requestAnimationFrame(loop);
+    const interactionChanged = world && advanceMovement(now);
     if (playing && world && !liveMode) {
       tMs += (now - lastTick) * speed;
       if (tMs >= world.duration_ms) { tMs = world.duration_ms; playing = false; $('#play').textContent = 'Play'; }
       if (replayMode) applyReplayUntil(tMs);
       update();
-    }
+    } else if (interactionChanged) update();
+    else if (interaction.mode === 'interact' && interaction.hudRole) positionSpatialHud(interaction.hudRole);
     lastTick = now;
     if (world3d) renderer.render(scene, camera);
   }
   resize(); placeCamera(); requestAnimationFrame(loop);
-  window.__scene = scene; window.__viewer = { loadWorld, update, frameAt: (t) => frameAt(t), bestServing: (g) => bestServing(g), setTime: (t) => { tMs = t; update(); }, select: (r) => { selected = r; update(); }, setBand: (b) => { band = b; update(); } };
+  window.__scene = scene; window.__viewer = {
+    loadWorld, update, frameAt: (t) => frameAt(t),
+    bestServing: (g) => bestServing(g),
+    setTime: (t) => { tMs = t; update(); },
+    select: (r) => { selected = r; interaction.hudRole = canInteractWith(r) ? r : null; update(); },
+    setBand: (b) => { band = b; update(); },
+    setInteractionMode,
+    setPreviewPosition: (role, point) => { setPositionOverride(role, point); update(); },
+    setPreviewPresence: (role, present) => { setPresenceOverride(role, present); update(); },
+    resetPreview: resetAllInteractions,
+  };
 
   const initial = new URLSearchParams(location.search).get('world');
   if (initial && GOLDEN.includes(initial)) sel.value = initial;

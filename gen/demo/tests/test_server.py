@@ -19,6 +19,7 @@ class ServerTests(unittest.TestCase):
         (root / "index.html").write_text("<html>viewer</html>")
         (root / "vendor").mkdir()
         (root / "vendor" / "three.min.js").write_text("window.THREE={};")
+        (root / "interaction-model.js").write_text("window.RoomInteractionModel={};")
         world = {
             "schema": "wmdcfg.world-plan.v1",
             "name": "test-world",
@@ -45,6 +46,10 @@ class ServerTests(unittest.TestCase):
             self.base + "/viewer/vendor/three.min.js", timeout=2
         ) as response:
             self.assertIn(b"THREE", response.read())
+        with urllib.request.urlopen(
+            self.base + "/viewer/interaction-model.js", timeout=2
+        ) as response:
+            self.assertIn(b"RoomInteractionModel", response.read())
 
     def test_post_is_not_a_control_surface(self):
         request = urllib.request.Request(self.base + "/api/demo/current", method="POST")

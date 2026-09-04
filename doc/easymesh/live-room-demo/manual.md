@@ -329,6 +329,47 @@ labels, trails, scenario links, and backhaul controls remain available.
 Changing the display band changes only visualization of Golden World SNR. It
 does not change client or AP configuration.
 
+The **Interactive room** card provides the first safe interaction milestone.
+It is intentionally marked **PREVIEW ONLY**: its controls change browser state,
+not wmediumd, controller telemetry, client association, or the recorded run.
+This makes it safe to learn and demonstrate the geometry before enabling the
+live control path.
+
+To place a client directly:
+
+1. select **Interact**;
+2. point at a client head and drag it across the room floor;
+3. read the floating spatial panel while dragging; and
+4. use **Reset role** or **Reset all** to return to scenario truth.
+
+The panel follows the selected client but remains within the viewport. It
+shows room coordinates, distance moved, current and strongest APs, distance,
+walls crossed, wall loss, predicted SNR, current measured RCPI when available,
+metric age, and the three strongest predicted candidates. Walls crossed by
+the associated or strongest path are highlighted amber. The purple line is
+the preview's strongest path; cyan remains the controller-observed association.
+
+For visible movement at a defined speed:
+
+1. choose `0.6`, `1.4`, or `3.0 m/s` in **Destination speed**;
+2. right-click the client and select **Move to destination…**;
+3. click the destination on the floor; and
+4. observe the dashed route, destination ring, remaining distance, estimated
+   time, wall crossings, and changing candidate ranking.
+
+The **Move to…** button performs the same operation for the selected client.
+Press Escape to cancel destination selection or an in-progress preview move.
+
+Right-click and choose **Disappear**, or use the card button, to preview an
+RF-absent role. **Reappear** restores its visible presence at the retained
+preview position. This does not test controller aging yet. Switch back to
+**Camera** to orbit or shift-pan without moving a client.
+
+Phase 2 will send these position and presence intents through a lease/revision
+API, compile the changed radio pairs, apply an atomic wmediumd generation, and
+replace preview values with measured telemetry. Until then, a preview is never
+evidence that RF or association changed.
+
 ### 8.5 Companion Network Topology signal meter
 
 The RDK Network Topology view places a ten-segment vertical signal meter beside

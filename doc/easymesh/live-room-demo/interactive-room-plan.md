@@ -251,13 +251,29 @@ explain.
 
 ## Delivery phases
 
+### Current implementation status
+
+The first visible Phase 1 slice is implemented on the RDK interactive-room
+branch. The viewer now provides separate Camera and Interact modes, bounded
+client dragging, right-click destination movement at `0.6`, `1.4`, or
+`3.0 m/s`, local disappear/reappear, reset controls, wall highlighting, and a
+live spatial/link-budget panel. Its geometry and movement calculations are a
+separate DOM-free module with command-line regression tests.
+
+This slice is deliberately labeled **PREVIEW ONLY**. It maintains local
+overrides above the immutable scenario and cannot write wmediumd. Server-side
+leases, revisions, atomic RF application, measured convergence, and recording
+remain subsequent delivery work.
+
 ### Phase 1: safe interactive preview
 
 - Add draggable client roles and room-boundary constraints.
 - Show predicted per-AP signal and the strongest candidate.
-- Add lease/revision handling.
+- Add destination movement, preview presence and reset controls.
+- Add server lease/revision handling before enabling any RF write.
 - Do not change wmediumd.
-- Unit-test geometry, stale revisions and multi-browser ownership.
+- Unit-test browser-independent geometry and movement now; add stale-revision
+  and multi-browser ownership tests with the server lease API.
 
 Exit criterion: dragging remains smooth, deterministic and incapable of
 changing the lab.
