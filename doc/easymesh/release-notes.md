@@ -80,3 +80,17 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 - Retained one known limitation explicitly: directed discovery of the hidden
   IoT secondary BSS on the 6 GHz RDK multi-VAP radio is not yet reliable. The
   2.4 and 5 GHz IoT paths and private-SSID tri-band steering remain available.
+
+## 0904
+
+- Added the closed-loop live-room presentation to both RDK EasyMesh and
+  prplMesh. A common Golden World drives the configurator and wmediumd while a
+  browser follows motion, RF state, observations, decisions and steering
+  outcomes on one synchronized timeline.
+- Added a portable live-room endpoint to both universal thin appliances and
+  retained the same viewer contract and appearance across the two mesh stacks.
+- Added link-aware vertical client signal meters to make live RF changes easy
+  to recognize without obscuring the radio-link animation.
+- Kept the stack-specific adapters local to each repository for this release;
+  extracting the common room, scenario and visualization components remains a
+  later refactoring step.

@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
-release_id=${EASYMESH_RELEASE_ID:-0903}
+release_id=${EASYMESH_RELEASE_ID:-0904}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -29,6 +29,8 @@ webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+room_address=${EASYMESH_ROOM_DEMO_HOST_IP:-$webui_address}
+room_port=${EASYMESH_ROOM_DEMO_PORT:-18891}
 http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
 boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
@@ -68,6 +70,7 @@ Common overrides:
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
   WMEDIUMD_CONSOLE_PORT=$console_port
+  EASYMESH_ROOM_DEMO_PORT=$room_port
   EASYMESH_LXD_HTTP_READY_TIMEOUT=$http_ready_timeout
 EOF
 }
@@ -343,6 +346,7 @@ build_vm() {
     lxc config set "$name" boot.autostart true
     add_proxy easymesh-webui "$webui_address" "$webui_port" 8888 "$appliance_ipv4"
     add_proxy wmediumd-console "$console_address" "$console_port" 8890 "$appliance_ipv4"
+    add_proxy room-demo-viewer "$room_address" "$room_port" 8891 "$appliance_ipv4"
     lxc start "$name"
     wait_agent
     push_inputs "$stage"

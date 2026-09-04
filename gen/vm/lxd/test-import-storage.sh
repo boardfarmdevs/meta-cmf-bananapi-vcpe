@@ -74,10 +74,11 @@ EASYMESH_LXD_STORAGE=large-pool \
 EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
 EASYMESH_WEBUI_PORT=29889 \
 WMEDIUMD_CONSOLE_PORT=29890 \
+EASYMESH_ROOM_DEMO_PORT=29891 \
     bash "$bundle/import.sh" > "$stage/import.out"
 
 grep -Fx \
-    "import $backup rdkeasymesh-20-storage-test --storage large-pool --device eth0\\,network=lxdbr0 --device eth0\\,ipv4.address=10.20.30.250 --device easymesh-webui\\,listen=tcp:127.0.0.1:29889 --device easymesh-webui\\,connect=tcp:10.20.30.250:8888 --device wmediumd-console\\,listen=tcp:127.0.0.1:29890 --device wmediumd-console\\,connect=tcp:10.20.30.250:8890 " \
+    "import $backup rdkeasymesh-20-storage-test --storage large-pool --device eth0\\,network=lxdbr0 --device eth0\\,ipv4.address=10.20.30.250 --device easymesh-webui\\,listen=tcp:127.0.0.1:29889 --device easymesh-webui\\,connect=tcp:10.20.30.250:8888 --device wmediumd-console\\,listen=tcp:127.0.0.1:29890 --device wmediumd-console\\,connect=tcp:10.20.30.250:8890 --device room-demo-viewer\\,listen=tcp:127.0.0.1:29891 --device room-demo-viewer\\,connect=tcp:10.20.30.250:8891 " \
     "$log" >/dev/null
 grep -F 'profile:           20 clients (small)' "$stage/import.out" >/dev/null
 grep -Fx 'config set rdkeasymesh-20-storage-test limits.memory 8GiB ' \
@@ -85,6 +86,8 @@ grep -Fx 'config set rdkeasymesh-20-storage-test limits.memory 8GiB ' \
 grep -Fx 'config device unset rdkeasymesh-20-storage-test eth0 ipv4.address ' \
     "$log" >/dev/null
 grep -Fx 'site address:      enp5s0 10.20.30.250/24 via 10.20.30.1' \
+    "$stage/import.out" >/dev/null
+grep -Fx 'room demo:        http://127.0.0.1:29891/viewer/?mode=live' \
     "$stage/import.out" >/dev/null
 grep -Fx '      dhcp4: false' "$netplan_capture" >/dev/null
 grep -Fx '      accept-ra: true' "$netplan_capture" >/dev/null
@@ -151,23 +154,24 @@ EASYMESH_LXD_STORAGE=large-pool \
 EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
 EASYMESH_WEBUI_PORT=29889 \
 WMEDIUMD_CONSOLE_PORT=29890 \
+EASYMESH_ROOM_DEMO_PORT=29891 \
     bash "$bundle/import.sh" --profile 20 "$backup" \
         > "$stage/nested-delayed.out"
 test "$(cat "$ready_count")" = 2
 ready_line=$(grep -nF \
-    'exec rdkeasymesh-20-0903 -- lxc query /1.0 ' "$log" \
+    'exec rdkeasymesh-20-0904 -- lxc query /1.0 ' "$log" \
     | tail -1 | cut -d: -f1)
 select_line=$(grep -nF \
-    'exec rdkeasymesh-20-0903 -- /usr/local/sbin/easymesh-select-thin-profile 20 ' \
+    'exec rdkeasymesh-20-0904 -- /usr/local/sbin/easymesh-select-thin-profile 20 ' \
     "$log" | cut -d: -f1)
 proxy_line=$(grep -nF \
-    'config device add rdkeasymesh-20-0903 easymesh-webui proxy ' \
+    'config device add rdkeasymesh-20-0904 easymesh-webui proxy ' \
     "$log" | tail -1 | cut -d: -f1)
 reload_line=$(grep -nF \
-    'exec rdkeasymesh-20-0903 -- systemctl daemon-reload ' \
+    'exec rdkeasymesh-20-0904 -- systemctl daemon-reload ' \
     "$log" | tail -1 | cut -d: -f1)
 start_line=$(grep -nF \
-    'exec rdkeasymesh-20-0903 -- systemctl --no-block start easymesh-lab.service ' \
+    'exec rdkeasymesh-20-0904 -- systemctl --no-block start easymesh-lab.service ' \
     "$log" | tail -1 | cut -d: -f1)
 test "$ready_line" -lt "$select_line"
 test "$select_line" -lt "$proxy_line"

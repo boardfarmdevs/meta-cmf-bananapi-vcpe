@@ -63,7 +63,7 @@ lxc list
 Set explicit convenience variables. Substitute values for your installation:
 
 ```bash
-LAB_VM=rdkeasymesh-20-0903
+LAB_VM=rdkeasymesh-20-0904
 LAB_HOST_IP=192.168.2.150
 LAB_VM_IP=10.212.227.250
 ```

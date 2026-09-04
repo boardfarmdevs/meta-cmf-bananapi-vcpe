@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
-release_id=${LAB_RELEASE_ID:-0903}
+release_id=${LAB_RELEASE_ID:-0904}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -116,6 +116,8 @@ host_address=${host_address:-127.0.0.1}
 webui_port=${EASYMESH_WEBUI_PORT:-18889}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$host_address}
 console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+room_address=${EASYMESH_ROOM_DEMO_HOST_IP:-$host_address}
+room_port=${EASYMESH_ROOM_DEMO_PORT:-18891}
 address_timeout=${EASYMESH_LXD_ADDRESS_TIMEOUT:-120}
 nested_ready_timeout=${EASYMESH_LXD_NESTED_READY_TIMEOUT:-$address_timeout}
 
@@ -180,6 +182,8 @@ import_args+=(
     --device "easymesh-webui,connect=tcp:$guest_address:8888"
     --device "wmediumd-console,listen=tcp:$console_address:$console_port"
     --device "wmediumd-console,connect=tcp:$guest_address:8890"
+    --device "room-demo-viewer,listen=tcp:$room_address:$room_port"
+    --device "room-demo-viewer,connect=tcp:$guest_address:8891"
 )
 "${import_args[@]}"
 # Device overrides must be applied atomically above: a foreign LXD server
@@ -206,7 +210,7 @@ else
     lxc config set "$name" security.secureboot false
 fi
 lxc config set "$name" boot.autostart true
-for device in easymesh-webui wmediumd-console; do
+for device in easymesh-webui wmediumd-console room-demo-viewer; do
     if lxc config device show "$name" | grep -q "^${device}:"; then
         lxc config device remove "$name" "$device"
     fi
@@ -333,6 +337,9 @@ lxc config device add "$name" easymesh-webui proxy nat=true \
 lxc config device add "$name" wmediumd-console proxy nat=true \
     listen="tcp:${console_address}:${console_port}" \
     connect="tcp:${guest_address}:8890"
+lxc config device add "$name" room-demo-viewer proxy nat=true \
+    listen="tcp:${room_address}:${room_port}" \
+    connect="tcp:${guest_address}:8891"
 
 if [ "$profile_selectable" = true ]; then
     # Return after starting the potentially long offline provisioning job.
@@ -351,5 +358,6 @@ echo "site address:      $guest_interface $guest_address/$prefix via $gateway"
 echo "profile:           $selected_clients clients ($selected_profile), $selected_radios radios"
 echo "EasyMesh WebUI:   http://${host_address}:${webui_port}/"
 echo "wmediumd Console: http://${console_address}:${console_port}/"
+echo "room demo:        http://${room_address}:${room_port}/viewer/?mode=live"
 echo "monitor: lxc exec $name -- journalctl -fu easymesh-lab.service"
 echo "accept:  lxc exec $name -- /usr/local/sbin/easymesh-labctl check"

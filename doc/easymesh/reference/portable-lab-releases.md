@@ -1,12 +1,12 @@
 # Portable LXD VM releases
 
-The 0903 handoff consists of one universal thin appliance for each EasyMesh
+The 0904 handoff consists of one universal thin appliance for each EasyMesh
 implementation:
 
 | Artifact | Selectable clients | Default host ports |
 | --- | --- | --- |
-| `rdkeasymesh-0903-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890` |
-| `prplmesh-0903-thin.tar` | 20, 50, or 100 | wmediumd Console `8090`, Controller UI `8091` |
+| `rdkeasymesh-0904-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890`, live room `18891` |
+| `prplmesh-0904-thin.tar` | 20, 50, or 100 | wmediumd Console `8090`, Controller UI `8091`, live room `18891` |
 
 There are no profile-specific downloads. Import selects exactly one immutable
 20-, 50-, or 100-client profile. Each archive contains an installed Ubuntu
@@ -24,9 +24,9 @@ alone.
 Place one archive and its adjacent checksum in an empty directory:
 
 ```sh
-sha256sum -c STACK-0903-thin.tar.sha256
-tar -xf STACK-0903-thin.tar
-cd STACK-0903-thin
+sha256sum -c STACK-0904-thin.tar.sha256
+tar -xf STACK-0904-thin.tar
+cd STACK-0904-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
@@ -75,8 +75,8 @@ PRPLMESH_UI_HOST_IP=192.168.2.140 \
   ./import.sh --profile 50
 ```
 
-Default instance names are `rdkeasymesh-PROFILE-0903` and
-`prplmesh-PROFILE-0903`. The bundled README documents name and port overrides
+Default instance names are `rdkeasymesh-PROFILE-0904` and
+`prplmesh-PROFILE-0904`. The bundled README documents name and port overrides
 for multiple labs on one host.
 
 ## Verify and operate
@@ -84,17 +84,17 @@ for multiple labs on one host.
 RDK EasyMesh:
 
 ```sh
-lxc exec rdkeasymesh-20-0903 -- \
+lxc exec rdkeasymesh-20-0904 -- \
   /usr/local/sbin/easymesh-labctl check
-lxc exec rdkeasymesh-20-0903 -- \
+lxc exec rdkeasymesh-20-0904 -- \
   journalctl -fu easymesh-lab.service
 ```
 
 prplMesh:
 
 ```sh
-lxc exec prplmesh-20-0903 -- prplmesh-lab-start status
-lxc exec prplmesh-20-0903 -- \
+lxc exec prplmesh-20-0904 -- prplmesh-lab-start status
+lxc exec prplmesh-20-0904 -- \
   journalctl -fu prplmesh-lab.service
 ```
 
@@ -106,8 +106,8 @@ Both imported VMs default to `boot.autostart=true`. `lxc stop INSTANCE` and
 Each outer tar contains one directory:
 
 ```text
-STACK-0903-thin/
-|-- STACK-0903-COMMIT-thin-lxd.tar.zst  LXD VM backup
+STACK-0904-thin/
+|-- STACK-0904-COMMIT-thin-lxd.tar.zst  LXD VM backup
 |-- import.sh                            profile and site reconciliation
 |-- install-host.sh                      Ubuntu 22.04/24.04 host setup
 |-- README.md                            operator instructions
@@ -121,11 +121,11 @@ STACK-0903-thin/
 Only four files need distribution:
 
 ```text
-EasyMesh-LXD-0903/
-|-- rdkeasymesh-0903-thin.tar
-|-- rdkeasymesh-0903-thin.tar.sha256
-|-- prplmesh-0903-thin.tar
-`-- prplmesh-0903-thin.tar.sha256
+EasyMesh-LXD-0904/
+|-- rdkeasymesh-0904-thin.tar
+|-- rdkeasymesh-0904-thin.tar.sha256
+|-- prplmesh-0904-thin.tar
+`-- prplmesh-0904-thin.tar.sha256
 ```
 
 Google Drive is transport only. Never replace an archive without also
