@@ -84,6 +84,17 @@ Pass only when all three observations agree:
 The command is a real EasyMesh steering request and 802.11v BTM exchange. It is
 not an autonomous optimizer decision.
 
+To move several distinct clients together, use the batch adapter rather than
+starting independent `steer.sh` processes:
+
+```sh
+gen/steer-batch.sh sta-03 extender-1 sta-04 extender-2 iot-15 agent-1
+```
+
+The batch uses one atomic RF preparation and one exact restore. An automatic
+demonstration can select five compatible moves with
+`gen/steer-batch.sh --count 5`.
+
 ## 5. Run a reversible RF demonstration
 
 With the Network Topology page visible, rotate the private cohort twice:

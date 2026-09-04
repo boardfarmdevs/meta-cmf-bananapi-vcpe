@@ -80,14 +80,20 @@ Resolution must produce exactly one current station placement and exactly one
 target BSS. Missing, duplicate, ambiguous, or already-current targets fail
 before the medium or controller is changed.
 
-The live `/api/v1/bsses` channel is preferred. If it is unavailable or reports
-zero, the fixed lab fallbacks are:
+The target AP interface's live `iw dev` frequency is authoritative. The script
+maps that frequency to the IEEE operating class and channel and passes both
+explicitly in the controller command. `/api/v1/bsses` is retained as a
+diagnostic because its configured channel can differ from the frequency on
+which an hwsim AP actually started. This was observed on 6 GHz: the model
+reported channel 37 while `wifi2` was live at 5955 MHz, channel 1.
+
+Current fallback values, used only before live resolution, are:
 
 | Band value | Band | Channel | Frequency |
 | ---: | --- | ---: | ---: |
 | `0` | 2.4 GHz | 6 | 2437 MHz |
 | `1` | 5 GHz | 36 | 5180 MHz |
-| `3` | 6 GHz | 5 | 5975 MHz |
+| `3` | 6 GHz | 1 | 5955 MHz |
 
 ## Deterministic RF preparation
 
@@ -172,8 +178,10 @@ success.
    BSSID, and SSID. Require one scan-cache record containing both the exact
    BSSID and expected ESS identity.
 8. If RF preparation already caused reassociation, skip the unnecessary BTM
-   request. Otherwise run `/usr/bin/steer.sh STA_MAC TARGET_BSSID` inside
-   `bpibroadband`.
+   request. Otherwise run
+   `/usr/bin/steer.sh STA_MAC TARGET_BSSID OPCLASS CHANNEL` inside
+   `bpibroadband`, using the live target AP state rather than a configured but
+   stale channel value.
 9. The controller sends the EasyMesh Client Steering Request. The serving
    Agent acknowledges receipt, builds the station-facing BTM Request, and
    submits it through OneWifi's prioritized raw-action-frame queue.
@@ -194,9 +202,18 @@ Response create a second record for the same BSSID with `iot_ssid`. Packet and
 station-cache evidence from the rev140 20-client lab demonstrated both records
 at the same time.
 
-The AP path was not the failed boundary: the target received a Probe Request
-containing `iot_ssid` and transmitted a Probe Response containing the complete
-SSID. hwsim and wmediumd delivered that exchange correctly.
+For the recorded 5 GHz failure, the AP path was not the failed boundary: the
+target received a Probe Request containing `iot_ssid` and transmitted a Probe
+Response containing the complete SSID. hwsim and wmediumd delivered that
+exchange correctly.
+
+That finding must not be generalized to every band. A later 5955 MHz capture
+showed the 6 GHz `wifi2.2` IoT BSS receiving an exact directed Probe Request
+without transmitting its own matching Probe Response; the primary private BSS
+responded instead. Hidden-IoT steering on 6 GHz therefore remains a separate
+AP/multi-VAP discovery defect. Private-SSID 6 GHz steering is validated after
+using the target AP's live channel, and hidden-IoT steering on 5 GHz is
+validated by the SSID-qualified supplicant lookup.
 
 The stock wpa_supplicant 2.10 WNM path selected a BTM candidate with a
 BSSID-only lookup. When that lookup returned the empty hidden-beacon record,
@@ -354,6 +371,15 @@ gen/steer-soak.sh
 
 # Issue an exact number of sequential topology-derived steers
 gen/steer-soak.sh 50
+
+# Submit three requested moves under one RF transaction
+gen/steer-batch.sh \
+  sta-03 extender-1 \
+  sta-04 extender-2 \
+  iot-15 agent-1
+
+# Select five distinct clients and compatible targets automatically
+gen/steer-batch.sh --count 5
 ```
 
 `steer-soak.sh` refreshes the live source, SSID, band and compatible target
@@ -361,6 +387,17 @@ before every move, then calls this single-steer adapter. It supports the full
 2.4/5/6 GHz client roster. It differs from `steering-matrix.sh`, which is a
 fixed 5 GHz cohort acceptance/timing test, and from the carousel, which drives
 RF roaming without sending BTM requests.
+
+`steer-batch.sh` is the safe concurrent form. It resolves every move before
+changing state, rejects duplicate clients, and creates one combined set of
+frequency-qualified links. One atomic wmediumd generation gives each client a
+`60 dB` target, `20 dB` source and `-20 dB` alternatives. Candidate scans run
+concurrently; BTM commands are then submitted in a short serialized burst
+because the RDK controller command transport is serialized. Physical links
+and WebUI ownership are verified concurrently, and the original medium matrix
+is restored once after the whole batch. Running several independent
+`gen/steer.sh` commands with `&` is unsupported because their independent
+snapshots and restores can overwrite each other.
 
 ## What this test proves
 

@@ -56,10 +56,9 @@ def write_state(path: Path, document: dict) -> None:
         raise
 
 
-def snapshot_frequency_links(
+def snapshot_link_keys(
     control: ControlClient,
-    pairs: list[tuple[str, str]],
-    frequency_mhz: int,
+    keys: list[tuple[str, str, int]],
 ):
     """Read effective frequency links with bounded bulk control requests.
 
@@ -97,7 +96,7 @@ def snapshot_frequency_links(
         for item in frequency_links
     }
     prior = []
-    for source, destination in pairs:
+    for source, destination, frequency_mhz in keys:
         frequency_key = (source, destination, frequency_mhz)
         if frequency_key in overrides:
             value, overridden = overrides[frequency_key]
@@ -116,6 +115,17 @@ def snapshot_frequency_links(
             "override": overridden,
         })
     return final_status, prior
+
+
+def snapshot_frequency_links(
+    control: ControlClient,
+    pairs: list[tuple[str, str]],
+    frequency_mhz: int,
+):
+    return snapshot_link_keys(
+        control,
+        [(source, destination, frequency_mhz) for source, destination in pairs],
+    )
 
 
 def apply(args: argparse.Namespace) -> int:
@@ -221,6 +231,84 @@ def apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def apply_batch(args: argparse.Namespace) -> int:
+    document = json.loads(args.plan.read_text(encoding="utf-8"))
+    if document.get("schema") != "easymesh.steering-batch-plan.v1":
+        raise RuntimeError("unsupported steering batch plan")
+    moves = document.get("moves") or []
+    if not moves:
+        raise RuntimeError("steering batch plan has no moves")
+
+    updates_by_key: dict[tuple[str, str, int], dict] = {}
+    clients: list[str] = []
+    for index, move in enumerate(moves, start=1):
+        try:
+            client = str(move["client"])
+            frequency = int(move["frequency_mhz"])
+            station = normalize_mac(move["station_radio"])
+            source_radio = normalize_mac(move["source_radio"])
+            target_radio = normalize_mac(move["target_radio"])
+            mesh_radios = sorted(
+                {normalize_mac(value) for value in move["mesh_radios"]}
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError(f"move {index} is incomplete: {error}") from error
+        if not client or frequency <= 0 or not mesh_radios:
+            raise RuntimeError(f"move {index} has an invalid client, frequency, or roster")
+        if source_radio == target_radio:
+            raise RuntimeError(f"move {index} source and target radios are identical")
+        if source_radio not in mesh_radios or target_radio not in mesh_radios:
+            raise RuntimeError(f"move {index} source/target is outside the mesh roster")
+        if station in clients:
+            raise RuntimeError(f"station radio {station} occurs more than once")
+        clients.append(station)
+
+        source_snr = int(move.get("source_snr", 20))
+        target_snr = int(move.get("target_snr", 60))
+        other_snr = int(move.get("other_snr", -20))
+        for radio in mesh_radios:
+            value = (
+                target_snr if radio == target_radio
+                else source_snr if radio == source_radio
+                else other_snr
+            )
+            for link_source, link_destination in (
+                (station, radio),
+                (radio, station),
+            ):
+                key = (link_source, link_destination, frequency)
+                update = {
+                    "source": link_source,
+                    "destination": link_destination,
+                    "frequency_mhz": frequency,
+                    "value": value,
+                    "override": True,
+                }
+                previous = updates_by_key.get(key)
+                if previous is not None and previous != update:
+                    raise RuntimeError(f"conflicting batch update for {key}")
+                updates_by_key[key] = update
+
+    keys = sorted(updates_by_key)
+    updates = [updates_by_key[key] for key in keys]
+    with medium_client(args) as control:
+        status, prior = snapshot_link_keys(control, keys)
+        state = {
+            "schema": "easymesh.steering-rf-bias.v1",
+            "backend": args.backend,
+            "instance_id": status.instance_id,
+            "client": f"batch:{len(moves)}",
+            "updates": prior,
+        }
+        write_state(args.state, state)
+        control.apply_frequency(status.generation + 1, updates)
+    print(
+        f"RF batch bias applied: moves={len(moves)} links={len(updates)} "
+        f"frequencies={','.join(str(value) for value in sorted({key[2] for key in keys}))}"
+    )
+    return 0
+
+
 def restore(args: argparse.Namespace) -> int:
     state = json.loads(args.state.read_text(encoding="utf-8"))
     if state.get("schema") != "easymesh.steering-rf-bias.v1":
@@ -269,6 +357,11 @@ def main() -> int:
     apply_parser.add_argument("--target-radio")
     apply_parser.add_argument("--mesh-radio", action="append", default=[])
     apply_parser.set_defaults(handler=apply)
+
+    batch_parser = commands.add_parser("apply-batch")
+    batch_parser.add_argument("--plan", required=True, type=Path)
+    batch_parser.add_argument("--state", required=True, type=Path)
+    batch_parser.set_defaults(handler=apply_batch)
 
     restore_parser = commands.add_parser("restore")
     restore_parser.add_argument("--state", required=True, type=Path)
