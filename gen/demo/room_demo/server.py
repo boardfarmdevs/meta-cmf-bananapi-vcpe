@@ -170,6 +170,11 @@ class RoomDemoServer:
                     })
                 elif parsed.path == "/api/demo/interactions" and interactions is not None:
                     self._json(interactions.snapshot())
+                elif parsed.path == "/api/demo/recording/world" and interactions is not None:
+                    try:
+                        self._json(interactions.recorded_world())
+                    except Exception as error:
+                        self._interaction_error(error)
                 elif parsed.path in {"/viewer", "/viewer/", "/viewer/index.html"}:
                     self._static("index.html")
                 elif parsed.path.startswith("/viewer/"):
@@ -189,6 +194,19 @@ class RoomDemoServer:
                             self._json(interactions.renew(str(body["token"])))
                         else:
                             self._json(interactions.acquire(str(body.get("owner") or "")), 201)
+                        return
+                    if parsed.path == "/api/demo/recording/start":
+                        self._json(interactions.start_recording(
+                            token=str(body.get("token") or ""),
+                            expected_revision=body.get("expected_revision"),
+                            name=body.get("name"),
+                        ), 201)
+                        return
+                    if parsed.path == "/api/demo/recording/stop":
+                        self._json(interactions.stop_recording(
+                            token=str(body.get("token") or ""),
+                            expected_revision=body.get("expected_revision"),
+                        ))
                         return
                     matched = self._role_path(parsed.path)
                     if matched is not None and matched[1] == "move":

@@ -201,6 +201,8 @@
       <button id="cancelMovement" disabled>Cancel walk</button>
       <button id="resetSelected" disabled>Reset role</button>
       <button id="resetAll">Reset all</button>
+      <button id="recordInteraction">Start recording</button>
+      <button id="downloadRecording" disabled>Download world</button>
     </div>
     <div id="interactionHelp">Right-click a client for movement and presence controls. Static-world changes remain a browser preview.</div>
   </div>
@@ -300,6 +302,7 @@
     pendingPosition: null,
     positionTimer: null,
     lastPositionSentAt: 0,
+    recording: {active: false, export_ready: false},
   };
   if (liveMode || replayMode) document.body.classList.add('live-presentation');
 
@@ -503,6 +506,7 @@
       const active = (snapshot.movements || []).find(
         (item) => item.status === 'running' || item.status === 'paused');
       interaction.movement = active || null;
+      interaction.recording = snapshot.recording || interaction.recording;
     }
     const badge = $('#interactionBadge');
     badge.textContent = interaction.apiEnabled ? 'LIVE RF' : 'OBSERVER';
@@ -1053,6 +1057,11 @@
     $('#cancelMovement').disabled = !interactiveLiveMode || !activeMovement;
     $('#pauseMovement').textContent = activeMovement && activeMovement.status === 'paused'
       ? 'Resume walk' : 'Pause walk';
+    $('#recordInteraction').disabled = !interactiveLiveMode || !interaction.apiEnabled;
+    $('#recordInteraction').textContent = interaction.recording.active
+      ? 'Stop recording' : 'Start recording';
+    $('#downloadRecording').disabled = !interactiveLiveMode ||
+      !interaction.recording.export_ready;
     if (!preview) {
       $('#interactionSummary').innerHTML = interaction.mode === 'interact'
         ? 'Click or drag a <b>client</b> in the room.'
@@ -1464,6 +1473,50 @@
     controlMovement(action);
   });
   $('#cancelMovement').addEventListener('click', () => controlMovement('cancel'));
+  async function toggleRecording() {
+    if (!interactiveLiveMode || !interaction.apiEnabled) return;
+    if (!interaction.leaseToken && !(await acquireInteractionLease())) return;
+    if (interaction.recording.active) {
+      const stopped = await sendControl('/api/demo/recording/stop', 'POST', {});
+      if (stopped && stopped.recording) {
+        interaction.recording = stopped.recording;
+        interactionMessage(
+          'recorded ' + stopped.recording.keyframes + ' keyframes over ' +
+          (stopped.recording.duration_ms / 1000).toFixed(1) + ' seconds');
+      }
+    } else {
+      const fallback = 'interactive-room-' + new Date().toISOString()
+        .replace(/[-:]/g, '').replace(/\..*/, 'Z');
+      const name = window.prompt('Recording name', fallback);
+      if (name === null) return;
+      const started = await sendControl(
+        '/api/demo/recording/start', 'POST', {name});
+      if (started && started.recording) {
+        interaction.recording = started.recording;
+        interactionMessage('recording accepted room movements and presence changes');
+      }
+    }
+    update();
+  }
+  async function downloadRecording() {
+    const response = await fetch('/api/demo/recording/world', {cache: 'no-store'});
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      interactionMessage(body.message || 'recorded world is unavailable', true);
+      return;
+    }
+    const worldBlob = await response.blob();
+    const anchor = document.createElement('a');
+    const name = interaction.recording.name || 'interactive-room';
+    anchor.href = URL.createObjectURL(worldBlob);
+    anchor.download = name + '.world.json';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
+  }
+  $('#recordInteraction').addEventListener('click', toggleRecording);
+  $('#downloadRecording').addEventListener('click', downloadRecording);
   $('#resetSelected').addEventListener('click', () => {
     const role = interaction.hudRole || selected;
     if (role && interactiveLiveMode) resetLiveRole(role);
@@ -1522,6 +1575,8 @@
     if (event.kind === 'interaction.movement.completed') return displayRole(p.movement.role) + ' reached its destination';
     if (event.kind === 'interaction.movement.cancelled') return displayRole(p.movement.role) + ' walk cancelled';
     if (event.kind === 'interaction.movement.failed') return displayRole(p.movement.role) + ' walk failed';
+    if (event.kind === 'interaction.recording.started') return 'Interaction recording started';
+    if (event.kind === 'interaction.recording.stopped') return 'Recorded world is ready';
     if (event.kind === 'interaction.lease.acquired') return 'Interactive control acquired';
     if (event.kind === 'interaction.lease.released' || event.kind === 'interaction.lease.expired') return 'Interactive control released';
     if (event.kind === 'worker.error') return (p.fatal ? 'ERROR' : 'Transient warning') + ': ' + p.worker;
@@ -1569,6 +1624,11 @@
           interaction.movement = null;
         }
       }
+    } else if (event.kind === 'interaction.recording.started' ||
+               event.kind === 'interaction.recording.stopped') {
+      interaction.recording = event.payload.recording;
+      interaction.revision = Math.max(
+        interaction.revision, Number(event.payload.revision || 0));
     }
     const label = eventLabel(event);
     if (label) recentEvents.push({world_time_ms: event.world_time_ms, label});

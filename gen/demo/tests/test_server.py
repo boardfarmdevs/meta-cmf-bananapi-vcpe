@@ -51,6 +51,19 @@ class FakeInteractions:
             **body,
         }
 
+    def start_recording(self, **body):
+        return {"revision": self.revision, "recording": {"active": True}, **body}
+
+    def stop_recording(self, **body):
+        return {
+            "revision": self.revision,
+            "recording": {"active": False, "export_ready": True},
+            **body,
+        }
+
+    def recorded_world(self):
+        return {"schema": "wmdcfg.world-plan.v1", "name": "recorded"}
+
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
@@ -202,6 +215,24 @@ class InteractiveServerTests(unittest.TestCase):
             {"token": lease["token"], "expected_revision": 4},
         )
         self.assertEqual(cancelled["movement"]["status"], "cancel")
+
+    def test_recording_routes(self):
+        _, lease = self._request(
+            "/api/demo/interactions/lease", "POST", {"owner": "browser"}
+        )
+        status, started = self._request(
+            "/api/demo/recording/start", "POST",
+            {"token": lease["token"], "expected_revision": 2, "name": "walk"},
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(started["recording"]["active"])
+        _, stopped = self._request(
+            "/api/demo/recording/stop", "POST",
+            {"token": lease["token"], "expected_revision": 2},
+        )
+        self.assertTrue(stopped["recording"]["export_ready"])
+        _, world = self._request("/api/demo/recording/world")
+        self.assertEqual(world["schema"], "wmdcfg.world-plan.v1")
 
 
 if __name__ == "__main__":

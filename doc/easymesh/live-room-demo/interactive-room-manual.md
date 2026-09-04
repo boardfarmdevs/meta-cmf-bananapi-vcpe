@@ -113,6 +113,25 @@ controller page is open. Closing it or losing connectivity releases or
 expires the lease and freezes the last accepted room state; it does not
 silently undo a presentation.
 
+## Record and replay an improvised room walk
+
+1. Select **Start recording** and give the session a short name.
+2. Drag clients, run destination walks, or use disappear/reappear normally.
+3. Select **Stop recording**.
+4. Select **Download world**.
+
+Recording stores only accepted server state, never unacknowledged browser
+preview positions. The downloaded file is a compiled
+`wmdcfg.world-plan.v1`: it contains all bound clients, their time-based paths,
+presence intervals, and the calculated links for each 200 ms generation. It
+can be opened directly in the static viewer or supplied to the configurator as
+a deterministic scenario. The source `wmdcfg.mobility.v1` and compiled world
+are also retained in the run evidence as `recorded-mobility.json` and
+`recorded-world.json`.
+
+Stopping the interactive process while recording safely finalizes the partial
+recording before restoring the original RF matrix.
+
 ## Optional steering authority
 
 The default command runs the external optimizer in recommendation mode. To
@@ -150,6 +169,8 @@ Evidence is written under `/tmp/easymesh-room-demo-runs/<run-id>/`:
   telemetry, optimizer, traffic, health, and restoration events;
 - `health-preflight.json` and `health-postflight.json`;
 - `interactive-summary.json`; and
+- `recorded-mobility.json` and `recorded-world.json`, when a recording was
+  made; and
 - `evidence-index.json` with size and SHA-256 for every artifact.
 
 The terminal must finish with `outcome=passed restored=true`. Treat any failed
@@ -202,3 +223,8 @@ The reply supplies a movement ID. Pause and resume it with `POST` to
 /api/demo/movements/{id}`. Each control body carries the token and current
 `expected_revision`. `GET /api/demo/interactions` exposes active and completed
 movement state without exposing lease credentials.
+
+Recording uses `POST /api/demo/recording/start` with `token`,
+`expected_revision`, and `name`; `POST /api/demo/recording/stop` uses the token
+and revision. After stop, `GET /api/demo/recording/world` returns the compiled
+world document without requiring the lease.

@@ -256,6 +256,34 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         )
         self.assertEqual(cancelled["movement"]["status"], "cancelled")
 
+    def test_recording_exports_runnable_mobility_and_world_documents(self):
+        started = self.session.start_recording(
+            token=self.lease["token"], expected_revision=0, name="my room walk"
+        )
+        self.assertTrue(started["recording"]["active"])
+        time.sleep(0.01)
+        self.session.position(
+            "sta_01", token=self.lease["token"], expected_revision=0,
+            position=[8, 2], final=True,
+        )
+        time.sleep(0.01)
+        self.session.presence(
+            "sta_01", token=self.lease["token"], expected_revision=1,
+            present=False,
+        )
+        stopped = self.session.stop_recording(
+            token=self.lease["token"], expected_revision=2
+        )
+        self.assertTrue(stopped["recording"]["export_ready"])
+        mobility, world = self.session.recorded_documents()
+        self.assertEqual(mobility["schema"], "wmdcfg.mobility.v1")
+        self.assertEqual(mobility["name"], "my-room-walk")
+        self.assertEqual(world["schema"], "wmdcfg.world-plan.v1")
+        self.assertEqual(self.session.recorded_world(), world)
+        station = next(item for item in mobility["nodes"] if item["role"] == "sta_01")
+        self.assertEqual(station["path"][-1]["position"], [8.0, 2.0])
+        self.assertNotEqual(station["presence"], [[0, mobility["duration_ms"]]])
+
 
 if __name__ == "__main__":
     unittest.main()

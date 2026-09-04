@@ -408,6 +408,17 @@ def _interactive(args) -> int:
         except Exception as error:
             outcome = "failed"
             error_text = f"{error_text + '; ' if error_text else ''}postflight: {error}"
+        recorded_mobility, recorded_world = interactions.recorded_documents()
+        if recorded_mobility is not None:
+            (runner.run_dir / "recorded-mobility.json").write_text(
+                json.dumps(recorded_mobility, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if recorded_world is not None:
+            (runner.run_dir / "recorded-world.json").write_text(
+                json.dumps(recorded_world, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         summary = {
             "schema": "easymesh.room-demo.interactive-summary.v1",
             "run_id": run_id,

@@ -253,9 +253,9 @@ explain.
 
 ### Current implementation status
 
-Phase 1, client live-RF actuation, and server-owned destination movement are
-implemented on the RDK interactive-room branch. Static worlds remain safely
-labeled **PREVIEW ONLY**.
+Phase 1, client live-RF actuation, server-owned destination movement, and
+record/export are implemented on the RDK interactive-room branch. Static
+worlds remain safely labeled **PREVIEW ONLY**.
 Running `room-demo interactive` adds a green **LIVE RF** state with a
 single-writer renewable lease, optimistic revisions, throttled/serialized
 position updates, atomic all-band wmediumd application, per-generation
@@ -265,9 +265,11 @@ the signed Golden World remains immutable.
 
 Live controls currently cover all bound clients. Constant-speed destination
 walks continue at the server and can be paused, resumed or cancelled without
-making the browser an RF clock. Gateway/extender motion, hybrid takeover,
-recording/export, full-room editing, and optimizer authority beyond the
-existing bounded hero policy remain subsequent delivery work.
+making the browser an RF clock. Accepted movements and presence changes can be
+recorded and downloaded as a compiled `wmdcfg.world-plan.v1` file. Gateway and
+extender motion, hybrid takeover/rejoin, full-room editing, and optimizer
+authority beyond the existing bounded hero policy remain subsequent delivery
+work.
 
 ### Phase 1: safe interactive preview
 

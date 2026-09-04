@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from wmdcfg.actuator import ActuatorError, ControlClient
 from wmdcfg.runner import FREQUENCY_CAPABILITIES, Runner
-from wmdcfg.world import _link
+from wmdcfg.world import _link, compile_world
 
 from .events import EventStore
 
@@ -66,6 +66,9 @@ class InteractiveMediumSession:
         self._closing = False
         self._movements: dict[str, dict[str, Any]] = {}
         self._movement_threads: dict[str, threading.Thread] = {}
+        self._recording: dict[str, Any] | None = None
+        self._recorded_mobility: dict[str, Any] | None = None
+        self._recorded_world: dict[str, Any] | None = None
         first = world["generations"][0]
         self._roles = {
             role: {
@@ -207,6 +210,7 @@ class InteractiveMediumSession:
                         self._movements.values(), key=lambda item: item["created_monotonic"]
                     )
                 ],
+                "recording": self._recording_status(),
                 "restored": self._restored,
                 "fault": self._faulted,
             }
@@ -404,6 +408,208 @@ class InteractiveMediumSession:
         for movement in self._movements.values():
             if movement.get("lease_token") == token:
                 self._cancel_movement(movement, reason)
+
+    def _recording_status(self) -> dict[str, Any]:
+        if self._recording is None:
+            status = {
+                "active": False,
+                "export_ready": self._recorded_world is not None,
+            }
+            if self._recorded_mobility is not None:
+                status.update({
+                    "name": self._recorded_mobility["name"],
+                    "duration_ms": self._recorded_mobility["duration_ms"],
+                })
+            return status
+        frames = sum(len(value) for value in self._recording["frames"].values())
+        return {
+            "active": True,
+            "export_ready": False,
+            "name": self._recording["name"],
+            "started_at": self._recording["started_at"],
+            "duration_ms": self._recording_time(),
+            "keyframes": frames,
+        }
+
+    def _recording_time(self) -> int:
+        if self._recording is None:
+            return 0
+        return max(
+            0,
+            round((time.monotonic() - self._recording["started_monotonic"]) * 1000),
+        )
+
+    def _record_frame(self, role: str) -> None:
+        if self._recording is None:
+            return
+        frames = self._recording["frames"][role]
+        frame = {
+            "time_ms": self._recording_time(),
+            "position": list(self._roles[role]["position"]),
+            "present": bool(self._roles[role]["present"]),
+        }
+        if frames and frame["time_ms"] == frames[-1]["time_ms"]:
+            frames[-1] = frame
+        elif not frames or (
+            frame["position"] != frames[-1]["position"]
+            or frame["present"] != frames[-1]["present"]
+        ):
+            frames.append(frame)
+
+    def start_recording(
+        self, *, token: str, expected_revision: Any, name: Any = None
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._require_lease(token)
+            self._validate_control_revision(expected_revision)
+            if self._recording is not None:
+                raise InteractionError(409, "recording_active", "a recording is already active")
+            raw_name = str(name or "interactive-room").strip()
+            clean_name = "".join(
+                character if character.isalnum() or character in "-_" else "-"
+                for character in raw_name
+            ).strip("-")[:80]
+            if not clean_name:
+                raise InteractionError(400, "invalid_recording_name", "recording name is empty")
+            now = dt.datetime.now(dt.timezone.utc)
+            self._recording = {
+                "name": clean_name,
+                "started_at": now.isoformat(),
+                "started_monotonic": time.monotonic(),
+                "frames": {
+                    role: [{
+                        "time_ms": 0,
+                        "position": list(self._roles[role]["position"]),
+                        "present": bool(self._roles[role]["present"]),
+                    }]
+                    for role in self._allowed_roles
+                },
+            }
+            self._recorded_mobility = None
+            self._recorded_world = None
+            payload = {"revision": self._revision, "recording": self._recording_status()}
+            self.store.emit(
+                "interaction.recording.started", self._world_time(), payload,
+                producer="interaction",
+            )
+            return payload
+
+    def _validate_control_revision(self, expected_revision: Any) -> int:
+        try:
+            revision = int(expected_revision)
+        except (TypeError, ValueError) as error:
+            raise InteractionError(
+                400, "invalid_revision", "expected_revision is required"
+            ) from error
+        if revision > self._revision:
+            raise InteractionError(
+                409, "stale_revision",
+                f"expected revision {revision} is ahead of current revision {self._revision}",
+            )
+        return revision
+
+    @staticmethod
+    def _presence_intervals(
+        frames: list[dict[str, Any]], duration_ms: int
+    ) -> list[list[int]]:
+        intervals: list[list[int]] = []
+        present = bool(frames[0]["present"])
+        start = 0 if present else None
+        for frame in frames[1:]:
+            current = bool(frame["present"])
+            when = min(duration_ms, int(frame["time_ms"]))
+            if present and not current and start is not None and start < when:
+                intervals.append([start, when])
+                start = None
+            elif not present and current:
+                start = when
+            present = current
+        if present and start is not None and start < duration_ms:
+            intervals.append([start, duration_ms])
+        return intervals
+
+    def _finish_recording(self, reason: str) -> dict[str, Any]:
+        assert self._recording is not None
+        elapsed = self._recording_time()
+        tick_ms = 200
+        duration_ms = max(tick_ms, math.ceil((elapsed + 1) / tick_ms) * tick_ms)
+        nodes = []
+        for role in self._allowed_roles:
+            frames = copy.deepcopy(self._recording["frames"][role])
+            positions = [frames[0]]
+            for frame in frames[1:]:
+                if frame["position"] != positions[-1]["position"]:
+                    positions.append(frame)
+            node: dict[str, Any] = {"role": role}
+            if len(positions) == 1:
+                node["position"] = positions[0]["position"]
+            else:
+                node["path"] = [
+                    {"time_ms": int(frame["time_ms"]),
+                     "position": frame["position"]}
+                    for frame in positions
+                ]
+            presence = self._presence_intervals(frames, duration_ms)
+            if presence != [[0, duration_ms]]:
+                node["presence"] = presence
+            nodes.append(node)
+        mobility = {
+            "schema": "wmdcfg.mobility.v1",
+            "name": self._recording["name"],
+            "tags": ["interactive-recording", f"clients-{len(self._allowed_roles)}"],
+            "duration_ms": duration_ms,
+            "tick_ms": tick_ms,
+            "seed": 0,
+            "nodes": nodes,
+        }
+        world = compile_world(self.layout, mobility)
+        self._recorded_mobility = mobility
+        self._recorded_world = world
+        name = self._recording["name"]
+        keyframes = sum(len(value) for value in self._recording["frames"].values())
+        self._recording = None
+        payload = {
+            "revision": self._revision,
+            "recording": {
+                "active": False,
+                "export_ready": True,
+                "name": name,
+                "duration_ms": duration_ms,
+                "keyframes": keyframes,
+                "reason": reason,
+                "world_url": "/api/demo/recording/world",
+            },
+        }
+        self.store.emit(
+            "interaction.recording.stopped", self._world_time(), payload,
+            producer="interaction",
+        )
+        return payload
+
+    def stop_recording(
+        self, *, token: str, expected_revision: Any
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._require_lease(token)
+            self._validate_control_revision(expected_revision)
+            if self._recording is None:
+                raise InteractionError(409, "recording_inactive", "no recording is active")
+            return self._finish_recording("operator_stopped")
+
+    def recorded_world(self) -> dict[str, Any]:
+        with self._lock:
+            if self._recorded_world is None:
+                raise InteractionError(409, "recording_unavailable", "stop a recording first")
+            return copy.deepcopy(self._recorded_world)
+
+    def recorded_documents(
+        self,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        with self._lock:
+            return (
+                copy.deepcopy(self._recorded_mobility),
+                copy.deepcopy(self._recorded_world),
+            )
 
     def move(
         self,
@@ -706,6 +912,7 @@ class InteractiveMediumSession:
             if readback != applied:
                 raise ActuatorError("interactive generation readback mismatch")
             self._revision += 1
+            self._record_frame(role)
         except Exception as error:
             if applied_started:
                 self._faulted = str(error)
@@ -787,6 +994,8 @@ class InteractiveMediumSession:
             self._closing = True
             for movement in self._movements.values():
                 self._cancel_movement(movement, "session_stopped")
+            if self._recording is not None:
+                self._finish_recording("session_stopped")
             threads = list(self._movement_threads.values())
         for thread in threads:
             thread.join(timeout=2)
