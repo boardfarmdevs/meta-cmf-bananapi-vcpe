@@ -62,6 +62,7 @@ class InteractiveMediumSession:
         self._generation = 0
         self._revision = 0
         self._environment_epoch = 0
+        self._measurement_epoch = 0
         self._last_rf_apply_monotonic: float | None = None
         self._last_rf_applied_at: str | None = None
         self._last_rf_role: str | None = None
@@ -229,6 +230,7 @@ class InteractiveMediumSession:
                 "enabled": self._client is not None,
                 "revision": self._revision,
                 "environment_epoch": self._environment_epoch,
+                "measurement_epoch": self._measurement_epoch,
                 "last_rf_applied_at": self._last_rf_applied_at,
                 "last_rf_role": self._last_rf_role,
                 "stable_for_seconds": (
@@ -1142,11 +1144,11 @@ class InteractiveMediumSession:
                             raise ActuatorError(self._faulted)
                         self._applied_values[key] = (value, overridden)
                     # Measurements collected while the temporary steering
-                    # matrix was active are not room truth.  Make the exact
-                    # restoration a new environment epoch so the optimizer
-                    # requires a fresh serving-link observation before its
-                    # next fleet decision.
-                    self._mark_rf_committed(station_role)
+                    # matrix was active are not room truth.  Mark a freshness
+                    # boundary without changing the environment epoch: the
+                    # authoritative geometry is unchanged and optimizer
+                    # cooldown/history must survive this transaction.
+                    self._mark_measurements_stale(station_role)
                 self.store.emit(
                     "rf.steering_assist.completed", self._world_time(),
                     {
@@ -1163,6 +1165,7 @@ class InteractiveMediumSession:
                         "error": None if action_error is None else str(action_error),
                         "daemon_generation": self._generation,
                         "environment_epoch": self._environment_epoch,
+                        "measurement_epoch": self._measurement_epoch,
                     },
                     producer="room-engine",
                 )
@@ -1172,6 +1175,10 @@ class InteractiveMediumSession:
 
     def _mark_rf_committed(self, role: str | None = None) -> None:
         self._environment_epoch += 1
+        self._mark_measurements_stale(role)
+
+    def _mark_measurements_stale(self, role: str | None = None) -> None:
+        self._measurement_epoch += 1
         self._last_rf_apply_monotonic = time.monotonic()
         self._last_rf_applied_at = dt.datetime.now(dt.timezone.utc).isoformat()
         self._last_rf_role = role

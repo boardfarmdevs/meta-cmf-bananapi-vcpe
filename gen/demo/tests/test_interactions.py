@@ -237,6 +237,7 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         before_generation = self.client.generation
         before_values = dict(self.client.values)
         before_epoch = self.session.snapshot()["environment_epoch"]
+        before_measurement_epoch = self.session.snapshot()["measurement_epoch"]
         observed = {}
 
         def action():
@@ -269,7 +270,10 @@ class InteractiveMediumSessionTests(unittest.TestCase):
             (20, True),
         )
         snapshot = self.session.snapshot()
-        self.assertEqual(snapshot["environment_epoch"], before_epoch + 1)
+        self.assertEqual(snapshot["environment_epoch"], before_epoch)
+        self.assertEqual(
+            snapshot["measurement_epoch"], before_measurement_epoch + 1
+        )
         self.assertEqual(snapshot["last_rf_role"], "sta_01")
         events = self.store.all()
         self.assertIn("rf.steering_assist.started", [item["kind"] for item in events])
@@ -278,7 +282,11 @@ class InteractiveMediumSessionTests(unittest.TestCase):
             if item["kind"] == "rf.steering_assist.completed"
         )
         self.assertTrue(completed["payload"]["room_matrix_restored"])
-        self.assertEqual(completed["payload"]["environment_epoch"], before_epoch + 1)
+        self.assertEqual(completed["payload"]["environment_epoch"], before_epoch)
+        self.assertEqual(
+            completed["payload"]["measurement_epoch"],
+            before_measurement_epoch + 1,
+        )
 
     def test_steering_assist_restores_after_action_failure(self):
         before_values = dict(self.client.values)

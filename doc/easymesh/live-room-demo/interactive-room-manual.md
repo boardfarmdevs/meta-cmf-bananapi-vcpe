@@ -237,8 +237,9 @@ this closed loop:
    until the physical target association succeeds or the bounded ten-second
    verification expires;
 10. atomically restore and read back the exact authoritative room RF matrix,
-    start a new measurement epoch, and reject telemetry sampled while the
-    steering assist was active; and
+    start a new measurement-freshness epoch without changing the room
+    environment epoch, and reject telemetry sampled while the steering assist
+    was active; and
 11. verify the physical BSSID, controller ownership and traffic before
     checking the whole fleet again.
 
@@ -261,6 +262,13 @@ without being kicked off its serving BSS. If it declines, the same transaction
 makes one disassociation-imminent retry; the verifier still requires the exact
 nominated BSSID and does not count a landing on a different AP as success. A
 later fleet cycle retries any unresolved client from its new live state.
+
+An assist restoration does not reset optimizer cooldown, failure history or
+hold state for unrelated clients because the authoritative room geometry did
+not change. It advances only `measurement_epoch` and the RF freshness
+timestamp. A committed drag, walk, presence change or reset advances both the
+room `environment_epoch` and measurement epoch and therefore resets policy
+hold state for the genuinely changed environment.
 
 Refreshing the eligible BSS set is important in repeated demonstrations. The
 associated BSS cannot be removed by `bss_flush`, and populated records for
