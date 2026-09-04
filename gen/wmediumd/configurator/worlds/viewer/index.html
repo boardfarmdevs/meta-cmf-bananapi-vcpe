@@ -1360,18 +1360,25 @@
       const automatic = !!optimizerState.automatic_actuation;
       const used = Number(optimizerState.actions_used || 0);
       const limit = Number(optimizerState.maximum_actions || 0);
+      const fleet = optimizerState.fleet || {};
+      const stronger = Number(fleet.clients_with_stronger_ap || 0);
+      const checked = Number(fleet.clients_checked || 0);
+      const total = Number(fleet.clients_evaluated || 0);
       $('#optimizerMetrics').innerHTML =
         '<div><span class="phase ' + phaseClass(phase) + '">' + esc(phase) + '</span> ' +
         '<span class="phase">' + esc(automatic ? 'AUTO BTM' : optimizerState.mode) + '</span>' + outcomeBadge + '</div>' +
         '<div class="policy-reason" style="margin-top:6px"><b>' + esc(d.reason || 'waiting') + '</b></div>' +
         '<div class="metric-grid"><span>Current</span><b>' + esc(d.current_rcpi == null ? 'N/A' : 'RCPI ' + d.current_rcpi) + '</b>' +
-        '<span>Moved client</span><b>' + esc(displayRole(optimizerState.subject_role)) + '</b>' +
+        '<span>Current focus</span><b>' + esc(displayRole(optimizerState.subject_role)) + '</b>' +
         '<span>Best target</span><b>' + esc(target || 'none') + '</b>' +
         '<span>Target metric</span><b>' + esc(d.target_rcpi == null ? 'N/A' : 'RCPI ' + d.target_rcpi) + '</b>' +
         '<span>Hold</span><b>' + esc(Number(d.hold_seconds || 0).toFixed(1)) + ' s</b>' +
+        '<span>Fleet check</span><b>' + esc(checked) + ' / ' + esc(total) + ' clients</b>' +
+        '<span>Stronger AP available</span><b>' + esc(stronger) + '</b>' +
         '<span>Action budget</span><b>' + esc(used) + ' / ' + esc(limit || '—') + '</b>' +
         '<span>Automatic steering</span><b>' + (automatic
-          ? (optimizerState.automatic_actuation_ready ? 'ready' : used >= limit ? 'limit reached' : 'waiting for client movement')
+          ? (used >= limit ? 'limit reached' : fleet.converged ? 'fleet converged' :
+            optimizerState.automatic_actuation_ready ? 'reconciling fleet' : 'waiting')
           : 'recommend only') + '</b>' +
         '<span>Action window</span><b>' + (optimizerState.action_window_kind === 'stable_interactive_environment'
           ? 'interactive session' : optimizerState.action_window_open ? 'open' : 'closed') + '</b></div>' +

@@ -286,10 +286,16 @@ def _interactive(args) -> int:
             ),
         )
     )
+    # Interactive act mode is a continuously running reconciler. Keep a
+    # generous explicit circuit breaker rather than inheriting the scripted
+    # demonstration's single-action budget.
+    maximum_actions = args.max_actions
+    if maximum_actions is None and args.mode == "act":
+        maximum_actions = 100
     conductor = LiveConductor(
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
-        interactive=True, maximum_actions=args.max_actions,
+        interactive=True, maximum_actions=maximum_actions,
     )
     server = RoomDemoServer(
         args.listen,
@@ -560,7 +566,7 @@ def parser() -> argparse.ArgumentParser:
     interactive.add_argument("--yes-act", action="store_true")
     interactive.add_argument(
         "--max-actions", type=int,
-        help="maximum automatic BTM requests in act mode (default: manifest limit)",
+        help="automatic BTM circuit breaker in act mode (default: 100)",
     )
     interactive.add_argument("--base-url", default="http://127.0.0.1:8888")
     interactive.add_argument(

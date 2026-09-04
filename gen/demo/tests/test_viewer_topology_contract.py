@@ -42,7 +42,9 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("AUTO BTM", source)
         self.assertIn("Action budget", source)
         self.assertIn("optimizerSubjectRole()", source)
-        self.assertIn("waiting for client movement", source)
+        self.assertIn("Fleet check", source)
+        self.assertIn("Stronger AP available", source)
+        self.assertIn("reconciling fleet", source)
 
 
 if __name__ == "__main__":

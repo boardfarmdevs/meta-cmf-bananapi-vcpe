@@ -11,7 +11,12 @@ if sys.version_info < (3, 9):
 from optimizer.model import ClientObservation, MeshHealth, Snapshot
 from optimizer.policy import Decision, Evaluation
 from optimizer.state import ClientPolicyState, PolicyState
-from room_demo.conductor import LiveConductor, _deferred_state
+from room_demo.conductor import (
+    LiveConductor,
+    _deferred_state,
+    _fleet_status,
+    _single_action_state,
+)
 from room_demo.events import EventStore
 
 
@@ -103,6 +108,78 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertEqual(state.phase, "holding")
         self.assertIsNone(state.pending_since)
         self.assertIsNone(state.last_action_at)
+
+    def test_single_fleet_action_leaves_other_client_eligible(self):
+        first = "02:00:00:00:03:00"
+        second = "02:00:00:00:0c:00"
+        pending = tuple(
+            ClientPolicyState(
+                sta_mac=sta,
+                phase="pending",
+                source_bssid="02:00:00:00:01:01",
+                target_bssid="02:00:00:00:04:01",
+                condition_since="2026-09-03T00:00:00Z",
+                pending_since="2026-09-03T00:00:10Z",
+                last_action_at="2026-09-03T00:00:10Z",
+            )
+            for sta in (first, second)
+        )
+        evaluation = Evaluation(
+            "hash",
+            tuple(Decision(
+                sta_mac=sta,
+                action="steer",
+                reason="threshold_margin_hold_satisfied",
+                source_bssid="02:00:00:00:01:01",
+                target_bssid="02:00:00:00:04:01",
+            ) for sta in (first, second)),
+            PolicyState(pending),
+        )
+
+        state = _single_action_state(PolicyState(), evaluation, first)
+
+        self.assertEqual(state.for_sta(first).phase, "pending")
+        self.assertEqual(state.for_sta(second).phase, "holding")
+        self.assertIsNone(state.for_sta(second).pending_since)
+
+    def test_fleet_convergence_uses_measured_best_ap_not_hold_phase(self):
+        clients = (
+            ClientObservation(
+                sta_mac="02:00:00:00:03:00",
+                connected_device_id="02:00:00:00:00:01",
+                connected_device_name="Agent-1",
+                connected_bssid="02:00:00:00:01:01",
+                rcpi=80,
+                association_uptime_seconds=90,
+                metric_observed_at="2026-09-03T00:00:00Z",
+                measurement_source="associated_sta_link_metrics",
+                band="5", ssid="private_ssid", cohort="private",
+            ),
+        )
+        from optimizer.model import CandidateObservation
+        snapshot = Snapshot(
+            schema_version=1, sequence=0,
+            observed_at="2026-09-03T00:00:00Z",
+            controller_url="http://controller",
+            health=MeshHealth(devices=5, clients=1, bsses=50),
+            clients=clients,
+            candidates=(CandidateObservation(
+                sta_mac=clients[0].sta_mac,
+                bssid="02:00:00:00:04:01",
+                device_id="02:00:00:00:00:04",
+                device_name="Extender-1",
+                rcpi=138,
+                metric_observed_at="2026-09-03T00:00:00Z",
+                measurement_source="candidate",
+                band="5",
+            ),),
+        )
+
+        status = _fleet_status(snapshot, {clients[0].sta_mac})
+
+        self.assertFalse(status["converged"])
+        self.assertEqual(status["clients_with_stronger_ap"], 1)
+        self.assertEqual(status["stronger_candidates"][0]["gain_rcpi"], 58)
 
     def test_interactive_action_window_is_not_bound_to_scenario_time(self):
         conductor, _store = self._conductor()

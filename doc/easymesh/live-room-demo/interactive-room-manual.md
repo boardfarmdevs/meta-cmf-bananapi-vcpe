@@ -193,38 +193,52 @@ start the room in explicitly authorized act mode:
 gen/demo/room-demo interactive \
   --mode act \
   --yes-act \
-  --max-actions 10 \
+  --max-actions 100 \
   --listen 0.0.0.0:8891
 ```
 
 Interactive act mode is not constrained by the prerecorded scenario's
-150--220 second action window. The action budget is explicit and remains
-bounded by `--max-actions`; without that option the manifest limit applies.
-Automatic actuation follows the most recently moved, present client. The
-client remains within its existing SSID and band; private and hidden-IoT
-candidate inventories never mix. The selected target is the strongest
-eligible same-network, same-band AP and must still improve RCPI by at least
-the configured margin. This keeps hysteresis: a negligible difference does
-not cause a needless roam.
+150--220 second action window. It continuously checks the complete live client
+roster, including before any manual movement. The default circuit breaker is
+100 automatic BTM requests per run and can be changed with `--max-actions`.
 
-After a client movement is committed, the room performs this closed loop:
+Every client remains within its existing SSID and band; private and hidden-IoT
+candidate inventories never mix. For each client, the optimizer measures all
+eligible same-network, same-band APs. A client becomes eligible when another
+AP is strictly stronger (at least one RCPI unit in this interactive
+reconciliation mode) for the configured five-second hold. If several clients
+are eligible together, the optimizer moves the client with the largest RCPI
+gain first. Only one BTM transaction runs at a time. The next complete fleet
+measurement then determines the next action. Exact ties do not roam, avoiding
+gratuitous ping-pong.
+
+At initial startup and after every committed room movement, the room performs
+this closed loop:
 
 1. atomically apply and read back the new directional wmediumd links;
 2. reset the optimizer hold state for the new environment epoch;
 3. wait until movement stops and RF has been stable for at least two seconds;
-4. require serving-link telemetry newer than the RF application;
-5. collect same-SSID, same-band candidate measurements without allowing the
-   room to change during that transaction;
-6. apply the configured threshold, gain and five-second hold policy;
-7. send `gen/steer.sh --request-only` for the selected BSSID; and
-8. verify the physical BSSID, controller ownership and traffic.
+4. require serving-link telemetry newer than the RF application (for the
+   complete roster on startup, or the moved client after an edit);
+5. collect same-SSID, same-band candidate measurements for all 20 clients
+   without allowing the room to change during that transaction;
+6. apply the gain and five-second hold policy to every client;
+7. select at most one client, preferring the largest measured RCPI gain;
+8. use a directed scan to resolve the nominated BSSID and SSID, including the
+   hidden `iot_ssid`, then send `gen/steer.sh --request-only`; and
+9. verify the physical BSSID, controller ownership and traffic before checking
+   the whole fleet again.
 
 The request-only path does not install another RF bias and does not force a
-client roam. The client changes AP only after the normal controller, EasyMesh,
-BTM, supplicant and association path succeeds. Allow roughly 10--30 seconds
-after the client stops for fresh telemetry, measurement, policy hold and
-verification. The Optimizer card shows `AUTO BTM`, the action budget and the
-current waiting/ready state.
+client roam. Its directed scan establishes hidden-BSS ESS identity but leaves
+the current room RF matrix untouched. The client changes AP only after the
+normal controller, EasyMesh, BTM, supplicant and association path succeeds.
+Full initial convergence may take several minutes because controller candidate
+queries and steering transactions are serialized deliberately. After the
+fleet converges, measurements continue indefinitely; a later room movement or
+radio change starts a new environment epoch and reconciliation resumes. The
+Optimizer card shows `AUTO BTM`, checked clients, clients with a stronger AP,
+the current focus, and the action circuit breaker.
 
 ## Public no-connect sandbox
 

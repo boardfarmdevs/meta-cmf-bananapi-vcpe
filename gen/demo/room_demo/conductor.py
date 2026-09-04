@@ -72,6 +72,65 @@ def _deferred_state(prior: PolicyState, evaluation) -> PolicyState:
     return state
 
 
+def _single_action_state(
+    prior: PolicyState, evaluation, selected_sta: str
+) -> PolicyState:
+    """Keep all non-selected steer candidates eligible for the next cycle."""
+    state = evaluation.state
+    for decision in evaluation.decisions:
+        if decision.action != "steer" or decision.sta_mac == selected_sta:
+            continue
+        proposed = state.for_sta(decision.sta_mac)
+        previous = prior.for_sta(decision.sta_mac)
+        state = state.replace(replace(
+            proposed,
+            phase="holding",
+            pending_since=None,
+            last_action_at=previous.last_action_at,
+        ))
+    return state
+
+
+def _fleet_status(snapshot, selected_sta_macs: set[str]) -> dict[str, Any]:
+    """Summarize measured best-AP convergence independently of policy phase."""
+    better: list[dict[str, Any]] = []
+    for client in snapshot.clients:
+        if client.rcpi is None:
+            continue
+        candidates = [
+            item for item in snapshot.candidates_for(client.sta_mac)
+            if item.eligible and item.rcpi is not None
+            and item.bssid != client.connected_bssid
+        ]
+        if not candidates:
+            continue
+        best = max(candidates, key=lambda item: (int(item.rcpi), item.bssid))
+        if int(best.rcpi) > int(client.rcpi):
+            better.append({
+                "sta_mac": client.sta_mac,
+                "current_bssid": client.connected_bssid,
+                "current_rcpi": client.rcpi,
+                "target_bssid": best.bssid,
+                "target_rcpi": best.rcpi,
+                "gain_rcpi": int(best.rcpi) - int(client.rcpi),
+            })
+    checked = len(selected_sta_macs)
+    total = len(snapshot.clients)
+    return {
+        "clients_evaluated": total,
+        "clients_checked": checked,
+        "candidate_measurements": sum(
+            item.rcpi is not None for item in snapshot.candidates
+        ),
+        "clients_with_stronger_ap": len(better),
+        "stronger_candidates": sorted(
+            better, key=lambda item: (-item["gain_rcpi"], item["sta_mac"])
+        ),
+        "measurement_complete": checked == total,
+        "converged": checked == total and not better,
+    }
+
+
 def _rssi(rcpi: int | None) -> int | None:
     return None if rcpi is None else int(round(rcpi / 2 - 110))
 
@@ -505,10 +564,10 @@ class LiveConductor:
             return
         if self.interactive:
             label = (
-                "Move any client; closed-loop steering is automatic after "
-                "fresh telemetry and policy hold"
+                "Continuous topology reconciliation is active; move any client "
+                "and the optimizer will reconverge the fleet"
                 if self.mode == "act" else
-                "Move any client; the optimizer will recommend from live telemetry"
+                "The optimizer continuously recommends the best eligible APs"
             )
             self.store.emit(
                 "demo.mark", self._time(), {"label": label, "interactive": True},
@@ -538,15 +597,18 @@ class LiveConductor:
             # best eligible AP. Keep the normal gain/hysteresis gate, but do
             # not require the old association to be below the weak-link
             # threshold before measuring alternatives.
-            policy_config = replace(policy_config, current_rcpi_below=220)
+            policy_config = replace(
+                policy_config,
+                current_rcpi_below=220,
+                minimum_target_gain_rcpi=1,
+            )
         policy = ThresholdPolicy(policy_config)
-        subject_mac = self.hero_mac
         provider = ControllerCandidateProvider(
             self.base_url,
             allow_simulated=bool(optimizer["allow_simulated_candidates"]),
             request_attempts=2,
             client_selector=lambda client, observed_at: (
-                client.sta_mac == subject_mac
+                (self.interactive or client.sta_mac == self.hero_mac)
                 and policy.requires_candidate_measurement(client, observed_at)
             ),
         )
@@ -606,30 +668,12 @@ class LiveConductor:
                         if self._sleep(0.5):
                             break
                         continue
-                subject = self._optimization_subject(room_before)
-                if subject is None:
-                    self.store.emit(
-                        "optimizer.measurement.waiting", self._time(),
-                        {
-                            "reason": (
-                                "client_movement_required"
-                                if not room_before or not room_before.get("last_rf_role")
-                                else "moved_client_absent"
-                            ),
-                            "environment_epoch": (
-                                None if room_before is None else
-                                room_before.get("environment_epoch")
-                            ),
-                            "world_revision": (
-                                None if room_before is None else room_before.get("revision")
-                            ),
-                        },
-                        producer="optimizer",
+                preferred_subject = self._optimization_subject(room_before)
+                if preferred_subject is None:
+                    hero_role = self.manifest["hero"]["role"]
+                    preferred_subject = (
+                        hero_role, self.hero_mac, self.hero_container
                     )
-                    if self._sleep(0.5):
-                        break
-                    continue
-                subject_role, subject_mac, subject_container = subject
                 self._candidate_active.set()
                 with self._controller_lock:
                     snapshot = observer.observe()
@@ -659,19 +703,22 @@ class LiveConductor:
                             producer="optimizer",
                         )
                         continue
-                    subject_observation = next(
-                        (item for item in snapshot.clients if item.sta_mac == subject_mac),
-                        None,
-                    )
                     applied_at = room_after.get("last_rf_applied_at")
-                    observed_at = (
-                        subject_observation.metric_observed_at
-                        if subject_observation is not None else None
-                    )
-                    if applied_at and observed_at:
+                    if applied_at:
                         applied_time = parse_time(applied_at)
-                        metric_time = parse_time(observed_at)
-                        if metric_time <= applied_time:
+                        moved_role = room_after.get("last_rf_role")
+                        moved_mac = self._mac_by_role.get(str(moved_role))
+                        relevant = (
+                            [item for item in snapshot.clients
+                             if item.sta_mac == moved_mac]
+                            if moved_mac else list(snapshot.clients)
+                        )
+                        not_fresh = [
+                            item for item in relevant
+                            if item.metric_observed_at is None
+                            or parse_time(item.metric_observed_at) <= applied_time
+                        ]
+                        if not_fresh:
                             self.store.emit(
                                 "optimizer.measurement.waiting", self._time(),
                                 {
@@ -679,47 +726,69 @@ class LiveConductor:
                                     "environment_epoch": room_after["environment_epoch"],
                                     "world_revision": room_after["revision"],
                                     "rf_applied_at": applied_at,
-                                    "metric_observed_at": observed_at,
+                                    "waiting_clients": len(not_fresh),
+                                    "waiting_roles": [
+                                        self._role_by_mac.get(item.sta_mac)
+                                        for item in not_fresh
+                                    ],
                                 },
                                 producer="optimizer",
                             )
                             continue
                 prior = state
                 evaluation = policy.evaluate(snapshot, prior)
-                decision = next(
-                    (item for item in evaluation.decisions if item.sta_mac == subject_mac),
-                    None,
-                )
-                if decision is None:
+                if not evaluation.decisions:
                     self.store.emit(
                         "optimizer.measurement.waiting", self._time(),
-                        {
-                            "reason": "moved_client_not_in_controller",
-                            "subject_role": subject_role,
-                            "subject_mac": subject_mac,
-                        },
+                        {"reason": "controller_client_roster_empty"},
                         producer="optimizer",
                     )
                     continue
+                steer_decisions = [
+                    item for item in evaluation.decisions if item.action == "steer"
+                ]
+                fleet = _fleet_status(snapshot, provider.last_selected_sta_macs)
+                selected_action = max(
+                    steer_decisions,
+                    key=lambda item: (
+                        (item.target_rcpi or 0) - (item.current_rcpi or 0),
+                        item.sta_mac,
+                    ),
+                    default=None,
+                )
+                preferred_role, preferred_mac, _preferred_container = preferred_subject
+                preferred_decision = next(
+                    (item for item in evaluation.decisions
+                     if item.sta_mac == preferred_mac),
+                    None,
+                )
+                decision = selected_action or preferred_decision or min(
+                    evaluation.decisions,
+                    key=lambda item: (
+                        item.current_rcpi if item.current_rcpi is not None else 221,
+                        item.sta_mac,
+                    ),
+                )
+                subject_mac = decision.sta_mac
+                subject_role = self._role_by_mac.get(subject_mac, preferred_role)
+                subject_container = self._container_by_mac[subject_mac]
                 now = self._time()
                 window_open, window_kind = self._action_window(now, action_window)
                 can_act = (
                     self.mode == "act"
                     and window_open
                     and self.action_attempts < maximum_actions
-                    and (
-                        not self.interactive
-                        or room_after is not None
-                        and room_after.get("last_rf_role")
-                        == subject_role
-                    )
                 )
-                if decision.action == "steer" and self.mode == "recommend":
+                if steer_decisions and self.mode == "recommend":
                     state = _recommendation_state(prior, evaluation)
-                elif decision.action == "steer" and self.mode == "act" and not can_act:
+                elif steer_decisions and self.mode == "act" and not can_act:
                     state = (
                         _deferred_state(prior, evaluation)
                         if not window_open else _recommendation_state(prior, evaluation)
+                    )
+                elif selected_action is not None and can_act:
+                    state = _single_action_state(
+                        prior, evaluation, selected_action.sta_mac
                     )
                 else:
                     state = evaluation.state
@@ -752,6 +821,10 @@ class LiveConductor:
                         "automatic_actuation_ready": can_act,
                         "optimization_goal": "best_eligible_same_network_band_ap",
                         "minimum_target_gain_rcpi": policy.config.minimum_target_gain_rcpi,
+                        "fleet": {
+                            **fleet,
+                            "actionable_clients": len(steer_decisions),
+                        },
                         "actions_used": self.action_attempts,
                         "maximum_actions": maximum_actions,
                         "observation_elapsed_ms": round(
@@ -760,7 +833,10 @@ class LiveConductor:
                     },
                     producer="optimizer",
                 )
-                if decision.action == "steer" and can_act:
+                if selected_action is not None and can_act:
+                    decision = selected_action
+                    subject_mac = decision.sta_mac
+                    subject_role = self._role_by_mac[subject_mac]
                     self.action_attempts += 1
                     self.store.emit(
                         "optimizer.action", now,
