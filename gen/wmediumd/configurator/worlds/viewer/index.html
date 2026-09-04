@@ -274,6 +274,7 @@
   let selected = null;       // role name
   let world3d = null;        // three objects for the current world
   const requestedMode = new URLSearchParams(location.search).get('mode');
+  const noConnectMode = requestedMode === 'no-connect';
   const interactiveLiveMode = requestedMode === 'interactive';
   const liveMode = requestedMode === 'live' || interactiveLiveMode;
   const replayMode = requestedMode === 'replay';
@@ -1352,17 +1353,25 @@
         ? ' <span class="phase ' + (verificationState.success ? 'verified' : 'failed') + '">last action ' +
           (verificationState.success ? 'verified' : 'failed') + '</span>' : '';
       const scores = (optimizerState.candidates || []).slice().sort((a, b) => (b.rcpi || -1) - (a.rcpi || -1));
+      const automatic = !!optimizerState.automatic_actuation;
+      const used = Number(optimizerState.actions_used || 0);
+      const limit = Number(optimizerState.maximum_actions || 0);
       $('#optimizerMetrics').innerHTML =
         '<div><span class="phase ' + phaseClass(phase) + '">' + esc(phase) + '</span> ' +
-        '<span class="phase">' + esc(optimizerState.mode) + '</span>' + outcomeBadge + '</div>' +
+        '<span class="phase">' + esc(automatic ? 'AUTO BTM' : optimizerState.mode) + '</span>' + outcomeBadge + '</div>' +
         '<div class="policy-reason" style="margin-top:6px"><b>' + esc(d.reason || 'waiting') + '</b></div>' +
         '<div class="metric-grid"><span>Current</span><b>' + esc(d.current_rcpi == null ? 'N/A' : 'RCPI ' + d.current_rcpi) + '</b>' +
         '<span>Best target</span><b>' + esc(target || 'none') + '</b>' +
         '<span>Target metric</span><b>' + esc(d.target_rcpi == null ? 'N/A' : 'RCPI ' + d.target_rcpi) + '</b>' +
         '<span>Hold</span><b>' + esc(Number(d.hold_seconds || 0).toFixed(1)) + ' s</b>' +
-        '<span>Action used</span><b>' + (actionState ? 'yes · limit reached' : 'no') + '</b>' +
-        '<span>Action window</span><b>' + (optimizerState.action_window_open ? 'open' : 'closed') + '</b></div>' +
-        (scores.length ? '<div class="sub" style="margin:6px 0 0">Measured: ' + scores.slice(0, 4).map((s) => esc(s.world_name || s.device_name) + ' ' + esc(s.rcpi)).join(' · ') + '</div>' : '');
+        '<span>Action budget</span><b>' + esc(used) + ' / ' + esc(limit || '—') + '</b>' +
+        '<span>Automatic steering</span><b>' + (automatic
+          ? (optimizerState.automatic_actuation_ready ? 'ready' : used >= limit ? 'limit reached' : 'waiting for hero movement')
+          : 'recommend only') + '</b>' +
+        '<span>Action window</span><b>' + (optimizerState.action_window_kind === 'stable_interactive_environment'
+          ? 'interactive session' : optimizerState.action_window_open ? 'open' : 'closed') + '</b></div>' +
+        (scores.length ? '<div class="sub" style="margin:6px 0 0">Measured: ' + scores.slice(0, 4).map((s) =>
+          esc(s.role ? displayRole(s.role) : (s.device_name || s.world_name)) + ' ' + esc(s.rcpi)).join(' · ') + '</div>' : '');
     }
     $('#eventRibbon').innerHTML = recentEvents.slice(-7).reverse().map((item) =>
       '<div class="event-row"><span class="event-time">' + (item.world_time_ms / 1000).toFixed(1) + 's</span><span>' + esc(item.label) + '</span></div>'
@@ -1495,7 +1504,9 @@
       const res = await fetch(GOLDEN_DIR + name + '.world.json');
       if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
       loadWorld(await res.json());
-      history.replaceState(null, '', '?world=' + encodeURIComponent(name));
+      const params = new URLSearchParams(location.search);
+      params.set('world', name);
+      history.replaceState(null, '', '?' + params.toString());
     } catch (e) {
       err('Could not fetch ' + name + '.world.json (' + e.message + '). When opening this page from disk, use the file picker instead.');
     }
@@ -1761,6 +1772,10 @@
       const d = p.decision || {};
       return 'Policy: ' + (d.reason || 'evaluated');
     }
+    if (event.kind === 'optimizer.measurement.waiting') {
+      return 'Optimizer waiting: ' + String(p.reason || 'fresh telemetry').replaceAll('_', ' ');
+    }
+    if (event.kind === 'optimizer.environment.changed') return 'RF changed; optimizer hold restarted';
     if (event.kind === 'optimizer.action') return p.phase === 'requested' ? 'BTM steer requested' : 'Steering request submitted';
     if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
@@ -1962,6 +1977,14 @@
 
   const initial = new URLSearchParams(location.search).get('world');
   if (initial && GOLDEN.includes(initial)) sel.value = initial;
+  if (noConnectMode) {
+    $('#viewerTitle').textContent = 'EasyMesh room sandbox';
+    $('#interactionBadge').textContent = 'NO CONNECT';
+    $('#interactionHelp').textContent =
+      'Browser-only sandbox: movements preview room geometry and RF; no controller, optimizer, client or wmediumd is connected.';
+    setLiveStatus('ready', 'no controller or medium connection');
+    setInteractionMode('interact');
+  }
   if (liveMode) connectLive();
   else if (replayMode) connectReplay();
   else if (location.protocol === 'file:') $('#worldmeta').textContent = 'Opened from disk: pick a .world.json below.';

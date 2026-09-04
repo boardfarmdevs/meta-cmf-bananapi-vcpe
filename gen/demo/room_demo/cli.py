@@ -266,6 +266,8 @@ def _run(args) -> int:
 def _interactive(args) -> int:
     if args.mode == "act" and not args.yes_act:
         raise ActuatorError("interactive act mode requires --yes-act")
+    if args.max_actions is not None and args.max_actions < 1:
+        raise ActuatorError("interactive --max-actions must be a positive integer")
     manifest, world_path, bindings_path = _paths(args)
     world, source, inventory, binding_doc, plan = _prepare(world_path, bindings_path)
     layout, layout_path = _layout_for(world)
@@ -287,6 +289,7 @@ def _interactive(args) -> int:
     conductor = LiveConductor(
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
+        interactive=True, maximum_actions=args.max_actions,
     )
     server = RoomDemoServer(
         args.listen,
@@ -555,6 +558,10 @@ def parser() -> argparse.ArgumentParser:
         help="optimizer authority (default: recommend)",
     )
     interactive.add_argument("--yes-act", action="store_true")
+    interactive.add_argument(
+        "--max-actions", type=int,
+        help="maximum automatic BTM requests in act mode (default: manifest limit)",
+    )
     interactive.add_argument("--base-url", default="http://127.0.0.1:8888")
     interactive.add_argument(
         "--listen", type=_address, default=("127.0.0.1", 8891), metavar="HOST:PORT"

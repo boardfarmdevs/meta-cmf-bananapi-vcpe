@@ -158,6 +158,7 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertEqual(result["changed_link_count"], 4)
         self.assertEqual({item["frequency_mhz"] for item in self.client.applied[-1]}, {5180})
         self.assertEqual(self.client.applied[0][0]["override"], True)
+        self.assertEqual(self.session.snapshot()["last_rf_role"], "sta_01")
         by_ap = {item["ap_role"]: item for item in result["links"]}
         self.assertEqual(by_ap["extender_1"]["snr_db"], 50)
         self.assertLess(by_ap["gateway"]["snr_db"], 50)

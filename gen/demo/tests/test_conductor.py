@@ -99,6 +99,15 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertIsNone(state.pending_since)
         self.assertIsNone(state.last_action_at)
 
+    def test_interactive_action_window_is_not_bound_to_scenario_time(self):
+        conductor, _store = self._conductor()
+        conductor.interactive = True
+
+        self.assertEqual(
+            conductor._action_window(999_999, [150_000, 220_000]),
+            (True, "stable_interactive_environment"),
+        )
+
     def test_controller_observation_is_projected_to_world_role(self):
         conductor, _store = self._conductor()
         snapshot = Snapshot(

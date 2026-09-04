@@ -64,6 +64,7 @@ class InteractiveMediumSession:
         self._environment_epoch = 0
         self._last_rf_apply_monotonic: float | None = None
         self._last_rf_applied_at: str | None = None
+        self._last_rf_role: str | None = None
         self._started_at = time.monotonic()
         self._lease: dict[str, Any] | None = None
         self._last_update_at = 0.0
@@ -229,6 +230,7 @@ class InteractiveMediumSession:
                 "revision": self._revision,
                 "environment_epoch": self._environment_epoch,
                 "last_rf_applied_at": self._last_rf_applied_at,
+                "last_rf_role": self._last_rf_role,
                 "stable_for_seconds": (
                     None if self._last_rf_apply_monotonic is None else
                     round(time.monotonic() - self._last_rf_apply_monotonic, 3)
@@ -992,10 +994,11 @@ class InteractiveMediumSession:
             self.recovery.committed(generation)
         return applied
 
-    def _mark_rf_committed(self) -> None:
+    def _mark_rf_committed(self, role: str | None = None) -> None:
         self._environment_epoch += 1
         self._last_rf_apply_monotonic = time.monotonic()
         self._last_rf_applied_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        self._last_rf_role = role
 
     def _capture_baseline(self, updates: list[dict[str, Any]]) -> None:
         assert self._client is not None
@@ -1035,7 +1038,7 @@ class InteractiveMediumSession:
                 for item in applied:
                     key = (item["source"], item["destination"], item["frequency_mhz"])
                     self._applied_values[key] = (item["value"], item["override"])
-                self._mark_rf_committed()
+                self._mark_rf_committed(role)
             else:
                 applied = []
             self._revision += 1

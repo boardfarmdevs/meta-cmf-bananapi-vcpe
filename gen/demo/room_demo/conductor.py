@@ -89,6 +89,8 @@ class LiveConductor:
         repo_root: Path,
         base_url: str = "http://127.0.0.1:8888",
         room_state: Callable[[], dict[str, Any]] | None = None,
+        interactive: bool = False,
+        maximum_actions: int | None = None,
     ) -> None:
         if mode not in {"stimulus", "recommend", "act"}:
             raise ValueError(f"unsupported demo mode {mode!r}")
@@ -99,6 +101,8 @@ class LiveConductor:
         self.repo_root = repo_root
         self.base_url = base_url
         self.room_state = room_state
+        self.interactive = interactive
+        self.maximum_actions = maximum_actions
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
         self.errors: list[str] = []
@@ -134,6 +138,12 @@ class LiveConductor:
         hero_role = manifest["hero"]["role"]
         self.hero_mac = plan["bindings"][hero_role]["radio_permanent_mac"].lower()
         self.hero_container = plan["bindings"][hero_role]["container"]
+
+    def _action_window(self, now_ms: int, configured: list[int]) -> tuple[bool, str]:
+        if self.interactive:
+            return True, "stable_interactive_environment"
+        start, end = [int(value) for value in configured]
+        return start <= now_ms <= end, "scenario_time"
 
     def _time(self) -> int:
         return int(self.store.current()["world_time_ms"])
@@ -472,6 +482,18 @@ class LiveConductor:
     def _narrative_worker(self) -> None:
         if not self._wait_for_run():
             return
+        if self.interactive:
+            label = (
+                "Move Private-Laptop; closed-loop steering is automatic after "
+                "fresh telemetry and policy hold"
+                if self.mode == "act" else
+                "Move Private-Laptop; the optimizer will recommend from live telemetry"
+            )
+            self.store.emit(
+                "demo.mark", self._time(), {"label": label, "interactive": True},
+                producer="conductor",
+            )
+            return
         pending = list(self.manifest.get("narrative", []))
         while pending and not self.stop_event.is_set() and self._active():
             now = self._time()
@@ -511,8 +533,11 @@ class LiveConductor:
         )
         state = PolicyState()
         interval = float(optimizer["interval_seconds"])
-        window_start, window_end = [int(value) for value in optimizer["action_window_ms"]]
-        maximum_actions = int(optimizer["max_actions"])
+        action_window = [int(value) for value in optimizer["action_window_ms"]]
+        maximum_actions = (
+            int(self.maximum_actions)
+            if self.maximum_actions is not None else int(optimizer["max_actions"])
+        )
         observed_epoch: int | None = None
         while not self.stop_event.is_set() and self._active():
             cycle_started = time.monotonic()
@@ -610,21 +635,25 @@ class LiveConductor:
                     item for item in evaluation.decisions if item.sta_mac == self.hero_mac
                 )
                 now = self._time()
-                window_open = window_start <= now <= window_end
+                window_open, window_kind = self._action_window(now, action_window)
                 can_act = (
                     self.mode == "act"
                     and window_open
                     and self.action_attempts < maximum_actions
+                    and (
+                        not self.interactive
+                        or room_after is not None
+                        and room_after.get("last_rf_role")
+                        == self.manifest["hero"]["role"]
+                    )
                 )
                 if decision.action == "steer" and self.mode == "recommend":
                     state = _recommendation_state(prior, evaluation)
-                elif (
-                    decision.action == "steer"
-                    and self.mode == "act"
-                    and self.action_attempts == 0
-                    and not window_open
-                ):
-                    state = _deferred_state(prior, evaluation)
+                elif decision.action == "steer" and self.mode == "act" and not can_act:
+                    state = (
+                        _deferred_state(prior, evaluation)
+                        if not window_open else _recommendation_state(prior, evaluation)
+                    )
                 else:
                     state = evaluation.state
                 hero_state = state.for_sta(self.hero_mac)
@@ -644,8 +673,15 @@ class LiveConductor:
                         "policy_state": asdict(hero_state),
                         "candidates": candidates,
                         "candidate_transactions": len(provider.last_raw),
-                        "action_window_ms": [window_start, window_end],
+                        "action_window_ms": (
+                            None if self.interactive else action_window
+                        ),
+                        "action_window_kind": window_kind,
                         "action_window_open": window_open,
+                        "automatic_actuation": self.mode == "act",
+                        "automatic_actuation_ready": can_act,
+                        "actions_used": self.action_attempts,
+                        "maximum_actions": maximum_actions,
                         "observation_elapsed_ms": round(
                             (time.monotonic() - cycle_started) * 1000, 3
                         ),

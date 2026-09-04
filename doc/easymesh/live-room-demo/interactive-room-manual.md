@@ -182,22 +182,58 @@ are also retained in the run evidence as `recorded-mobility.json` and
 Stopping the interactive process while recording safely finalizes the partial
 recording before restoring the original RF matrix.
 
-## Optional steering authority
+## Automatic closed-loop steering
 
-The default command runs the external optimizer in recommendation mode. To
-permit its existing single bounded BTM action, restart the room with both
-confirmations:
+The default command runs the external optimizer in recommendation mode. It
+will explain which AP is better, but it will not change the association. To
+make a committed room movement automatically drive normal EasyMesh steering,
+start the room in explicitly authorized act mode:
 
 ```bash
 gen/demo/room-demo interactive \
   --mode act \
   --yes-act \
+  --max-actions 10 \
   --listen 0.0.0.0:8891
 ```
 
-The current manifest still limits the action to its declared time window and
-hero client. Other clients may be moved to explore RF and telemetry, but they
-do not acquire steering authority from the room server.
+Interactive act mode is not constrained by the prerecorded scenario's
+150--220 second action window. The action budget is explicit and remains
+bounded by `--max-actions`; without that option the manifest limit applies.
+Automatic actuation is restricted to `Private-Laptop`, the private 5 GHz hero
+client. Moving another client changes its modeled RF but does not grant it
+optimizer actuation authority.
+
+After a hero movement is committed, the room performs this closed loop:
+
+1. atomically apply and read back the new directional wmediumd links;
+2. reset the optimizer hold state for the new environment epoch;
+3. wait until movement stops and RF has been stable for at least two seconds;
+4. require serving-link telemetry newer than the RF application;
+5. collect same-SSID, same-band candidate measurements without allowing the
+   room to change during that transaction;
+6. apply the configured threshold, gain and five-second hold policy;
+7. send `gen/steer.sh --request-only` for the selected BSSID; and
+8. verify the physical BSSID, controller ownership and traffic.
+
+The request-only path does not install another RF bias and does not force a
+client roam. The client changes AP only after the normal controller, EasyMesh,
+BTM, supplicant and association path succeeds. Allow roughly 10--30 seconds
+after the laptop stops for fresh telemetry, measurement, policy hold and
+verification. The Optimizer card shows `AUTO BTM`, the action budget and the
+current waiting/ready state.
+
+## Public no-connect sandbox
+
+The same viewer is available without a lab connection:
+
+<https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/?mode=no-connect&world=home-a-private-client-room-walk>
+
+This browser-only mode starts in Interact mode. Anyone can drag clients,
+right-click to move them at a selected speed, disappear/reappear them, inspect
+distance and wall crossings, and preview the calculated links. Its prominent
+`NO CONNECT` badge means that it does not contact a controller, optimizer,
+client or wmediumd and therefore cannot cause a real association change.
 
 ## Stop, restoration, and evidence
 

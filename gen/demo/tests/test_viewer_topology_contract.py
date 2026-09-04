@@ -27,6 +27,21 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("meshNode && meshNode.name", source)
         self.assertIn("actualBackhaulFor(selected)", source)
 
+    def test_static_no_connect_mode_is_an_explicit_interactive_sandbox(self):
+        source = VIEWER.read_text(encoding="utf-8")
+
+        self.assertIn("requestedMode === 'no-connect'", source)
+        self.assertIn("EasyMesh room sandbox", source)
+        self.assertIn("NO CONNECT", source)
+        self.assertIn("setInteractionMode('interact')", source)
+
+    def test_automatic_closed_loop_state_is_visible(self):
+        source = VIEWER.read_text(encoding="utf-8")
+
+        self.assertIn("automatic_actuation_ready", source)
+        self.assertIn("AUTO BTM", source)
+        self.assertIn("Action budget", source)
+
 
 if __name__ == "__main__":
     unittest.main()

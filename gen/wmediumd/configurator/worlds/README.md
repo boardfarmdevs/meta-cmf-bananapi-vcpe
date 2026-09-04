@@ -35,6 +35,12 @@ The public viewer is published as a static site from the repository's
 
 <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/>
 
+The room-focused, explicitly disconnected sandbox starts directly in
+interactive mode. It calculates the same browser-side geometry previews but
+cannot change a live lab:
+
+<https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/?mode=no-connect&world=home-a-private-client-room-walk>
+
 Select a world in the sidebar or address one directly, for example:
 
 <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/?world=home-a-slow-walk-ten>
