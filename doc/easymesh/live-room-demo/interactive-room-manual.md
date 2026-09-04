@@ -228,9 +228,9 @@ this closed loop:
    target is temporarily made unambiguous to hwsim on the selected band, in
    both directions: target `60 dB` SNR, source `20 dB`, and other APs
    `-20 dB`;
-9. discard stale non-serving scan-cache records, actively refresh the serving
-   BSSID that wpa_supplicant must retain, and use a directed scan to resolve
-   the nominated BSSID and SSID, including the hidden `iot_ssid`,
+9. discard stale non-serving scan-cache records, actively refresh every
+   same-SSID/same-band BSSID under the current medium generation, and resolve
+   the nominated BSSID last, including on the hidden `iot_ssid`,
    then send a graceful mandated BTM through `gen/steer.sh --request-only`;
    if the client declines it, retry once with Disassociation Imminent while
    retaining the same measured target, and keep the serialized assist active
@@ -262,13 +262,14 @@ makes one disassociation-imminent retry; the verifier still requires the exact
 nominated BSSID and does not count a landing on a different AP as success. A
 later fleet cycle retries any unresolved client from its new live state.
 
-Refreshing the serving BSSID is important in repeated demonstrations. The
-associated BSS cannot be removed by `bss_flush`; without the directed refresh,
-wpa_supplicant can retain the old high-signal Probe Response created when that
-AP was a previous steering target. The refresh changes no association and
-invents no identity. It replaces that stale cache signal with a new response
-received under the current serialized medium generation before the BTM policy
-compares source and target.
+Refreshing the eligible BSS set is important in repeated demonstrations. The
+associated BSS cannot be removed by `bss_flush`, and populated records for
+other VAPs can retain the high signal created when those APs were earlier
+steering targets. Without the directed refresh, the client may reject the
+nominated target or land on a third AP using stale scan evidence. The refresh
+changes no association and invents no identity. It replaces those stale cache
+signals with responses received under the current serialized medium
+generation before the BTM policy compares source and target.
 Full initial convergence may take several minutes because controller candidate
 queries and steering transactions are serialized deliberately. After the
 fleet converges, measurements continue indefinitely; a later room movement or
