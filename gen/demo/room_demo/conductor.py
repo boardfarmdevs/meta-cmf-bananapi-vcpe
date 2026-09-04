@@ -208,6 +208,11 @@ class LiveConductor:
             role = None
             for haul in node.get("haulTypes", []) or []:
                 for bss in haul.get("BSSList", []) or []:
+                    # RDK also lists the extender's associated backhaul BSSID
+                    # as a station-mode VAP.  It is owned by the parent and
+                    # must never be used to identify this controller node.
+                    if bss.get("vapMode") == 1:
+                        continue
                     bssid = str(bss.get("BSSID") or "").lower()
                     role = self._ap_role_by_bssid.get(bssid)
                     if role:

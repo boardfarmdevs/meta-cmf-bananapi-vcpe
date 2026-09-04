@@ -147,9 +147,17 @@ class ConductorProjectionTests(unittest.TestCase):
                     "name": "Extender-4",
                     "backhaulMedia": "Wireless LAN",
                     "upstreamBSSID": "02:00:00:00:02:01",
-                    "haulTypes": [{"BSSList": [{
-                        "BSSID": "02:00:00:00:04:01",
-                    }]}],
+                    "haulTypes": [{"BSSList": [
+                        {
+                            # Parent BSSID must not steal the child's role.
+                            "BSSID": "02:00:00:00:01:01",
+                            "vapMode": 1,
+                        },
+                        {
+                            "BSSID": "02:00:00:00:04:01",
+                            "vapMode": 0,
+                        },
+                    ]}],
                 },
             ],
             "edges": [{
