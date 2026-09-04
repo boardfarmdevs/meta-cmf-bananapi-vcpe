@@ -14,7 +14,7 @@
     --extender: #1f5f8b;
     --mobile: #7a4b9c;
     --static: #3b3b3b;
-    --panel-w: 320px;
+    --panel-w: 380px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -42,6 +42,7 @@
     background: #fff; color: var(--ink); cursor: pointer;
   }
   button:hover { border-color: var(--ink); }
+  button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: 0.5; }
   button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--extender); outline-offset: 1px; }
   .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 4px 10px; }
@@ -63,6 +64,32 @@
   tr.best td { font-weight: 600; }
   td.snr { color: #fff; }
   .warn { color: var(--gateway); font-size: 12px; }
+  #liveStatus { display: none; margin: 10px 0 2px; padding: 6px 9px; border-radius: 4px; background: #e6e1d6; font-size: 12px; font-weight: 600; }
+  #liveStatus[data-state=running] { display: block; color: #fff; background: #176b48; }
+  #liveStatus[data-state=connecting], #liveStatus[data-state=preparing], #liveStatus[data-state=ready], #liveStatus[data-state=restoring] { display: block; color: #553c00; background: #f4d77b; }
+  #liveStatus[data-state=passed] { display: block; color: #fff; background: #176b48; }
+  #liveStatus[data-state=failed], #liveStatus[data-state=disconnected] { display: block; color: #fff; background: var(--gateway); }
+  #liveRun { display: none; margin: 2px 0 12px; overflow-wrap: anywhere; }
+  .live-only { display: none; }
+  body.live-presentation .live-only { display: block; }
+  .card { border: 1px solid var(--rule); border-radius: 7px; background: #fff; padding: 9px 10px; margin: 8px 0; }
+  .card h2 { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+  .metric-grid { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; }
+  .metric-grid b { text-align: right; font-variant-numeric: tabular-nums; }
+  .hero-name { font-size: 17px; font-weight: 650; }
+  .hero-line { color: #087ea4; font-weight: 600; }
+  .policy-reason { overflow-wrap: anywhere; font-size: 12px; }
+  .phase { display: inline-block; border-radius: 999px; padding: 2px 7px; background: #e9e4d8; font-size: 11px; font-weight: 700; }
+  .phase.steering, .phase.pending { color: #5b3b00; background: #ffd86b; }
+  .phase.cooldown, .phase.verified { color: #fff; background: #176b48; }
+  .phase.failed { color: #fff; background: var(--gateway); }
+  #eventRibbon { max-height: 126px; overflow: hidden; font-size: 11px; }
+  .event-row { display: grid; grid-template-columns: 45px 1fr; gap: 7px; padding: 3px 0; border-top: 1px solid #eee8dc; }
+  .event-row:first-child { border-top: 0; }
+  .event-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .line-key { display:inline-block; width:24px; height:0; vertical-align:4px; margin-right:5px; border-top:3px solid #05a9cf; }
+  .line-key.dashed { border-top:2px dashed #777; }
+  .line-key.target { border-color:#f0ad00; }
   main { position: relative; overflow: hidden; }
   canvas { display: block; }
   #hint { position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: var(--muted); }
@@ -75,8 +102,18 @@
 </head>
 <body>
 <aside>
-  <h1>wmediumd world viewer</h1>
+  <h1 id="viewerTitle">wmediumd world viewer</h1>
   <div class="sub" id="worldmeta">Loading…</div>
+  <div id="liveStatus" role="status" aria-live="polite"></div>
+  <div class="sub" id="liveRun"></div>
+
+  <div class="live-only">
+    <div class="card" id="storyCard"><h2>Scenario</h2><div id="storyText">Waiting for the conductor…</div></div>
+    <div class="card" id="labCard"><h2>Whole lab</h2><div id="labMetrics" class="metric-grid"><span>Status</span><b>waiting</b></div></div>
+    <div class="card" id="heroCard"><h2>Hero client</h2><div id="heroMetrics">Waiting for controller telemetry…</div></div>
+    <div class="card" id="optimizerCard"><h2>External optimizer</h2><div id="optimizerMetrics">No evaluation yet.</div></div>
+    <div class="card"><h2>Recent events</h2><div id="eventRibbon"></div></div>
+  </div>
 
   <label class="field" for="world">World</label>
   <select id="world"></select>
@@ -104,7 +141,7 @@
   </span>
 
   <div style="margin-top:12px">
-    <label class="check"><input type="checkbox" id="showLinks" checked> Best serving link per station</label>
+    <label class="check"><input type="checkbox" id="showLinks" checked> Strongest simulated link per station</label>
     <label class="check"><input type="checkbox" id="showBackhaul"> Backhaul links</label>
     <label class="check"><input type="checkbox" id="showTrails" checked> Mobile trails up to now</label>
     <label class="check"><input type="checkbox" id="showSta" checked> Station names</label>
@@ -123,6 +160,9 @@
     <span style="background:var(--mobile);margin-left:10px"></span>mobile station
     <span style="background:var(--static);margin-left:10px"></span>static station<br>
     Links: red weak → amber → green strong. Absent roles are shown hollow.<br>
+    <span class="line-key dashed"></span>scenario-best
+    <span class="line-key"></span>actual association
+    <span class="line-key target"></span>optimizer target<br>
     Labels: <b>gw</b> gateway, <b>e1</b> extender_1, <b>m01</b> sta_mobile_01, <b>s01</b> sta_static_01.
   </div>
 </aside>
@@ -131,7 +171,7 @@
   <div id="err"></div>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="vendor/three.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -141,7 +181,7 @@
     'home-a-stationary', 'home-a-slow-walk-ten', 'home-b-slow-walk-ten',
     'home-a-border-hover', 'home-a-fast-transit', 'home-a-disappear-reappear',
     'home-a-extender-loss-recovery', 'home-a-flash-crowd', 'home-a-asymmetric-link',
-    'home-a-band-walk-small',
+    'home-a-band-walk-small', 'home-a-private-client-room-walk',
   ];
   const GOLDEN_DIR = '../golden/';
   const AP_H = 2.2, STA_H = 0.9, WALL_H = 2.6;
@@ -152,7 +192,7 @@
 
   const $ = (s) => document.querySelector(s);
   const err = (msg) => { const e = $('#err'); e.style.display = 'block'; e.textContent = msg; };
-  if (typeof THREE === 'undefined') { err('three.js failed to load from cdnjs. Check network access.'); return; }
+  if (typeof THREE === 'undefined') { err('The bundled three.js renderer failed to load.'); return; }
 
   // ---- state ---------------------------------------------------------------
   let world = null;          // parsed world plan
@@ -161,6 +201,17 @@
   let band = '5';
   let selected = null;       // role name
   let world3d = null;        // three objects for the current world
+  const requestedMode = new URLSearchParams(location.search).get('mode');
+  const liveMode = requestedMode === 'live';
+  const replayMode = requestedMode === 'replay';
+  let liveSource = null;
+  let liveTerminal = false;
+  let networkState = null, optimizerState = null, trafficState = null;
+  let healthState = null, actionState = null, verificationState = null;
+  let storyState = 'Waiting for the conductor…';
+  let recentEvents = [], replayEvents = [], replayIndex = 0, replayAppliedTime = -1;
+  let actionPulseUntil = 0;
+  if (liveMode || replayMode) document.body.classList.add('live-presentation');
 
   // ---- scene ---------------------------------------------------------------
   const main = $('main');
@@ -280,8 +331,22 @@
     const mat = new THREE.SpriteMaterial({ map: t && t.tex, color: t ? 0xffffff : color, depthTest: false, transparent: true });
     const sp = new THREE.Sprite(mat);
     sp.scale.set(height * (t ? t.aspect : 3), height, 1);
+    sp.userData.labelText = text;
+    sp.userData.labelHeight = height;
     sp.renderOrder = 10;
     return sp;
+  }
+  function setSpriteLabel(sprite, text, color) {
+    if (sprite.userData.labelText === text) return;
+    const rendered = textTexture(text, { bg: color });
+    if (!rendered) return;
+    if (sprite.material.map) sprite.material.map.dispose();
+    sprite.material.map = rendered.tex;
+    sprite.material.color.setHex(0xffffff);
+    sprite.material.needsUpdate = true;
+    const height = sprite.userData.labelHeight;
+    sprite.scale.set(height * rendered.aspect, height, 1);
+    sprite.userData.labelText = text;
   }
   // Text lying flat on the floor, aligned with a wall, on the side away from its normal.
   function makeFloorText(text, x0, y0, x1, y1, height) {
@@ -368,13 +433,24 @@
     }
 
     // link and trail buffers (rebuilt each frame)
-    const links = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true }));
+    const links = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ vertexColors: true, dashSize: 0.34, gapSize: 0.22, transparent: true, opacity: 0.72 })
+    );
+    const actual = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x05a9cf, transparent: true, opacity: 0.95 })
+    );
+    const target = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ color: 0xf0ad00, dashSize: 0.48, gapSize: 0.18, transparent: true, opacity: 0.95 })
+    );
     const backhaul = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.45 }));
     const trails = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: COL.mobile, transparent: true, opacity: 0.45 }));
-    root.add(links, backhaul, trails);
+    root.add(links, actual, target, backhaul, trails);
 
     scene.add(root);
-    world3d = { root, nodes, pickables, links, backhaul, trails, W, H };
+    world3d = { root, nodes, pickables, links, actual, target, backhaul, trails, W, H };
     orbit.target.set(W / 2, 0, -H / 2); orbit.r = Math.max(W, H) * 1.5; placeCamera();
   }
 
@@ -384,6 +460,20 @@
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     if (cols) g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
     g.computeBoundingSphere();
+    if (obj.computeLineDistances) obj.computeLineDistances();
+  }
+  function deviceRole(name) {
+    const value = String(name || '').toLowerCase();
+    if (value === 'agent-1') return 'gateway';
+    const match = value.match(/^extender-(\d+)$/);
+    return match ? 'extender_' + match[1] : null;
+  }
+  function heroRole() { return networkState && networkState.hero && networkState.hero.role; }
+  function targetRole() {
+    const decision = optimizerState && optimizerState.decision;
+    if (!decision || !decision.target_bssid) return null;
+    const candidate = (optimizerState.candidates || []).find((item) => item.bssid === decision.target_bssid);
+    return candidate ? (candidate.role || deviceRole(candidate.device_name)) : null;
   }
   function update() {
     if (!world3d) return;
@@ -400,14 +490,28 @@
       n.grp.position.copy(P(p[0], p[1], 0));
       n.grp.visible = true;
       const mat = n.head.material;
+      const observed = networkState && (networkState.clients || []).find((item) => item.role === role);
+      if (!n.ap && observed) {
+        const suffix = observed.sta_mac.split(':')[4];
+        const label = role === heroRole() ? 'Private-Laptop'
+          : (observed.cohort === 'iot' ? 'iot-' : 'sta-') + suffix;
+        setSpriteLabel(n.tag, label, observed.cohort === 'iot' ? '#256f3f' : '#225ca8');
+      }
       n.tag.visible = n.ap || showSta;
       n.tag.material.opacity = present ? 1 : 0.4;
       if (!present) { mat.color.setHex(COL.absent); mat.transparent = true; mat.opacity = 0.35; n.post.material.color.setHex(COL.absent); }
       else {
-        mat.transparent = false; mat.opacity = 1; n.post.material.color.setHex(n.color);
+        mat.transparent = false; mat.opacity = 1;
+        n.post.material.color.setHex(observed && observed.cohort === 'iot' ? 0x256f3f
+          : observed && observed.cohort === 'private' ? 0x225ca8 : n.color);
         if (!n.ap && best[role]) mat.color.copy(snrColor(best[role].snr)); else mat.color.setHex(n.color);
       }
-      n.ring.visible = role === selected;
+      const hero = role === heroRole();
+      n.ring.visible = role === selected || hero;
+      n.ring.material.color.setHex(hero ? 0xf0ad00 : n.color);
+      const pulsing = hero && performance.now() < actionPulseUntil;
+      const pulse = pulsing ? 1 + 0.22 * Math.sin(performance.now() / 90) : 1;
+      n.ring.scale.set(pulse, pulse, pulse);
     }
 
     // best serving links
@@ -419,6 +523,28 @@
       }
     }
     setSegments(world3d.links, lp, lc);
+
+    // Controller-observed associations are independent of the RF model.
+    const ap = [];
+    if (networkState && networkState.clients) {
+      for (const client of networkState.clients) {
+        if (!client.role || !client.connected_role || !pos[client.role] || !pos[client.connected_role]) continue;
+        const a = pos[client.connected_role], b = pos[client.role];
+        ap.push(a[0], AP_H + 0.12, -a[1], b[0], STA_H + 0.12, -b[1]);
+      }
+    }
+    setSegments(world3d.actual, ap);
+
+    // The optimizer target is visible before and during an action, never
+    // confused with either the model-best or the current association.
+    const tpTarget = [], target = targetRole(), hero = heroRole();
+    if (target && hero && pos[target] && pos[hero]) {
+      const a = pos[target], b = pos[hero];
+      tpTarget.push(a[0], AP_H + 0.24, -a[1], b[0], STA_H + 0.24, -b[1]);
+    }
+    setSegments(world3d.target, tpTarget);
+    world3d.target.material.opacity = performance.now() < actionPulseUntil
+      ? 0.58 + 0.4 * Math.abs(Math.sin(performance.now() / 120)) : 0.88;
 
     // backhaul (undirected, stronger direction)
     const bp = [], bc = [];
@@ -458,6 +584,66 @@
     $('#tnow').textContent = (tMs / 1000).toFixed(1) + ' s';
     $('#scrub').value = Math.round(tMs / world.duration_ms * 1000);
     renderInspector(g, best);
+    renderLivePanels();
+  }
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+  }
+  function phaseClass(value) {
+    const phase = String(value || 'stable').toLowerCase();
+    return /failed|error|timeout/.test(phase) ? 'failed' : phase;
+  }
+  function renderLivePanels() {
+    if (!liveMode && !replayMode) return;
+    $('#storyText').textContent = storyState;
+    if (networkState) {
+      const h = healthState || {}, api = networkState.health || {}, cohorts = networkState.cohorts || {};
+      $('#labMetrics').innerHTML =
+        '<span>Mesh devices</span><b>' + esc(api.mesh_devices) + ' / 5</b>' +
+        '<span>Clients</span><b>' + esc(api.clients) + ' / 20</b>' +
+        '<span>Private / IoT</span><b>' + esc(cohorts.private) + ' / ' + esc(cohorts.iot) + '</b>' +
+        '<span>Model</span><b>' + esc(h.model_devices == null ? '—' : h.model_devices + '/' + h.model_radios + '/' + h.model_bsses + '/' + h.model_associated) + '</b>' +
+        '<span>Health</span><b>' + (h.healthy == null ? 'observing' : h.healthy ? 'healthy' : 'degraded') + '</b>';
+      const hero = networkState.hero;
+      if (hero) {
+        const servingName = hero.connected_world_name || hero.connected_device_name;
+        const controllerName = hero.connected_device_name && hero.connected_device_name !== servingName
+          ? ' <span class="sub">(controller label ' + esc(hero.connected_device_name) + ')</span>' : '';
+        $('#heroMetrics').innerHTML =
+          '<div class="hero-name">Private-Laptop <span class="phase">' + esc(hero.band) + ' GHz</span></div>' +
+          '<div class="hero-line">' + esc(servingName) + controllerName + ' · ' + esc(hero.connected_bssid) + '</div>' +
+          '<div class="metric-grid"><span>Signal</span><b>' + (hero.rssi_dbm == null ? 'N/A' : esc(hero.rssi_dbm) + ' dBm / RCPI ' + esc(hero.rcpi)) + '</b>' +
+          '<span>SSID</span><b>' + esc(hero.ssid) + '</b><span>Traffic</span><b>' +
+          (trafficState == null ? 'waiting' : trafficState.success ? 'pass' + (trafficState.rtt_ms == null ? '' : ' · ' + esc(trafficState.rtt_ms) + ' ms') : 'FAIL') + '</b></div>';
+      }
+    }
+    if (optimizerState) {
+      const d = optimizerState.decision || {}, state = optimizerState.policy_state || {};
+      const target = targetRole();
+      let phase = state.phase || (d.action === 'steer' ? 'eligible' : 'stable');
+      if (actionState && actionState.phase === 'requested' && !verificationState) phase = 'steering';
+      const outcomeBadge = verificationState
+        ? ' <span class="phase ' + (verificationState.success ? 'verified' : 'failed') + '">last action ' +
+          (verificationState.success ? 'verified' : 'failed') + '</span>' : '';
+      const scores = (optimizerState.candidates || []).slice().sort((a, b) => (b.rcpi || -1) - (a.rcpi || -1));
+      $('#optimizerMetrics').innerHTML =
+        '<div><span class="phase ' + phaseClass(phase) + '">' + esc(phase) + '</span> ' +
+        '<span class="phase">' + esc(optimizerState.mode) + '</span>' + outcomeBadge + '</div>' +
+        '<div class="policy-reason" style="margin-top:6px"><b>' + esc(d.reason || 'waiting') + '</b></div>' +
+        '<div class="metric-grid"><span>Current</span><b>' + esc(d.current_rcpi == null ? 'N/A' : 'RCPI ' + d.current_rcpi) + '</b>' +
+        '<span>Best target</span><b>' + esc(target || 'none') + '</b>' +
+        '<span>Target metric</span><b>' + esc(d.target_rcpi == null ? 'N/A' : 'RCPI ' + d.target_rcpi) + '</b>' +
+        '<span>Hold</span><b>' + esc(Number(d.hold_seconds || 0).toFixed(1)) + ' s</b>' +
+        '<span>Action used</span><b>' + (actionState ? 'yes · limit reached' : 'no') + '</b>' +
+        '<span>Action window</span><b>' + (optimizerState.action_window_open ? 'open' : 'closed') + '</b></div>' +
+        (scores.length ? '<div class="sub" style="margin:6px 0 0">Measured: ' + scores.slice(0, 4).map((s) => esc(s.world_name || s.device_name) + ' ' + esc(s.rcpi)).join(' · ') + '</div>' : '');
+    }
+    $('#eventRibbon').innerHTML = recentEvents.slice(-7).reverse().map((item) =>
+      '<div class="event-row"><span class="event-time">' + (item.world_time_ms / 1000).toFixed(1) + 's</span><span>' + esc(item.label) + '</span></div>'
+    ).join('');
   }
 
   // ---- inspector -----------------------------------------------------------
@@ -508,6 +694,11 @@
     $('#tmax').textContent = 'of ' + (w.duration_ms / 1000).toFixed(0) + ' s';
     buildWorld(); resize(); update();
   }
+  async function fetchWorldUrl(url) {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    loadWorld(await res.json());
+  }
   async function fetchWorld(name) {
     try {
       const res = await fetch(GOLDEN_DIR + name + '.world.json');
@@ -528,8 +719,13 @@
   });
 
   // ---- controls ------------------------------------------------------------
-  $('#scrub').addEventListener('input', (e) => { if (!world) return; tMs = e.target.value / 1000 * world.duration_ms; update(); });
-  function togglePlay() { playing = !playing; $('#play').textContent = playing ? 'Pause' : 'Play'; lastTick = performance.now(); if (playing && world && tMs >= world.duration_ms) tMs = 0; }
+  $('#scrub').addEventListener('input', (e) => {
+    if (!world || liveMode) return;
+    tMs = e.target.value / 1000 * world.duration_ms;
+    if (replayMode) applyReplayUntil(tMs);
+    update();
+  });
+  function togglePlay() { if (liveMode) return; playing = !playing; $('#play').textContent = playing ? 'Pause' : 'Play'; lastTick = performance.now(); if (playing && world && tMs >= world.duration_ms) tMs = 0; }
   $('#play').addEventListener('click', togglePlay);
   document.addEventListener('keydown', (e) => { if (e.code === 'Space' && !/INPUT|SELECT|BUTTON/.test(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
   document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => {
@@ -540,12 +736,148 @@
   }));
   ['#showLinks', '#showBackhaul', '#showTrails', '#showSta'].forEach((id) => $(id).addEventListener('change', update));
 
+  function setLiveStatus(state, detail = '') {
+    const badge = $('#liveStatus');
+    badge.dataset.state = state;
+    badge.textContent = (replayMode ? 'REPLAY' : 'LIVE') + ' · ' + state.toUpperCase() + (detail ? ' · ' + detail : '');
+  }
+  function resetEventState() {
+    networkState = optimizerState = trafficState = healthState = actionState = verificationState = null;
+    storyState = 'Waiting for the scenario…';
+    recentEvents = [];
+  }
+  function eventLabel(event) {
+    const p = event.payload || {};
+    if (event.kind === 'demo.mark') return p.label;
+    if (event.kind === 'optimizer.evaluation') {
+      const d = p.decision || {};
+      return 'Policy: ' + (d.reason || 'evaluated');
+    }
+    if (event.kind === 'optimizer.action') return p.phase === 'requested' ? 'BTM steer requested' : 'Steering request submitted';
+    if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
+    if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
+    if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
+    if (event.kind === 'worker.error') return (p.fatal ? 'ERROR' : 'Transient warning') + ': ' + p.worker;
+    if (event.kind === 'rf.restore.started') return 'Restoring the original RF matrix';
+    if (event.kind === 'rf.restore.completed') return p.verified ? 'RF baseline restored' : 'RF restoration failed';
+    if (event.kind === 'run.completed') return 'Run ' + p.outcome;
+    return null;
+  }
+  function applyDemoEvent(event, advanceClock = true) {
+    if (advanceClock) tMs = Math.max(0, Math.min(world.duration_ms, Number(event.world_time_ms) || 0));
+    if (event.kind === 'network.snapshot') networkState = event.payload;
+    else if (event.kind === 'optimizer.evaluation') optimizerState = event.payload;
+    else if (event.kind === 'traffic.sample') trafficState = event.payload;
+    else if (event.kind === 'health.sample') healthState = event.payload;
+    else if (event.kind === 'optimizer.action') {
+      actionState = event.payload;
+      actionPulseUntil = performance.now() + 5000;
+    } else if (event.kind === 'optimizer.verification') {
+      verificationState = event.payload;
+      actionPulseUntil = performance.now() + 6000;
+    } else if (event.kind === 'demo.mark') storyState = event.payload.label;
+    const label = eventLabel(event);
+    if (label) recentEvents.push({world_time_ms: event.world_time_ms, label});
+    if (recentEvents.length > 30) recentEvents = recentEvents.slice(-30);
+  }
+  function runStateFor(event) {
+    if (event.kind === 'runner.preflight' || (event.kind === 'demo.state' && event.payload.state === 'ready')) return 'ready';
+    if (event.kind === 'rf.restore.started' || event.kind === 'rf.restore.completed' || event.kind === 'runner.postflight') return 'restoring';
+    if (event.kind === 'scenario.completed' || event.kind === 'run.completed') return event.payload.outcome;
+    return 'running';
+  }
+  function applyLiveState(state) {
+    if (!world) return;
+    tMs = Math.max(0, Math.min(world.duration_ms, Number(state.world_time_ms) || 0));
+    resetEventState();
+    Object.values(state.latest || {}).sort((a, b) => a.sequence - b.sequence)
+      .forEach((event) => applyDemoEvent(event, false));
+    setLiveStatus(state.state, 'event ' + state.sequence);
+    $('#liveRun').style.display = 'block';
+    $('#liveRun').textContent = 'Run ' + state.run_id;
+    liveTerminal = state.state === 'passed' || state.state === 'failed';
+    update();
+  }
+  async function connectLive() {
+    setLiveStatus('connecting');
+    $('#world').disabled = true;
+    $('#file').disabled = true;
+    $('#scrub').disabled = true;
+    $('#play').disabled = true;
+    document.querySelectorAll('[data-speed]').forEach((button) => { button.disabled = true; });
+    $('#viewerTitle').textContent = 'EasyMesh immersive room demo';
+    $('#hint').textContent = 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan';
+    try {
+      const stateResponse = await fetch('/api/demo/current', { cache: 'no-store' });
+      if (!stateResponse.ok) throw new Error(stateResponse.status + ' ' + stateResponse.statusText);
+      const state = await stateResponse.json();
+      await fetchWorldUrl(state.world_url);
+      applyLiveState(state);
+      liveSource = new EventSource('/api/demo/events?after=' + encodeURIComponent(state.sequence));
+      liveSource.onopen = () => {
+        const current = $('#liveStatus').dataset.state;
+        if (current === 'connecting' || current === 'disconnected') setLiveStatus(state.state, 'connected');
+      };
+      liveSource.onmessage = (message) => {
+        const event = JSON.parse(message.data);
+        $('#liveRun').style.display = 'block';
+        $('#liveRun').textContent = 'Run ' + event.run_id;
+        applyDemoEvent(event);
+        const runState = runStateFor(event);
+        if (event.kind === 'run.completed') liveTerminal = true;
+        setLiveStatus(runState, 'event ' + event.sequence);
+        update();
+      };
+      liveSource.onerror = () => { if (!liveTerminal) setLiveStatus('disconnected', 'reconnecting'); };
+    } catch (e) {
+      setLiveStatus('failed');
+      err('Could not enter live mode: ' + e.message);
+    }
+  }
+  function applyReplayUntil(value) {
+    if (value < replayAppliedTime) {
+      resetEventState(); replayIndex = 0;
+    }
+    while (replayIndex < replayEvents.length && replayEvents[replayIndex].world_time_ms <= value) {
+      applyDemoEvent(replayEvents[replayIndex], false);
+      replayIndex++;
+    }
+    replayAppliedTime = value;
+    const last = replayIndex ? replayEvents[replayIndex - 1] : null;
+    setLiveStatus(last ? runStateFor(last) : 'ready', 'event ' + (last ? last.sequence : 0));
+  }
+  async function connectReplay() {
+    setLiveStatus('connecting');
+    $('#world').disabled = true;
+    $('#file').disabled = true;
+    $('#viewerTitle').textContent = 'EasyMesh room demo replay';
+    $('#hint').textContent = 'recorded evidence · drag to orbit · wheel to zoom · shift-drag to pan · space plays';
+    try {
+      const [stateResponse, worldResponse, eventsResponse] = await Promise.all([
+        fetch('/api/demo/current', {cache: 'no-store'}),
+        fetch('/api/demo/world', {cache: 'no-store'}),
+        fetch('/api/demo/events.json', {cache: 'no-store'}),
+      ]);
+      if (!stateResponse.ok || !worldResponse.ok || !eventsResponse.ok) throw new Error('replay API is unavailable');
+      const state = await stateResponse.json();
+      loadWorld(await worldResponse.json());
+      replayEvents = (await eventsResponse.json()).events.sort((a, b) => a.sequence - b.sequence);
+      $('#liveRun').style.display = 'block';
+      $('#liveRun').textContent = 'Recorded run ' + state.run_id;
+      resetEventState(); replayIndex = 0; replayAppliedTime = -1; tMs = 0;
+      applyReplayUntil(0); update();
+    } catch (e) {
+      setLiveStatus('failed'); err('Could not enter replay mode: ' + e.message);
+    }
+  }
+
   // ---- loop ----------------------------------------------------------------
   function loop(now) {
     requestAnimationFrame(loop);
-    if (playing && world) {
+    if (playing && world && !liveMode) {
       tMs += (now - lastTick) * speed;
       if (tMs >= world.duration_ms) { tMs = world.duration_ms; playing = false; $('#play').textContent = 'Play'; }
+      if (replayMode) applyReplayUntil(tMs);
       update();
     }
     lastTick = now;
@@ -556,7 +888,9 @@
 
   const initial = new URLSearchParams(location.search).get('world');
   if (initial && GOLDEN.includes(initial)) sel.value = initial;
-  if (location.protocol === 'file:') $('#worldmeta').textContent = 'Opened from disk: pick a .world.json below.';
+  if (liveMode) connectLive();
+  else if (replayMode) connectReplay();
+  else if (location.protocol === 'file:') $('#worldmeta').textContent = 'Opened from disk: pick a .world.json below.';
   else fetchWorld(sel.value);
 })();
 </script>

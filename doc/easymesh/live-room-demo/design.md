@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed, implementation-ready |
+| Status | Complete implementation available: live observation, recommend, bounded act, evidence and replay |
 | Project baseline | `boardfarmdevs/meta-cmf-bananapi-vcpe` |
 | Baseline branch | `codex/0902-clean` |
 | Date | 2026-09-03 |
-| Repository path | `doc/easymesh/planning/live-room-demo.md` |
+| Repository path | `doc/easymesh/live-room-demo/design.md` |
 | First supported live claim | One external-optimizer-driven, same-band steer of one `private_ssid` client while the complete 20-client, dual-network lab remains active |
 
 ## 1. Executive summary
@@ -35,6 +35,15 @@ The initial closed-loop action should target one `private_ssid` client. The ten 
 The first polished demo should deliberately make a narrow, defensible claim:
 
 > Twenty clients and five tri-band EasyMesh devices remain active while one private 5 GHz client walks between rooms. The external optimizer detects a sustained, measured same-band advantage, sends one real EasyMesh steering request, verifies the reassociation and controller convergence, maintains traffic, and restores the exact RF baseline without restarting EasyMesh or OneWifi.
+
+The implemented entry point is `gen/demo/room-demo`. The default manifest is
+`gen/demo/manifests/private-client-room-walk.json`; it selects the dedicated
+240-second world, swaps one private client into the hero mobility role, limits
+candidate collection and action to that client, provides `stimulus`,
+`recommend`, and confirmed `act` modes, and produces a hash-indexed replayable
+evidence directory. The live/replay viewer consumes the same centrally ordered
+events retained as evidence. Operational detail is in the
+[immersive room demo manual](manual.md).
 
 ## 2. Objectives
 
@@ -209,7 +218,11 @@ The browser viewer already:
 - exports a small `window.__viewer` control surface including `setTime`, `select`, and `setBand`;
 - is published from `gh-pages`.
 
-The current viewer is intentionally static. Its time is controlled by the browser, and its “best serving link” is derived from Golden World SNR. It does not currently know:
+The viewer retains its static mode and now also has a first `?mode=live`
+milestone. In live mode, time comes from typed runner events, local playback
+controls are disabled, and the same Golden World is served by a read-only
+REST/SSE service. Its strongest simulated link still derives from Golden World
+SNR. It does not yet know:
 
 - the real associated BSSID;
 - controller-observed RCPI;
@@ -218,7 +231,6 @@ The current viewer is intentionally static. Its time is controlled by the browse
 - BTM action state;
 - traffic state;
 - health state;
-- the authoritative scenario runner clock.
 
 It also loads Three.js from cdnjs, which creates an avoidable network dependency for a live demonstration.
 
@@ -318,13 +330,13 @@ This should remain the authoritative full preflight and postflight gate.
 | Area | Current state | Required change |
 |---|---|---|
 | Dual networks | Already provisioned and observed | Preserve both; add explicit demo policy and visual identity |
-| RF stimulus | Complete, atomic, restorable | Add a room-demo world and event hook |
+| RF stimulus | Complete, atomic, restorable, and emits typed live events | Add the dedicated hero-client room world |
 | Optimizer | Complete narrow same-band loop | Add hero-STA scope and request-only actuation |
 | Steering helper | `--request-only` already exists | Wire optimizer actuator to it |
 | Current actuator | Calls `gen/steer.sh STA BSSID` | Prevent its default temporary RF bias during a running world |
-| Viewer | Static Golden World player | Add live and replay modes |
-| Clock | Browser-local | Use scenario runner monotonic time |
-| Event integration | Separate logs and journals | Add a conductor and normalized event stream |
+| Viewer | Static player plus stimulus-only live mode | Add replay and actual-network overlays |
+| Clock | Runner-monotonic in live mode | Reuse it for optimizer and traffic events |
+| Event integration | Typed runner events persisted and streamed over SSE | Add optimizer, traffic, and health event producers |
 | Scenario duration | Existing room walks are 60 seconds | Add a 240-second demo world or a later generic time-scale option |
 | Network truth | Viewer shows Golden RF-best link | Add real associated AP as a separate visual |
 | Action scope | Optimizer evaluates all clients | Collect/act only for an explicit hero allowlist while retaining all 20 in health |
@@ -764,6 +776,13 @@ Use separate visual encodings:
 
 Do not overload node color with both cohort and RF strength. Use badges or rings for SSID/cohort identity.
 
+In the companion RDK Network Topology view, use a ten-segment vertical signal
+meter beside each STA/IoT icon. It spans the icon height, changes fill and
+quality color with fresh associated-link telemetry, and is placed on the side
+opposite the squiggly serving-AP line. Recalculate that side after client drag
+or reassociation. Keep exact RSSI/RCPI in hover details and update the meter in
+place so telemetry polling never disturbs the graph layout.
+
 ### 10.3 Hero panel
 
 The selected hero panel should display:
@@ -830,31 +849,27 @@ Add a narrow orchestration package:
 ```text
 gen/demo/
 |-- README.md
-|-- pyproject.toml
+|-- room-demo
 |-- room_demo/
 |   |-- __init__.py
 |   |-- cli.py
 |   |-- manifest.py
 |   |-- conductor.py
 |   |-- events.py
-|   |-- server.py
-|   |-- traffic.py
-|   |-- monitor.py
-|   `-- bundle.py
+|   `-- server.py
 |-- manifests/
-|   `-- private-client-room-walk.yaml
+|   `-- private-client-room-walk.json
 |-- bindings/
 |   `-- private-client-room-walk.json
 `-- tests/
 ```
 
-Suggested operator interface:
+Implemented operator interface:
 
 ```bash
-gen/demo/room-demo plan private-client-room-walk
-gen/demo/room-demo check private-client-room-walk
-gen/demo/room-demo run private-client-room-walk --mode recommend
-gen/demo/room-demo run private-client-room-walk --mode act --yes-act
+gen/demo/room-demo check
+gen/demo/room-demo run --mode recommend
+gen/demo/room-demo run --mode act --yes-act
 gen/demo/room-demo replay /path/to/run-directory
 ```
 
@@ -1067,9 +1082,9 @@ A live observation still reports 20 clients, but candidate transactions and acti
 gen/wmediumd/configurator/worlds/mobility/private-client-room-walk.json
 gen/wmediumd/configurator/worlds/golden/home-a-private-client-room-walk.world.json
 gen/wmediumd/configurator/worlds/build-goldens.sh
-gen/optimizer/scenarios/private-client-room-walk-bindings.json
-gen/demo/manifests/private-client-room-walk.yaml
-gh-pages/golden/
+gen/demo/bindings/private-client-room-walk.json
+gen/demo/manifests/private-client-room-walk.json
+gen/wmediumd/configurator/worlds/viewer/
 ```
 
 #### Work
@@ -1102,6 +1117,11 @@ gh-pages/golden/
 The room world can run live without an optimizer, animate correctly, and leave the complete dual-network lab unchanged after restoration.
 
 ### Phase 4 — Runner event hook and authoritative clock
+
+Implementation status: complete for the stimulus-only milestone. The runner
+emits ordered preflight, start, clock, mark, applied-generation, restore,
+postflight, and completion events. Optimizer/action-window events remain later
+work.
 
 #### Files
 
@@ -1247,6 +1267,11 @@ The optimizer journal remains independently hash-chained. `hashes.json` should b
 One command performs a complete recommend-only run, restores RF, retains evidence, and exits nonzero on any failed gate.
 
 ### Phase 7 — Live and replay viewer
+
+Implementation status: live stimulus mode is implemented in the existing
+single-file viewer with REST/SSE reconnect state and disabled playback
+controls. Replay, actual association, optimizer, traffic, health panels, and a
+vendored Three.js dependency remain later work.
 
 #### Files
 
@@ -1467,18 +1492,18 @@ Inside the EasyMesh appliance VM:
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 
 # Rehearsal: no action.
-gen/demo/room-demo run private-client-room-walk --mode recommend
+gen/demo/room-demo run --mode recommend
 
 # Live closed loop: one request-only action.
-gen/demo/room-demo run private-client-room-walk --mode act --yes-act
+gen/demo/room-demo run --mode act --yes-act
 ```
 
 The conductor prints:
 
 ```text
-run_id:       20260903T190000Z-private-client-room-walk
-viewer:       http://127.0.0.1:8891/viewer/?mode=live
-artifacts:    /home/easymesh/.local/state/easymesh-room-demo/runs/RUN_ID
+room-demo: run 20260903T190000Z-private-client-room-walk; mode=act; hero=...
+room-demo: immersive viewer http://127.0.0.1:8891/viewer/?mode=live
+room-demo: evidence /tmp/easymesh-room-demo-runs/RUN_ID
 ```
 
 Expose the viewer through one additional outer-VM proxy port, for example:
@@ -1571,8 +1596,8 @@ The first release is complete when one checked-in command can reliably produce t
 
 - [EasyMesh demonstration runbook](../guide/demonstrations.md)
 - [External optimizer architecture](../reference/optimizer-architecture.md)
-- [Optimizer development manual](optimizer-development.md)
-- [Optimizer scenario suite](optimizer-scenarios.md)
+- [Optimizer development manual](../experiments/optimizer-development.md)
+- [Optimizer scenario suite](../experiments/optimizer-scenarios.md)
 - [wmediumd configurator reference](../reference/wmediumd-configurator.md)
 - [External optimizer implementation](../../../gen/optimizer/README.md)
 - [wmediumd configurator implementation](../../../gen/wmediumd/configurator/README.md)
