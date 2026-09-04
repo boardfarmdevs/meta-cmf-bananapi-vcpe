@@ -91,6 +91,67 @@ an AP or extender changes every affected fronthaul and backhaul pair. The
 initial milestone limits live dragging to clients so cost and behavior remain
 easy to bound.
 
+### Drag-time spatial feedback
+
+Dragging must make the physical model understandable without opening another
+view. A compact panel anchored next to the selected role shows, live:
+
+- current room coordinates and distance moved;
+- distance to the associated AP and to the strongest candidate AP;
+- the straight-line path to each of those APs;
+- number and names of walls crossed by each path;
+- wall loss, free-space/path loss and predicted SNR for the selected band;
+- current measured RCPI and the age of that measurement; and
+- the three best candidates, ordered by predicted signal.
+
+The intersected wall segments are highlighted while dragging. Distances and
+wall counts are geometric predictions; measured telemetry remains visually
+separate. The panel follows the role but is kept inside the viewport so it
+cannot obscure the pointer or fall off the screen.
+
+### Destination movement at a selected speed
+
+The operator can right-click a role, select **Move**, and then click a
+destination in the room. Before movement begins, the viewer shows the proposed
+path, total distance, walls crossed, selected speed and estimated arrival
+time. The operator can use a preset speed or enter a value in metres per
+second.
+
+The server turns the requested route into time-based position keyframes and
+uses the same geometry and wmediumd application path as a precooked scenario.
+It does not teleport the role or manipulate its association directly. During
+movement, the role follows the path at the selected speed while distance
+remaining, elapsed time, crossed walls, predicted link values and observed
+mesh state update continuously. The movement can be paused, resumed or
+cancelled. Cancelling freezes the role at its last accepted position.
+
+Direct dragging remains available for immediate placement. Destination
+movement is the preferred presentation control when the audience should see a
+realistic RF crossover, optimizer hold time and subsequent steering decision.
+Both forms of movement produce recordable scenario keyframes.
+
+### Presence and reappearance
+
+Every bound role has an explicit `present` state. **Disappear** atomically
+drives all of that role's wmediumd links below the usable threshold while the
+container, stable radio identity and inventory entry remain intact. This
+simulates leaving the room or complete RF isolation. It must not delete the
+role or directly remove it from the controller model.
+
+The room view immediately marks the role as RF absent. The topology view then
+shows the independently observed consequences: link loss, client recovery and
+controller aging. Keeping these two states separate makes controller liveness
+behavior visible instead of manufacturing it in the presentation.
+
+**Reappear** restores the role at a selected position, recomputes all affected
+links and allows normal discovery, association and EasyMesh onboarding to
+occur. The operator can position an absent role before making it present. Both
+actions are scenario keyframes and are recordable and replayable.
+
+A separate expert-only **Power off/on** action may later stop and start the
+corresponding container. It tests lifecycle recovery and is not equivalent to
+RF disappearance.
+
 A movement lease prevents two browsers from controlling the same role. A
 second observer remains read-only. Losing the lease or closing the run freezes
 the role at its last accepted position; stopping the run restores the complete
@@ -108,6 +169,11 @@ Add a narrowly scoped interaction API:
 
 - `POST /api/demo/interactions/lease`
 - `PUT /api/demo/roles/{role}/position`
+- `POST /api/demo/roles/{role}/move`
+- `POST /api/demo/movements/{movement}/pause`
+- `POST /api/demo/movements/{movement}/resume`
+- `DELETE /api/demo/movements/{movement}`
+- `PUT /api/demo/roles/{role}/presence`
 - `DELETE /api/demo/interactions/lease`
 - `POST /api/demo/recording/start`
 - `POST /api/demo/recording/stop`
@@ -124,6 +190,11 @@ New ordered events include:
 - `interaction.position.previewed`
 - `interaction.position.accepted`
 - `interaction.position.rejected`
+- `interaction.movement.started`
+- `interaction.movement.progress`
+- `interaction.movement.completed`
+- `interaction.movement.cancelled`
+- `interaction.presence.changed`
 - `rf.generation.applied`
 - `telemetry.position.effect.observed`
 - `optimizer.recommendation`
@@ -158,6 +229,26 @@ Recording samples accepted positions, simplifies the path within a configured
 error tolerance, preserves significant RF/steering event times, and exports
 the same scenario schema consumed by the current configurator.
 
+## Recommended interactive controls
+
+The useful room controls, in implementation order, are:
+
+1. select, inspect, drag, or send a role to a destination at a chosen speed;
+2. disappear and reappear a client, extender or gateway;
+3. pause, resume and change the speed of scripted time;
+4. choose optimizer authority: observe, recommend or explicitly act;
+5. start or stop a client traffic pattern and show its offered/actual rate;
+6. open or close a modeled door and enable, move or edit a wall;
+7. apply a band-specific interference or outage region;
+8. capture a named snapshot, undo/redo an edit and reset the scene; and
+9. record, annotate, export and replay the complete interaction.
+
+The UI should also offer a link-budget inspection mode. Selecting any two
+roles explains distance, obstructions, per-band loss, applied wmediumd SNR,
+measured telemetry and whether frames have recently crossed that link. This is
+more useful than adding many independent knobs whose effects are difficult to
+explain.
+
 ## Delivery phases
 
 ### Phase 1: safe interactive preview
@@ -174,13 +265,15 @@ changing the lab.
 ### Phase 2: live RF actuation
 
 - Compile each accepted client position into frequency-qualified SNR updates.
+- Apply role disappearance and reappearance as atomic RF generations.
 - Apply changed pairs as one atomic wmediumd generation.
 - Rate-limit and coalesce drag updates.
 - Read back every generation.
 - Restore the exact original RF matrix on stop, error or process termination.
 
-Exit criterion: moving one client changes only its intended RF pairs, measured
-RCPI follows, traffic remains bounded, and restore is byte-for-byte exact.
+Exit criterion: moving or hiding one client changes only its intended RF
+pairs, measured RCPI and liveness follow, reappearance recovers normally,
+traffic remains bounded, and restore is byte-for-byte exact.
 
 ### Phase 3: optimizer loop
 
@@ -235,16 +328,16 @@ correct under bounded interactive changes at every supported scale.
 Start with one 5 GHz private client in the existing five-agent room:
 
 1. drag the hero client;
-2. preview its signal to every AP;
+2. see distance, crossed walls and predicted signal to every AP;
 3. apply its changed wmediumd pairs at pointer-up;
 4. observe fresh controller RCPI;
-5. show the optimizer recommendation;
-6. optionally confirm one BTM steer;
-7. verify association and traffic;
-8. restore the starting RF matrix;
-9. export the movement as a scenario.
+5. disappear and reappear it at a new position;
+6. show the optimizer recommendation;
+7. optionally confirm one BTM steer;
+8. verify association and traffic;
+9. restore the starting RF matrix;
+10. export the movement and presence changes as a scenario.
 
 This uses the current viewer, world geometry, role bindings, atomic control
 plane, optimizer and evidence recorder. It adds interaction rather than a
 second demonstration architecture.
-
