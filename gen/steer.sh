@@ -452,7 +452,7 @@ if ((request_only)); then
     fi
     status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
-        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" gentle
     exit $?
 fi
 

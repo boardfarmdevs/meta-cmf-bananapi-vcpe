@@ -1,5 +1,5 @@
 #!/bin/sh
-# steer.sh <STA_MAC> <TARGET_BSSID> [OP_CLASS] [CHANNEL]
+# steer.sh <STA_MAC> <TARGET_BSSID> [OP_CLASS] [CHANNEL] [gentle]
 #
 # Commanded EasyMesh client steering, the ergonomic form: given only the station
 # and the destination BSSID, resolve the source device (AL-MAC / RUID / source
@@ -10,11 +10,31 @@
 #
 # Example: steer.sh 02:00:00:00:03:00 02:00:00:51:38:4f
 
-STA="$1"; TGT="$2"; OPCLASS="$3"; CHAN="$4"
+STA="$1"; TGT="$2"; OPCLASS="$3"; CHAN="$4"; MODE="$5"
 if [ -z "$STA" ] || [ -z "$TGT" ]; then
-    echo "usage: steer.sh <STA_MAC> <TARGET_BSSID> [op_class] [channel]" >&2
+    echo "usage: steer.sh <STA_MAC> <TARGET_BSSID> [op_class] [channel] [gentle]" >&2
     exit 2
 fi
+
+# Continuous reconciliation must not kick a station off its serving AP merely
+# because it declines a candidate. Gentle mode keeps the mandate and abridged
+# target list but leaves a rejecting station associated for a measured retry.
+case "$MODE" in
+    gentle)
+        BTM_DISASSOC_IMMINENT=false
+        BTM_DISASSOC_TIMER=0
+        BTM_OPPORTUNITY_WINDOW=50
+        ;;
+    "")
+        BTM_DISASSOC_IMMINENT=true
+        BTM_DISASSOC_TIMER=5
+        BTM_OPPORTUNITY_WINDOW=5
+        ;;
+    *)
+        echo "steer.sh: fifth argument must be 'gentle' when supplied" >&2
+        exit 2
+        ;;
+esac
 
 MYSQL="mysql -N -ubpi -proot OneWifiMesh"
 
@@ -66,11 +86,11 @@ cat > "$JSON" <<EOF
           "ClientSteer": {
             "TargetBSSID": "$TGT",
             "RequestMode": { "Steering_Mandate": 1 },
-            "BTMDisassociationImminent": true,
+            "BTMDisassociationImminent": $BTM_DISASSOC_IMMINENT,
             "BTMAbridged": true,
             "LinkRemovalImminent": false,
-            "SteeringOpportunityWindow": 5,
-            "BTMDisassociationTimer": 5,
+            "SteeringOpportunityWindow": $BTM_OPPORTUNITY_WINDOW,
+            "BTMDisassociationTimer": $BTM_DISASSOC_TIMER,
             "TargetBSSOperatingClass": $OPCLASS,
             "TargetBSSChannel": $CHAN
           } }] }] }] }] } } }
