@@ -27,7 +27,17 @@ The current safe boundary is deliberately narrow:
 
 The room position is simulated truth. Association, RCPI, candidate metrics,
 optimizer decisions, BTM acceptance, topology, and traffic remain observed
-truth. Moving an icon never directly moves it to a different AP.
+truth. Moving an icon never directly moves it to a different AP. The room and
+the unchanged EasyMesh Network Topology view consume the same live controller
+graph: solid client links are current BSS ownership and solid dark-blue AP
+links are current wireless-backhaul parentage. Modeled AP-to-AP reachability is
+not presented as an actual live mesh edge.
+
+Controller display ordinals can follow discovery order. Room coordinates are
+bound to stable container/radio identities, then joined to controller nodes by
+BSSID ownership. The room displays the controller's current `Agent-1` and
+`Extender-N` names on those coordinates, so a star, branch, or chain conveys
+the same actual parent/child topology in both views.
 
 Predicted geometry SNR, applied/read-back wmediumd SNR, associated-link RCPI,
 and candidate RCPI are separate values with separate directions, timestamps

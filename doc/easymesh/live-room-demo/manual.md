@@ -282,26 +282,36 @@ lock.
 
 - dashed red/amber/green: **scenario-best** AP for the selected display band;
 - solid cyan: **actual controller-observed association**;
-- dashed gold: optimizer's current measured target.
+- dashed gold: optimizer's current measured target; and
+- solid dark blue: **actual controller-observed wireless-backhaul parent**.
 
 The lines are intentionally independent. A dashed green scenario-best line is
 not proof that the client has associated there. During a useful crossover the
 cyan line can remain on the old AP while the gold line identifies a better
 candidate. It moves only after the real client and controller converge.
 
-The room's `Extender-1` through `Extender-4` names are stable manifest/container
-roles. RDK's controller may assign its displayed `Extender-N` ordinal in a
-different discovery order. The conductor resolves both serving and candidate
-links by their live BSSID ownership, so geometry and lines use the stable room
-role. When the controller label differs, the Hero card shows it in
-parentheses rather than silently treating the ordinal as an identity.
+Room positions remain bound to stable manifest/container roles. RDK's
+controller may assign its displayed `Extender-N` ordinal in a different
+discovery order, so the conductor does not bind the room by that label. It
+joins each controller node to a room role through live BSSID ownership and
+then displays the controller's current device name on that physical room
+position. Client association lines and wireless-backhaul parent lines use the
+same controller topology snapshot as the unchanged EasyMesh Network Topology
+view. A star or multihop change therefore appears in both views without
+changing the room geometry.
+
+The geometric AP-to-AP RF graph is not shown as live mesh topology. It remains
+available only in the offline Golden World viewer, where no controller graph
+exists. This prevents an RF-capable link from being mistaken for an actual
+backhaul association.
 
 ### 8.3 Left-side cards
 
 `Scenario` states the current audience narrative marker.
 
-`Whole lab` reports mesh-device, client, private/IoT cohort, controller-model,
-and health counts. A healthy full model is `5/15/50/24`.
+`Whole lab` reports mesh-device, client, private/IoT cohort, actual topology
+shape and backhaul-edge count, controller-model, and health counts. A healthy
+full model is `5/15/50/24`.
 
 `Hero client` reports the real serving device and BSSID, band, SSID, associated
 RCPI/RSSI, and the latest data-plane ping result.
@@ -328,7 +338,7 @@ policy changes, action, verification, health, and RF restoration.
 
 In live mode, world selection, file input, play, speed, and scrub are disabled
 because the runner owns time. Camera orbit, shift-pan, wheel zoom, band display,
-labels, trails, scenario links, and backhaul controls remain available.
+labels, trails, scenario links, and actual-backhaul controls remain available.
 
 Changing the display band changes only visualization of Golden World SNR. It
 does not change client or AP configuration.

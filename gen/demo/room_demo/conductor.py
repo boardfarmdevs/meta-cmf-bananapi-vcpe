@@ -12,7 +12,7 @@ from typing import Any, Callable
 from optimizer.actuator import SteerActuator
 from optimizer.candidates import CandidateMetricsError, ControllerCandidateProvider
 from optimizer.config import load_policy
-from optimizer.model import parse_time
+from optimizer.model import normalize_band, parse_time
 from optimizer.observer import ControllerObserver
 from optimizer.policy import ThresholdPolicy
 from optimizer.state import PolicyState
@@ -184,7 +184,96 @@ class LiveConductor:
             "metric_observed_at": client.metric_observed_at,
         }
 
-    def _network_payload(self, snapshot) -> dict[str, Any]:
+    def _topology_payload(self, topology: dict[str, Any] | None) -> dict[str, Any]:
+        """Project the controller's live mesh graph onto stable world roles.
+
+        Controller display ordinals are discovery-order labels, so node names
+        cannot safely bind an extender to a room position.  A BSS belongs to
+        both the controller node and one compiled lab role; that shared BSSID
+        is the authoritative bridge used for nodes, backhaul and clients.
+        """
+        if not topology:
+            return {
+                "source": "controller_topology_api",
+                "available": False,
+                "nodes": [],
+                "backhaul_edges": [],
+                "unresolved_edges": 0,
+            }
+
+        role_by_device_id: dict[str, str] = {}
+        nodes = []
+        for node in topology.get("nodes", []) or []:
+            device_id = str(node.get("id") or "").lower()
+            role = None
+            for haul in node.get("haulTypes", []) or []:
+                for bss in haul.get("BSSList", []) or []:
+                    bssid = str(bss.get("BSSID") or "").lower()
+                    role = self._ap_role_by_bssid.get(bssid)
+                    if role:
+                        break
+                if role:
+                    break
+            if role is None:
+                role = DEVICE_ROLES.get(str(node.get("name") or "").lower())
+            if not role:
+                # The logical controller is intentionally not a separate
+                # object in the physical room; Agent-1/gateway represents the
+                # co-located controller+agent device.
+                continue
+            role_by_device_id[device_id] = role
+            nodes.append({
+                "role": role,
+                "device_id": device_id,
+                "name": node.get("name") or _world_device_name(role),
+                "backhaul_media": node.get("backhaulMedia") or "",
+                "upstream_bssid": str(node.get("upstreamBSSID") or "").lower(),
+            })
+
+        edges = []
+        unresolved = 0
+        for edge in topology.get("edges", []) or []:
+            if str(edge.get("mediaType") or "").lower() != "wireless lan":
+                continue
+            parent = role_by_device_id.get(str(edge.get("from") or "").lower())
+            child = role_by_device_id.get(str(edge.get("to") or "").lower())
+            if not parent or not child:
+                unresolved += 1
+                continue
+            raw_band = edge.get("band")
+            try:
+                band = normalize_band(raw_band)
+            except ValueError:
+                band = None
+            signal = dict(edge.get("signal") or {})
+            if signal.get("rssi_dbm") is None and edge.get("rssi") is not None:
+                signal["rssi_dbm"] = edge.get("rssi")
+            if signal.get("rcpi") is None and edge.get("rcpi") is not None:
+                signal["rcpi"] = edge.get("rcpi")
+            edges.append({
+                "parent_role": parent,
+                "child_role": child,
+                "media_type": edge.get("mediaType") or "Wireless LAN",
+                "band": band,
+                "channel": edge.get("channel"),
+                "upstream_bssid": str(edge.get("upstreamBSSID") or "").lower(),
+                "backhaul_sta": str(edge.get("backhaulSTA") or "").lower(),
+                "signal": signal,
+            })
+
+        return {
+            "source": "controller_topology_api",
+            "available": True,
+            "nodes": sorted(nodes, key=lambda item: item["role"]),
+            "backhaul_edges": sorted(
+                edges, key=lambda item: (item["parent_role"], item["child_role"])
+            ),
+            "unresolved_edges": unresolved,
+        }
+
+    def _network_payload(
+        self, snapshot, topology: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         clients = [self._client_payload(item) for item in snapshot.clients]
         hero = next((item for item in clients if item["sta_mac"] == self.hero_mac), None)
         return {
@@ -201,6 +290,7 @@ class LiveConductor:
             },
             "clients": clients,
             "hero": hero,
+            "mesh": self._topology_payload(topology),
         }
 
     def _ping(self, container: str) -> dict[str, Any]:
@@ -243,7 +333,7 @@ class LiveConductor:
     def preflight(self) -> None:
         observer = ControllerObserver(self.base_url)
         snapshot = observer.observe()
-        payload = self._network_payload(snapshot)
+        payload = self._network_payload(snapshot, observer.last_raw["topology"])
         hero = payload["hero"]
         expected = self.manifest["health"]
         failures = []
@@ -325,7 +415,9 @@ class LiveConductor:
                 finally:
                     self._controller_lock.release()
                 self.store.emit(
-                    "network.snapshot", self._time(), self._network_payload(snapshot),
+                    "network.snapshot", self._time(), self._network_payload(
+                        snapshot, observer.last_raw["topology"]
+                    ),
                     producer="network",
                 )
             except (OSError, ValueError, KeyError) as error:

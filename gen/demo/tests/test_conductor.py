@@ -50,6 +50,17 @@ class ConductorProjectionTests(unittest.TestCase):
                             "ssid": "private_ssid",
                         }]}
                     },
+                },
+                "gateway": {
+                    "role_type": "fronthaul_ap",
+                    "container": "bpibroadband",
+                    "radio_permanent_mac": "02:00:00:00:00:00",
+                    "band_radios": {
+                        "5": {"interfaces": [{
+                            "mac": "02:00:00:00:01:01",
+                            "ssid": "private_ssid",
+                        }]}
+                    },
                 }
             }
         }
@@ -117,6 +128,60 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertEqual(payload["hero"]["connected_world_name"], "Extender-1")
         self.assertEqual(payload["hero"]["rssi_dbm"], -41)
         self.assertEqual(payload["cohorts"], {"private": 1, "iot": 0, "other": 0})
+
+    def test_controller_backhaul_is_projected_by_bssid_not_display_ordinal(self):
+        conductor, _store = self._conductor()
+        topology = {
+            "nodes": [
+                {
+                    "id": "02:00:00:00:10:20",
+                    "name": "Agent-1",
+                    "backhaulMedia": "Ethernet",
+                    "haulTypes": [{"BSSList": [{
+                        "BSSID": "02:00:00:00:01:01",
+                    }]}],
+                },
+                {
+                    "id": "02:00:00:00:44:20",
+                    # Deliberately differs from the world role's ordinal.
+                    "name": "Extender-4",
+                    "backhaulMedia": "Wireless LAN",
+                    "upstreamBSSID": "02:00:00:00:02:01",
+                    "haulTypes": [{"BSSList": [{
+                        "BSSID": "02:00:00:00:04:01",
+                    }]}],
+                },
+            ],
+            "edges": [{
+                "from": "02:00:00:00:10:20",
+                "to": "02:00:00:00:44:20",
+                "mediaType": "Wireless LAN",
+                "band": 1,
+                "channel": 36,
+                "upstreamBSSID": "02:00:00:00:02:01",
+                "backhaulSTA": "02:00:00:00:03:01",
+                "signal": {"status": "fresh", "rcpi": 138, "rssi_dbm": -41},
+            }],
+        }
+
+        mesh = conductor._topology_payload(topology)
+
+        self.assertTrue(mesh["available"])
+        self.assertEqual(mesh["unresolved_edges"], 0)
+        self.assertEqual(
+            {item["role"]: item["name"] for item in mesh["nodes"]},
+            {"gateway": "Agent-1", "extender_1": "Extender-4"},
+        )
+        self.assertEqual(mesh["backhaul_edges"], [{
+            "parent_role": "gateway",
+            "child_role": "extender_1",
+            "media_type": "Wireless LAN",
+            "band": "5",
+            "channel": 36,
+            "upstream_bssid": "02:00:00:00:02:01",
+            "backhaul_sta": "02:00:00:00:03:01",
+            "signal": {"status": "fresh", "rcpi": 138, "rssi_dbm": -41},
+        }])
 
 
 if __name__ == "__main__":

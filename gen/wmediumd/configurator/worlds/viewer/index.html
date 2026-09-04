@@ -90,6 +90,7 @@
   .line-key { display:inline-block; width:24px; height:0; vertical-align:4px; margin-right:5px; border-top:3px solid #05a9cf; }
   .line-key.dashed { border-top:2px dashed #777; }
   .line-key.target { border-color:#f0ad00; }
+  .line-key.backhaul { border-color:#2468a8; border-top-width:4px; }
   .interaction-card { border-color: #b9a4ca; background: #fbf8ff; }
   .preview-badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #6f3e8e; color: #fff; font-size: 10px; font-weight: 750; letter-spacing: .05em; }
   .preview-badge.live-rf { background: #176b48; }
@@ -174,7 +175,7 @@
 
   <div style="margin-top:12px">
     <label class="check"><input type="checkbox" id="showLinks" checked> Strongest simulated link per station</label>
-    <label class="check"><input type="checkbox" id="showBackhaul"> Backhaul links</label>
+    <label class="check"><input type="checkbox" id="showBackhaul" checked> Actual mesh backhaul</label>
     <label class="check"><input type="checkbox" id="showTrails" checked> Mobile trails up to now</label>
     <label class="check"><input type="checkbox" id="showSta" checked> Station names</label>
   </div>
@@ -222,7 +223,8 @@
     Links: red weak → amber → green strong. Absent roles are shown hollow.<br>
     <span class="line-key dashed"></span>scenario-best
     <span class="line-key"></span>actual association
-    <span class="line-key target"></span>optimizer target<br>
+    <span class="line-key target"></span>optimizer target
+    <span class="line-key backhaul"></span>actual backhaul<br>
     Labels: <b>gw</b> gateway, <b>e1</b> extender_1, <b>m01</b> sta_mobile_01, <b>s01</b> sta_static_01.
   </div>
 </aside>
@@ -911,7 +913,10 @@
       new THREE.BufferGeometry(),
       new THREE.LineDashedMaterial({ color: 0xf0ad00, dashSize: 0.48, gapSize: 0.18, transparent: true, opacity: 0.95 })
     );
-    const backhaul = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.45 }));
+    const backhaul = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x2468a8, transparent: true, opacity: 0.88 })
+    );
     const trails = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: COL.mobile, transparent: true, opacity: 0.45 }));
     const preview = new THREE.LineSegments(
       new THREE.BufferGeometry(),
@@ -978,7 +983,11 @@
       n.grp.visible = true;
       const mat = n.head.material;
       const observed = networkState && (networkState.clients || []).find((item) => item.role === role);
-      if (!n.ap && observed) {
+      if (n.ap) {
+        const meshNode = observedMeshNode(role);
+        setSpriteLabel(n.tag, meshNode && meshNode.name
+          ? meshNode.name : displayRole(role), '#' + new THREE.Color(n.color).getHexString());
+      } else if (observed) {
         const suffix = observed.sta_mac.split(':')[4];
         const label = role === heroRole() ? 'Private-Laptop'
           : (observed.cohort === 'iot' ? 'iot-' : 'sta-') + suffix;
@@ -1050,22 +1059,34 @@
     world3d.target.material.opacity = performance.now() < actionPulseUntil
       ? 0.58 + 0.4 * Math.abs(Math.sin(performance.now() / 120)) : 0.88;
 
-    // backhaul (undirected, stronger direction)
-    const bp = [], bc = [];
+    // The live room uses the exact parent/child graph reported by the
+    // controller.  The geometric all-AP graph is only an offline-world
+    // fallback and is never presented as actual live mesh topology.
+    const bp = [];
     if ($('#showBackhaul').checked) {
-      const seen = {};
-      for (const l of g.links) {
-        if (l.link_class !== 'backhaul' || !g.present[l.source_role] || !g.present[l.destination_role]) continue;
-        const key = [l.source_role, l.destination_role].sort().join('|');
-        const s = l.snr_db_by_band[band];
-        if (!(key in seen) || s > seen[key].s) seen[key] = { l, s };
-      }
-      for (const key in seen) {
-        const { l, s } = seen[key], a = pos[l.source_role], b = pos[l.destination_role], c = snrColor(s);
-        bp.push(a[0], AP_H, -a[1], b[0], AP_H, -b[1]); bc.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      const mesh = networkState && networkState.mesh;
+      if (mesh && mesh.available) {
+        for (const edge of mesh.backhaul_edges || []) {
+          const a = pos[edge.parent_role], b = pos[edge.child_role];
+          if (!a || !b || !effectivePresent(edge.parent_role, g) ||
+              !effectivePresent(edge.child_role, g)) continue;
+          bp.push(a[0], AP_H, -a[1], b[0], AP_H, -b[1]);
+        }
+      } else if (!liveMode && !replayMode) {
+        const seen = {};
+        for (const l of g.links) {
+          if (l.link_class !== 'backhaul' || !g.present[l.source_role] || !g.present[l.destination_role]) continue;
+          const key = [l.source_role, l.destination_role].sort().join('|');
+          const s = l.snr_db_by_band[band];
+          if (!(key in seen) || s > seen[key].s) seen[key] = { l, s };
+        }
+        for (const key in seen) {
+          const l = seen[key].l, a = pos[l.source_role], b = pos[l.destination_role];
+          bp.push(a[0], AP_H, -a[1], b[0], AP_H, -b[1]);
+        }
       }
     }
-    setSegments(world3d.backhaul, bp, bc);
+    setSegments(world3d.backhaul, bp);
 
     // trails up to now
     const tp = [];
@@ -1097,8 +1118,18 @@
   function observedClient(role) {
     return networkState && (networkState.clients || []).find((item) => item.role === role);
   }
+  function observedMeshNode(role) {
+    const mesh = networkState && networkState.mesh;
+    return mesh && (mesh.nodes || []).find((item) => item.role === role);
+  }
+  function actualBackhaulFor(role) {
+    const mesh = networkState && networkState.mesh;
+    return mesh && (mesh.backhaul_edges || []).find((item) => item.child_role === role);
+  }
   function displayRole(role) {
     if (!role) return 'none';
+    const meshNode = observedMeshNode(role);
+    if (meshNode && meshNode.name) return meshNode.name;
     if (role === 'gateway') return 'Agent-1';
     if (role.startsWith('extender_')) return 'Extender-' + role.slice(9);
     const observed = observedClient(role);
@@ -1288,10 +1319,15 @@
     $('#storyText').textContent = storyState;
     if (networkState) {
       const h = healthState || {}, api = networkState.health || {}, cohorts = networkState.cohorts || {};
+      const mesh = networkState.mesh || {};
+      const backhaulCount = (mesh.backhaul_edges || []).length;
+      const multihop = (mesh.backhaul_edges || []).some((edge) => edge.parent_role !== 'gateway');
+      const shape = mesh.available ? (multihop ? 'multihop' : 'star') : 'waiting';
       $('#labMetrics').innerHTML =
         '<span>Mesh devices</span><b>' + esc(api.mesh_devices) + ' / 5</b>' +
         '<span>Clients</span><b>' + esc(api.clients) + ' / 20</b>' +
         '<span>Private / IoT</span><b>' + esc(cohorts.private) + ' / ' + esc(cohorts.iot) + '</b>' +
+        '<span>Actual topology</span><b>' + esc(shape) + ' · ' + esc(backhaulCount) + ' backhaul links</b>' +
         '<span>Model</span><b>' + esc(h.model_devices == null ? '—' : h.model_devices + '/' + h.model_radios + '/' + h.model_bsses + '/' + h.model_associated) + '</b>' +
         '<span>Health</span><b>' + (h.healthy == null ? 'observing' : h.healthy ? 'healthy' : 'degraded') + '</b>';
       const hero = networkState.hero;
@@ -1365,6 +1401,21 @@
     html += '<div class="sub">generation t = ' + (g.time_ms / 1000).toFixed(1) + ' s' +
       (present ? '' : ' <span class="warn">absent</span>') +
       (previewed ? ' <span class="preview-badge">PREVIEW</span>' : '') + '</div>';
+    const meshNode = observedMeshNode(selected);
+    const actualBackhaul = actualBackhaulFor(selected);
+    if (meshNode) {
+      html += '<div class="metric-grid" style="margin-top:6px"><span>Controller name</span><b>' +
+        esc(meshNode.name) + '</b>';
+      if (actualBackhaul) {
+        const signal = actualBackhaul.signal || {};
+        const strength = signal.rssi_dbm == null ? 'N/A' : signal.rssi_dbm + ' dBm';
+        html += '<span>Actual parent</span><b>' + esc(displayRole(actualBackhaul.parent_role)) +
+          '</b><span>Backhaul</span><b>' + esc(actualBackhaul.band || '?') + ' GHz · ch ' +
+          esc(actualBackhaul.channel == null ? '?' : actualBackhaul.channel) + ' · ' +
+          esc(strength) + '</b>';
+      }
+      html += '</div>';
+    }
     if (!present_rows.length) { html += '<div class="empty">No present links at this generation.</div>'; box.innerHTML = html; return; }
     html += '<table><thead><tr><th>peer</th><th></th><th>m</th><th>wall</th><th>2.4</th><th>5</th><th>6</th></tr></thead><tbody>';
     for (const r of present_rows) {
