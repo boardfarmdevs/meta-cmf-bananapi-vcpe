@@ -285,6 +285,7 @@
   const interaction = {
     mode: 'camera',
     overrides: {},
+    previewPositions: {},
     drag: null,
     movement: null,
     awaitingDestination: null,
@@ -368,7 +369,7 @@
       if (interaction.drag) {
         const point = floorPoint(e);
         if (point) {
-          setPositionOverride(interaction.drag.role, point);
+          setPreviewPosition(interaction.drag.role, point);
           update();
         }
         return;
@@ -389,7 +390,10 @@
     el.addEventListener('pointerup', (e) => {
       if (interaction.drag) {
         const role = interaction.drag.role;
-        const point = effectivePosition(role, frameAt(tMs)).slice();
+        const point = (
+          interaction.previewPositions[role] ||
+          effectivePosition(role, frameAt(tMs))
+        ).slice();
         interaction.drag = null;
         main.classList.remove('dragging');
         schedulePosition(role, point, true);
@@ -463,6 +467,10 @@
     });
     interaction.hudRole = role;
   }
+  function setPreviewPosition(role, point) {
+    interaction.previewPositions[role] = interactionModel.clampPosition(world, point);
+    interaction.hudRole = role;
+  }
   function setPresenceOverride(role, present) {
     const previous = interaction.overrides[role] || {};
     interaction.overrides[role] = Object.assign({}, previous, {present: !!present});
@@ -470,6 +478,7 @@
   }
   function resetRoleOverride(role) {
     delete interaction.overrides[role];
+    delete interaction.previewPositions[role];
     if (interaction.movement && interaction.movement.role === role) interaction.movement = null;
     if (interaction.awaitingDestination === role) {
       interaction.awaitingDestination = null;
@@ -515,6 +524,11 @@
         interaction.overrides[role] = {
           position: state.position.slice(), present: !!state.present,
         };
+        const preview = interaction.previewPositions[role];
+        if (!interaction.drag && preview &&
+            Math.hypot(preview[0] - state.position[0], preview[1] - state.position[1]) < 0.001) {
+          delete interaction.previewPositions[role];
+        }
       }
       const active = (snapshot.movements || []).find(
         (item) => item.status === 'running' || item.status === 'paused');
@@ -622,6 +636,12 @@
     interaction.lastPositionSentAt = performance.now();
     sendMutation('position', pending.role, {
       position: pending.position, final: pending.final,
+    }).then((accepted) => {
+      if (accepted) {
+        setPositionOverride(pending.role, accepted.position);
+      }
+      delete interaction.previewPositions[pending.role];
+      update();
     });
   }
   function schedulePosition(role, point, final) {
@@ -731,6 +751,40 @@
     sprite.scale.set(height * rendered.aspect, height, 1);
     sprite.userData.labelText = text;
   }
+  function makeSignalGauge() {
+    const group = new THREE.Group();
+    const bars = [];
+    for (let index = 0; index < 10; index++) {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 0.065, 0.055),
+        new THREE.MeshBasicMaterial({
+          color: 0xaaa69d, transparent: true, opacity: 0.28, depthTest: false,
+        }));
+      bar.position.y = 0.10 + index * 0.082;
+      bar.renderOrder = 11;
+      group.add(bar);
+      bars.push(bar);
+    }
+    return {group, bars};
+  }
+  function signalLevel(observed, predicted) {
+    if (observed && Number.isFinite(Number(observed.rssi_dbm))) {
+      return Math.max(1, Math.min(10,
+        Math.round((Number(observed.rssi_dbm) + 90) / 5) + 1));
+    }
+    if (predicted && Number.isFinite(Number(predicted.snr))) {
+      return Math.max(1, Math.min(10,
+        Math.round((Number(predicted.snr) + 10) / 6) + 1));
+    }
+    return 0;
+  }
+  function updateSignalGauge(node, level) {
+    for (let index = 0; index < node.gauge.bars.length; index++) {
+      const active = index < level;
+      node.gauge.bars[index].material.color.copy(snrColor(index * 6 - 5, 0, 50));
+      node.gauge.bars[index].material.opacity = active ? 0.98 : 0.20;
+    }
+  }
   // Text lying flat on the floor, aligned with a wall, on the side away from its normal.
   function makeFloorText(text, x0, y0, x1, y1, height) {
     const t = textTexture(text, { fg: '#5c5344', font: '600 40px system-ui, sans-serif', pad: 6 });
@@ -812,8 +866,36 @@
       tag.position.y = ap ? h + 0.95 : h + 0.42;   // sits directly on the head
       tag.userData.sta = !ap;
       grp.add(tag);
+      let gauge = null, ghost = null;
+      if (!ap) {
+        gauge = makeSignalGauge();
+        gauge.group.position.x = 0.36;
+        grp.add(gauge.group);
+        ghost = new THREE.Group();
+        const ghostBody = new THREE.Mesh(
+          new THREE.SphereGeometry(0.30, 16, 12),
+          new THREE.MeshBasicMaterial({
+            color: 0x6f3e8e, transparent: true, opacity: 0.34,
+            depthTest: false, wireframe: true,
+          }));
+        ghostBody.position.y = STA_H;
+        ghostBody.renderOrder = 12;
+        ghost.add(ghostBody);
+        const ghostRing = new THREE.Mesh(
+          new THREE.RingGeometry(0.32, 0.48, 32),
+          new THREE.MeshBasicMaterial({
+            color: 0x6f3e8e, transparent: true, opacity: 0.58,
+            side: THREE.DoubleSide, depthTest: false,
+          }));
+        ghostRing.rotation.x = -Math.PI / 2;
+        ghostRing.position.y = 0.02;
+        ghostRing.renderOrder = 12;
+        ghost.add(ghostRing);
+        ghost.visible = false;
+        root.add(ghost);
+      }
       root.add(grp);
-      nodes[role] = { grp, post, head, ring, tag, color, ap, h };
+      nodes[role] = { grp, post, head, ring, tag, gauge, ghost, color, ap, h };
     }
 
     // link and trail buffers (rebuilt each frame)
@@ -879,9 +961,13 @@
     const fr = frameAt(tMs), g = fr.g;
     const { nodes } = world3d;
     const pos = {};
+    const visualPos = {};
     const showSta = $('#showSta').checked;
 
-    for (const role in nodes) pos[role] = effectivePosition(role, fr);
+    for (const role in nodes) {
+      pos[role] = effectivePosition(role, fr);
+      visualPos[role] = interaction.previewPositions[role] || pos[role];
+    }
     const best = bestServing(g, pos);
 
     for (const role in nodes) {
@@ -903,9 +989,26 @@
       if (!present) { mat.color.setHex(COL.absent); mat.transparent = true; mat.opacity = 0.35; n.post.material.color.setHex(COL.absent); }
       else {
         mat.transparent = false; mat.opacity = 1;
-        n.post.material.color.setHex(observed && observed.cohort === 'iot' ? 0x256f3f
-          : observed && observed.cohort === 'private' ? 0x225ca8 : n.color);
-        if (!n.ap && best[role]) mat.color.copy(snrColor(best[role].snr)); else mat.color.setHex(n.color);
+        const identity = observed && observed.cohort === 'iot' ? 0x256f3f
+          : observed && observed.cohort === 'private' ? 0x225ca8 : n.color;
+        n.post.material.color.setHex(identity);
+        mat.color.setHex(identity);
+      }
+      if (n.ghost) {
+        n.ghost.visible = !!interaction.previewPositions[role] && present && showSta;
+        if (n.ghost.visible) {
+          const preview = interaction.previewPositions[role];
+          n.ghost.position.copy(P(preview[0], preview[1], 0));
+        }
+      }
+      if (n.gauge) {
+        n.gauge.group.visible = present && showSta;
+        updateSignalGauge(n, signalLevel(observed, best[role]));
+        const serving = observed && observed.connected_role
+          ? observed.connected_role : best[role] && best[role].ap;
+        const peer = serving && pos[serving];
+        // Put the meter on the side opposite the serving RF line.
+        n.gauge.group.position.x = peer && peer[0] >= pos[role][0] ? -0.36 : 0.36;
       }
       const hero = role === heroRole();
       n.ring.visible = role === selected || hero;
@@ -982,12 +1085,12 @@
     }
     setSegments(world3d.trails, tp);
 
-    renderInteractionOverlays(g, pos, best);
+    renderInteractionOverlays(g, visualPos, best);
 
     $('#tnow').textContent = (tMs / 1000).toFixed(1) + ' s';
     $('#scrub').value = Math.round(tMs / world.duration_ms * 1000);
-    renderInspector(g, best, pos);
-    renderInteractionControls(g, pos, best);
+    renderInspector(g, best, visualPos);
+    renderInteractionControls(g, visualPos, best);
     renderLivePanels();
   }
 
@@ -1035,7 +1138,8 @@
   }
   function renderInteractionOverlays(g, pos) {
     const role = interaction.hudRole || (canInteractWith(selected) ? selected : null);
-    const previewActive = interaction.mode === 'interact' || !!interaction.overrides[role];
+    const previewActive = interaction.mode === 'interact' ||
+      !!interaction.overrides[role] || !!interaction.previewPositions[role];
     const preview = previewActive ? rolePreview(role, g, pos) : null;
     const points = [], colors = [];
     const highlightedWalls = new Set();
@@ -1107,12 +1211,16 @@
     const present = effectivePresent(role, g);
     $('#presenceSelected').textContent = present ? 'Disappear' : 'Reappear';
     const override = interaction.overrides[role];
+    const localPreview = interaction.previewPositions[role];
     const movement = activeMovement && activeMovement.role === role
       ? interaction.movement : null;
     let state = present
       ? (interactiveLiveMode ? (roleIsModified(role) ? 'live moved' : 'live position')
         : (override ? 'preview moved' : 'scenario position'))
       : (interactiveLiveMode ? 'RF absent' : 'RF absent preview');
+    if (localPreview) {
+      state = interaction.drag ? 'preview · release to apply RF' : 'applying RF…';
+    }
     if (movement) state = (movement.status === 'paused' ? 'paused' : 'moving') +
       ' · ' + movement.speed_mps.toFixed(1) + ' m/s';
     if (interaction.awaitingDestination === role) state = 'click a destination';
@@ -1153,7 +1261,8 @@
   function positionSpatialHud(role) {
     if (!world3d || !world3d.nodes[role]) return;
     const node = world3d.nodes[role];
-    const point = node.grp.position.clone();
+    const preview = interaction.previewPositions[role];
+    const point = preview ? P(preview[0], preview[1], 0) : node.grp.position.clone();
     point.y += node.h + 0.8;
     point.project(camera);
     const hud = $('#spatialHud');
@@ -1235,7 +1344,9 @@
         const dir = l.source_role === selected ? '→' : '←';
         return { peer, dir, l };
       });
-    const previewed = !!interaction.overrides[selected] && canInteractWith(selected);
+    const previewed = (
+      !!interaction.overrides[selected] || !!interaction.previewPositions[selected]
+    ) && canInteractWith(selected);
     if (previewed && positions[selected]) {
       rows = predictedFor(selected, positions[selected], g).map((item) => ({
         peer: item.role,
@@ -1315,6 +1426,7 @@
   function loadWorld(w) {
     world = w; tMs = 0; selected = null; playing = false; $('#play').textContent = 'Play';
     for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
+    for (const role of Object.keys(interaction.previewPositions)) delete interaction.previewPositions[role];
     interaction.drag = interaction.movement = interaction.awaitingDestination = interaction.hudRole = null;
     main.classList.remove('awaiting-destination', 'dragging');
     $('#worldmeta').textContent = w.name + ' — ' + w.counts.agents + ' agents, ' + w.counts.stations + ' stations, '
@@ -1647,6 +1759,11 @@
           position: locallyMoving && prior.position ? prior.position : p.position.slice(),
           present: !!p.present,
         });
+        const preview = interaction.previewPositions[p.role];
+        if (!interaction.drag && preview &&
+            Math.hypot(preview[0] - p.position[0], preview[1] - p.position[1]) <= 0.04) {
+          delete interaction.previewPositions[p.role];
+        }
       }
     } else if (event.kind.startsWith('interaction.movement.')) {
       const p = event.payload || {};

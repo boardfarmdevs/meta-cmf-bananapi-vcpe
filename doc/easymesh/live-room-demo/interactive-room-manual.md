@@ -92,11 +92,22 @@ static viewer remains labeled **PREVIEW ONLY**.
    optimizer state, and the cyan observed-association line.
 
 Pointer motion is a smooth browser-local ghost preview at display rate and
-does not write RF. Pointer-up sends one revision-checked position command. The
-server quantizes it to the 5 cm room grid, applies only changed RF keys in one
-generation, and reads them back before advancing its room revision. If the
-position changes geometrically but none of the integer SNR values changes, it
-records an RF no-op and does not advance the medium generation.
+does not write RF. The translucent purple ghost and purple predicted path move
+with the pointer; the solid client and cyan observed-association line remain at
+the last authoritative position. Pointer-up sends one revision-checked
+position command. Only after successful apply/readback does the solid client
+move and the ghost disappear. The server quantizes the point to the 5 cm room
+grid, applies only changed RF keys in one generation, and reads them back
+before advancing its room revision. If the position changes geometrically but
+none of the integer SNR values changes, it records an RF no-op and does not
+advance the medium generation.
+
+Client bodies keep a stable cohort identity: blue is `private_ssid` and green
+is hidden `iot_ssid`. Signal quality is shown independently by the ten-segment
+red/amber/green vertical gauge spanning the client icon. The gauge uses fresh
+controller RSSI when available and otherwise the modeled serving-link SNR. It
+is placed on the side opposite the serving RF line so the two cues do not
+obscure one another.
 
 ## Walk to a destination
 

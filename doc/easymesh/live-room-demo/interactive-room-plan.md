@@ -351,6 +351,12 @@ The room uses:
 - a distinct animated optimizer-target link; and
 - a short RF-apply pulse between commit and fresh telemetry.
 
+Client bodies retain fixed private/IoT cohort colors. A separate ten-segment
+vertical gauge spans the client height, changes from red through amber to
+green, and is placed opposite the serving RF line. During local dragging, a
+translucent purple ghost moves while the solid client and observed association
+remain anchored to the last committed state.
+
 Association changes are attributed as `optimizer_steer`, `client_autonomous`,
 `link_loss_recovery` or `unknown`. A BSSID change without an active steering
 transaction emits `association.changed_uncommanded` and is never presented as
