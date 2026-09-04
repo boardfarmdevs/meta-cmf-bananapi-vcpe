@@ -117,6 +117,11 @@ scan_target_candidate() {
         target=$2
         ssid=$3
         ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
+        # Keep the BTM decision tied to the candidate we are resolving now.
+        # hwsim clients can otherwise retain empty-SSID and old probe-response
+        # records for several VAPs on the same radio.  The associated BSS is
+        # retained by wpa_supplicant; the directed scan repopulates the target.
+        wpa_cli -i wlan0 bss_flush 0 >/dev/null 2>&1 || exit 3
         attempt=0
         while [ "$attempt" -lt 3 ]; do
             request=$(wpa_cli -i wlan0 scan "freq=$frequency" \

@@ -224,14 +224,16 @@ this closed loop:
    without allowing the room to change during that transaction;
 6. apply the gain and five-second hold policy to every client;
 7. select at most one client, preferring the largest measured RCPI gain;
-8. use a directed scan to resolve the nominated BSSID and SSID, including the
-   hidden `iot_ssid`, then send `gen/steer.sh --request-only`; and
+8. discard stale non-serving scan-cache records and use a directed scan to
+   resolve only the nominated BSSID and SSID, including the hidden `iot_ssid`,
+   then send `gen/steer.sh --request-only`; and
 9. verify the physical BSSID, controller ownership and traffic before checking
    the whole fleet again.
 
 The request-only path does not install another RF bias and does not force a
-client roam. Its directed scan establishes hidden-BSS ESS identity but leaves
-the current room RF matrix untouched. The client changes AP only after the
+client roam. Its targeted cache refresh establishes hidden-BSS ESS identity
+and prevents stale hwsim VAP records from competing with the nominated AP, but
+leaves the current room RF matrix untouched. The client changes AP only after the
 normal controller, EasyMesh, BTM, supplicant and association path succeeds.
 Full initial convergence may take several minutes because controller candidate
 queries and steering transactions are serialized deliberately. After the
