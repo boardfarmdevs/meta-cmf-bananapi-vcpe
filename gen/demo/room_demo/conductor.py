@@ -787,7 +787,13 @@ class LiveConductor:
                         if verified.success:
                             self.verification_successes += 1
                         self.store.emit(
-                            "optimizer.verification", self._time(), verified.to_dict(),
+                            "optimizer.verification", self._time(),
+                            {
+                                **verified.to_dict(),
+                                "subject_role": subject_role,
+                                "subject_mac": subject_mac,
+                                "target_bssid": decision.target_bssid,
+                            },
                             producer="optimizer",
                         )
             except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
