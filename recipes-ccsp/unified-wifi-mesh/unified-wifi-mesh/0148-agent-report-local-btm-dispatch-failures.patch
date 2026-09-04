@@ -1,0 +1,92 @@
+From: EasyMesh Lab <easymesh-lab@localhost>
+Date: Thu, 3 Sep 2026 17:02:00 -0700
+Subject: [PATCH] agent: report local BTM dispatch failures
+
+The local BTM dispatcher converted a negative result to unsigned and only
+tested for zero, hiding every real failure.  It also continued after a null
+bus descriptor.  Preserve the signed result, return safely, and add a
+transaction tuple around the RBUS handoff so a received 1905 request can be
+correlated with its source VAP and target.
+---
+ src/agent/dm_easy_mesh_agent.cpp | 24 +++++++++++++++---------
+ src/agent/em_agent.cpp           | 10 ++++++----
+ 2 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -463,15 +463,17 @@ void em_agent_t::handle_autoconfig_renew(em_bus_event_t *evt)
+ 
+ void em_agent_t::handle_btm_request_action_frame(em_bus_event_t *evt)
+ {
+-    unsigned int num;
++    int rc;
+     wifi_bus_desc_t *desc;
+ 
+     if((desc = get_bus_descriptor()) == NULL) {
+-       printf("descriptor is null");
++       em_printf("BTM request dispatch failed: bus descriptor is null");
++       return;
+     }
+ 
+-    if ((num = static_cast<unsigned int>(m_data_model.analyze_btm_request_action_frame(evt, desc, &m_bus_hdl))) == 0) {
+-	    printf("analyze_btm_request_action_frame failed\n");
++    rc = m_data_model.analyze_btm_request_action_frame(evt, desc, &m_bus_hdl);
++    if (rc <= 0) {
++	    em_printf("BTM request dispatch failed: rc=%d", rc);
+     }
+ }
+ 
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -904,8 +904,9 @@ int dm_easy_mesh_agent_t::analyze_btm_request_action_frame(em_bus_event_t *evt,
+     raw_data_t l_bus_data = {};
+     int len = 0;
+     size_t scratch_len = 0, alloc_len = 0;
+-    mac_addr_str_t mac_str;
++    mac_addr_str_t sta_str, source_str, target_str;
+     char bus_path[128];
++    int bus_rc;
+     em_steering_req_t *steer_req = reinterpret_cast<em_steering_req_t *> (&evt->u.raw_buff);
+     em_bss_info_t *source_bss = get_bss_info_with_mac(steer_req->bssid);
+ 
+@@ -980,8 +981,9 @@ int dm_easy_mesh_agent_t::analyze_btm_request_action_frame(em_bus_event_t *evt,
+     //todo: check how to get this
+     bss_list->bss_transition_cand_list[0].phy_type = 0;
+ 
+-    dm_easy_mesh_t::macbytes_to_string(steer_req->sta_mac_addr, mac_str);
+-    em_printfout("STA MAC for BTM request %s", mac_str);
++    dm_easy_mesh_t::macbytes_to_string(steer_req->sta_mac_addr, sta_str);
++    dm_easy_mesh_t::macbytes_to_string(steer_req->bssid, source_str);
++    dm_easy_mesh_t::macbytes_to_string(steer_req->target_bssids, target_str);
+     memcpy(aframe->dest_addr, steer_req->sta_mac_addr, sizeof(mac_addr_t));
+     aframe->frequency = 0;
+     aframe->ap_index = static_cast<int>(source_bss->vap_index);
+@@ -996,15 +998,19 @@ int dm_easy_mesh_agent_t::analyze_btm_request_action_frame(em_bus_event_t *evt,
+ 
+     snprintf(bus_path, sizeof(bus_path), "Device.WiFi.AccessPoint.%u.RawFrame.Mgmt.Action.Tx",
+         source_bss->vap_index + 1);
+-    if (desc->bus_set_fn(bus_hdl, bus_path, &l_bus_data)== 0) {
+-        em_printfout("Frame subdoc send successfull\n");
+-    }
+-    else {
+-        em_printfout("Error: Frame subdoc send fail\n");
++    em_printf("BTM dispatch: sta=%s source=%s target=%s vap=%u path=%s frame_len=%u",
++        sta_str, source_str, target_str, source_bss->vap_index, bus_path, aframe->frame_len);
++    bus_rc = desc->bus_set_fn(bus_hdl, bus_path, &l_bus_data);
++    if (bus_rc != 0) {
++        em_printf("BTM dispatch failed: sta=%s source=%s target=%s vap=%u bus_rc=%d",
++            sta_str, source_str, target_str, source_bss->vap_index, bus_rc);
+         free(aframe);
+         return -1;
+     }
+ 
++    em_printf("BTM dispatch accepted by OneWifi: sta=%s source=%s target=%s vap=%u",
++        sta_str, source_str, target_str, source_bss->vap_index);
++
+     free(aframe);
+     return 1;
+ }
+-- 
+2.43.0

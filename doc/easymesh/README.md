@@ -3,7 +3,7 @@
 Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
 engineers.
 
-Status: current documentation for `codex/0831-clean`.
+Status: current documentation for `codex/0902-clean` and the 0904 appliance.
 
 This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
 node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel
@@ -21,6 +21,7 @@ a large physical Wi-Fi installation.
 | Use an already installed lab | [Quickstart](guide/quickstart.md) |
 | Start, stop, recover, or redeploy it | [Operations](guide/operations.md) |
 | Give a live demonstration | [Demonstrations](guide/demonstrations.md) |
+| Run the closed-loop 3D room presentation | [Live room demo](live-room-demo/README.md) |
 | Understand RF simulation | [RF simulation](concepts/rf-simulation.md) |
 | Understand steering and policy boundaries | [Steering policy](concepts/steering-policy.md) |
 | Develop an optimizer | [Optimizer](concepts/optimizer.md) |
@@ -50,6 +51,11 @@ Guides contain procedures an operator follows:
 - [Operations](guide/operations.md) covers deployment, cold and warm starts,
   health gates, VM parity, recovery, access, and troubleshooting.
 - [Demonstrations](guide/demonstrations.md) is the audience-facing runbook.
+- [Immersive room demo](live-room-demo/manual.md) joins a live Golden World,
+  controller telemetry, the external optimizer, bounded steering, traffic,
+  health, evidence and replay in one presentation.
+- [Live room viewer](live-room-demo/viewer.md) retains the earlier
+  stimulus-only compatibility procedure.
 
 ### Concepts
 
@@ -79,6 +85,8 @@ boundary:
 - [Consolidated patch set](reference/patch-set.md)
 - [MediaTek single-wiphy radio model](reference/single-wiphy-radio-model.md)
 - [Metrics reporting and APIs](reference/metrics.md)
+- [Commanded EasyMesh steering](reference/commanded-steering.md)
+- [wmediumd client carousel](reference/client-carousel.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)
 - [wmediumd internals](reference/wmediumd-internals.md)
 - [wmediumd performance and CPU scaling](reference/wmediumd-performance.md)

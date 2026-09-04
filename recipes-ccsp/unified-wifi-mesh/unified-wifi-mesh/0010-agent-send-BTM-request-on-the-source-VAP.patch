@@ -40,7 +40,7 @@ diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
      if (aframe == NULL) {
          em_printfout("Error: Failed to allocate action frame");
          return -1;
-@@ -839,19 +850,19 @@
+@@ -839,19 +850,21 @@
      ieeeframe->u.action.u.bss_tm_req.action = WLAN_ACTION_HT;
      ieeeframe->u.action.u.bss_tm_req.dialog_token = 1;
  
@@ -64,11 +64,13 @@ diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
 +    ieeeframe->u.action.u.bss_tm_req.disassoc_timer[1] = static_cast<uint8_t>(disassoc_timer >> 8);
      //todo: check this
 -    ieeeframe->u.action.u.bss_tm_req.validity_interval = 0;
-+    ieeeframe->u.action.u.bss_tm_req.validity_interval = 1;
++    // Keep the preferred candidate usable while a station completes an active
++    // scan. With a 100 TU beacon interval, 50 allows about five seconds.
++    ieeeframe->u.action.u.bss_tm_req.validity_interval = 50;
  
      // Copy the variable part
      em_80211_btm_req_var_t *bss_list = reinterpret_cast<em_80211_btm_req_var_t *>(&ieeeframe->u.action.u.bss_tm_req.variable);
-@@ -868,17 +879,20 @@
+@@ -868,17 +881,20 @@
      dm_easy_mesh_t::macbytes_to_string(steer_req->sta_mac_addr, mac_str);
      em_printfout("STA MAC for BTM request %s", mac_str);
      memcpy(aframe->dest_addr, steer_req->sta_mac_addr, sizeof(mac_addr_t));

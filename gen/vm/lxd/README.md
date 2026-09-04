@@ -115,6 +115,7 @@ used by the outer host's IPv4 default route and exposes:
 ```text
 http://HOST:18889/  EasyMesh WebUI
 http://HOST:18890/  wmediumd Console
+http://HOST:18891/viewer/?mode=live  room demo while run/replay is active
 ```
 
 Override site-local settings without changing image identity:
@@ -125,6 +126,7 @@ EASYMESH_LXD_STORAGE=bpi-lab \
 EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
 EASYMESH_WEBUI_PORT=28889 \
 WMEDIUMD_CONSOLE_PORT=28890 \
+EASYMESH_ROOM_DEMO_PORT=28891 \
   ./build.sh start
 ```
 

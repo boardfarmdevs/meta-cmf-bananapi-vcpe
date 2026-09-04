@@ -10,11 +10,12 @@
 #               binary. Optional ssid/psk; defaults to the current /tmp/wpa.conf
 #               if one exists, else PlumeSim/open.
 #
-# The build lands at /tmp/wpa_supplicant-2.10/wpa_supplicant/wpa_supplicant and
-# is run from there. See README.md for why (802.11v BTM steering) and how to
-# verify.
+# The build is copied back to gen/wpa_supplicant/wpa_supplicant-wnm so it can
+# be reviewed, committed, and baked into the reusable client image. See
+# README.md for why (802.11v BTM steering) and how to verify.
 set -u
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 CT="${1:-wlan-client}"
 shift 2>/dev/null || true
 RUN=0; SSID=""; PSK=""
@@ -24,11 +25,13 @@ VER=2.10
 SRC_URL="https://w1.fi/releases/wpa_supplicant-${VER}.tar.gz"
 # Official upstream tarball checksum (w1.fi). Verified, not the local re-tar.
 SRC_SHA=20df7ae5154b3830355f8ab4269123a87affdea59fe74fe9292a91d0d7e17b2f
+HIDDEN_BSS_PATCH=$SCRIPT_DIR/0001-wnm-select-hidden-bss-by-current-ssid.patch
 
 say(){ echo "[wnm-build] $*"; }
 ce(){ lxc exec "$CT" -- sh -c "$1"; }
 
 lxc info "$CT" >/dev/null 2>&1 || { echo "container '$CT' not present (create it with wlan-client.sh)"; exit 1; }
+[ -r "$HIDDEN_BSS_PATCH" ] || { echo "missing source patch: $HIDDEN_BSS_PATCH"; exit 1; }
 
 # The client holds a DHCP default route from wlan0 that outranks eth0, so apk and
 # the source fetch cannot reach the internet. Drop it and DHCP eth0 if needed.
@@ -52,7 +55,7 @@ restore_mem(){
 trap restore_mem EXIT
 
 say "installing build deps in $CT"
-ce 'apk add --no-cache gcc make musl-dev openssl-dev libnl3-dev linux-headers pkgconf wget tar >/dev/null 2>&1' \
+ce 'apk add --no-cache gcc make musl-dev openssl-dev libnl3-dev linux-headers pkgconf wget tar patch >/dev/null 2>&1' \
     || { echo "apk failed -- check the container has internet on eth0 (see README)"; exit 1; }
 
 say "fetching wpa_supplicant $VER source"
@@ -62,8 +65,13 @@ ce "cd /tmp && { [ -f wpa_supplicant-${VER}.tar.gz ] || wget -q '${SRC_URL}'; } 
 
 say "configuring (CONFIG_WNM=y) and building"
 ce "cd /tmp && rm -rf wpa_supplicant-${VER} && tar xzf wpa_supplicant-${VER}.tar.gz"
+lxc file push "$HIDDEN_BSS_PATCH" \
+    "$CT/tmp/wpa_supplicant-${VER}/0001-wnm-select-hidden-bss-by-current-ssid.patch" >/dev/null 2>&1
+ce "cd /tmp/wpa_supplicant-${VER} && \
+    patch -p1 < 0001-wnm-select-hidden-bss-by-current-ssid.patch >/tmp/wnm-patch.log 2>&1" \
+    || { echo "source patch failed:"; ce 'cat /tmp/wnm-patch.log'; exit 1; }
 # ship the config into the build tree
-lxc file push "$(dirname "$0")/wpa_supplicant-wnm.config" \
+lxc file push "$SCRIPT_DIR/wpa_supplicant-wnm.config" \
     "$CT/tmp/wpa_supplicant-${VER}/wpa_supplicant/.config" >/dev/null 2>&1 \
     || ce "cat > /tmp/wpa_supplicant-${VER}/wpa_supplicant/.config" < "$(dirname "$0")/wpa_supplicant-wnm.config"
 ce "cd /tmp/wpa_supplicant-${VER}/wpa_supplicant && make -j\$(nproc) >/tmp/wnm-build.log 2>&1" \
@@ -77,6 +85,10 @@ if ce "grep -q wnm_process_bss_tm_req '$BIN' 2>/dev/null || strings '$BIN' 2>/de
 else
     say "WNM/BTM support: NOT detected -- check .config"
 fi
+
+lxc file pull "$CT$BIN" "$SCRIPT_DIR/wpa_supplicant-wnm"
+chmod 0755 "$SCRIPT_DIR/wpa_supplicant-wnm"
+say "updated committed runtime input: $SCRIPT_DIR/wpa_supplicant-wnm"
 
 if [ "$RUN" = "1" ]; then
     say "restarting wpa_supplicant on wlan0 with the WNM binary"
@@ -101,4 +113,4 @@ if [ "$RUN" = "1" ]; then
     say "state: $(ce 'iw dev wlan0 link 2>/dev/null | grep -E "Connected to|SSID" | tr "\n" " "')"
 fi
 
-say "done. WNM binary: $CT:$BIN"
+say "done. WNM binary: $SCRIPT_DIR/wpa_supplicant-wnm"

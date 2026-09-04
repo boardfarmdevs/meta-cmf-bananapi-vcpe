@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000149 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Fri, 4 Sep 2026 10:00:00 -0700
+Subject: [PATCH] cli: show segmented client signal meter
+
+Replace the compact semicircular client signal glyph with a ten-segment
+vertical meter that spans the complete STA or IoT icon height.  The live fill
+and color follow the current signal quality, making small changes easier to
+recognize from across a room.
+
+Place the meter on the horizontal side of the client opposite its serving RF
+line.  Recompute that placement when a client is dragged so the signal meter
+does not obscure the squiggly association link.  Continue updating telemetry
+in place without restarting the topology layout.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+---
+ src/rdkb-cli/static/index.html |  2 +-
+ src/rdkb-cli/static/script.js  | 66 +++++++++++++++++++++-------------
+ 2 files changed, 41 insertions(+), 27 deletions(-)
+
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 3921b9b..f181542 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2024,7 +2024,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-shape-roam-3"></script>
++    <script src="static/script.js?v=topology-signal-meter-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 2944704..2fc401e 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3170,31 +3170,47 @@ async handleWebSocketMessage(data) {
+     };
+   }
+ 
+-  /** Convert a live signal snapshot into the five-level topology glyph. */
++  /** Convert a live signal snapshot into the ten-level topology meter. */
+   topologySignalLevel(signal) {
+     if (!signal?.available || !Number.isFinite(signal.rssi)) return 0;
+-    if (signal.rssi >= -50) return 5;
+-    if (signal.rssi >= -60) return 4;
+-    if (signal.rssi >= -67) return 3;
+-    if (signal.rssi >= -75) return 2;
++    if (signal.rssi >= -45) return 10;
++    if (signal.rssi >= -50) return 9;
++    if (signal.rssi >= -55) return 8;
++    if (signal.rssi >= -60) return 7;
++    if (signal.rssi >= -65) return 6;
++    if (signal.rssi >= -70) return 5;
++    if (signal.rssi >= -75) return 4;
++    if (signal.rssi >= -80) return 3;
++    if (signal.rssi >= -85) return 2;
+     return 1;
+   }
+ 
+-  /** Draw one compact Wi-Fi-style semicircle beside a client icon. */
+-  topologySignalArcPath(staData, arcIndex) {
+-    const radius = 2.5 + Number(arcIndex) * 2;
+-    const centerX = staData.to.x + staData.iconSize / 2 - 1;
+-    const centerY = staData.to.y + staData.iconSize / 2 - 1;
+-    return `M${centerX - radius},${centerY} A${radius},${radius} 0 0 1 ${centerX + radius},${centerY}`;
++  /** Place a full-height meter on the client side away from its RF link. */
++  topologySignalMeterGeometry(staData, segmentIndex = 0) {
++    const width = Math.max(5, Math.min(7, staData.iconSize * 0.18));
++    const gap = 1;
++    const segmentHeight = Math.max(1.25, (staData.iconSize - 9 * gap) / 10);
++    const away = staData.to.x - staData.from.x < -1 ? -1 : 1;
++    const x = away > 0
++      ? staData.to.x + staData.iconSize / 2 + 5
++      : staData.to.x - staData.iconSize / 2 - 5 - width;
++    const y = staData.to.y + staData.iconSize / 2 -
++      (Number(segmentIndex) + 1) * segmentHeight - Number(segmentIndex) * gap;
++    return { x, y, width, height: segmentHeight, side: away };
+   }
+ 
+-  updateTopologySignalArcs(selection, staData) {
++  updateTopologySignalMeter(selection, staData) {
+     const level = this.topologySignalLevel(staData.signal);
+-    selection.selectAll('path.sta-signal-arc')
+-      .attr('d', arcIndex => this.topologySignalArcPath(staData, arcIndex))
+-      .attr('stroke', arcIndex => arcIndex < level ? staData.signal.color : '#cbd5e1')
+-      .attr('stroke-width', arcIndex => arcIndex < level ? 2 : 1.25)
+-      .attr('opacity', arcIndex => arcIndex < level ? 1 : 0.3);
++    selection.selectAll('rect.sta-signal-segment')
++      .attr('x', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).x)
++      .attr('y', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).y)
++      .attr('width', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).width)
++      .attr('height', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).height)
++      .attr('rx', 1)
++      .attr('fill', segmentIndex => segmentIndex < level ? staData.signal.color : '#e2e8f0')
++      .attr('stroke', segmentIndex => segmentIndex < level ? '#ffffff' : '#94a3b8')
++      .attr('stroke-width', 0.55)
++      .attr('opacity', segmentIndex => segmentIndex < level ? 1 : 0.42);
+   }
+ 
+   /**
+@@ -3209,6 +3225,6 @@ async handleWebSocketMessage(data) {
+     stationNodes.each(function(staData) {
+       staData.signal = self.topologySignalForSTA(staData.sta);
+-      self.updateTopologySignalArcs(d3.select(this), staData);
++      self.updateTopologySignalMeter(d3.select(this), staData);
+     });
+     return true;
+   }
+@@ -3635,14 +3651,12 @@ async handleWebSocketMessage(data) {
+             .attr('class', 'sta-signal-bars')
+             .attr('opacity', moveEffect ? 0 : 1)
+             .style('pointer-events', 'none');
+-          signalGlyph.selectAll('path.sta-signal-arc')
+-            .data([0, 1, 2, 3, 4])
++          signalGlyph.selectAll('rect.sta-signal-segment')
++            .data([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+             .enter()
+-            .append('path')
+-            .attr('class', 'sta-signal-arc')
+-            .attr('fill', 'none')
+-            .attr('stroke-linecap', 'round');
+-          self.updateTopologySignalArcs(staElement, data);
++            .append('rect')
++            .attr('class', 'sta-signal-segment');
++          self.updateTopologySignalMeter(staElement, data);
+ 
+           if (steeringIntent) {
+             const phaseLabel = steeringIntent.phase === 'moving' ? 'MOVING' : 'NEXT';
+@@ -4022,7 +4036,7 @@ async handleWebSocketMessage(data) {
+         wavelength: d.waveLength
+       });
+       selection.select('path.sta-link').attr('d', sinePathData.path);
+-      self.updateTopologySignalArcs(selection, d);
++      self.updateTopologySignalMeter(selection, d);
+       selection.select('circle.sta-steer-pulse')
+         .attr('cx', d.to.x).attr('cy', d.to.y);
+       selection.select('image.sta-icon')
+-- 
+2.43.0

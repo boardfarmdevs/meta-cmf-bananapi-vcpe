@@ -187,16 +187,31 @@ assert.equal(liveSignal.rssi, -41);
 assert.equal(liveSignal.rcpi, 138);
 assert.equal(liveSignal.quality, 'strong');
 assert.equal(liveSignal.band, '5G');
-assert.equal(controller.topologySignalLevel(liveSignal), 5);
-assert.equal(controller.topologySignalLevel({ available: true, rssi: -56 }), 4);
-assert.equal(controller.topologySignalLevel({ available: true, rssi: -63 }), 3);
-assert.equal(controller.topologySignalLevel({ available: true, rssi: -72 }), 2);
-assert.equal(controller.topologySignalLevel({ available: true, rssi: -82 }), 1);
+assert.equal(controller.topologySignalLevel(liveSignal), 10);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -50 }), 9);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -56 }), 7);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -63 }), 6);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -72 }), 4);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -82 }), 2);
+assert.equal(controller.topologySignalLevel({ available: true, rssi: -90 }), 1);
 assert.equal(controller.topologySignalLevel({ available: false, rssi: null }), 0);
-assert.match(controller.topologySignalArcPath({
-  to: { x: 10, y: 20 }, iconSize: 30
-}, 4), /^M.*A.*0 0 1/,
-  'signal glyph is not a semicircular SVG arc');
+const meterRight = controller.topologySignalMeterGeometry({
+  from: { x: 0, y: 20 }, to: { x: 10, y: 20 }, iconSize: 30
+}, 9);
+const meterLeft = controller.topologySignalMeterGeometry({
+  from: { x: 20, y: 20 }, to: { x: 10, y: 20 }, iconSize: 30
+}, 9);
+assert.equal(meterRight.side, 1,
+  'signal meter was not placed away from a left-side RF line');
+assert.equal(meterLeft.side, -1,
+  'signal meter was not placed away from a right-side RF line');
+assert.ok(meterRight.x > 10 + 15 && meterLeft.x + meterLeft.width < 10 - 15,
+  'signal meter overlaps the client icon');
+const meterBottom = controller.topologySignalMeterGeometry({
+  from: { x: 0, y: 20 }, to: { x: 10, y: 20 }, iconSize: 30
+}, 0);
+assert.ok(Math.abs((meterBottom.y + meterBottom.height) - 35) < 0.001,
+  'signal meter does not span the complete client icon height');
 
 const uptimeOnlyChange = deepClone(controller.clients);
 uptimeOnlyChange[0].client_metrics.association_uptime_seconds = 12;
@@ -247,8 +262,10 @@ assert.doesNotMatch(controller.resizeTopologyViewport.toString(),
   'resizing the pane would refit, redraw or replace the operator pan/zoom');
 assert.match(visualizationSource, /sta-signal-bars/,
   'topology does not render the signal-strength glyph');
-assert.match(visualizationSource, /sta-signal-arc/,
-  'topology does not render the five signal semicircles');
+assert.match(visualizationSource, /sta-signal-segment/,
+  'topology does not render the ten signal-meter segments');
+assert.doesNotMatch(visualizationSource, /sta-signal-arc/,
+  'topology still renders the old semicircular signal glyph');
 assert.doesNotMatch(visualizationSource, /sta-signal-ring/,
   'topology still draws a bubble around client devices');
 assert.doesNotMatch(visualizationSource, /sta-signal-label/,
@@ -272,7 +289,7 @@ assert.match(visualizationSource, /BSSID:.*sta\.bssid/,
 assert.match(controller.refreshTopologyData.toString(), /apiCall\('\/clients'\)/,
   'topology refresh does not acquire the live client metrics snapshot');
 assert.match(controller.refreshTopologyData.toString(), /refreshTopologySignalVisuals\(\)/,
-  'metric polling does not update signal arcs in place');
+  'metric polling does not update the signal meter in place');
 assert.doesNotMatch(controller.refreshTopologyData.toString(), /updateTopologyVisualization\(\)/,
   'two-second metric polling still rebuilds the entire topology SVG');
 assert.match(visualizationSource, /staDragStarted/,

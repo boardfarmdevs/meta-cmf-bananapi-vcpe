@@ -107,6 +107,47 @@ lxc_exec_bounded() {
         lxc exec -T -n "$@"
 }
 
+operating_tuple_for_frequency() {
+    local band=$1 frequency=$2 channel opclass
+
+    case "$band" in
+        0)
+            if ((frequency == 2484)); then
+                channel=14
+                opclass=82
+            elif ((frequency >= 2412 && frequency <= 2472 \
+                    && (frequency - 2407) % 5 == 0)); then
+                channel=$(((frequency - 2407) / 5))
+                opclass=81
+            else
+                return 1
+            fi
+            ;;
+        1)
+            ((frequency >= 5000 && frequency < 5955 \
+                && (frequency - 5000) % 5 == 0)) || return 1
+            channel=$(((frequency - 5000) / 5))
+            case "$channel" in
+                36|40|44|48)     opclass=115 ;;
+                52|56|60|64)     opclass=118 ;;
+                100|104|108|112|116|120|124|128|132|136|140|144)
+                                  opclass=121 ;;
+                149|153|157|161) opclass=124 ;;
+                165|169|173|177) opclass=125 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        3)
+            ((frequency >= 5955 && frequency <= 7115 \
+                && (frequency - 5950) % 5 == 0)) || return 1
+            channel=$(((frequency - 5950) / 5))
+            opclass=131
+            ;;
+        *) return 1 ;;
+    esac
+    printf '%s\t%s\n' "$opclass" "$channel"
+}
+
 for command in curl jq lxc; do
     command -v "$command" >/dev/null || {
         echo "steer.sh: required host command is missing: $command" >&2
@@ -240,14 +281,85 @@ if ! lxc_exec_bounded 5 "$controller" -- true >/dev/null 2>&1; then
     exit 1
 fi
 
+case "$target_band" in
+    0) target_channel=6; target_frequency=2437 ;;
+    1) target_channel=36; target_frequency=5180 ;;
+    3) target_channel=1; target_frequency=5955 ;;
+    *) echo "steer.sh: unsupported live target band: $target_band" >&2; exit 1 ;;
+esac
+
+# Retain the controller-reported channel as a diagnostic.  In the hwsim lab it
+# can describe the requested OneWifi configuration rather than the channel on
+# which the AP actually started (notably channel 37 versus 5955 MHz/channel 1).
+# The live AP interface below is authoritative for RF preparation and the BTM
+# candidate's operating class/channel.
+bsses_url=${topology_url%/topology}/bsses
+bsses=$(curl --connect-timeout "$curl_connect_timeout" --max-time "$curl_timeout" \
+    -fsS "$bsses_url" 2>/dev/null || true)
+reported_channel=$(jq -r --arg bssid "$target_bssid" '
+    first(.bsses[]? | select((.bssid // "" | ascii_downcase) == $bssid)
+      | (.channel // 0)) // 0' <<<"$bsses" 2>/dev/null || true)
+
+[[ -r $identity_inventory ]] || {
+    echo "steer.sh: wmediumd identity inventory is unavailable: $identity_inventory" >&2
+    exit 1
+}
+
+radio_identity_for_node() {
+    local node=$1
+    jq -r --arg node "$node" '
+        [.stations[]?
+          | select(.role == "extender" or .role == "controller-agent")
+          | select((.label // "" | ascii_downcase) == ($node | ascii_downcase))
+          | [.owner, (.mac | ascii_downcase)] | @tsv]
+        | unique[]' "$identity_inventory"
+}
+
+mapfile -t target_identities < <(radio_identity_for_node "$target_name")
+if ((${#target_identities[@]} != 1)); then
+    echo "steer.sh: $target_name has ${#target_identities[@]} wmediumd radio identities (expected 1)" >&2
+    exit 1
+fi
+IFS=$'\t' read -r target_owner target_radio <<<"${target_identities[0]}"
+timeout --signal=TERM --kill-after=2 5 lxc info "$target_owner" >/dev/null 2>&1 || {
+    echo "steer.sh: target container '$target_owner' is not available" >&2
+    exit 1
+}
+target_radio_state=$(lxc_exec_bounded 6 "$target_owner" -- iw dev 2>/dev/null || true)
+mapfile -t target_live_rows < <(awk -v target="${target_bssid,,}" '
+    /^[[:space:]]*Interface / { interface=$2; address="" }
+    /^[[:space:]]*addr / { address=tolower($2) }
+    /^[[:space:]]*channel / && address == target {
+        frequency=$3
+        gsub(/[()]/, "", frequency)
+        print interface "\t" frequency
+    }
+' <<<"$target_radio_state")
+if ((${#target_live_rows[@]} != 1)); then
+    echo "steer.sh: cannot resolve one live AP frequency for $target_name/$target_bssid" >&2
+    exit 1
+fi
+IFS=$'\t' read -r target_interface target_frequency <<<"${target_live_rows[0]}"
+mapfile -t target_operating_tuple < <(
+    operating_tuple_for_frequency "$target_band" "$target_frequency"
+)
+if ((${#target_operating_tuple[@]} != 1)); then
+    echo "steer.sh: live frequency ${target_frequency}MHz is invalid for band $target_band" >&2
+    exit 1
+fi
+IFS=$'\t' read -r target_opclass target_channel <<<"${target_operating_tuple[0]}"
+if [[ $reported_channel =~ ^[1-9][0-9]*$ && $reported_channel != "$target_channel" ]]; then
+    status_note "Controller reports channel $reported_channel, but $target_owner/$target_interface is live on ${target_frequency}MHz (channel $target_channel); using the live AP state."
+fi
+
 if ((request_only)); then
     status_action "Using standards-only mode; no temporary RF preference will be applied."
     announce_steering planned
     status_wait_seconds "$preview_seconds" "highlighting $sta_input in the topology before the request"
     announce_steering moving
-    status_action "Sending the BTM steering request for $sta to $target_bssid."
+    status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
-        /usr/bin/steer.sh "$sta" "$target_bssid"
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
     exit $?
 fi
 
@@ -260,38 +372,6 @@ fi
     exit 1
 }
 
-case "$target_band" in
-    0) target_channel=6; target_frequency=2437 ;;
-    1) target_channel=36; target_frequency=5180 ;;
-    3) target_channel=5; target_frequency=5975 ;;
-    *) echo "steer.sh: unsupported live target band: $target_band" >&2; exit 1 ;;
-esac
-
-# Prefer a controller-reported operating channel when it is available.  The
-# current hwsim model reports zero, so the fixed lab channels above remain the
-# explicit simulator fallback used by the optimizer candidate adapter too.
-bsses_url=${topology_url%/topology}/bsses
-bsses=$(curl --connect-timeout "$curl_connect_timeout" --max-time "$curl_timeout" \
-    -fsS "$bsses_url" 2>/dev/null || true)
-reported_channel=$(jq -r --arg bssid "$target_bssid" '
-    first(.bsses[]? | select((.bssid // "" | ascii_downcase) == $bssid)
-      | (.channel // 0)) // 0' <<<"$bsses" 2>/dev/null || true)
-if [[ $reported_channel =~ ^[1-9][0-9]*$ ]]; then
-    target_channel=$reported_channel
-    case "$target_band" in
-        0)
-            if ((target_channel == 14)); then target_frequency=2484
-            else target_frequency=$((2407 + 5 * target_channel)); fi
-            ;;
-        1) target_frequency=$((5000 + 5 * target_channel)) ;;
-        3) target_frequency=$((5950 + 5 * target_channel)) ;;
-    esac
-fi
-
-[[ -r $identity_inventory ]] || {
-    echo "steer.sh: wmediumd identity inventory is unavailable: $identity_inventory" >&2
-    exit 1
-}
 mapfile -t client_identity < <(jq -r --arg input "$sta_input" --arg sta "$sta" '
     [.stations[]?
       | select(.role == "wlan-client" or .role == "iot-client")
@@ -307,36 +387,21 @@ if ((${#client_identity[@]} != 1)); then
 fi
 IFS=$'\t' read -r client station_radio <<<"${client_identity[0]}"
 
-radio_for_node() {
-    local node=$1
-    jq -r --arg node "$node" '
-        [.stations[]?
-          | select(.role == "extender" or .role == "controller-agent")
-          | select((.label // "" | ascii_downcase) == ($node | ascii_downcase))
-          | (.mac | ascii_downcase)]
-        | unique[]' "$identity_inventory"
-}
-mapfile -t source_radios < <(radio_for_node "$source_name")
-mapfile -t target_radios < <(radio_for_node "$target_name")
+mapfile -t source_identities < <(radio_identity_for_node "$source_name")
 mapfile -t mesh_radios < <(jq -r '
     [.stations[]?
       | select(.role == "extender" or .role == "controller-agent")
       | (.mac | ascii_downcase)]
     | unique | sort[]' "$identity_inventory")
-if ((${#source_radios[@]} != 1)); then
-    echo "steer.sh: $source_name has ${#source_radios[@]} wmediumd radio identities (expected 1)" >&2
-    exit 1
-fi
-if ((${#target_radios[@]} != 1)); then
-    echo "steer.sh: $target_name has ${#target_radios[@]} wmediumd radio identities (expected 1)" >&2
+if ((${#source_identities[@]} != 1)); then
+    echo "steer.sh: $source_name has ${#source_identities[@]} wmediumd radio identities (expected 1)" >&2
     exit 1
 fi
 if ((${#mesh_radios[@]} < 2)); then
     echo "steer.sh: wmediumd identity inventory has fewer than two mesh radios" >&2
     exit 1
 fi
-source_radio=${source_radios[0]}
-target_radio=${target_radios[0]}
+IFS=$'\t' read -r source_owner source_radio <<<"${source_identities[0]}"
 timeout --signal=TERM --kill-after=2 5 lxc info "$client" >/dev/null 2>&1 || {
     echo "steer.sh: client container '$client' is not available" >&2
     exit 1
@@ -411,32 +476,64 @@ fi
 bias_active=1
 
 status_action "Scanning ${target_frequency} MHz so the station can see candidate $target_bssid."
-if ! lxc_exec_bounded 12 "$client" -- sh -c '
+set +e
+lxc_exec_bounded 12 "$client" -- sh -c '
     frequency=$1
     target=$2
+    ssid=$3
+    ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
     attempt=0
     while [ "$attempt" -lt 3 ]; do
-        request=$(wpa_cli -i wlan0 scan "freq=$frequency" 2>/dev/null || true)
-        sleep 1
-        scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
-        if [ "$request" = OK ] && printf "%s\n" "$scan" | grep -Fqi "$target"; then
-            exit 0
+        request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
+            "bssid=$target" "ssid $ssid_hex" 2>/dev/null || true)
+        elapsed=0
+        while [ "$elapsed" -lt 20 ]; do
+            scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+            if [ "$request" = OK ] && printf "%s\n" "$scan" | \
+                awk -F "\t" -v b="$target" -v s="$ssid" '\''
+                    tolower($1) == tolower(b) && $5 == s { found = 1 }
+                    END { exit found ? 0 : 1 }
+                '\''; then
+                exit 0
+            fi
+            sleep 0.1
+            elapsed=$((elapsed + 1))
+        done
+        if [ "$request" != OK ]; then
+            sleep 0.5
         fi
+        request=
+        scan=
         attempt=$((attempt + 1))
-        sleep 1
     done
-    exit 1
-' sh "$target_frequency" "$target_bssid" >/dev/null 2>&1; then
-    echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan" >&2
-    exit 1
+
+    # Report a more precise failure boundary to the caller. Exit 2 means the
+    # BSSID is RF-visible, but no cache record resolves it to the target ESS.
+    scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+    if printf "%s\n" "$scan" | awk -F "\t" -v b="$target" '\''
+        tolower($1) == tolower(b) { found = 1 }
+        END { exit found ? 0 : 1 }
+    '\''; then
+        exit 2
+    fi
+' sh "$target_frequency" "$target_bssid" "$target_ssid" >/dev/null 2>&1
+scan_rc=$?
+set -e
+if ((scan_rc != 0)); then
+    if ((scan_rc == 2)); then
+        echo "steer.sh: target $target_bssid is RF-visible, but its hidden ESS identity '$target_ssid' was not resolved; no BTM request was sent" >&2
+    else
+        echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan; no BTM request was sent" >&2
+    fi
+    exit "$scan_rc"
 fi
 link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
 physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
     status_pass "The station reassociated during RF preparation; no BTM request was needed."
 else
-    status_pass "The target BSSID is present in the station scan cache."
-    status_action "Sending the EasyMesh BTM request for $sta to $target_bssid."
+    status_pass "The target BSSID and ESS identity are present in the station scan cache."
+    status_action "Sending the EasyMesh BTM request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     set +e
     # The native command transport has a 30-second I/O bound and controller
     # commands are serialized.  Keep the outer deadline above that contract so
@@ -444,7 +541,7 @@ else
     # Do not retry an ambiguous timeout: the controller may already have sent
     # the BTM request even if delivery of its command result was delayed.
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
-        /usr/bin/steer.sh "$sta" "$target_bssid"
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
     command_rc=$?
     set -e
     ((command_rc == 0)) || {

@@ -278,6 +278,12 @@ SRC_URI += "file://0019-wifi_hal_send_mgmt_frame-use-the-interface-BSSID.patch"
 # the existing validated accessor, causing another NL80211 -EINVAL.
 SRC_URI += "file://0020-wifi_hal_send_mgmt_frame-use-validated-MLO-link-id.patch"
 
+# Generic action-frame transmission used NL80211_ATTR_DONT_WAIT_FOR_ACK even
+# for unicast BTM Requests.  Apply this after the BSSID and MLO-link fixes and
+# keep no-ACK only for group destinations so steering frames receive normal
+# 802.11 acknowledgement and retry handling.
+SRC_URI += "file://0034-action-frame-request-80211-ack.patch"
+
 # Every kernel DEL_STATION notification was reflected back into hostapd as
 # EVENT_DISASSOC -- including removals hostapd itself had just ordered.  Its
 # clean-slate removal of a stale kernel entry during a returning client's

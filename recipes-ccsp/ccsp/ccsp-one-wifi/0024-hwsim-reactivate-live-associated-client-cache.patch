@@ -1,0 +1,54 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH] hwsim: reactivate clients present in live snapshots
+
+The hwsim association reconciler made OneWifi's event-backed client map
+inactive when the HAL omitted an old or idle station from a live provider
+snapshot.  The reverse transition was missing: when traffic made a still
+associated station visible to the HAL again, the monitor cache became active
+but the event-backed map stayed inactive forever.  Full EasyMesh snapshots
+therefore continued to omit a physically associated and reachable client.
+
+Treat a station present in a successful live provider response as current
+evidence, restore cli_Active, and publish the same authoritative full update
+used for withdrawals.  This makes reconciliation symmetric while retaining
+the hwsim-only stale-row filter.
+
+Upstream-Status: Pending
+---
+ source/apps/em/wifi_em.c | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -666,16 +666,24 @@ static void em_reconcile_live_assoc_snapshot(wifi_mgr_t *wifi_mgr,
+     }
+     entry = hash_map_get_first(vap->associated_devices_map);
+     while (entry != NULL) {
+-        if (entry->dev_stats.cli_Active &&
+-            !em_live_snapshot_contains(response,
+-                entry->dev_stats.cli_MACAddress)) {
+-            mac_addr_str_t mac_str;
++        mac_addr_str_t mac_str;
++        bool present = em_live_snapshot_contains(response,
++            entry->dev_stats.cli_MACAddress);
++
++        if (entry->dev_stats.cli_Active && !present) {
+             entry->dev_stats.cli_Active = false;
+             changed = true;
+             to_mac_str(entry->dev_stats.cli_MACAddress, mac_str);
+             wifi_util_info_print(WIFI_EM,
+                 "%s:%d: live snapshot withdrew stale client %s from vap %u\n",
+                 __func__, __LINE__, mac_str, vap_index);
++        } else if (!entry->dev_stats.cli_Active && present) {
++            entry->dev_stats.cli_Active = true;
++            changed = true;
++            to_mac_str(entry->dev_stats.cli_MACAddress, mac_str);
++            wifi_util_info_print(WIFI_EM,
++                "%s:%d: live snapshot restored associated client %s on vap %u\n",
++                __func__, __LINE__, mac_str, vap_index);
+         }
+         entry = hash_map_get_next(vap->associated_devices_map, entry);
+     }
+-- 
+2.43.0

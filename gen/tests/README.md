@@ -132,6 +132,7 @@ Docker/Boardfarm reconstruction.
 | `multihop-backhaul-test.sh` | Live backhaul acceptance | Yes |
 | `multihop-backhaul.sh` | Backhaul profile implementation and diagnostics | Yes |
 | `gen/steer.sh` (manual) | One live commanded steer | Yes |
+| `gen/steer-soak.sh` | Repeated topology-derived commanded steers | Yes |
 | `steering-matrix.sh` | Live commanded steering | Yes |
 | `association-ownership-regression.sh` | Delayed serving-BSS consistency | Yes |
 | `ap-recovery.sh` | Live forced AP failure/recovery | Yes, disruptive |
@@ -415,6 +416,37 @@ eventually place the STA under the same agent. The Network Topology page shows
 the move with its steering pulse/trail. Use `steering-matrix.sh` when a
 repeatable pass/fail result and convergence timing are required; use the
 optimizer smoke test to evaluate policy inputs without issuing a steer.
+
+### Repeated live steering with `gen/steer-soak.sh`
+
+Run one topology-derived move for every client currently connected at startup:
+
+```sh
+gen/steer-soak.sh
+```
+
+Or request an exact number of sequential attempts. Counts larger than the
+client roster cycle through it fairly:
+
+```sh
+gen/steer-soak.sh 50
+```
+
+Before every attempt the script reads the current topology again. It resolves
+the selected client's current parent, SSID, band and BSSID, then chooses a
+different live mesh node with exactly one matching fronthaul BSS. This includes
+the clients pinned to 2.4 and 6 GHz; unlike `steering-matrix.sh`, the soak does
+not assume a 5 GHz cohort. The actual move is delegated to `gen/steer.sh`, so
+candidate discovery, BTM delivery, physical/controller verification and exact
+RF restoration use the same supported implementation as a manual steer.
+
+An issued failure still counts as an attempt and does not stop later clients.
+The final summary reports attempted, passed, failed and skipped clients and
+returns nonzero if any issued move failed. With no count, a client that became
+unavailable or lacks a compatible alternate target is reported and skipped;
+it is never replaced by a second move of another client. Results are written
+to a timestamped `tmp/test-results/steer-soak-*.csv` file. Do not run another
+medium-changing scenario at the same time.
 
 ### `steering-matrix.sh`
 
@@ -801,3 +833,22 @@ Preserve a failed test's timestamped artifact directory before redeploying.
 For RF tests, first confirm the recorded `medium_restored` result. For a stopped
 AP test, confirm the cleanup restart. Then use `health-audit.sh` and the
 topology WebUI to establish the post-test baseline.
+
+## Comparable performance snapshot
+
+Run the common collector as root inside the outer lab VM after a lifecycle
+gate. It reads the most recent lifecycle timing record and uses
+`smaps_rollup`, so PSS is not inflated by counting shared pages once for every
+process:
+
+```sh
+sudo gen/tests/lab-performance-snapshot.py \
+  --stack rdk --profile 20 --label ready \
+  --output /var/tmp/rdk-ready.json
+```
+
+The schema records the outer VM's memory and load, nested LXD cardinality,
+normalized thin first-boot start/finish time, cumulative lifecycle milestones,
+relevant process details, and PSS/RSS, private memory, swap, threads and
+file-descriptor totals by functional group. Use the same profile and label in
+the prplMesh lab for direct comparison.

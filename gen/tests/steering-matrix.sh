@@ -114,17 +114,36 @@ client_bssid() {
 # be visible. This models the candidate discovery a production station normally
 # performs and makes private/IoT steering deterministic for the same reason.
 prime_candidate_scan() {
-    local client=$1 target=$2 frequency=$3 scan
-    for _ in $(seq 1 5); do
-        scan=$(lxc exec "$client" -- iw dev wlan0 scan freq "$frequency" \
+    local client=$1 target=$2 frequency=$3 scan request ssid_hex
+    local attempt poll
+    ssid_hex=$(printf '%s' "$ssid" | od -An -tx1 | tr -d ' \n')
+    for attempt in $(seq 1 5); do
+        request=$(lxc exec -T "$client" -- wpa_cli -i wlan0 scan \
+            "freq=$frequency" "bssid=$target" "ssid $ssid_hex" \
             2>/dev/null || true)
-        if grep -Fqi "BSS $target(" <<<"$scan"; then
-            echo "candidate scan primed: $client target=$target frequency=${frequency}MHz"
-            return 0
-        fi
-        sleep 1
+        for poll in $(seq 1 20); do
+            scan=$(lxc exec -T "$client" -- wpa_cli -i wlan0 scan_results \
+                2>/dev/null || true)
+            if [[ $request == OK ]] && awk -F $'\t' \
+                -v b="$target" -v s="$ssid" '
+                    tolower($1) == tolower(b) && $5 == s { found = 1 }
+                    END { exit found ? 0 : 1 }
+                ' <<<"$scan"; then
+                echo "candidate scan primed: $client target=$target ssid=$ssid frequency=${frequency}MHz"
+                return 0
+            fi
+            sleep 0.1
+        done
+        sleep 0.5
     done
-    echo "$client: target $target was absent from the ${frequency}MHz scan" >&2
+    if awk -F $'\t' -v b="$target" '
+        tolower($1) == tolower(b) { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' <<<"${scan:-}"; then
+        echo "$client: target $target is RF-visible, but its ESS identity '$ssid' was not resolved" >&2
+    else
+        echo "$client: target $target was absent from the ${frequency}MHz scan" >&2
+    fi
     return 1
 }
 

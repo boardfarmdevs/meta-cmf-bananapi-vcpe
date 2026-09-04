@@ -1,0 +1,80 @@
+--- a/wpa_supplicant/wnm_sta.c
++++ b/wpa_supplicant/wnm_sta.c
+@@ -610,6 +610,29 @@
+ }
+ 
+ 
++static struct wpa_bss *
++wnm_get_transition_candidate(struct wpa_supplicant *wpa_s, const u8 *bssid)
++{
++	struct wpa_bss *current = wpa_s->current_bss;
++	struct wpa_bss *target;
++
++	/*
++	 * A hidden BSS can have both an empty-SSID Beacon entry and a
++	 * full-SSID Probe Response entry in the BSS table. Prefer the entry
++	 * belonging to the current ESS. A BSSID-only lookup can otherwise pick
++	 * the empty entry and reject a valid transition as a different ESS.
++	 */
++	if (current) {
++		target = wpa_bss_get(wpa_s, bssid, current->ssid,
++				     current->ssid_len);
++		if (target)
++			return target;
++	}
++
++	return wpa_bss_get_bssid(wpa_s, bssid);
++}
++
++
+ static struct wpa_bss * get_first_acceptable(struct wpa_supplicant *wpa_s)
+ {
+ 	unsigned int i;
+@@ -618,7 +641,7 @@
+ 	for (i = 0; i < wpa_s->wnm_num_neighbor_report; i++) {
+ 		nei = &wpa_s->wnm_neighbor_report_elements[i];
+ 		if (nei->acceptable)
+-			return wpa_bss_get_bssid(wpa_s, nei->bssid);
++			return wnm_get_transition_candidate(wpa_s, nei->bssid);
+ 	}
+ 
+ 	return NULL;
+@@ -662,15 +685,15 @@
+ 		/* If failed to get candidate BSS transition status from driver,
+ 		 * get the first acceptable candidate from wpa_supplicant.
+ 		 */
+-		target = wpa_bss_get_bssid(wpa_s, params.bssid);
++		target = wnm_get_transition_candidate(wpa_s, params.bssid);
+ 		goto end;
+ 	}
+ 
+ 	/* Get the first acceptable candidate from driver */
+ 	for (i = 0; i < info->num; i++) {
+ 		if (info->candidates[i].is_accept) {
+-			target = wpa_bss_get_bssid(wpa_s,
+-						   info->candidates[i].bssid);
++			target = wnm_get_transition_candidate(
++				wpa_s, info->candidates[i].bssid);
+ 			goto end;
+ 		}
+ 	}
+@@ -681,8 +704,8 @@
+ 	 */
+ 	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_DISASSOC_IMMINENT) {
+ 		for (i = 0; i < info->num; i++) {
+-			target = wpa_bss_get_bssid(wpa_s,
+-						   info->candidates[i].bssid);
++			target = wnm_get_transition_candidate(
++				wpa_s, info->candidates[i].bssid);
+ 			if (target &&
+ 			    (target->level <
+ 			     wpa_s->conf->disassoc_imminent_rssi_threshold))
+@@ -745,7 +768,7 @@
+ 			continue;
+ 		}
+ 
+-		target = wpa_bss_get_bssid(wpa_s, nei->bssid);
++		target = wnm_get_transition_candidate(wpa_s, nei->bssid);
+ 		if (!target) {
+ 			wpa_printf(MSG_DEBUG, "Candidate BSS " MACSTR
+ 				   " (pref %d) not found in scan results",

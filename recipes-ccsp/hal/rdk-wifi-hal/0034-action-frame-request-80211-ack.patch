@@ -1,0 +1,55 @@
+From: EasyMesh Lab <easymesh-lab@localhost>
+Date: Thu, 3 Sep 2026 17:00:00 -0700
+Subject: [PATCH] wifi_hal: request ACKs for unicast action frames
+
+The generic management-frame API sent every action frame with noack=1.
+For a unicast BTM Request this sets NL80211_ATTR_DONT_WAIT_FOR_ACK and
+disables normal acknowledgement/retry handling.  A transient loss then
+looks like a successful request throughout the upper layers.
+
+Request ACK handling for unicast action frames and retain no-ACK behavior
+only for group-addressed frames, which cannot be acknowledged.
+---
+ wifi_hal.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/wifi_hal.c b/wifi_hal.c
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -4671,6 +4671,7 @@ int wifi_hal_send_mgmt_frame(int apIndex,mac_address_t sta, const unsigned char
+     u8 *buf;
+     struct ieee80211_hdr *hdr;
+     int res = 0;
++    int noack;
+ #ifdef HOSTAPD_2_11 // 2.11
+     int link_id = 0;
+ #endif
+@@ -4696,14 +4697,23 @@ int wifi_hal_send_mgmt_frame(int apIndex,mac_address_t sta, const unsigned char
+         os_memcpy(hdr->addr3, interface->u.sta.backhaul.bssid, ETH_ALEN);
+     }
+ 
++    /*
++     * Unicast action frames, including BSS Transition Management requests,
++     * need normal 802.11 acknowledgement and retry handling.  Setting
++     * DONT_WAIT_FOR_ACK for those frames turns an intermittent RF loss into a
++     * silent steering miss.  Retain no-ACK behavior only for group-addressed
++     * management frames, which cannot be acknowledged.
++     */
++    noack = (sta[0] & 0x01) ? 1 : 0;
++
+     
+ #ifdef HOSTAPD_2_11 // 2.11
+     link_id = wifi_hal_get_mld_link_id(interface);
+-    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, 1, freq, NULL, 0, 0, wait, link_id);
++    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, noack, freq, NULL, 0, 0, wait, link_id);
+ #elif HOSTAPD_2_10 // 2.10
+-    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, 1, freq, NULL, 0, 0, wait);
++    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, noack, freq, NULL, 0, 0, wait);
+ #else
+-    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, 1, freq, NULL, 0);
++    res = wifi_drv_send_mlme(interface, buf, 24 + data_len, noack, freq, NULL, 0);
+ #endif
+ 
+     os_free(buf);
+-- 
+2.43.0

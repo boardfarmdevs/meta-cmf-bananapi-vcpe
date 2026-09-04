@@ -85,6 +85,31 @@ class SnapshotTests(unittest.TestCase):
                 5180,
             )
 
+    def test_snapshots_multiple_frequencies_in_one_generation(self):
+        _, prior = MODULE.snapshot_link_keys(
+            FakeControl(),
+            [
+                ("station", "radio-a", 5180),
+                ("station", "radio-b", 5955),
+            ],
+        )
+        self.assertEqual(prior, [
+            {
+                "source": "station",
+                "destination": "radio-a",
+                "frequency_mhz": 5180,
+                "value": 55,
+                "override": True,
+            },
+            {
+                "source": "station",
+                "destination": "radio-b",
+                "frequency_mhz": 5955,
+                "value": 42,
+                "override": False,
+            },
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
