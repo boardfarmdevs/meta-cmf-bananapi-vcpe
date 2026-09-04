@@ -63,6 +63,9 @@ class InteractiveMediumSession:
         self._baseline: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._restored = False
         self._faulted: str | None = None
+        self._closing = False
+        self._movements: dict[str, dict[str, Any]] = {}
+        self._movement_threads: dict[str, threading.Thread] = {}
         first = world["generations"][0]
         self._roles = {
             role: {
@@ -95,6 +98,8 @@ class InteractiveMediumSession:
             "authoritative": True,
             "position_url": "/api/demo/roles/{role}/position",
             "presence_url": "/api/demo/roles/{role}/presence",
+            "move_url": "/api/demo/roles/{role}/move",
+            "movement_url": "/api/demo/movements/{movement}",
         }
         return result
 
@@ -169,7 +174,9 @@ class InteractiveMediumSession:
         if self._lease is None or self._lease["expires_monotonic"] > time.monotonic():
             return
         owner = self._lease["owner"]
+        token = self._lease["token"]
         self._lease = None
+        self._cancel_owned_movements(token, "lease_expired")
         self.store.emit(
             "interaction.lease.expired", self._world_time(), {"owner": owner},
             producer="interaction",
@@ -194,6 +201,12 @@ class InteractiveMediumSession:
                     "instance_id": self._instance_id,
                     "generation": self._generation,
                 },
+                "movements": [
+                    self._public_movement(value)
+                    for value in sorted(
+                        self._movements.values(), key=lambda item: item["created_monotonic"]
+                    )
+                ],
                 "restored": self._restored,
                 "fault": self._faulted,
             }
@@ -253,6 +266,7 @@ class InteractiveMediumSession:
             lease = self._require_lease(token)
             owner = lease["owner"]
             self._lease = None
+            self._cancel_owned_movements(token, "lease_released")
             self.store.emit(
                 "interaction.lease.released", self._world_time(), {"owner": owner},
                 producer="interaction",
@@ -318,6 +332,7 @@ class InteractiveMediumSession:
     ) -> dict[str, Any]:
         with self._lock:
             self._validate_mutation(role, token, expected_revision)
+            self._cancel_role_movement(role, "direct_position")
             now = time.monotonic()
             if not final and now - self._last_update_at < self.minimum_update_interval:
                 raise InteractionError(429, "rate_limited", "position updates are limited to five per second")
@@ -346,6 +361,8 @@ class InteractiveMediumSession:
             raise InteractionError(400, "invalid_presence", "present must be true or false")
         with self._lock:
             self._validate_mutation(role, token, expected_revision)
+            if not present:
+                self._cancel_role_movement(role, "role_absent")
             previous = copy.deepcopy(self._roles[role])
             self._roles[role]["present"] = present
             try:
@@ -354,6 +371,256 @@ class InteractiveMediumSession:
                 if self._faulted is None:
                     self._roles[role] = previous
                 raise
+
+    @staticmethod
+    def _public_movement(movement: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: copy.deepcopy(value)
+            for key, value in movement.items()
+            if key not in {"lease_token", "wake", "created_monotonic", "started_monotonic",
+                           "paused_monotonic", "paused_seconds"}
+        }
+
+    def _cancel_movement(self, movement: dict[str, Any], reason: str) -> None:
+        if movement["status"] not in {"running", "paused"}:
+            return
+        movement["status"] = "cancelled"
+        movement["reason"] = reason
+        movement["position"] = list(self._roles[movement["role"]]["position"])
+        movement["wake"].set()
+        self.store.emit(
+            "interaction.movement.cancelled", self._world_time(),
+            {"revision": self._revision, "reason": reason,
+             "movement": self._public_movement(movement)},
+            producer="interaction",
+        )
+
+    def _cancel_role_movement(self, role: str, reason: str) -> None:
+        for movement in self._movements.values():
+            if movement["role"] == role:
+                self._cancel_movement(movement, reason)
+
+    def _cancel_owned_movements(self, token: str, reason: str) -> None:
+        for movement in self._movements.values():
+            if movement.get("lease_token") == token:
+                self._cancel_movement(movement, reason)
+
+    def move(
+        self,
+        role: str,
+        *,
+        token: str,
+        expected_revision: Any,
+        destination: Any,
+        speed_mps: Any,
+        client_sequence: Any = None,
+    ) -> dict[str, Any]:
+        """Start a server-owned constant-speed path for one station role."""
+        with self._lock:
+            self._validate_mutation(role, token, expected_revision)
+            target = self._clamp_position(destination)
+            try:
+                speed = float(speed_mps)
+            except (TypeError, ValueError) as error:
+                raise InteractionError(400, "invalid_speed", "speed_mps must be a number") from error
+            if not math.isfinite(speed) or not 0.1 <= speed <= 10.0:
+                raise InteractionError(
+                    400, "invalid_speed", "speed_mps must be between 0.1 and 10.0",
+                )
+            self._cancel_role_movement(role, "superseded")
+            start = list(self._roles[role]["position"])
+            distance = math.dist(start, target)
+            movement_id = secrets.token_hex(8)
+            now = time.monotonic()
+            movement = {
+                "id": movement_id,
+                "role": role,
+                "status": "running",
+                "start": start,
+                "destination": target,
+                "position": start,
+                "speed_mps": round(speed, 3),
+                "distance_m": round(distance, 3),
+                "remaining_m": round(distance, 3),
+                "duration_ms": round(distance / speed * 1000),
+                "progress": 0.0,
+                "client_sequence": client_sequence,
+                "lease_token": token,
+                "created_monotonic": now,
+                "started_monotonic": now,
+                "paused_monotonic": None,
+                "paused_seconds": 0.0,
+                "wake": threading.Event(),
+            }
+            self._movements[movement_id] = movement
+            self._revision += 1
+            payload = {
+                "revision": self._revision,
+                "movement": self._public_movement(movement),
+            }
+            self.store.emit(
+                "interaction.movement.started", self._world_time(), payload,
+                producer="interaction",
+            )
+            thread = threading.Thread(
+                target=self._movement_worker,
+                args=(movement_id,),
+                name=f"room-demo-move-{role}",
+                daemon=True,
+            )
+            self._movement_threads[movement_id] = thread
+            thread.start()
+            return payload
+
+    def _movement_worker(self, movement_id: str) -> None:
+        while True:
+            with self._lock:
+                movement = self._movements[movement_id]
+                self._expire_lease()
+                if self._closing or movement["status"] in {"cancelled", "completed", "failed"}:
+                    return
+                if movement["status"] == "paused":
+                    wake = movement["wake"]
+                    delay = 0.5
+                elif (
+                    self._lease is None
+                    or not secrets.compare_digest(
+                        movement["lease_token"], self._lease["token"]
+                    )
+                ):
+                    self._cancel_movement(movement, "lease_lost")
+                    return
+                else:
+                    now = time.monotonic()
+                    elapsed = max(
+                        0.0,
+                        now - movement["started_monotonic"] - movement["paused_seconds"],
+                    )
+                    duration = max(0.001, movement["duration_ms"] / 1000)
+                    fraction = min(1.0, elapsed / duration)
+                    point = [
+                        round(
+                            movement["start"][axis]
+                            + (movement["destination"][axis] - movement["start"][axis])
+                            * fraction,
+                            3,
+                        )
+                        for axis in (0, 1)
+                    ]
+                    previous = copy.deepcopy(self._roles[movement["role"]])
+                    self._roles[movement["role"]]["position"] = point
+                    try:
+                        applied = self._apply_role(
+                            movement["role"], "position",
+                            client_sequence=movement["client_sequence"],
+                        )
+                    except Exception as error:
+                        if self._faulted is None:
+                            self._roles[movement["role"]] = previous
+                        movement["status"] = "failed"
+                        movement["reason"] = str(error)
+                        self.store.emit(
+                            "interaction.movement.failed", self._world_time(),
+                            {"revision": self._revision, "reason": str(error),
+                             "movement": self._public_movement(movement)},
+                            producer="interaction",
+                        )
+                        return
+                    movement["position"] = point
+                    movement["progress"] = round(fraction, 4)
+                    movement["remaining_m"] = round(
+                        math.dist(point, movement["destination"]), 3
+                    )
+                    movement["daemon_generation"] = applied["daemon_generation"]
+                    movement["revision"] = self._revision
+                    if fraction >= 1:
+                        movement["status"] = "completed"
+                        movement["remaining_m"] = 0.0
+                        kind = "interaction.movement.completed"
+                    else:
+                        kind = "interaction.movement.progress"
+                    self.store.emit(
+                        kind, self._world_time(),
+                        {"revision": self._revision,
+                         "movement": self._public_movement(movement)},
+                        producer="interaction",
+                    )
+                    if fraction >= 1:
+                        return
+                    wake = movement["wake"]
+                    delay = max(0.2, self.minimum_update_interval)
+            wake.wait(delay)
+            wake.clear()
+
+    def movement_control(
+        self,
+        movement_id: str,
+        action: str,
+        *,
+        token: str,
+        expected_revision: Any,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._require_lease(token)
+            try:
+                revision = int(expected_revision)
+            except (TypeError, ValueError) as error:
+                raise InteractionError(
+                    400, "invalid_revision", "expected_revision is required"
+                ) from error
+            # Progress advances the global room revision up to five times per
+            # second. A movement-specific control remains unambiguous because
+            # both its opaque ID and originating lease must match, so accept a
+            # revision that was current when the operator clicked. A future
+            # revision is never valid.
+            if revision > self._revision:
+                raise InteractionError(
+                    409, "stale_revision",
+                    f"expected revision {revision} is ahead of current revision "
+                    f"{self._revision}",
+                )
+            movement = self._movements.get(movement_id)
+            if movement is None:
+                raise InteractionError(404, "movement_not_found", "movement does not exist")
+            if not secrets.compare_digest(movement["lease_token"], token):
+                raise InteractionError(403, "lease_mismatch", "movement belongs to another lease")
+            now = time.monotonic()
+            if action == "pause":
+                if movement["status"] != "running":
+                    raise InteractionError(409, "movement_not_running", "movement is not running")
+                movement["status"] = "paused"
+                movement["paused_monotonic"] = now
+            elif action == "resume":
+                if movement["status"] != "paused":
+                    raise InteractionError(409, "movement_not_paused", "movement is not paused")
+                movement["paused_seconds"] += now - movement["paused_monotonic"]
+                movement["paused_monotonic"] = None
+                movement["status"] = "running"
+                movement["wake"].set()
+            elif action == "cancel":
+                if movement["status"] not in {"running", "paused"}:
+                    raise InteractionError(409, "movement_not_active", "movement is not active")
+                self._revision += 1
+                movement["revision"] = self._revision
+                self._cancel_movement(movement, "operator_cancelled")
+                return {
+                    "revision": self._revision,
+                    "movement": self._public_movement(movement),
+                }
+            else:
+                raise InteractionError(400, "invalid_action", "unknown movement action")
+            self._revision += 1
+            movement["revision"] = self._revision
+            payload = {
+                "revision": self._revision,
+                "movement": self._public_movement(movement),
+            }
+            if action != "cancel":
+                self.store.emit(
+                    f"interaction.movement.{action}d", self._world_time(), payload,
+                    producer="interaction",
+                )
+            return payload
 
     def _links_for_role(self, role: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         positions = {
@@ -516,6 +783,13 @@ class InteractiveMediumSession:
             return restored
 
     def close(self) -> bool:
+        with self._lock:
+            self._closing = True
+            for movement in self._movements.values():
+                self._cancel_movement(movement, "session_stopped")
+            threads = list(self._movement_threads.values())
+        for thread in threads:
+            thread.join(timeout=2)
         with self._lock:
             if self._client is None:
                 return self._restored

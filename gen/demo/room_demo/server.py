@@ -101,6 +101,14 @@ class RoomDemoServer:
                     return None
                 return unquote(parts[3]), parts[4]
 
+            @staticmethod
+            def _movement_path(path: str, *, action: bool) -> tuple[str, str | None] | None:
+                parts = path.strip("/").split("/")
+                expected = 5 if action else 4
+                if len(parts) != expected or parts[:3] != ["api", "demo", "movements"]:
+                    return None
+                return unquote(parts[3]), (parts[4] if action else None)
+
             def _static(self, relative: str):
                 target = (viewer_root / relative).resolve()
                 if viewer_root not in target.parents and target != viewer_root:
@@ -171,15 +179,38 @@ class RoomDemoServer:
 
             def do_POST(self):
                 parsed = urlparse(self.path)
-                if parsed.path != "/api/demo/interactions/lease" or interactions is None:
+                if interactions is None:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
                     body = self._body()
-                    if body.get("token"):
-                        self._json(interactions.renew(str(body["token"])))
-                    else:
-                        self._json(interactions.acquire(str(body.get("owner") or "")), 201)
+                    if parsed.path == "/api/demo/interactions/lease":
+                        if body.get("token"):
+                            self._json(interactions.renew(str(body["token"])))
+                        else:
+                            self._json(interactions.acquire(str(body.get("owner") or "")), 201)
+                        return
+                    matched = self._role_path(parsed.path)
+                    if matched is not None and matched[1] == "move":
+                        role, _ = matched
+                        self._json(interactions.move(
+                            role,
+                            token=str(body.get("token") or ""),
+                            expected_revision=body.get("expected_revision"),
+                            destination=body.get("destination"),
+                            speed_mps=body.get("speed_mps"),
+                            client_sequence=body.get("client_sequence"),
+                        ), 201)
+                        return
+                    movement = self._movement_path(parsed.path, action=True)
+                    if movement is not None and movement[1] in {"pause", "resume"}:
+                        self._json(interactions.movement_control(
+                            movement[0], movement[1],
+                            token=str(body.get("token") or ""),
+                            expected_revision=body.get("expected_revision"),
+                        ))
+                        return
+                    raise InteractionError(404, "unknown_operation", "unknown interaction operation")
                 except Exception as error:
                     self._interaction_error(error)
 
@@ -214,12 +245,23 @@ class RoomDemoServer:
 
             def do_DELETE(self):
                 parsed = urlparse(self.path)
-                if parsed.path != "/api/demo/interactions/lease" or interactions is None:
+                if interactions is None:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
                     body = self._body()
-                    self._json(interactions.release(str(body.get("token") or "")))
+                    if parsed.path == "/api/demo/interactions/lease":
+                        self._json(interactions.release(str(body.get("token") or "")))
+                        return
+                    movement = self._movement_path(parsed.path, action=False)
+                    if movement is not None:
+                        self._json(interactions.movement_control(
+                            movement[0], "cancel",
+                            token=str(body.get("token") or ""),
+                            expected_revision=body.get("expected_revision"),
+                        ))
+                        return
+                    raise InteractionError(404, "unknown_operation", "unknown interaction operation")
                 except Exception as error:
                     self._interaction_error(error)
 

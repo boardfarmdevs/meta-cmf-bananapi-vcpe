@@ -77,10 +77,17 @@ accepted update is read back before the server advances its room revision.
 2. Right-click a client and choose **Move to destination…**.
 3. Click the destination on the room floor.
 
-The purple path and marker show the route. The viewer interpolates the role at
-the selected speed and sends bounded live positions through the same API. It
-does not issue a steering command. A later optimizer recommendation or BTM
-request is a separate, visible closed-loop outcome.
+The purple path and marker show the route. The server owns the movement after
+the click, interpolates constant-speed positions, and applies at most five RF
+generations per second. The browser follows accepted server events; throttling,
+closing, or reloading that browser therefore cannot distort the route. Use
+**Pause walk**, **Resume walk**, or **Cancel walk** at any point. Cancelling
+freezes the client at its last applied position.
+
+The walk does not issue a steering command. A later optimizer recommendation
+or BTM request is a separate, visible closed-loop outcome. Releasing or losing
+the control lease cancels the walk safely and also freezes the last accepted
+position.
 
 ## Disappear and reappear
 
@@ -176,3 +183,22 @@ Send it with `PUT /api/demo/roles/sta_mobile_01/position`. Presence uses
 The response identifies the accepted revision, daemon generation, role state,
 changed-link count, and calculated per-AP/per-band link budget. Tokens are
 never included in the event stream.
+
+A server-owned walk begins with `POST /api/demo/roles/{role}/move` and this
+body (using the latest revision):
+
+```json
+{
+  "token": "returned lease token",
+  "expected_revision": 4,
+  "client_sequence": 2,
+  "destination": [17.0, 12.0],
+  "speed_mps": 1.4
+}
+```
+
+The reply supplies a movement ID. Pause and resume it with `POST` to
+`/api/demo/movements/{id}/pause` or `/resume`; cancel it with `DELETE
+/api/demo/movements/{id}`. Each control body carries the token and current
+`expected_revision`. `GET /api/demo/interactions` exposes active and completed
+movement state without exposing lease credentials.

@@ -253,8 +253,9 @@ explain.
 
 ### Current implementation status
 
-Phase 1 preview and the client portion of Phase 2 are implemented on the RDK
-interactive-room branch. Static worlds remain safely labeled **PREVIEW ONLY**.
+Phase 1, client live-RF actuation, and server-owned destination movement are
+implemented on the RDK interactive-room branch. Static worlds remain safely
+labeled **PREVIEW ONLY**.
 Running `room-demo interactive` adds a green **LIVE RF** state with a
 single-writer renewable lease, optimistic revisions, throttled/serialized
 position updates, atomic all-band wmediumd application, per-generation
@@ -262,10 +263,11 @@ readback, RF disappearance/reappearance, ordered evidence, and exact baseline
 restore. The verified source layout supplies room dimensions and propagation;
 the signed Golden World remains immutable.
 
-Live controls currently cover all bound clients. Gateway/extender motion,
-server-owned destination trajectories, hybrid takeover, recording/export,
-full-room editing, and optimizer authority beyond the existing bounded hero
-policy remain subsequent delivery work.
+Live controls currently cover all bound clients. Constant-speed destination
+walks continue at the server and can be paused, resumed or cancelled without
+making the browser an RF clock. Gateway/extender motion, hybrid takeover,
+recording/export, full-room editing, and optimizer authority beyond the
+existing bounded hero policy remain subsequent delivery work.
 
 ### Phase 1: safe interactive preview
 

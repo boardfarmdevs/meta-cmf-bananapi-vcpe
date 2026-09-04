@@ -7,9 +7,10 @@ on the runner's authoritative clock.
 
 Scripted-run browser APIs remain read-only. The separate `interactive` command
 exposes a lease-protected, revisioned control API whose sole RF writer applies
-and reads back atomic wmediumd generations. `stimulus`, `recommend`, and
-explicitly confirmed `act` modes separate optimizer authority from simulated
-room movement.
+and reads back atomic wmediumd generations. Destination walks are server-owned
+and support pause, resume and cancel, so browser rendering is never the RF
+clock. `stimulus`, `recommend`, and explicitly confirmed `act` modes separate
+optimizer authority from simulated room movement.
 
 See [the full operator manual](../../doc/easymesh/live-room-demo/manual.md).
 Interactive operation has a separate

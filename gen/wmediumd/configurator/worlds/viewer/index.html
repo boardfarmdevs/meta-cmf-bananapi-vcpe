@@ -197,6 +197,8 @@
     <div class="interaction-actions">
       <button id="moveSelected" disabled>Move to…</button>
       <button id="presenceSelected" disabled>Disappear</button>
+      <button id="pauseMovement" disabled>Pause walk</button>
+      <button id="cancelMovement" disabled>Cancel walk</button>
       <button id="resetSelected" disabled>Reset role</button>
       <button id="resetAll">Reset all</button>
     </div>
@@ -324,7 +326,7 @@
   (function bindOrbit() {
     let drag = null;
     const el = renderer.domElement;
-    el.addEventListener('pointerdown', (e) => {
+    el.addEventListener('pointerdown', async (e) => {
       hideRoleMenu();
       if (e.button !== 0) return;
       if (interaction.mode === 'interact') {
@@ -335,6 +337,9 @@
         }
         const role = pickedRole(e);
         if (role && canInteractWith(role)) {
+          if (interactiveLiveMode && interaction.movement) {
+            await controlMovement('cancel');
+          }
           selected = role;
           interaction.hudRole = role;
           interaction.drag = {
@@ -485,7 +490,9 @@
   function applyInteractionSnapshot(snapshot) {
     interaction.apiEnabled = !!snapshot.enabled;
     interaction.revision = Number(snapshot.revision || 0);
-    interaction.initialRoles = JSON.parse(JSON.stringify(snapshot.roles || {}));
+    if (!Object.keys(interaction.initialRoles).length) {
+      interaction.initialRoles = JSON.parse(JSON.stringify(snapshot.roles || {}));
+    }
     if (interactiveLiveMode) {
       for (const [role, state] of Object.entries(snapshot.roles || {})) {
         if (!canInteractWith(role)) continue;
@@ -493,6 +500,9 @@
           position: state.position.slice(), present: !!state.present,
         };
       }
+      const active = (snapshot.movements || []).find(
+        (item) => item.status === 'running' || item.status === 'paused');
+      interaction.movement = active || null;
     }
     const badge = $('#interactionBadge');
     badge.textContent = interaction.apiEnabled ? 'LIVE RF' : 'OBSERVER';
@@ -542,7 +552,7 @@
       return false;
     }
   }
-  function sendMutation(operation, role, payload) {
+  function sendControl(url, method, payload) {
     if (!interactiveLiveMode || !interaction.leaseToken) return Promise.resolve(null);
     const sequence = ++interaction.clientSequence;
     interaction.requestChain = interaction.requestChain.then(async () => {
@@ -552,10 +562,9 @@
         client_sequence: sequence,
       });
       try {
-        const accepted = await apiJson(
-          '/api/demo/roles/' + encodeURIComponent(role) + '/' + operation,
-          {method: 'PUT', body: JSON.stringify(body)});
-        interaction.revision = Number(accepted.revision);
+        const accepted = await apiJson(url, {method, body: JSON.stringify(body)});
+        interaction.revision = Math.max(
+          interaction.revision, Number(accepted.revision));
         interaction.acknowledgedSequence = Math.max(
           interaction.acknowledgedSequence, Number(accepted.client_sequence || sequence));
         return accepted;
@@ -566,6 +575,11 @@
       }
     }).catch(() => null);
     return interaction.requestChain;
+  }
+  function sendMutation(operation, role, payload) {
+    return sendControl(
+      '/api/demo/roles/' + encodeURIComponent(role) + '/' + operation,
+      'PUT', payload);
   }
   function flushPosition() {
     const pending = interaction.pendingPosition;
@@ -1032,6 +1046,13 @@
     $('#moveSelected').disabled = !selectedUsable;
     $('#presenceSelected').disabled = !selectedUsable;
     $('#resetSelected').disabled = !selectedUsable || !roleIsModified(role);
+    const activeMovement = interaction.movement &&
+      ['running', 'paused'].includes(interaction.movement.status)
+      ? interaction.movement : null;
+    $('#pauseMovement').disabled = !interactiveLiveMode || !activeMovement;
+    $('#cancelMovement').disabled = !interactiveLiveMode || !activeMovement;
+    $('#pauseMovement').textContent = activeMovement && activeMovement.status === 'paused'
+      ? 'Resume walk' : 'Pause walk';
     if (!preview) {
       $('#interactionSummary').innerHTML = interaction.mode === 'interact'
         ? 'Click or drag a <b>client</b> in the room.'
@@ -1042,13 +1063,14 @@
     const present = effectivePresent(role, g);
     $('#presenceSelected').textContent = present ? 'Disappear' : 'Reappear';
     const override = interaction.overrides[role];
-    const movement = interaction.movement && interaction.movement.role === role
+    const movement = activeMovement && activeMovement.role === role
       ? interaction.movement : null;
     let state = present
       ? (interactiveLiveMode ? (roleIsModified(role) ? 'live moved' : 'live position')
         : (override ? 'preview moved' : 'scenario position'))
       : (interactiveLiveMode ? 'RF absent' : 'RF absent preview');
-    if (movement) state = 'moving · ' + movement.speed_mps.toFixed(1) + ' m/s';
+    if (movement) state = (movement.status === 'paused' ? 'paused' : 'moving') +
+      ' · ' + movement.speed_mps.toFixed(1) + ' m/s';
     if (interaction.awaitingDestination === role) state = 'click a destination';
     $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · ' + esc(state);
 
@@ -1061,7 +1083,7 @@
     const associated = preview.associated;
     let movementRow = '';
     if (movement) {
-      const remaining = Math.hypot(
+      const remaining = movement.remaining_m != null ? Number(movement.remaining_m) : Math.hypot(
         movement.destination[0] - preview.point[0], movement.destination[1] - preview.point[1]);
       movementRow = '<span>Destination</span><b>' + remaining.toFixed(1) + ' m · ' +
         Math.ceil(remaining / movement.speed_mps) + ' s</b>';
@@ -1331,13 +1353,17 @@
         !(await acquireInteractionLease())) return;
     selected = role;
     interaction.hudRole = role;
-    interaction.movement = null;
+    if (interactiveLiveMode && interaction.movement) {
+      await controlMovement('cancel');
+    } else {
+      interaction.movement = null;
+    }
     interaction.awaitingDestination = role;
     await setInteractionMode('interact');
     main.classList.add('awaiting-destination');
     $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · click its destination in the room';
   }
-  function startDestinationMovement(role, destination) {
+  async function startDestinationMovement(role, destination) {
     const fr = frameAt(tMs);
     const start = effectivePosition(role, fr).slice();
     const target = interactionModel.clampPosition(world, destination);
@@ -1346,6 +1372,19 @@
     interaction.awaitingDestination = null;
     main.classList.remove('awaiting-destination');
     setPositionOverride(role, start);
+    if (interactiveLiveMode) {
+      const accepted = await sendControl(
+        '/api/demo/roles/' + encodeURIComponent(role) + '/move', 'POST',
+        {destination: target, speed_mps: speedMps});
+      if (accepted && accepted.movement) {
+        interaction.movement = accepted.movement;
+        interactionMessage(
+          displayRole(role) + ' walking ' + accepted.movement.distance_m.toFixed(1) +
+          ' m at ' + accepted.movement.speed_mps.toFixed(1) + ' m/s');
+      }
+      update();
+      return;
+    }
     if (durationMs < 40) {
       setPositionOverride(role, target);
       schedulePosition(role, target, true);
@@ -1392,7 +1431,7 @@
   }
   function advanceMovement(now) {
     const movement = interaction.movement;
-    if (!movement) return false;
+    if (!movement || interactiveLiveMode) return false;
     const fraction = (now - movement.started_at) / movement.duration_ms;
     setPositionOverride(movement.role,
       interactionModel.interpolate(movement.start, movement.destination, fraction));
@@ -1406,6 +1445,25 @@
   $('#interactMode').addEventListener('click', () => setInteractionMode('interact'));
   $('#moveSelected').addEventListener('click', () => beginDestinationSelection(interaction.hudRole || selected));
   $('#presenceSelected').addEventListener('click', () => togglePresence(interaction.hudRole || selected));
+  async function controlMovement(action) {
+    const movement = interaction.movement;
+    if (!movement || !interactiveLiveMode) return;
+    const method = action === 'cancel' ? 'DELETE' : 'POST';
+    const suffix = action === 'cancel' ? '' : '/' + action;
+    const accepted = await sendControl(
+      '/api/demo/movements/' + encodeURIComponent(movement.id) + suffix,
+      method, {});
+    if (!accepted || !accepted.movement) return;
+    interaction.movement = ['completed', 'cancelled', 'failed'].includes(
+      accepted.movement.status) ? null : accepted.movement;
+    update();
+  }
+  $('#pauseMovement').addEventListener('click', () => {
+    const action = interaction.movement && interaction.movement.status === 'paused'
+      ? 'resume' : 'pause';
+    controlMovement(action);
+  });
+  $('#cancelMovement').addEventListener('click', () => controlMovement('cancel'));
   $('#resetSelected').addEventListener('click', () => {
     const role = interaction.hudRole || selected;
     if (role && interactiveLiveMode) resetLiveRole(role);
@@ -1430,7 +1488,7 @@
     if (event.key !== 'Escape') return;
     hideRoleMenu();
     interaction.awaitingDestination = null;
-    interaction.movement = null;
+    if (!interactiveLiveMode) interaction.movement = null;
     main.classList.remove('awaiting-destination', 'dragging');
     update();
   });
@@ -1458,6 +1516,12 @@
     if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
     if (event.kind === 'interaction.position.accepted') return displayRole(p.role) + ' RF position applied';
     if (event.kind === 'interaction.presence.accepted') return displayRole(p.role) + (p.present ? ' reappeared' : ' disappeared');
+    if (event.kind === 'interaction.movement.started') return displayRole(p.movement.role) + ' started walking';
+    if (event.kind === 'interaction.movement.paused') return displayRole(p.movement.role) + ' walk paused';
+    if (event.kind === 'interaction.movement.resumed') return displayRole(p.movement.role) + ' walk resumed';
+    if (event.kind === 'interaction.movement.completed') return displayRole(p.movement.role) + ' reached its destination';
+    if (event.kind === 'interaction.movement.cancelled') return displayRole(p.movement.role) + ' walk cancelled';
+    if (event.kind === 'interaction.movement.failed') return displayRole(p.movement.role) + ' walk failed';
     if (event.kind === 'interaction.lease.acquired') return 'Interactive control acquired';
     if (event.kind === 'interaction.lease.released' || event.kind === 'interaction.lease.expired') return 'Interactive control released';
     if (event.kind === 'worker.error') return (p.fatal ? 'ERROR' : 'Transient warning') + ': ' + p.worker;
@@ -1486,12 +1550,24 @@
       if (canInteractWith(p.role)) {
         const locallyMoving = interaction.leaseToken &&
           ((interaction.drag && interaction.drag.role === p.role) ||
-           (interaction.movement && interaction.movement.role === p.role));
+           (!interactiveLiveMode && interaction.movement &&
+            interaction.movement.role === p.role));
         const prior = interaction.overrides[p.role] || {};
         interaction.overrides[p.role] = Object.assign({}, prior, {
           position: locallyMoving && prior.position ? prior.position : p.position.slice(),
           present: !!p.present,
         });
+      }
+    } else if (event.kind.startsWith('interaction.movement.')) {
+      const p = event.payload || {};
+      const movement = p.movement;
+      interaction.revision = Math.max(interaction.revision, Number(p.revision || 0));
+      if (movement) {
+        if (['running', 'paused'].includes(movement.status)) {
+          interaction.movement = movement;
+        } else if (interaction.movement && interaction.movement.id === movement.id) {
+          interaction.movement = null;
+        }
       }
     }
     const label = eventLabel(event);

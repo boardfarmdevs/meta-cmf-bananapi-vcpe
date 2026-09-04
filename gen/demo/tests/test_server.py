@@ -35,6 +35,22 @@ class FakeInteractions:
         self.revision += 1
         return {"role": role, "revision": self.revision, **body}
 
+    def move(self, role, **body):
+        self.revision += 1
+        return {
+            "revision": self.revision,
+            "movement": {"id": "move-1", "role": role, "status": "running"},
+            **body,
+        }
+
+    def movement_control(self, movement_id, action, **body):
+        self.revision += 1
+        return {
+            "revision": self.revision,
+            "movement": {"id": movement_id, "status": action},
+            **body,
+        }
+
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
@@ -164,6 +180,28 @@ class InteractiveServerTests(unittest.TestCase):
             "/api/demo/interactions/lease", "DELETE", {"token": lease["token"]}
         )
         self.assertTrue(released["released"])
+
+    def test_server_owned_movement_routes(self):
+        _, lease = self._request(
+            "/api/demo/interactions/lease", "POST", {"owner": "browser"}
+        )
+        status, started = self._request(
+            "/api/demo/roles/sta_01/move", "POST",
+            {"token": lease["token"], "expected_revision": 2,
+             "destination": [8, 2], "speed_mps": 1.4},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(started["movement"]["role"], "sta_01")
+        _, paused = self._request(
+            "/api/demo/movements/move-1/pause", "POST",
+            {"token": lease["token"], "expected_revision": 3},
+        )
+        self.assertEqual(paused["movement"]["status"], "pause")
+        _, cancelled = self._request(
+            "/api/demo/movements/move-1", "DELETE",
+            {"token": lease["token"], "expected_revision": 4},
+        )
+        self.assertEqual(cancelled["movement"]["status"], "cancel")
 
 
 if __name__ == "__main__":
