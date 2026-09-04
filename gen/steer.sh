@@ -110,18 +110,26 @@ lxc_exec_bounded() {
 }
 
 scan_target_candidate() {
-    status_action "Scanning ${target_frequency} MHz so the station can resolve candidate $target_bssid on '$target_ssid'."
+    status_action "Refreshing the serving BSS and resolving candidate $target_bssid on '$target_ssid' at ${target_frequency} MHz."
     set +e
     lxc_exec_bounded 12 "$client" -- sh -c '
         frequency=$1
         target=$2
         ssid=$3
+        source=$4
         ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
         # Keep the BTM decision tied to the candidate we are resolving now.
         # hwsim clients can otherwise retain empty-SSID and old probe-response
         # records for several VAPs on the same radio.  The associated BSS is
         # retained by wpa_supplicant; the directed scan repopulates the target.
         wpa_cli -i wlan0 bss_flush 0 >/dev/null 2>&1 || exit 3
+        # The associated BSS cannot be flushed.  Refresh it explicitly before
+        # resolving the target so an old high-signal Probe Response from a
+        # previous deterministic steer cannot make the current AP look
+        # stronger than the nominated candidate.  A single-frequency scan is
+        # bounded; the target loop below naturally waits through scan busy.
+        wpa_cli -i wlan0 scan "freq=$frequency" \
+            "bssid=$source" "ssid $ssid_hex" >/dev/null 2>&1 || true
         attempt=0
         while [ "$attempt" -lt 3 ]; do
             request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
@@ -156,7 +164,8 @@ scan_target_candidate() {
         '\''; then
             exit 2
         fi
-    ' sh "$target_frequency" "$target_bssid" "$target_ssid" >/dev/null 2>&1
+    ' sh "$target_frequency" "$target_bssid" "$target_ssid" \
+        "$source_bssid" >/dev/null 2>&1
     local scan_rc=$?
     set -e
     if ((scan_rc != 0)); then
