@@ -123,6 +123,11 @@ class LiveConductor:
             for value in plan["bindings"].values()
             if value["role_type"] == "station"
         }
+        self._mac_by_role = {
+            role: value["radio_permanent_mac"].lower()
+            for role, value in plan["bindings"].items()
+            if value["role_type"] == "station"
+        }
         # Controller display ordinals reflect discovery order and can differ
         # from the manifest's stable container/world ordinals.  BSSID
         # ownership is the authoritative bridge between both namespaces.
@@ -138,6 +143,22 @@ class LiveConductor:
         hero_role = manifest["hero"]["role"]
         self.hero_mac = plan["bindings"][hero_role]["radio_permanent_mac"].lower()
         self.hero_container = plan["bindings"][hero_role]["container"]
+
+    def _optimization_subject(
+        self, room: dict[str, Any] | None
+    ) -> tuple[str, str, str] | None:
+        """Resolve the only client eligible for this optimizer cycle."""
+        hero_role = self.manifest["hero"]["role"]
+        if not self.interactive:
+            return hero_role, self.hero_mac, self.hero_container
+        if room is None:
+            return None
+        role = room.get("last_rf_role")
+        mac = self._mac_by_role.get(str(role))
+        role_state = (room.get("roles") or {}).get(str(role), {})
+        if mac is None or role_state.get("present") is not True:
+            return None
+        return str(role), mac, self._container_by_mac[mac]
 
     def _action_window(self, now_ms: int, configured: list[int]) -> tuple[bool, str]:
         if self.interactive:
@@ -484,10 +505,10 @@ class LiveConductor:
             return
         if self.interactive:
             label = (
-                "Move Private-Laptop; closed-loop steering is automatic after "
+                "Move any client; closed-loop steering is automatic after "
                 "fresh telemetry and policy hold"
                 if self.mode == "act" else
-                "Move Private-Laptop; the optimizer will recommend from live telemetry"
+                "Move any client; the optimizer will recommend from live telemetry"
             )
             self.store.emit(
                 "demo.mark", self._time(), {"label": label, "interactive": True},
@@ -511,13 +532,21 @@ class LiveConductor:
             return
         optimizer = self.manifest["optimizer"]
         policy_path = self.repo_root / self.manifest["policy"]
-        policy = ThresholdPolicy(load_policy(policy_path))
+        policy_config = load_policy(policy_path)
+        if self.interactive:
+            # An explicitly moved client asks the room optimizer to find the
+            # best eligible AP. Keep the normal gain/hysteresis gate, but do
+            # not require the old association to be below the weak-link
+            # threshold before measuring alternatives.
+            policy_config = replace(policy_config, current_rcpi_below=220)
+        policy = ThresholdPolicy(policy_config)
+        subject_mac = self.hero_mac
         provider = ControllerCandidateProvider(
             self.base_url,
             allow_simulated=bool(optimizer["allow_simulated_candidates"]),
             request_attempts=2,
             client_selector=lambda client, observed_at: (
-                client.sta_mac == self.hero_mac
+                client.sta_mac == subject_mac
                 and policy.requires_candidate_measurement(client, observed_at)
             ),
         )
@@ -525,7 +554,9 @@ class LiveConductor:
         verify_observer = ControllerObserver(self.base_url)
         verifier = OutcomeVerifier(
             verify_observer,
-            traffic_probe=lambda _sta: self._ping(self.hero_container)["success"],
+            traffic_probe=lambda sta: self._ping(
+                self._container_by_mac[sta.lower()]
+            )["success"],
         )
         actuator = SteerActuator(
             self.repo_root / "gen/steer.sh",
@@ -575,6 +606,30 @@ class LiveConductor:
                         if self._sleep(0.5):
                             break
                         continue
+                subject = self._optimization_subject(room_before)
+                if subject is None:
+                    self.store.emit(
+                        "optimizer.measurement.waiting", self._time(),
+                        {
+                            "reason": (
+                                "client_movement_required"
+                                if not room_before or not room_before.get("last_rf_role")
+                                else "moved_client_absent"
+                            ),
+                            "environment_epoch": (
+                                None if room_before is None else
+                                room_before.get("environment_epoch")
+                            ),
+                            "world_revision": (
+                                None if room_before is None else room_before.get("revision")
+                            ),
+                        },
+                        producer="optimizer",
+                    )
+                    if self._sleep(0.5):
+                        break
+                    continue
+                subject_role, subject_mac, subject_container = subject
                 self._candidate_active.set()
                 with self._controller_lock:
                     snapshot = observer.observe()
@@ -604,14 +659,14 @@ class LiveConductor:
                             producer="optimizer",
                         )
                         continue
-                    hero_observation = next(
-                        (item for item in snapshot.clients if item.sta_mac == self.hero_mac),
+                    subject_observation = next(
+                        (item for item in snapshot.clients if item.sta_mac == subject_mac),
                         None,
                     )
                     applied_at = room_after.get("last_rf_applied_at")
                     observed_at = (
-                        hero_observation.metric_observed_at
-                        if hero_observation is not None else None
+                        subject_observation.metric_observed_at
+                        if subject_observation is not None else None
                     )
                     if applied_at and observed_at:
                         applied_time = parse_time(applied_at)
@@ -632,8 +687,20 @@ class LiveConductor:
                 prior = state
                 evaluation = policy.evaluate(snapshot, prior)
                 decision = next(
-                    item for item in evaluation.decisions if item.sta_mac == self.hero_mac
+                    (item for item in evaluation.decisions if item.sta_mac == subject_mac),
+                    None,
                 )
+                if decision is None:
+                    self.store.emit(
+                        "optimizer.measurement.waiting", self._time(),
+                        {
+                            "reason": "moved_client_not_in_controller",
+                            "subject_role": subject_role,
+                            "subject_mac": subject_mac,
+                        },
+                        producer="optimizer",
+                    )
+                    continue
                 now = self._time()
                 window_open, window_kind = self._action_window(now, action_window)
                 can_act = (
@@ -644,7 +711,7 @@ class LiveConductor:
                         not self.interactive
                         or room_after is not None
                         and room_after.get("last_rf_role")
-                        == self.manifest["hero"]["role"]
+                        == subject_role
                     )
                 )
                 if decision.action == "steer" and self.mode == "recommend":
@@ -656,9 +723,9 @@ class LiveConductor:
                     )
                 else:
                     state = evaluation.state
-                hero_state = state.for_sta(self.hero_mac)
+                subject_state = state.for_sta(subject_mac)
                 candidates = []
-                for item in snapshot.candidates_for(self.hero_mac):
+                for item in snapshot.candidates_for(subject_mac):
                     if item.rcpi is None:
                         continue
                     candidate = asdict(item)
@@ -669,8 +736,11 @@ class LiveConductor:
                     "optimizer.evaluation", now,
                     {
                         "mode": self.mode,
+                        "subject_role": subject_role,
+                        "subject_mac": subject_mac,
+                        "subject_container": subject_container,
                         "decision": decision.to_dict(),
-                        "policy_state": asdict(hero_state),
+                        "policy_state": asdict(subject_state),
                         "candidates": candidates,
                         "candidate_transactions": len(provider.last_raw),
                         "action_window_ms": (
@@ -680,6 +750,8 @@ class LiveConductor:
                         "action_window_open": window_open,
                         "automatic_actuation": self.mode == "act",
                         "automatic_actuation_ready": can_act,
+                        "optimization_goal": "best_eligible_same_network_band_ap",
+                        "minimum_target_gain_rcpi": policy.config.minimum_target_gain_rcpi,
                         "actions_used": self.action_attempts,
                         "maximum_actions": maximum_actions,
                         "observation_elapsed_ms": round(
@@ -692,7 +764,8 @@ class LiveConductor:
                     self.action_attempts += 1
                     self.store.emit(
                         "optimizer.action", now,
-                        {"phase": "requested", "decision": decision.to_dict()},
+                        {"phase": "requested", "subject_role": subject_role,
+                         "decision": decision.to_dict()},
                         producer="optimizer",
                     )
                     result = actuator.execute(decision, snapshot)
@@ -700,7 +773,8 @@ class LiveConductor:
                         self.action_successes += 1
                     self.store.emit(
                         "optimizer.action", self._time(),
-                        {"phase": "submitted", "decision": decision.to_dict(),
+                        {"phase": "submitted", "subject_role": subject_role,
+                         "decision": decision.to_dict(),
                          "result": result.to_dict()},
                         producer="optimizer",
                     )

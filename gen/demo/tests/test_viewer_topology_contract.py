@@ -41,6 +41,8 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("automatic_actuation_ready", source)
         self.assertIn("AUTO BTM", source)
         self.assertIn("Action budget", source)
+        self.assertIn("optimizerSubjectRole()", source)
+        self.assertIn("waiting for client movement", source)
 
 
 if __name__ == "__main__":

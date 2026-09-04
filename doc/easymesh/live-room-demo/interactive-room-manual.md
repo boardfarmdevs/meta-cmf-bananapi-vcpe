@@ -200,11 +200,14 @@ gen/demo/room-demo interactive \
 Interactive act mode is not constrained by the prerecorded scenario's
 150--220 second action window. The action budget is explicit and remains
 bounded by `--max-actions`; without that option the manifest limit applies.
-Automatic actuation is restricted to `Private-Laptop`, the private 5 GHz hero
-client. Moving another client changes its modeled RF but does not grant it
-optimizer actuation authority.
+Automatic actuation follows the most recently moved, present client. The
+client remains within its existing SSID and band; private and hidden-IoT
+candidate inventories never mix. The selected target is the strongest
+eligible same-network, same-band AP and must still improve RCPI by at least
+the configured margin. This keeps hysteresis: a negligible difference does
+not cause a needless roam.
 
-After a hero movement is committed, the room performs this closed loop:
+After a client movement is committed, the room performs this closed loop:
 
 1. atomically apply and read back the new directional wmediumd links;
 2. reset the optimizer hold state for the new environment epoch;
@@ -219,7 +222,7 @@ After a hero movement is committed, the room performs this closed loop:
 The request-only path does not install another RF bias and does not force a
 client roam. The client changes AP only after the normal controller, EasyMesh,
 BTM, supplicant and association path succeeds. Allow roughly 10--30 seconds
-after the laptop stops for fresh telemetry, measurement, policy hold and
+after the client stops for fresh telemetry, measurement, policy hold and
 verification. The Optimizer card shows `AUTO BTM`, the action budget and the
 current waiting/ready state.
 

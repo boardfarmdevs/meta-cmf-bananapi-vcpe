@@ -40,6 +40,11 @@ class ConductorProjectionTests(unittest.TestCase):
                     "radio_permanent_mac": "02:00:00:00:0c:00",
                     "container": "wlan-client-007",
                 },
+                "sta_static_01": {
+                    "role_type": "station",
+                    "radio_permanent_mac": "02:00:00:00:03:00",
+                    "container": "wlan-client",
+                },
                 "extender_1": {
                     "role_type": "fronthaul_ap",
                     "container": "bpiap",
@@ -107,6 +112,21 @@ class ConductorProjectionTests(unittest.TestCase):
             conductor._action_window(999_999, [150_000, 220_000]),
             (True, "stable_interactive_environment"),
         )
+
+    def test_interactive_subject_is_the_last_present_moved_client(self):
+        conductor, _store = self._conductor()
+        conductor.interactive = True
+        room = {
+            "last_rf_role": "sta_static_01",
+            "roles": {"sta_static_01": {"present": True}},
+        }
+
+        self.assertEqual(
+            conductor._optimization_subject(room),
+            ("sta_static_01", "02:00:00:00:03:00", "wlan-client"),
+        )
+        room["roles"]["sta_static_01"]["present"] = False
+        self.assertIsNone(conductor._optimization_subject(room))
 
     def test_controller_observation_is_projected_to_world_role(self):
         conductor, _store = self._conductor()

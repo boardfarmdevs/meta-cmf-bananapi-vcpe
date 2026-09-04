@@ -956,6 +956,9 @@
     return match ? 'extender_' + match[1] : null;
   }
   function heroRole() { return networkState && networkState.hero && networkState.hero.role; }
+  function optimizerSubjectRole() {
+    return optimizerState && optimizerState.subject_role || heroRole();
+  }
   function targetRole() {
     const decision = optimizerState && optimizerState.decision;
     if (!decision || !decision.target_bssid) return null;
@@ -1021,9 +1024,10 @@
         n.gauge.group.position.x = peer && peer[0] >= pos[role][0] ? -0.36 : 0.36;
       }
       const hero = role === heroRole();
-      n.ring.visible = role === selected || hero;
-      n.ring.material.color.setHex(hero ? 0xf0ad00 : n.color);
-      const pulsing = hero && performance.now() < actionPulseUntil;
+      const optimizerSubject = role === optimizerSubjectRole();
+      n.ring.visible = role === selected || hero || optimizerSubject;
+      n.ring.material.color.setHex(optimizerSubject ? 0xf0ad00 : n.color);
+      const pulsing = optimizerSubject && performance.now() < actionPulseUntil;
       const pulse = pulsing ? 1 + 0.22 * Math.sin(performance.now() / 90) : 1;
       n.ring.scale.set(pulse, pulse, pulse);
     }
@@ -1051,9 +1055,9 @@
 
     // The optimizer target is visible before and during an action, never
     // confused with either the model-best or the current association.
-    const tpTarget = [], target = targetRole(), hero = heroRole();
-    if (target && hero && pos[target] && pos[hero]) {
-      const a = pos[target], b = pos[hero];
+    const tpTarget = [], target = targetRole(), subject = optimizerSubjectRole();
+    if (target && subject && pos[target] && pos[subject]) {
+      const a = pos[target], b = pos[subject];
       tpTarget.push(a[0], AP_H + 0.24, -a[1], b[0], STA_H + 0.24, -b[1]);
     }
     setSegments(world3d.target, tpTarget);
@@ -1361,12 +1365,13 @@
         '<span class="phase">' + esc(automatic ? 'AUTO BTM' : optimizerState.mode) + '</span>' + outcomeBadge + '</div>' +
         '<div class="policy-reason" style="margin-top:6px"><b>' + esc(d.reason || 'waiting') + '</b></div>' +
         '<div class="metric-grid"><span>Current</span><b>' + esc(d.current_rcpi == null ? 'N/A' : 'RCPI ' + d.current_rcpi) + '</b>' +
+        '<span>Moved client</span><b>' + esc(displayRole(optimizerState.subject_role)) + '</b>' +
         '<span>Best target</span><b>' + esc(target || 'none') + '</b>' +
         '<span>Target metric</span><b>' + esc(d.target_rcpi == null ? 'N/A' : 'RCPI ' + d.target_rcpi) + '</b>' +
         '<span>Hold</span><b>' + esc(Number(d.hold_seconds || 0).toFixed(1)) + ' s</b>' +
         '<span>Action budget</span><b>' + esc(used) + ' / ' + esc(limit || '—') + '</b>' +
         '<span>Automatic steering</span><b>' + (automatic
-          ? (optimizerState.automatic_actuation_ready ? 'ready' : used >= limit ? 'limit reached' : 'waiting for hero movement')
+          ? (optimizerState.automatic_actuation_ready ? 'ready' : used >= limit ? 'limit reached' : 'waiting for client movement')
           : 'recommend only') + '</b>' +
         '<span>Action window</span><b>' + (optimizerState.action_window_kind === 'stable_interactive_environment'
           ? 'interactive session' : optimizerState.action_window_open ? 'open' : 'closed') + '</b></div>' +
