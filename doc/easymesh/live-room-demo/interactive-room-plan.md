@@ -595,27 +595,42 @@ AP move across visible generations is not accepted as atomic behavior.
 
 ## Delivery phases
 
-### Current transitional implementation
+### Current implementation
 
-The RDK interactive branch already provides real RF application, exact
-baseline restoration, server-owned destination movement, leases/revisions,
-presence, recording/export, ordered SSE and a working room viewer. All 20 real
-clients remain active. This is a valuable prototype, not the final control
-architecture.
+The RDK interactive branch provides real RF application, exact baseline
+restoration, server-owned destination movement, leases/revisions, presence,
+recording/export, ordered SSE and a working room viewer. All 20 real clients
+remain active.
 
-Known transitional gaps are:
+The first Phase 0 foundation is now implemented:
 
-- mutation is protected by a lock but still entered from HTTP worker threads;
-- state snapshots retain latest events instead of full reduced room state;
-- one clock and event schema v1 are still used;
-- geometry imports a private compiler helper;
-- environment-epoch telemetry gating is incomplete;
-- security relies mainly on the movement lease rather than a run token;
-- crash recovery covers normal process cleanup, not a killed process; and
-- recording exists before the full audit/reducer/replay equivalence contract.
+- one actor-style `RoomEngine` serializes HTTP commands, autonomous movement
+  ticks, medium mutations, readback, state snapshots and shutdown;
+- command admission closes atomically, so work cannot be queued behind the
+  terminal restore;
+- all successful writes are idempotent by `command_id` and a repeated ID with
+  different content is rejected;
+- HTTP world mutations require an `ETag`/`If-Match` revision contract;
+- same-origin checks and a random, run-scoped operator capability protect the
+  mutation API independently of the movement lease;
+- state schema v2 separates run/scenario clocks and reduces all role,
+  movement, lease, medium, optimizer, network and health state;
+- events are hash chained and the reduced state has its own digest;
+- public canonical geometry is shared by compilation and live interaction;
+- client coordinates are quantized to 5 cm, unchanged integer RF values are
+  recorded as no-ops, and one client remains bounded to 30 directed keys;
+- environment epochs prevent movement from being mixed with candidate
+  measurement and reset the optimizer hold;
+- unexpected medium instances/generations contaminate the run instead of
+  being silently retried; and
+- a checksummed recovery record is persisted before every RF write. The
+  guarded `room-demo recover` command restores only the exact recorded medium
+  instance and an allowed committed/pending generation.
 
-Default dragging is now preview-only with one RF commit on pointer-up. This
-removes the highest-rate contradiction while the foundation is refactored.
+Default dragging is preview-only with one RF commit on pointer-up. Remaining
+foundation work includes complete intent/causation identifiers on every
+derived event, explicit per-role rather than one-session leases, supervised
+kill-recovery acceptance, and browser/Python geometry parity fixtures.
 
 ### Phase 0: ownership and state foundation
 

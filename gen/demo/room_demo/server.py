@@ -6,10 +6,12 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import secrets
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .engine import RoomEngine
 from .events import EventStore
-from .interactions import InteractionError, InteractiveMediumSession
+from .interactions import InteractionError
 
 
 class RoomDemoServer:
@@ -18,11 +20,13 @@ class RoomDemoServer:
         address: tuple[str, int],
         store: EventStore,
         viewer_root: Path,
-        interactions: InteractiveMediumSession | None = None,
+        interactions: RoomEngine | None = None,
+        operator_token: str | None = None,
     ):
         self.store = store
         self.viewer_root = viewer_root.resolve()
         self.interactions = interactions
+        self.operator_token = operator_token
         handler = self._handler()
         self.httpd = ThreadingHTTPServer(address, handler)
         self.httpd.daemon_threads = True
@@ -51,6 +55,7 @@ class RoomDemoServer:
         store = self.store
         viewer_root = self.viewer_root
         interactions = self.interactions
+        operator_token = self.operator_token
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "EasyMeshRoomDemo/0.1"
@@ -58,21 +63,52 @@ class RoomDemoServer:
             def log_message(self, format, *args):
                 return
 
-            def _headers(self, status: int, content_type: str, length: int | None = None):
+            def _headers(
+                self,
+                status: int,
+                content_type: str,
+                length: int | None = None,
+                extra: dict[str, str] | None = None,
+            ):
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "no-referrer")
+                for name, value in (extra or {}).items():
+                    self.send_header(name, value)
                 if length is not None:
                     self.send_header("Content-Length", str(length))
                 self.end_headers()
 
-            def _json(self, value, status: int = HTTPStatus.OK):
+            def _json(
+                self,
+                value,
+                status: int = HTTPStatus.OK,
+                *,
+                revision: int | None = None,
+            ):
                 body = (json.dumps(value, sort_keys=True) + "\n").encode()
-                self._headers(status, "application/json; charset=utf-8", len(body))
+                extra = None if revision is None else {
+                    "ETag": f'"world-revision-{int(revision)}"'
+                }
+                self._headers(
+                    status, "application/json; charset=utf-8", len(body), extra
+                )
                 self.wfile.write(body)
 
+            def _interaction_json(self, value, status: int = HTTPStatus.OK):
+                revision = value.get("revision") if isinstance(value, dict) else None
+                self._json(value, status, revision=revision)
+
             def _body(self) -> dict:
+                media_type = self.headers.get("Content-Type", "").split(";", 1)[0]
+                if media_type.strip().lower() != "application/json":
+                    raise InteractionError(
+                        415,
+                        "unsupported_media_type",
+                        "interactive writes require Content-Type: application/json",
+                    )
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError as error:
@@ -86,6 +122,69 @@ class RoomDemoServer:
                 if not isinstance(value, dict):
                     raise InteractionError(400, "invalid_body", "request body must be an object")
                 return value
+
+            def _require_same_origin(self) -> None:
+                origin = self.headers.get("Origin")
+                if not origin:
+                    return
+                if urlparse(origin).netloc != self.headers.get("Host"):
+                    raise InteractionError(
+                        403,
+                        "origin_mismatch",
+                        "cross-origin interactive writes are not allowed",
+                    )
+
+            def _require_operator(self) -> None:
+                self._require_same_origin()
+                if operator_token is None:
+                    return
+                supplied = self.headers.get("Authorization", "")
+                prefix = "Bearer "
+                if not supplied.startswith(prefix) or not secrets.compare_digest(
+                    supplied[len(prefix):], operator_token
+                ):
+                    raise InteractionError(
+                        401,
+                        "operator_authorization_required",
+                        "a valid run-scoped operator capability is required",
+                    )
+
+            def _expected_revision(self, body: dict) -> int:
+                raw = self.headers.get("If-Match")
+                if raw is None:
+                    raise InteractionError(
+                        428,
+                        "revision_required",
+                        "world mutation requires If-Match: \"world-revision-N\"",
+                    )
+                value = raw.strip()
+                if value.startswith('W/'):
+                    value = value[2:].strip()
+                if len(value) >= 2 and value[0] == value[-1] == '"':
+                    value = value[1:-1]
+                if value.startswith("world-revision-"):
+                    value = value[len("world-revision-"):]
+                try:
+                    revision = int(value)
+                except ValueError as error:
+                    raise InteractionError(
+                        400, "invalid_revision", "If-Match has an invalid revision"
+                    ) from error
+                supplied = body.get("expected_revision")
+                if supplied is not None:
+                    try:
+                        supplied_revision = int(supplied)
+                    except (TypeError, ValueError) as error:
+                        raise InteractionError(
+                            400, "invalid_revision", "expected_revision is invalid"
+                        ) from error
+                    if supplied_revision != revision:
+                        raise InteractionError(
+                            400,
+                            "revision_mismatch",
+                            "If-Match and expected_revision do not match",
+                        )
+                return revision
 
             def _interaction_error(self, error: Exception):
                 if isinstance(error, InteractionError):
@@ -157,7 +256,8 @@ class RoomDemoServer:
                     self._json({"status": "ok", "run_id": store.run_id,
                                 "state": current["state"]})
                 elif parsed.path == "/api/demo/current":
-                    self._json(store.current())
+                    current = store.current()
+                    self._json(current, revision=current["world_revision"])
                 elif parsed.path == "/api/demo/world":
                     self._json(store.world)
                 elif parsed.path == "/api/demo/events":
@@ -169,7 +269,8 @@ class RoomDemoServer:
                         "events": store.all(),
                     })
                 elif parsed.path == "/api/demo/interactions" and interactions is not None:
-                    self._json(interactions.snapshot())
+                    snapshot = interactions.snapshot()
+                    self._json(snapshot, revision=snapshot["revision"])
                 elif parsed.path == "/api/demo/recording/world" and interactions is not None:
                     try:
                         self._json(interactions.recorded_world())
@@ -188,44 +289,55 @@ class RoomDemoServer:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
+                    self._require_operator()
                     body = self._body()
+                    command_id = str(body.get("command_id") or "")
                     if parsed.path == "/api/demo/interactions/lease":
                         if body.get("token"):
-                            self._json(interactions.renew(str(body["token"])))
+                            self._interaction_json(interactions.renew(
+                                str(body["token"]), command_id=command_id
+                            ))
                         else:
-                            self._json(interactions.acquire(str(body.get("owner") or "")), 201)
+                            self._interaction_json(interactions.acquire(
+                                str(body.get("owner") or ""),
+                                command_id=command_id,
+                            ), 201)
                         return
                     if parsed.path == "/api/demo/recording/start":
-                        self._json(interactions.start_recording(
+                        self._interaction_json(interactions.start_recording(
                             token=str(body.get("token") or ""),
-                            expected_revision=body.get("expected_revision"),
+                            expected_revision=self._expected_revision(body),
                             name=body.get("name"),
+                            command_id=command_id,
                         ), 201)
                         return
                     if parsed.path == "/api/demo/recording/stop":
-                        self._json(interactions.stop_recording(
+                        self._interaction_json(interactions.stop_recording(
                             token=str(body.get("token") or ""),
-                            expected_revision=body.get("expected_revision"),
+                            expected_revision=self._expected_revision(body),
+                            command_id=command_id,
                         ))
                         return
                     matched = self._role_path(parsed.path)
                     if matched is not None and matched[1] == "move":
                         role, _ = matched
-                        self._json(interactions.move(
+                        self._interaction_json(interactions.move(
                             role,
                             token=str(body.get("token") or ""),
-                            expected_revision=body.get("expected_revision"),
+                            expected_revision=self._expected_revision(body),
                             destination=body.get("destination"),
                             speed_mps=body.get("speed_mps"),
                             client_sequence=body.get("client_sequence"),
+                            command_id=command_id,
                         ), 201)
                         return
                     movement = self._movement_path(parsed.path, action=True)
                     if movement is not None and movement[1] in {"pause", "resume"}:
-                        self._json(interactions.movement_control(
+                        self._interaction_json(interactions.movement_control(
                             movement[0], movement[1],
                             token=str(body.get("token") or ""),
-                            expected_revision=body.get("expected_revision"),
+                            expected_revision=self._expected_revision(body),
+                            command_id=command_id,
                         ))
                         return
                     raise InteractionError(404, "unknown_operation", "unknown interaction operation")
@@ -240,11 +352,13 @@ class RoomDemoServer:
                     return
                 role, operation = matched
                 try:
+                    self._require_operator()
                     body = self._body()
                     common = {
                         "token": str(body.get("token") or ""),
-                        "expected_revision": body.get("expected_revision"),
+                        "expected_revision": self._expected_revision(body),
                         "client_sequence": body.get("client_sequence"),
+                        "command_id": str(body.get("command_id") or ""),
                     }
                     if operation == "position":
                         result = interactions.position(
@@ -257,7 +371,7 @@ class RoomDemoServer:
                         )
                     else:
                         raise InteractionError(404, "unknown_operation", "unknown role operation")
-                    self._json(result)
+                    self._interaction_json(result)
                 except Exception as error:
                     self._interaction_error(error)
 
@@ -267,16 +381,22 @@ class RoomDemoServer:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
+                    self._require_operator()
                     body = self._body()
+                    command_id = str(body.get("command_id") or "")
                     if parsed.path == "/api/demo/interactions/lease":
-                        self._json(interactions.release(str(body.get("token") or "")))
+                        self._interaction_json(interactions.release(
+                            str(body.get("token") or ""),
+                            command_id=command_id,
+                        ))
                         return
                     movement = self._movement_path(parsed.path, action=False)
                     if movement is not None:
-                        self._json(interactions.movement_control(
+                        self._interaction_json(interactions.movement_control(
                             movement[0], "cancel",
                             token=str(body.get("token") or ""),
-                            expected_revision=body.get("expected_revision"),
+                            expected_revision=self._expected_revision(body),
+                            command_id=command_id,
                         ))
                         return
                     raise InteractionError(404, "unknown_operation", "unknown interaction operation")

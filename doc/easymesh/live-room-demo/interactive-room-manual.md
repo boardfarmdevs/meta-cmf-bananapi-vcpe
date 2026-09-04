@@ -13,6 +13,8 @@ The current safe boundary is deliberately narrow:
 - every one of the 20 bound WLAN clients can be moved, hidden, or restored;
 - gateway and extender positions remain fixed;
 - one browser holds the control lease while any number of browsers observe;
+- all mutations pass through one serialized `RoomEngine`, and retries with the
+  same command ID cannot apply RF twice;
 - client motion changes five AP links on three bands in both directions, or 30
   frequency-qualified values in one atomic generation;
 - session start captures the full baseline and applies the 20-client room as
@@ -20,6 +22,8 @@ The current safe boundary is deliberately narrow:
 - `recommend` is the default optimizer authority;
 - stopping the process restores the exact pre-session value and override bit
   for every touched wmediumd link.
+- a checksummed recovery record is updated before every generation so an
+  interrupted process can be restored without guessing.
 
 The room position is simulated truth. Association, RCPI, candidate metrics,
 optimizer decisions, BTM acceptance, topology, and traffic remain observed
@@ -59,8 +63,23 @@ Open:
 http://192.168.2.140:18891/viewer/?mode=interactive
 ```
 
-The purple badge changes to green **LIVE RF** only when the writable API is
-present. A static viewer remains labeled **PREVIEW ONLY**.
+The printed first URL is an observer URL. It can see every accepted position,
+measurement and optimizer event but cannot mutate RF. The process also prints
+an operator URL whose `#operator=...` fragment contains the run-scoped write
+capability. That fragment is consumed locally by the browser and removed from
+the address bar; it is never sent as an HTTP request target or referrer.
+
+To construct an outer-host operator URL, read the capability inside the VM:
+
+```bash
+TOKEN=$(cat /run/easymesh-room-demo/operator.token)
+printf 'http://192.168.2.140:18891/viewer/?mode=interactive#operator=%s\n' "$TOKEN"
+```
+
+Opening the observer URL and selecting **Interact** prompts for the same
+capability. The purple badge changes to green **LIVE RF** when the writable API
+is present; possession of the API URL alone does not grant write authority. A
+static viewer remains labeled **PREVIEW ONLY**.
 
 ## Move a client directly
 
@@ -162,11 +181,20 @@ do not acquire steering authority from the room server.
 ## Stop, restoration, and evidence
 
 Press Ctrl-C in the room-demo terminal. SIGINT and SIGTERM both enter the
-normal shutdown path. The server stops accepting controls, workers stop, and
-the exact captured wmediumd baseline is restored and read back before the
-postflight mesh audit.
+normal shutdown path. The server first withdraws command admission, drains
+already accepted actor work, stops movement clocks, and restores and reads
+back the exact captured wmediumd baseline before the postflight mesh audit.
 
-Do not use `kill -9`; no userspace program can restore state after SIGKILL.
+An uncatchable `kill -9` cannot restore in the dead process. The recovery
+journal remains at `/run/easymesh-room-demo/recovery.json`. Before starting a
+new room session, run:
+
+```bash
+gen/demo/room-demo recover
+```
+
+Recovery refuses a different wmediumd instance, an unexplained generation or
+a contaminated ownership record; those cases require engineering diagnosis.
 Do not run `steer.sh`, another configurator scenario, or another room demo at
 the same time because they would be competing RF writers.
 
@@ -179,6 +207,7 @@ Evidence is written under `/tmp/easymesh-room-demo-runs/<run-id>/`:
   telemetry, optimizer, traffic, health, and restoration events;
 - `health-preflight.json` and `health-postflight.json`;
 - `interactive-summary.json`; and
+- `recovery.json`, the final checksummed recovery state copied from `/run`;
 - `recorded-mobility.json` and `recorded-world.json`, when a recording was
   made; and
 - `evidence-index.json` with size and SHA-256 for every artifact.
@@ -192,8 +221,9 @@ The browser is the normal client. For diagnosis, acquire a lease:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8891/api/demo/interactions/lease \
+  -H "Authorization: Bearer $(cat /run/easymesh-room-demo/operator.token)" \
   -H 'Content-Type: application/json' \
-  -d '{"owner":"terminal-demo"}' | jq
+  -d '{"owner":"terminal-demo","command_id":"terminal-lease-0001"}' | jq
 ```
 
 Read `/api/demo/interactions` to obtain the current revision. A position write
@@ -204,12 +234,17 @@ then has this shape:
   "token": "returned lease token",
   "expected_revision": 0,
   "client_sequence": 1,
+  "command_id": "terminal-position-0001",
   "position": [12.5, 8.0],
   "final": true
 }
 ```
 
-Send it with `PUT /api/demo/roles/sta_mobile_01/position`. Presence uses
+Send it with `PUT /api/demo/roles/sta_mobile_01/position`, the bearer header
+shown above, and `If-Match: "world-revision-0"`. Responses carry the new
+world revision as an `ETag`. A retry must reuse the exact same `command_id` and
+body; it receives the original response without advancing world or medium
+state. Reusing that ID with different content returns a conflict. Presence uses
 `PUT /api/demo/roles/sta_mobile_01/presence` and a boolean `present` member.
 The response identifies the accepted revision, daemon generation, role state,
 changed-link count, and calculated per-AP/per-band link budget. Tokens are
@@ -223,6 +258,7 @@ body (using the latest revision):
   "token": "returned lease token",
   "expected_revision": 4,
   "client_sequence": 2,
+  "command_id": "terminal-move-0001",
   "destination": [17.0, 12.0],
   "speed_mps": 1.4
 }

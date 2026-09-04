@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
 
 from wmdcfg.actuator import ActuatorError, DaemonStatus
+from room_demo.engine import RoomEngine
 from room_demo.events import EventStore
 from room_demo.interactions import InteractionError, InteractiveMediumSession
+from room_demo.recovery import RecoveryJournal, load_recovery, recover_medium
 
 
 WORLD = {
@@ -73,6 +76,10 @@ class FakeClient:
         self.closed = False
         self.values = {}
         self.applied = []
+        self.thread_ids = set()
+
+    def _trace(self):
+        self.thread_ids.add(threading.get_ident())
 
     def _status(self):
         return DaemonStatus(
@@ -85,19 +92,24 @@ class FakeClient:
         )
 
     def connect(self):
+        self._trace()
         return self._status()
 
     def status(self):
+        self._trace()
         return self._status()
 
     def close(self):
+        self._trace()
         self.closed = True
 
     def get_frequency_link(self, source, destination, frequency):
+        self._trace()
         value, overridden = self.values.get((source, destination, frequency), (31, False))
         return self.generation, value, overridden
 
     def apply_frequency(self, generation, updates):
+        self._trace()
         if generation != self.generation + 1:
             raise ActuatorError("generation conflict")
         self.generation = generation
@@ -313,6 +325,163 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         station = next(item for item in mobility["nodes"] if item["role"] == "sta_01")
         self.assertEqual(station["path"][-1]["position"], [8.0, 2.0])
         self.assertNotEqual(station["presence"], [[0, mobility["duration_ms"]]])
+
+
+class RoomEngineTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.store = EventStore(
+            "engine-1", WORLD, Path(temp.name) / "events.jsonl"
+        )
+        self.client = FakeClient("fake")
+        session = InteractiveMediumSession(
+            self.store, WORLD, LAYOUT, PLAN, "fake",
+            client_factory=lambda _path: self.client,
+            minimum_update_interval=0,
+        )
+        self.engine = RoomEngine(session)
+
+    def test_all_medium_operations_run_on_one_actor_thread(self):
+        caller = threading.get_ident()
+        self.engine.start()
+        lease = self.engine.acquire(
+            "browser-test", command_id="test-acquire-001"
+        )
+        self.engine.position(
+            "sta_01", token=lease["token"], expected_revision=0,
+            position=[8, 2], final=True, command_id="test-position-001",
+        )
+        self.assertTrue(self.engine.close())
+        self.assertEqual(len(self.client.thread_ids), 1)
+        self.assertNotIn(caller, self.client.thread_ids)
+
+    def test_autonomous_movement_uses_the_same_actor(self):
+        self.engine.start()
+        lease = self.engine.acquire(
+            "browser-test", command_id="test-acquire-002"
+        )
+        started = self.engine.move(
+            "sta_01", token=lease["token"], expected_revision=0,
+            destination=[2.2, 2], speed_mps=10,
+            command_id="test-movement-001",
+        )
+        deadline = time.monotonic() + 2
+        movement = started["movement"]
+        while time.monotonic() < deadline:
+            movement = self.engine.snapshot()["movements"][-1]
+            if movement["status"] == "completed":
+                break
+            time.sleep(0.02)
+        self.assertEqual(movement["status"], "completed")
+        self.assertTrue(self.engine.close())
+        self.assertEqual(len(self.client.thread_ids), 1)
+
+    def test_close_during_movement_does_not_deadlock_or_accept_late_work(self):
+        self.engine.start()
+        lease = self.engine.acquire(
+            "browser-test", command_id="test-acquire-003"
+        )
+        self.engine.move(
+            "sta_01", token=lease["token"], expected_revision=0,
+            destination=[8, 2], speed_mps=0.1,
+            command_id="test-movement-002",
+        )
+        started = time.monotonic()
+        self.assertTrue(self.engine.close())
+        self.assertLess(time.monotonic() - started, 1.0)
+        with self.assertRaisesRegex(RuntimeError, "room engine is closing"):
+            self.engine.position(
+                "sta_01", token=lease["token"], expected_revision=1,
+                position=[7, 2], final=True, command_id="test-position-002",
+            )
+
+    def test_final_snapshot_is_cached_and_defensively_copied(self):
+        self.engine.start()
+        self.assertTrue(self.engine.close())
+        first = self.engine.snapshot()
+        first["roles"]["sta_01"]["position"][0] = 99
+        self.assertEqual(
+            self.engine.snapshot()["roles"]["sta_01"]["position"],
+            [2.0, 2.0],
+        )
+
+    def test_close_before_start_has_nothing_to_restore(self):
+        self.assertTrue(self.engine.close())
+        self.assertTrue(self.engine.snapshot()["restored"])
+        self.assertFalse(self.client.closed)
+
+    def test_duplicate_command_returns_original_result_without_second_write(self):
+        self.engine.start()
+        lease = self.engine.acquire(
+            "browser-test", command_id="test-acquire-004"
+        )
+        kwargs = {
+            "token": lease["token"],
+            "expected_revision": 0,
+            "position": [8, 2],
+            "final": True,
+            "command_id": "test-position-003",
+        }
+        first = self.engine.position("sta_01", **kwargs)
+        apply_count = len(self.client.applied)
+        second = self.engine.position("sta_01", **kwargs)
+        self.assertEqual(second, first)
+        self.assertEqual(len(self.client.applied), apply_count)
+        with self.assertRaisesRegex(InteractionError, "different operation"):
+            self.engine.position(
+                "sta_01", token=lease["token"], expected_revision=1,
+                position=[7, 2], final=True,
+                command_id="test-position-003",
+            )
+        self.assertTrue(self.engine.close())
+
+
+class RecoveryTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.path = self.root / "recovery.json"
+        self.store = EventStore("recovery-1", WORLD, self.root / "events.jsonl")
+        self.client = FakeClient("fake")
+
+    def test_interrupted_session_can_restore_its_exact_baseline(self):
+        recovery = RecoveryJournal(self.path, "recovery-1", "inventory-hash")
+        session = InteractiveMediumSession(
+            self.store, WORLD, LAYOUT, PLAN, "fake",
+            client_factory=lambda _path: self.client,
+            minimum_update_interval=0,
+            recovery=recovery,
+        )
+        session.start()
+        lease = session.acquire("browser-test")
+        session.position(
+            "sta_01", token=lease["token"], expected_revision=0,
+            position=[8, 2], final=True,
+        )
+        active = load_recovery(self.path)
+        self.assertEqual(active["state"], "active")
+        self.assertEqual(active["last_committed_generation"], self.client.generation)
+
+        # Simulate a worker that disappeared without entering normal close().
+        session._client.close()
+        session._client = None
+        result = recover_medium(
+            self.path, "fake", client_factory=lambda _path: self.client
+        )
+        self.assertEqual(result["status"], "restored")
+        self.assertEqual(self.client.values, {})
+        self.assertEqual(load_recovery(self.path)["state"], "restored")
+
+    def test_incomplete_record_blocks_a_second_session(self):
+        first = RecoveryJournal(self.path, "first", "inventory-hash")
+        first.prepare("instance", 4, {
+            ("02:00:00:00:01:00", "02:00:00:00:02:00", 5180): (31, False)
+        })
+        second = RecoveryJournal(self.path, "second", "inventory-hash")
+        with self.assertRaisesRegex(ActuatorError, "run room-demo recover first"):
+            second.prepare("instance", 4, {})
 
 
 if __name__ == "__main__":

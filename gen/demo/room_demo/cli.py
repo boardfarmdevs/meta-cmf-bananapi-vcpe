@@ -5,6 +5,7 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import secrets
 import signal
 import shutil
 import sys
@@ -22,8 +23,10 @@ from wmdcfg.runner import Runner
 from wmdcfg.world import _hash, export_wmd, load_json, verify_world_plan
 
 from .conductor import LiveConductor, load_manifest
+from .engine import RoomEngine
 from .events import EventStore
 from .interactions import InteractiveMediumSession
+from .recovery import RecoveryJournal, recover_medium
 from .server import RoomDemoServer
 
 
@@ -271,15 +274,27 @@ def _interactive(args) -> int:
     run_id = f"{timestamp}-{manifest['name']}-interactive"
     runner = Runner(plan, args.socket, args.output_root, run_id=run_id)
     store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl")
-    interactions = InteractiveMediumSession(
-        store, world, layout, plan, args.socket,
-        lease_seconds=args.lease_seconds,
+    operator_token = secrets.token_urlsafe(32)
+    interactions = RoomEngine(
+        InteractiveMediumSession(
+            store, world, layout, plan, args.socket,
+            lease_seconds=args.lease_seconds,
+            recovery=RecoveryJournal(
+                args.recovery_file, run_id, _hash(inventory)
+            ),
+        )
     )
     conductor = LiveConductor(
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
     )
-    server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER, interactions)
+    server = RoomDemoServer(
+        args.listen,
+        store,
+        DEFAULT_VIEWER,
+        interactions,
+        operator_token=operator_token,
+    )
     stop_event = threading.Event()
     clock_thread: threading.Thread | None = None
     old_handlers = {}
@@ -305,6 +320,9 @@ def _interactive(args) -> int:
         lock_stream.truncate()
         lock_stream.write(run_id + "\n")
         lock_stream.flush()
+        args.operator_token_file.parent.mkdir(parents=True, exist_ok=True)
+        args.operator_token_file.write_text(operator_token + "\n", encoding="utf-8")
+        args.operator_token_file.chmod(0o600)
         for signum in (signal.SIGINT, signal.SIGTERM):
             old_handlers[signum] = signal.signal(signum, stop_requested)
 
@@ -354,6 +372,12 @@ def _interactive(args) -> int:
             f"http://{display_host}:{port}/viewer/?mode=interactive"
         )
         print(
+            f"room-demo: operator viewer "
+            f"http://{display_host}:{port}/viewer/?mode=interactive"
+            f"#operator={operator_token}"
+        )
+        print(f"room-demo: operator capability {args.operator_token_file}")
+        print(
             f"room-demo: run {run_id}; authority={args.mode}; "
             "RF writer=interactive wmdcfg session; Ctrl-C restores the exact baseline"
         )
@@ -379,15 +403,12 @@ def _interactive(args) -> int:
         conductor.stop()
         if clock_thread is not None:
             clock_thread.join(timeout=2)
-        if session_started:
-            try:
-                restored = interactions.close()
-            except Exception as error:
-                restored = False
-                outcome = "failed"
-                error_text = f"{error_text + '; ' if error_text else ''}restore: {error}"
-        else:
-            restored = True
+        try:
+            restored = interactions.close()
+        except Exception as error:
+            restored = False
+            outcome = "failed"
+            error_text = f"{error_text + '; ' if error_text else ''}restore: {error}"
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
         if outcome == "passed" and not restored:
@@ -419,6 +440,8 @@ def _interactive(args) -> int:
                 json.dumps(recorded_world, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+        if args.recovery_file.exists():
+            shutil.copy2(args.recovery_file, runner.run_dir / "recovery.json")
         summary = {
             "schema": "easymesh.room-demo.interactive-summary.v1",
             "run_id": run_id,
@@ -445,6 +468,15 @@ def _interactive(args) -> int:
         if lock_stream is not None:
             fcntl.flock(lock_stream, fcntl.LOCK_UN)
             lock_stream.close()
+        try:
+            if (
+                args.operator_token_file.exists()
+                and args.operator_token_file.read_text(encoding="utf-8").strip()
+                == operator_token
+            ):
+                args.operator_token_file.unlink()
+        except OSError:
+            pass
     print(f"room-demo: outcome={outcome} restored={str(restored).lower()}")
     print(f"room-demo: evidence {runner.run_dir}")
     return 0 if outcome == "passed" else 1
@@ -469,6 +501,22 @@ def _replay(args) -> int:
     finally:
         server.close()
     return 0
+
+
+def _recover(args) -> int:
+    args.lock.parent.mkdir(parents=True, exist_ok=True)
+    lock_stream = args.lock.open("a+")
+    try:
+        try:
+            fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ActuatorError(f"another room demo owns {args.lock}") from error
+        result = recover_medium(args.recovery_file, args.socket)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    finally:
+        fcntl.flock(lock_stream, fcntl.LOCK_UN)
+        lock_stream.close()
 
 
 def parser() -> argparse.ArgumentParser:
@@ -522,6 +570,30 @@ def parser() -> argparse.ArgumentParser:
     interactive.add_argument(
         "--lock", type=Path, default=Path("/run/lock/easymesh-room-demo.lock")
     )
+    interactive.add_argument(
+        "--recovery-file",
+        type=Path,
+        default=Path("/run/easymesh-room-demo/recovery.json"),
+        help="checksummed crash-recovery record",
+    )
+    interactive.add_argument(
+        "--operator-token-file",
+        type=Path,
+        default=Path("/run/easymesh-room-demo/operator.token"),
+        help="run-scoped browser write capability (mode 0600)",
+    )
+    recover = commands.add_parser(
+        "recover", help="restore the RF baseline retained by an interrupted session"
+    )
+    recover.add_argument("--socket", default="/run/wmediumd-control.sock")
+    recover.add_argument(
+        "--recovery-file",
+        type=Path,
+        default=Path("/run/easymesh-room-demo/recovery.json"),
+    )
+    recover.add_argument(
+        "--lock", type=Path, default=Path("/run/lock/easymesh-room-demo.lock")
+    )
     replay = commands.add_parser("replay", help="serve a completed evidence directory offline")
     replay.add_argument("run_directory", type=Path)
     replay.add_argument("--listen", type=_address, default=("127.0.0.1", 8891), metavar="HOST:PORT")
@@ -537,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
             return _check(args)
         if args.command == "replay":
             return _replay(args)
+        if args.command == "recover":
+            return _recover(args)
         if args.command == "interactive":
             return _interactive(args)
         return _run(args)

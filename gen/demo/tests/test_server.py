@@ -18,13 +18,13 @@ class FakeInteractions:
     def snapshot(self):
         return {"enabled": True, "revision": self.revision}
 
-    def acquire(self, owner):
+    def acquire(self, owner, **_body):
         return {"token": "lease-token", "owner": owner, "revision": self.revision}
 
-    def renew(self, token):
+    def renew(self, token, **_body):
         return {"token_seen": token, "revision": self.revision}
 
-    def release(self, token):
+    def release(self, token, **_body):
         return {"released": token == "lease-token", "revision": self.revision}
 
     def position(self, role, **body):
@@ -95,7 +95,10 @@ class ServerTests(unittest.TestCase):
             self.base + path,
             method=method,
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer operator-secret",
+            },
         )
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.load(response)
@@ -154,17 +157,29 @@ class InteractiveServerTests(unittest.TestCase):
         store = EventStore("run", world, root / "events.jsonl")
         self.interactions = FakeInteractions()
         self.server = RoomDemoServer(
-            ("127.0.0.1", 0), store, root, self.interactions
+            ("127.0.0.1", 0), store, root, self.interactions,
+            operator_token="operator-secret",
         )
         self.server.start()
         self.addCleanup(self.server.close)
         self.base = f"http://127.0.0.1:{self.server.address[1]}"
 
     def _request(self, path, method="GET", body=None):
+        if body is not None and method != "GET":
+            body = dict(body)
+            body.setdefault("command_id", f"test-command-{id(body)}")
         data = None if body is None else json.dumps(body).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer operator-secret",
+        }
+        if body is not None and "expected_revision" in body:
+            headers["If-Match"] = (
+                f'"world-revision-{body["expected_revision"]}"'
+            )
         request = urllib.request.Request(
             self.base + path, method=method, data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.load(response)
@@ -233,6 +248,56 @@ class InteractiveServerTests(unittest.TestCase):
         self.assertTrue(stopped["recording"]["export_ready"])
         _, world = self._request("/api/demo/recording/world")
         self.assertEqual(world["schema"], "wmdcfg.world-plan.v1")
+
+    def test_world_mutation_requires_if_match(self):
+        request = urllib.request.Request(
+            self.base + "/api/demo/roles/sta_01/position",
+            method="PUT",
+            data=json.dumps({
+                "token": "lease-token",
+                "expected_revision": 2,
+                "position": [4, 2],
+                "command_id": "test-no-if-match",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer operator-secret",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 428)
+
+    def test_cross_origin_write_is_rejected(self):
+        request = urllib.request.Request(
+            self.base + "/api/demo/interactions/lease",
+            method="POST",
+            data=json.dumps({
+                "owner": "browser",
+                "command_id": "test-cross-origin",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://not-the-room.example",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_write_without_operator_capability_is_rejected(self):
+        request = urllib.request.Request(
+            self.base + "/api/demo/interactions/lease",
+            method="POST",
+            data=json.dumps({
+                "owner": "browser",
+                "command_id": "test-no-operator",
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 401)
 
 
 if __name__ == "__main__":

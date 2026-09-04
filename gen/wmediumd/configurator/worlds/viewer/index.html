@@ -303,7 +303,11 @@
     positionTimer: null,
     lastPositionSentAt: 0,
     recording: {active: false, export_ready: false},
+    operatorToken: new URLSearchParams(location.hash.slice(1)).get('operator'),
   };
+  if (interaction.operatorToken) {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   if (liveMode || replayMode) document.body.classList.add('live-presentation');
 
   // ---- scene ---------------------------------------------------------------
@@ -475,11 +479,21 @@
   function interactionMessage(message, failed = false) {
     $('#interactionSummary').innerHTML = '<b>' + (failed ? 'Control error' : 'Interactive RF') + '</b> · ' + esc(message);
   }
+  function newCommandId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+    return 'browser-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2) + '-' + (++interaction.clientSequence);
+  }
   async function apiJson(url, options = {}) {
-    const response = await fetch(url, Object.assign({
-      cache: 'no-store',
-      headers: {'Content-Type': 'application/json'},
-    }, options));
+    const request = Object.assign({cache: 'no-store'}, options);
+    request.headers = Object.assign(
+      {'Content-Type': 'application/json'}, options.headers || {});
+    if (request.method && request.method !== 'GET' && interaction.operatorToken) {
+      request.headers.Authorization = 'Bearer ' + interaction.operatorToken;
+    }
+    const response = await fetch(url, request);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(body.message || response.status + ' ' + response.statusText);
@@ -524,11 +538,19 @@
   async function acquireInteractionLease() {
     if (!interactiveLiveMode || !interaction.apiEnabled) return true;
     if (interaction.leaseToken) return true;
+    if (!interaction.operatorToken) {
+      const supplied = window.prompt('Operator capability');
+      if (!supplied) {
+        interactionMessage('operator capability is required for live control', true);
+        return false;
+      }
+      interaction.operatorToken = supplied.trim();
+    }
     const owner = interaction.leaseOwner ||
       ('browser-' + Math.random().toString(36).slice(2, 10));
     try {
       const lease = await apiJson('/api/demo/interactions/lease', {
-        method: 'POST', body: JSON.stringify({owner}),
+        method: 'POST', body: JSON.stringify({owner, command_id: newCommandId()}),
       });
       interaction.leaseOwner = owner;
       interaction.leaseToken = lease.token;
@@ -538,7 +560,9 @@
         if (!interaction.leaseToken) return;
         try {
           const renewed = await apiJson('/api/demo/interactions/lease', {
-            method: 'POST', body: JSON.stringify({token: interaction.leaseToken}),
+            method: 'POST', body: JSON.stringify({
+              token: interaction.leaseToken, command_id: newCommandId(),
+            }),
           });
           interaction.revision = Math.max(interaction.revision, Number(renewed.revision));
         } catch (error) {
@@ -559,13 +583,19 @@
     if (!interactiveLiveMode || !interaction.leaseToken) return Promise.resolve(null);
     const sequence = ++interaction.clientSequence;
     interaction.requestChain = interaction.requestChain.then(async () => {
+      const expectedRevision = interaction.revision;
       const body = Object.assign({}, payload, {
         token: interaction.leaseToken,
-        expected_revision: interaction.revision,
+        expected_revision: expectedRevision,
         client_sequence: sequence,
+        command_id: newCommandId(),
       });
       try {
-        const accepted = await apiJson(url, {method, body: JSON.stringify(body)});
+        const accepted = await apiJson(url, {
+          method,
+          body: JSON.stringify(body),
+          headers: {'If-Match': '"world-revision-' + expectedRevision + '"'},
+        });
         interaction.revision = Math.max(
           interaction.revision, Number(accepted.revision));
         interaction.acknowledgedSequence = Math.max(
@@ -616,7 +646,9 @@
     if (!token) return;
     try {
       await apiJson('/api/demo/interactions/lease', {
-        method: 'DELETE', body: JSON.stringify({token}), keepalive: true,
+        method: 'DELETE',
+        body: JSON.stringify({token, command_id: newCommandId()}),
+        keepalive: true,
       });
     } catch (_error) { /* expiration provides the same safe freeze semantics */ }
   }

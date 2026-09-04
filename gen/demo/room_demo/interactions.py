@@ -14,6 +14,7 @@ from wmdcfg.runner import FREQUENCY_CAPABILITIES
 from wmdcfg.world import compile_world
 
 from .events import EventStore
+from .recovery import RecoveryJournal
 
 
 class InteractionError(RuntimeError):
@@ -44,6 +45,7 @@ class InteractiveMediumSession:
         client_factory: Callable[[str], ControlClient] = ControlClient,
         lease_seconds: int = 30,
         minimum_update_interval: float = 0.15,
+        recovery: RecoveryJournal | None = None,
     ) -> None:
         self.store = store
         self.world = world
@@ -53,6 +55,7 @@ class InteractiveMediumSession:
         self.client_factory = client_factory
         self.lease_seconds = max(10, min(120, int(lease_seconds)))
         self.minimum_update_interval = max(0.0, float(minimum_update_interval))
+        self.recovery = recovery
         self._lock = threading.RLock()
         self._client: ControlClient | None = None
         self._instance_id: str | None = None
@@ -74,6 +77,7 @@ class InteractiveMediumSession:
         self._recording: dict[str, Any] | None = None
         self._recorded_mobility: dict[str, Any] | None = None
         self._recorded_world: dict[str, Any] | None = None
+        self._command_executor: Callable[..., Any] | None = None
         first = world["generations"][0]
         self._roles = {
             role: {
@@ -93,8 +97,16 @@ class InteractiveMediumSession:
             for role in world["roles"]
         }
 
+    def set_command_executor(self, executor: Callable[..., Any]) -> None:
+        """Route autonomous movement ticks through the owning RoomEngine."""
+        self._command_executor = executor
+
     def _world_time(self) -> int:
         return max(0, round((time.monotonic() - self._started_at) * 1000))
+
+    def world_time(self) -> int:
+        """Return this session's monotonic run time for actor-owned events."""
+        return self._world_time()
 
     @staticmethod
     def runtime_world(world: dict[str, Any], layout: dict[str, Any]) -> dict[str, Any]:
@@ -116,6 +128,7 @@ class InteractiveMediumSession:
             if self._client is not None:
                 raise InteractionError(409, "already_started", "interactive session is already started")
             client = self.client_factory(self.socket_path)
+            recovery_prepared = False
             try:
                 status = client.connect()
                 missing = FREQUENCY_CAPABILITIES - status.capabilities
@@ -137,6 +150,11 @@ class InteractiveMediumSession:
                         f"daemon limit is {status.max_updates}"
                     )
                 self._capture_baseline(initial_updates)
+                if self.recovery is not None:
+                    self.recovery.prepare(
+                        self._instance_id, self._generation, self._baseline
+                    )
+                    recovery_prepared = True
                 applied = self._apply_generation(initial_updates)
                 for item in applied:
                     _, value, overridden = client.get_frequency_link(
@@ -172,7 +190,11 @@ class InteractiveMediumSession:
                     producer="interaction",
                 )
             except Exception:
-                if self._client is not None and self._baseline:
+                if (
+                    self._client is not None
+                    and self._baseline
+                    and (self.recovery is None or recovery_prepared)
+                ):
                     try:
                         self.restore()
                     except Exception:
@@ -231,6 +253,7 @@ class InteractiveMediumSession:
                 "recording": self._recording_status(),
                 "restored": self._restored,
                 "fault": self._faulted,
+                "recovery": None if self.recovery is None else self.recovery.snapshot(),
             }
 
     def acquire(self, owner: str) -> dict[str, Any]:
@@ -701,85 +724,100 @@ class InteractiveMediumSession:
             thread.start()
             return payload
 
-    def _movement_worker(self, movement_id: str) -> None:
-        while True:
-            with self._lock:
-                movement = self._movements[movement_id]
-                self._expire_lease()
-                if self._closing or movement["status"] in {"cancelled", "completed", "failed"}:
-                    return
-                if movement["status"] == "paused":
-                    wake = movement["wake"]
-                    delay = 0.5
-                elif (
-                    self._lease is None
-                    or not secrets.compare_digest(
-                        movement["lease_token"], self._lease["token"]
-                    )
+    def _movement_tick(
+        self, movement_id: str
+    ) -> tuple[threading.Event | None, float, bool]:
+        with self._lock:
+            movement = self._movements[movement_id]
+            self._expire_lease()
+            if self._closing or movement["status"] in {"cancelled", "completed", "failed"}:
+                return None, 0, True
+            if movement["status"] == "paused":
+                return movement["wake"], 0.5, False
+            if (
+                self._lease is None
+                or not secrets.compare_digest(
+                    movement["lease_token"], self._lease["token"]
+                )
+            ):
+                self._cancel_movement(movement, "lease_lost")
+                return None, 0, True
+
+            now = time.monotonic()
+            elapsed = max(
+                0.0,
+                now - movement["started_monotonic"] - movement["paused_seconds"],
+            )
+            duration = max(0.001, movement["duration_ms"] / 1000)
+            fraction = min(1.0, elapsed / duration)
+            point = self._clamp_position([
+                movement["start"][axis]
+                + (movement["destination"][axis] - movement["start"][axis]) * fraction
+                for axis in (0, 1)
+            ])
+            previous = copy.deepcopy(self._roles[movement["role"]])
+            self._roles[movement["role"]]["position"] = point
+            try:
+                applied = self._apply_role(
+                    movement["role"], "position",
+                    client_sequence=movement["client_sequence"],
+                )
+            except Exception as error:
+                if self._faulted is None or self._faulted.startswith(
+                    "unexpected external medium change:"
                 ):
-                    self._cancel_movement(movement, "lease_lost")
-                    return
+                    self._roles[movement["role"]] = previous
+                movement["status"] = "failed"
+                movement["reason"] = str(error)
+                self.store.emit(
+                    "interaction.movement.failed", self._world_time(),
+                    {"revision": self._revision, "reason": str(error),
+                     "movement": self._public_movement(movement)},
+                    producer="interaction",
+                )
+                return None, 0, True
+            movement["position"] = point
+            movement["progress"] = round(fraction, 4)
+            movement["remaining_m"] = round(
+                math.dist(point, movement["destination"]), 3
+            )
+            movement["daemon_generation"] = applied["daemon_generation"]
+            movement["revision"] = self._revision
+            if fraction >= 1:
+                movement["status"] = "completed"
+                movement["remaining_m"] = 0.0
+                kind = "interaction.movement.completed"
+            else:
+                kind = "interaction.movement.progress"
+            self.store.emit(
+                kind, self._world_time(),
+                {"revision": self._revision,
+                 "movement": self._public_movement(movement)},
+                producer="interaction",
+            )
+            return (
+                None if fraction >= 1 else movement["wake"],
+                max(0.2, self.minimum_update_interval),
+                fraction >= 1,
+            )
+
+    def _movement_worker(self, movement_id: str) -> None:
+        while not self._closing:
+            execute = self._command_executor
+            try:
+                if execute is None:
+                    wake, delay, done = self._movement_tick(movement_id)
                 else:
-                    now = time.monotonic()
-                    elapsed = max(
-                        0.0,
-                        now - movement["started_monotonic"] - movement["paused_seconds"],
-                    )
-                    duration = max(0.001, movement["duration_ms"] / 1000)
-                    fraction = min(1.0, elapsed / duration)
-                    point = [
-                        round(
-                            movement["start"][axis]
-                            + (movement["destination"][axis] - movement["start"][axis])
-                            * fraction,
-                            3,
-                        )
-                        for axis in (0, 1)
-                    ]
-                    previous = copy.deepcopy(self._roles[movement["role"]])
-                    self._roles[movement["role"]]["position"] = point
-                    try:
-                        applied = self._apply_role(
-                            movement["role"], "position",
-                            client_sequence=movement["client_sequence"],
-                        )
-                    except Exception as error:
-                        if self._faulted is None or self._faulted.startswith(
-                            "unexpected external medium change:"
-                        ):
-                            self._roles[movement["role"]] = previous
-                        movement["status"] = "failed"
-                        movement["reason"] = str(error)
-                        self.store.emit(
-                            "interaction.movement.failed", self._world_time(),
-                            {"revision": self._revision, "reason": str(error),
-                             "movement": self._public_movement(movement)},
-                            producer="interaction",
-                        )
-                        return
-                    movement["position"] = point
-                    movement["progress"] = round(fraction, 4)
-                    movement["remaining_m"] = round(
-                        math.dist(point, movement["destination"]), 3
-                    )
-                    movement["daemon_generation"] = applied["daemon_generation"]
-                    movement["revision"] = self._revision
-                    if fraction >= 1:
-                        movement["status"] = "completed"
-                        movement["remaining_m"] = 0.0
-                        kind = "interaction.movement.completed"
-                    else:
-                        kind = "interaction.movement.progress"
-                    self.store.emit(
-                        kind, self._world_time(),
-                        {"revision": self._revision,
-                         "movement": self._public_movement(movement)},
-                        producer="interaction",
-                    )
-                    if fraction >= 1:
-                        return
-                    wake = movement["wake"]
-                    delay = max(0.2, self.minimum_update_interval)
+                    wake, delay, done = execute(self._movement_tick, movement_id)
+            except RuntimeError as error:
+                # RoomEngine withdraws command admission before it enqueues
+                # the terminal restore. A movement clock racing that boundary
+                # simply exits; it must not enqueue behind shutdown.
+                if "room engine is closing" in str(error):
+                    return
+                raise
+            if done or wake is None:
+                return
             wake.wait(delay)
             wake.clear()
 
@@ -926,6 +964,8 @@ class InteractiveMediumSession:
                 f"observed instance={status.instance_id} generation={status.generation}"
             )
             self._faulted = reason
+            if self.recovery is not None:
+                self.recovery.failed(reason, contaminated=True)
             self.store.emit(
                 "medium.external_write_detected",
                 self._world_time(),
@@ -939,8 +979,17 @@ class InteractiveMediumSession:
             )
             raise ActuatorError(reason)
         generation = self._generation + 1
-        applied = self._client.apply_frequency(generation, updates)
+        if self.recovery is not None:
+            self.recovery.before_apply(self._generation, generation)
+        try:
+            applied = self._client.apply_frequency(generation, updates)
+        except Exception as error:
+            if self.recovery is not None:
+                self.recovery.failed(error)
+            raise
         self._generation = generation
+        if self.recovery is not None:
+            self.recovery.committed(generation)
         return applied
 
     def _mark_rf_committed(self) -> None:
@@ -1037,6 +1086,8 @@ class InteractiveMediumSession:
                 "rf.restore.started", self._world_time(),
                 {"touched_links": len(self._baseline)}, producer="interaction",
             )
+            if self.recovery is not None:
+                self.recovery.restoring()
             if self._faulted and self._faulted.startswith(
                 "unexpected external medium change:"
             ):
@@ -1052,6 +1103,8 @@ class InteractiveMediumSession:
                     },
                     producer="interaction",
                 )
+                if self.recovery is not None:
+                    self.recovery.failed(self._faulted, contaminated=True)
                 return False
             restored = True
             if self._baseline:
@@ -1074,6 +1127,8 @@ class InteractiveMediumSession:
                     if value != expected_value or overridden != expected_override:
                         restored = False
             self._restored = restored
+            if self.recovery is not None:
+                self.recovery.completed(self._generation, restored)
             self.store.emit(
                 "rf.restore.completed", self._world_time(),
                 {

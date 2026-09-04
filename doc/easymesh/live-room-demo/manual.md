@@ -443,8 +443,10 @@ The common event envelope includes `run_id`, global `sequence`, wall-clock
 `recorded_at`, monotonic `run_elapsed_ms`, `scenario_time_ms`, compatibility
 `world_time_ms`, `producer`, `kind`, `payload`, and event-chain hashes.
 Runner-local sequence numbers are retained as `payload.producer_sequence`.
-Scripted/replay servers reject writes; the interactive service exposes only
-its bounded lease/revision control routes.
+Scripted/replay servers reject writes. The interactive service exposes only
+its bounded control routes, protected by a run-scoped operator capability,
+renewable lease, idempotent command ID and `ETag`/`If-Match` world revision.
+All accepted mutations are serialized by one `RoomEngine`.
 
 ## 11. Evidence and offline replay
 
