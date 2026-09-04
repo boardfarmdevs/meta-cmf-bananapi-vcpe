@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
-release_id=${LAB_RELEASE_ID:-0831}
+release_id=${LAB_RELEASE_ID:-0903}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;

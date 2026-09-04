@@ -60,3 +60,23 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 - Restored controller-first appliance startup after clean reboot acceptance
   proved that controller/extender overlap can miss all four backhaul STA model
   rows even though their physical links are connected.
+
+## 0903
+
+- Consolidated the current RDK and prplMesh deliveries into one universal thin
+  LXD appliance per stack. Each appliance selects 20, 50, or 100 clients at
+  import and contains the exact offline inputs needed for first provisioning.
+- Corrected hidden-SSID BTM candidate selection so a station uses an actually
+  discovered `(BSSID, current SSID)` record instead of an empty hidden-beacon
+  cache entry, while retaining the normal ESS and security checks.
+- Made deterministic steering derive the target channel and operating class
+  from the live AP interface. This corrected private-SSID steering on the
+  lab's actual 5955 MHz 6 GHz channel rather than trusting stale model data.
+- Added `steer-soak.sh` for one live pass or a bounded number of topology-aware
+  sequential steers, and `steer-batch.sh` for one atomic RF transaction with
+  multiple concurrent station moves and independent verification.
+- Documented the exact single-steer and carousel RF behavior and added the
+  initial live-room demonstration implementation plan.
+- Retained one known limitation explicitly: directed discovery of the hidden
+  IoT secondary BSS on the 6 GHz RDK multi-VAP radio is not yet reliable. The
+  2.4 and 5 GHz IoT paths and private-SSID tri-band steering remain available.

@@ -3,7 +3,7 @@
 Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
 engineers.
 
-Status: current documentation for `codex/0831-clean`.
+Status: current documentation for `codex/0902-clean` and the 0903 appliance.
 
 This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
 node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel

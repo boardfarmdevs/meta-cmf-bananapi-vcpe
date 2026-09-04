@@ -27,11 +27,11 @@ easymesh_profile_clients() {
 easymesh_profile_release_name() {
     printf 'rdkeasymesh-%s-%s\n' \
         "$(easymesh_profile_clients "${1:-20}")" \
-        "${EASYMESH_RELEASE_ID:-0831}"
+        "${EASYMESH_RELEASE_ID:-0903}"
 }
 
 easymesh_thin_release_name() {
-    printf 'rdkeasymesh-%s-thin\n' "${EASYMESH_RELEASE_ID:-0831}"
+    printf 'rdkeasymesh-%s-thin\n' "${EASYMESH_RELEASE_ID:-0903}"
 }
 
 easymesh_profile_radios() {
