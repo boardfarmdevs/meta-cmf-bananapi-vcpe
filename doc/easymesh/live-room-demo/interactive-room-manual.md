@@ -232,7 +232,9 @@ this closed loop:
    resolve only the nominated BSSID and SSID, including the hidden `iot_ssid`,
    then send a graceful mandated BTM through `gen/steer.sh --request-only`;
    if the client declines it, retry once with Disassociation Imminent while
-   retaining the same measured target;
+   retaining the same measured target, and keep the serialized assist active
+   until the physical target association succeeds or the bounded ten-second
+   verification expires;
 10. atomically restore and read back the exact authoritative room RF matrix,
     start a new measurement epoch, and reject telemetry sampled while the
     steering assist was active; and

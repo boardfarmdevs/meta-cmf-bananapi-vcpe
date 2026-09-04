@@ -476,8 +476,21 @@ if ((request_only)); then
     fi
     status_action "The client did not accept the graceful request; escalating to a disassociation-imminent BTM while retaining the same measured target."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
-        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
-    exit $?
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" || {
+        echo "steer.sh: controller steering command failed" >&2
+        exit 1
+    }
+    # A disassociation-imminent request can return before the client reaches
+    # the nominated AP.  Keep the caller's serialized RF transaction active
+    # until the physical outcome is known; otherwise RoomEngine could restore
+    # its temporary steering assist before the BTM timer expires.
+    status_wait "Waiting up to 10s for the escalated BTM to reach $target_bssid."
+    if wait_target_association 10; then
+        status_pass "The station accepted the escalated BTM request."
+        exit 0
+    fi
+    echo "steer.sh: station did not accept/reassociate to $target_bssid" >&2
+    exit 1
 fi
 
 [[ $source_bssid =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
