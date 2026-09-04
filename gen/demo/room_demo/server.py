@@ -6,9 +6,10 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .events import EventStore
+from .interactions import InteractionError, InteractiveMediumSession
 
 
 class RoomDemoServer:
@@ -17,9 +18,11 @@ class RoomDemoServer:
         address: tuple[str, int],
         store: EventStore,
         viewer_root: Path,
+        interactions: InteractiveMediumSession | None = None,
     ):
         self.store = store
         self.viewer_root = viewer_root.resolve()
+        self.interactions = interactions
         handler = self._handler()
         self.httpd = ThreadingHTTPServer(address, handler)
         self.httpd.daemon_threads = True
@@ -47,6 +50,7 @@ class RoomDemoServer:
     def _handler(self):
         store = self.store
         viewer_root = self.viewer_root
+        interactions = self.interactions
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "EasyMeshRoomDemo/0.1"
@@ -67,6 +71,35 @@ class RoomDemoServer:
                 body = (json.dumps(value, sort_keys=True) + "\n").encode()
                 self._headers(status, "application/json; charset=utf-8", len(body))
                 self.wfile.write(body)
+
+            def _body(self) -> dict:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError as error:
+                    raise InteractionError(400, "invalid_length", "invalid Content-Length") from error
+                if length <= 0 or length > 64 * 1024:
+                    raise InteractionError(400, "invalid_body", "a JSON body is required")
+                try:
+                    value = json.loads(self.rfile.read(length))
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise InteractionError(400, "invalid_json", "request body is not valid JSON") from error
+                if not isinstance(value, dict):
+                    raise InteractionError(400, "invalid_body", "request body must be an object")
+                return value
+
+            def _interaction_error(self, error: Exception):
+                if isinstance(error, InteractionError):
+                    status, code, message = error.status, error.code, str(error)
+                else:
+                    status, code, message = 502, "medium_error", str(error)
+                self._json({"error": code, "message": message}, status)
+
+            @staticmethod
+            def _role_path(path: str) -> tuple[str, str] | None:
+                parts = path.strip("/").split("/")
+                if len(parts) != 5 or parts[:3] != ["api", "demo", "roles"]:
+                    return None
+                return unquote(parts[3]), parts[4]
 
             def _static(self, relative: str):
                 target = (viewer_root / relative).resolve()
@@ -127,6 +160,8 @@ class RoomDemoServer:
                         "run_id": store.run_id,
                         "events": store.all(),
                     })
+                elif parsed.path == "/api/demo/interactions" and interactions is not None:
+                    self._json(interactions.snapshot())
                 elif parsed.path in {"/viewer", "/viewer/", "/viewer/index.html"}:
                     self._static("index.html")
                 elif parsed.path.startswith("/viewer/"):
@@ -135,6 +170,57 @@ class RoomDemoServer:
                     self.send_error(HTTPStatus.NOT_FOUND)
 
             def do_POST(self):
-                self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
+                parsed = urlparse(self.path)
+                if parsed.path != "/api/demo/interactions/lease" or interactions is None:
+                    self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
+                    return
+                try:
+                    body = self._body()
+                    if body.get("token"):
+                        self._json(interactions.renew(str(body["token"])))
+                    else:
+                        self._json(interactions.acquire(str(body.get("owner") or "")), 201)
+                except Exception as error:
+                    self._interaction_error(error)
+
+            def do_PUT(self):
+                parsed = urlparse(self.path)
+                matched = self._role_path(parsed.path)
+                if matched is None or interactions is None:
+                    self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
+                    return
+                role, operation = matched
+                try:
+                    body = self._body()
+                    common = {
+                        "token": str(body.get("token") or ""),
+                        "expected_revision": body.get("expected_revision"),
+                        "client_sequence": body.get("client_sequence"),
+                    }
+                    if operation == "position":
+                        result = interactions.position(
+                            role, position=body.get("position"),
+                            final=bool(body.get("final")), **common,
+                        )
+                    elif operation == "presence":
+                        result = interactions.presence(
+                            role, present=body.get("present"), **common,
+                        )
+                    else:
+                        raise InteractionError(404, "unknown_operation", "unknown role operation")
+                    self._json(result)
+                except Exception as error:
+                    self._interaction_error(error)
+
+            def do_DELETE(self):
+                parsed = urlparse(self.path)
+                if parsed.path != "/api/demo/interactions/lease" or interactions is None:
+                    self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
+                    return
+                try:
+                    body = self._body()
+                    self._json(interactions.release(str(body.get("token") or "")))
+                except Exception as error:
+                    self._interaction_error(error)
 
         return Handler

@@ -5,8 +5,10 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import signal
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -14,12 +16,14 @@ from wmdcfg.actuator import ActuatorError, ControlClient
 from wmdcfg.compiler import compile_scenario
 from wmdcfg.inventory import discover
 from wmdcfg.model import ScenarioError
+from wmdcfg.observers import mesh_health
 from wmdcfg.parser import parse
 from wmdcfg.runner import Runner
-from wmdcfg.world import export_wmd, load_json, verify_world_plan
+from wmdcfg.world import _hash, export_wmd, load_json, verify_world_plan
 
 from .conductor import LiveConductor, load_manifest
 from .events import EventStore
+from .interactions import InteractiveMediumSession
 from .server import RoomDemoServer
 
 
@@ -72,6 +76,14 @@ def _paths(args) -> tuple[dict, Path, Path]:
     world = args.world.resolve() if args.world else REPO_ROOT / manifest["world"]
     bindings = args.bindings.resolve() if args.bindings else REPO_ROOT / manifest["bindings"]
     return manifest, world, bindings
+
+
+def _layout_for(world: dict) -> tuple[dict, Path]:
+    path = CONFIGURATOR / "worlds/layouts" / f"{world['layout']}.json"
+    layout = load_json(path)
+    if _hash(layout) != world.get("layout_sha256"):
+        raise ScenarioError(f"{path}: layout hash does not match the signed Golden World")
+    return layout, path
 
 
 def _file_index(run_dir: Path) -> dict:
@@ -248,6 +260,185 @@ def _run(args) -> int:
         lock_stream.close()
 
 
+def _interactive(args) -> int:
+    if args.mode == "act" and not args.yes_act:
+        raise ActuatorError("interactive act mode requires --yes-act")
+    manifest, world_path, bindings_path = _paths(args)
+    world, source, inventory, binding_doc, plan = _prepare(world_path, bindings_path)
+    layout, layout_path = _layout_for(world)
+    runtime_world = InteractiveMediumSession.runtime_world(world, layout)
+    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{timestamp}-{manifest['name']}-interactive"
+    runner = Runner(plan, args.socket, args.output_root, run_id=run_id)
+    store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl")
+    conductor = LiveConductor(
+        store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
+        base_url=args.base_url,
+    )
+    interactions = InteractiveMediumSession(
+        store, world, layout, plan, args.socket,
+        lease_seconds=args.lease_seconds,
+    )
+    server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER, interactions)
+    stop_event = threading.Event()
+    clock_thread: threading.Thread | None = None
+    old_handlers = {}
+    lock_stream = None
+    server_started = False
+    session_started = False
+    outcome = "failed"
+    restored = False
+    error_text = None
+    started = time.monotonic()
+
+    def stop_requested(_signum=None, _frame=None):
+        stop_event.set()
+
+    try:
+        args.lock.parent.mkdir(parents=True, exist_ok=True)
+        lock_stream = args.lock.open("a+")
+        try:
+            fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ActuatorError(f"another room demo owns {args.lock}") from error
+        lock_stream.seek(0)
+        lock_stream.truncate()
+        lock_stream.write(run_id + "\n")
+        lock_stream.flush()
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            old_handlers[signum] = signal.signal(signum, stop_requested)
+
+        _copy_inputs(runner, source, inventory, binding_doc, world_path, manifest)
+        shutil.copy2(layout_path, runner.run_dir / "layout.json")
+        (runner.run_dir / "runtime-world.json").write_text(
+            json.dumps(runtime_world, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        expected = plan.get("expected_lab") or {}
+        expected_agents = int(expected.get("mesh_devices", 5))
+        expected_clients = int(expected.get("clients", 20))
+        initial_health = mesh_health(expected_agents, expected_clients)
+        Runner._require_healthy(initial_health, "interactive preflight")
+        (runner.run_dir / "health-preflight.json").write_text(
+            json.dumps(initial_health, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        conductor.preflight()
+        interactions.start()
+        session_started = True
+        store.emit(
+            "demo.state", 0,
+            {"state": "running", "mode": f"interactive-{args.mode}"},
+            producer="interaction",
+        )
+        conductor.start()
+
+        def clock_worker():
+            while not stop_event.wait(0.25):
+                elapsed = round((time.monotonic() - started) * 1000)
+                store.emit(
+                    "scenario.clock", min(world["duration_ms"], elapsed),
+                    {"interactive": True}, producer="interaction-clock",
+                )
+
+        clock_thread = threading.Thread(
+            target=clock_worker, name="room-demo-interaction-clock", daemon=True
+        )
+        clock_thread.start()
+        server.start()
+        server_started = True
+        host, port = server.address
+        display_host = "127.0.0.1" if host == "0.0.0.0" else host
+        print(
+            f"room-demo: interactive viewer "
+            f"http://{display_host}:{port}/viewer/?mode=interactive"
+        )
+        print(
+            f"room-demo: run {run_id}; authority={args.mode}; "
+            "RF writer=interactive wmdcfg session; Ctrl-C restores the exact baseline"
+        )
+        deadline = (
+            None if args.serve_seconds <= 0
+            else time.monotonic() + args.serve_seconds
+        )
+        while not stop_event.wait(0.5):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            if conductor.errors:
+                raise RuntimeError("one or more live workers failed")
+        outcome = "passed"
+    except Exception as error:
+        error_text = str(error)
+        print(f"room-demo: interactive session failed: {error}", file=sys.stderr)
+    finally:
+        stop_event.set()
+        if server_started:
+            server.close()
+        else:
+            server.httpd.server_close()
+        conductor.stop()
+        if clock_thread is not None:
+            clock_thread.join(timeout=2)
+        if session_started:
+            try:
+                restored = interactions.close()
+            except Exception as error:
+                restored = False
+                outcome = "failed"
+                error_text = f"{error_text + '; ' if error_text else ''}restore: {error}"
+        else:
+            restored = True
+        for signum, handler in old_handlers.items():
+            signal.signal(signum, handler)
+        if outcome == "passed" and not restored:
+            outcome = "failed"
+            error_text = "interactive RF baseline restoration was not verified"
+        try:
+            if session_started:
+                expected = plan.get("expected_lab") or {}
+                final_health = mesh_health(
+                    int(expected.get("mesh_devices", 5)),
+                    int(expected.get("clients", 20)),
+                )
+                Runner._require_healthy(final_health, "interactive postflight")
+                (runner.run_dir / "health-postflight.json").write_text(
+                    json.dumps(final_health, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+        except Exception as error:
+            outcome = "failed"
+            error_text = f"{error_text + '; ' if error_text else ''}postflight: {error}"
+        summary = {
+            "schema": "easymesh.room-demo.interactive-summary.v1",
+            "run_id": run_id,
+            "outcome": outcome,
+            "restored": restored,
+            "error": error_text,
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "interactions": interactions.snapshot(),
+            "conductor": conductor.summary(),
+        }
+        runner.run_dir.mkdir(parents=True, exist_ok=True)
+        (runner.run_dir / "interactive-summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        store.emit(
+            "run.completed", store.current()["world_time_ms"],
+            {"outcome": outcome, "restored": restored, "error": error_text},
+            producer="interaction",
+        )
+        (runner.run_dir / "evidence-index.json").write_text(
+            json.dumps(_file_index(runner.run_dir), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if lock_stream is not None:
+            fcntl.flock(lock_stream, fcntl.LOCK_UN)
+            lock_stream.close()
+    print(f"room-demo: outcome={outcome} restored={str(restored).lower()}")
+    print(f"room-demo: evidence {runner.run_dir}")
+    return 0 if outcome == "passed" else 1
+
+
 def _replay(args) -> int:
     store = EventStore.from_evidence(args.run_directory.resolve())
     server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER)
@@ -278,6 +469,7 @@ def parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("check", "compile and validate the live radio bindings without changing RF"),
         ("run", "run, present, verify and restore one live room experiment"),
+        ("interactive", "serve a lease-protected live room that controls wmediumd"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST,
@@ -298,6 +490,27 @@ def parser() -> argparse.ArgumentParser:
                      help="retain completed live view before exit (default: 60)")
     run.add_argument("--clock-interval-ms", type=int, default=250)
     run.add_argument("--lock", type=Path, default=Path("/run/lock/easymesh-room-demo.lock"))
+    interactive = commands.choices["interactive"]
+    interactive.add_argument(
+        "--mode", choices=("stimulus", "recommend", "act"), default="recommend",
+        help="optimizer authority (default: recommend)",
+    )
+    interactive.add_argument("--yes-act", action="store_true")
+    interactive.add_argument("--base-url", default="http://127.0.0.1:8888")
+    interactive.add_argument(
+        "--listen", type=_address, default=("127.0.0.1", 8891), metavar="HOST:PORT"
+    )
+    interactive.add_argument(
+        "--output-root", type=Path, default=Path("/tmp/easymesh-room-demo-runs")
+    )
+    interactive.add_argument(
+        "--serve-seconds", type=int, default=0,
+        help="exit and restore after N seconds; zero runs until Ctrl-C",
+    )
+    interactive.add_argument("--lease-seconds", type=int, default=30)
+    interactive.add_argument(
+        "--lock", type=Path, default=Path("/run/lock/easymesh-room-demo.lock")
+    )
     replay = commands.add_parser("replay", help="serve a completed evidence directory offline")
     replay.add_argument("run_directory", type=Path)
     replay.add_argument("--listen", type=_address, default=("127.0.0.1", 8891), metavar="HOST:PORT")
@@ -313,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
             return _check(args)
         if args.command == "replay":
             return _replay(args)
+        if args.command == "interactive":
+            return _interactive(args)
         return _run(args)
     except (OSError, json.JSONDecodeError, ScenarioError, ActuatorError, ValueError) as error:
         print(f"room-demo: {error}", file=sys.stderr)

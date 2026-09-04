@@ -11,6 +11,31 @@ from room_demo.events import EventStore
 from room_demo.server import RoomDemoServer
 
 
+class FakeInteractions:
+    def __init__(self):
+        self.revision = 2
+
+    def snapshot(self):
+        return {"enabled": True, "revision": self.revision}
+
+    def acquire(self, owner):
+        return {"token": "lease-token", "owner": owner, "revision": self.revision}
+
+    def renew(self, token):
+        return {"token_seen": token, "revision": self.revision}
+
+    def release(self, token):
+        return {"released": token == "lease-token", "revision": self.revision}
+
+    def position(self, role, **body):
+        self.revision += 1
+        return {"role": role, "revision": self.revision, **body}
+
+    def presence(self, role, **body):
+        self.revision += 1
+        return {"role": role, "revision": self.revision, **body}
+
+
 class ServerTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -35,6 +60,16 @@ class ServerTests(unittest.TestCase):
     def _json(self, path):
         with urllib.request.urlopen(self.base + path, timeout=2) as response:
             return json.load(response)
+
+    def _request(self, path, method, body):
+        request = urllib.request.Request(
+            self.base + path,
+            method=method,
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status, json.load(response)
 
     def test_health_current_world_and_viewer(self):
         self.assertEqual(self._json("/healthz")["status"], "ok")
@@ -78,6 +113,57 @@ class ServerTests(unittest.TestCase):
         payload = self._json("/api/demo/events.json")
         self.assertEqual(payload["schema"], "easymesh.room-demo.events.v1")
         self.assertEqual(payload["events"][0]["kind"], "scenario.clock")
+
+
+class InteractiveServerTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / "index.html").write_text("<html>viewer</html>")
+        world = {"name": "world", "duration_ms": 1000, "tick_ms": 100}
+        store = EventStore("run", world, root / "events.jsonl")
+        self.interactions = FakeInteractions()
+        self.server = RoomDemoServer(
+            ("127.0.0.1", 0), store, root, self.interactions
+        )
+        self.server.start()
+        self.addCleanup(self.server.close)
+        self.base = f"http://127.0.0.1:{self.server.address[1]}"
+
+    def _request(self, path, method="GET", body=None):
+        data = None if body is None else json.dumps(body).encode()
+        request = urllib.request.Request(
+            self.base + path, method=method, data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status, json.load(response)
+
+    def test_lease_position_presence_and_release_routes(self):
+        _, state = self._request("/api/demo/interactions")
+        self.assertEqual(state["revision"], 2)
+        status, lease = self._request(
+            "/api/demo/interactions/lease", "POST", {"owner": "browser"}
+        )
+        self.assertEqual(status, 201)
+        _, moved = self._request(
+            "/api/demo/roles/sta_01/position", "PUT",
+            {"token": lease["token"], "expected_revision": 2,
+             "position": [4, 2], "final": True},
+        )
+        self.assertEqual(moved["role"], "sta_01")
+        self.assertEqual(moved["position"], [4, 2])
+        _, presence = self._request(
+            "/api/demo/roles/sta_01/presence", "PUT",
+            {"token": lease["token"], "expected_revision": 3,
+             "present": False},
+        )
+        self.assertFalse(presence["present"])
+        _, released = self._request(
+            "/api/demo/interactions/lease", "DELETE", {"token": lease["token"]}
+        )
+        self.assertTrue(released["released"])
 
 
 if __name__ == "__main__":

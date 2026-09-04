@@ -7,6 +7,10 @@ turns a deterministic model of a home into live RF conditions, observes the
 real EasyMesh response, runs the external reference optimizer, optionally sends
 one real steering request, and presents the result in one browser view.
 
+This document covers the precooked timed presentation. For live drag,
+destination, disappearance, lease, API, and restoration operation, use the
+[interactive room manual](interactive-room-manual.md).
+
 The default profile keeps the accepted lab fully loaded:
 
 - one controller and colocated agent;

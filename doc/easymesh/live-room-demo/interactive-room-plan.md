@@ -253,17 +253,19 @@ explain.
 
 ### Current implementation status
 
-The first visible Phase 1 slice is implemented on the RDK interactive-room
-branch. The viewer now provides separate Camera and Interact modes, bounded
-client dragging, right-click destination movement at `0.6`, `1.4`, or
-`3.0 m/s`, local disappear/reappear, reset controls, wall highlighting, and a
-live spatial/link-budget panel. Its geometry and movement calculations are a
-separate DOM-free module with command-line regression tests.
+Phase 1 preview and the client portion of Phase 2 are implemented on the RDK
+interactive-room branch. Static worlds remain safely labeled **PREVIEW ONLY**.
+Running `room-demo interactive` adds a green **LIVE RF** state with a
+single-writer renewable lease, optimistic revisions, throttled/serialized
+position updates, atomic all-band wmediumd application, per-generation
+readback, RF disappearance/reappearance, ordered evidence, and exact baseline
+restore. The verified source layout supplies room dimensions and propagation;
+the signed Golden World remains immutable.
 
-This slice is deliberately labeled **PREVIEW ONLY**. It maintains local
-overrides above the immutable scenario and cannot write wmediumd. Server-side
-leases, revisions, atomic RF application, measured convergence, and recording
-remain subsequent delivery work.
+Live controls currently cover all bound clients. Gateway/extender motion,
+server-owned destination trajectories, hybrid takeover, recording/export,
+full-room editing, and optimizer authority beyond the existing bounded hero
+policy remain subsequent delivery work.
 
 ### Phase 1: safe interactive preview
 

@@ -92,6 +92,8 @@
   .line-key.target { border-color:#f0ad00; }
   .interaction-card { border-color: #b9a4ca; background: #fbf8ff; }
   .preview-badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #6f3e8e; color: #fff; font-size: 10px; font-weight: 750; letter-spacing: .05em; }
+  .preview-badge.live-rf { background: #176b48; }
+  .preview-badge.observer { background: #8a6220; }
   .interaction-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
   .interaction-actions button { padding: 4px 7px; }
   #interactionSummary { margin-top: 7px; font-size: 12px; }
@@ -178,7 +180,7 @@
   </div>
 
   <div class="card interaction-card" id="interactionCard">
-    <h2>Interactive room <span class="preview-badge">PREVIEW ONLY</span></h2>
+    <h2>Interactive room <span class="preview-badge" id="interactionBadge">PREVIEW ONLY</span></h2>
     <div class="seg" role="group" aria-label="pointer mode">
       <button id="cameraMode" aria-pressed="true">Camera</button>
       <button id="interactMode">Interact</button>
@@ -198,7 +200,7 @@
       <button id="resetSelected" disabled>Reset role</button>
       <button id="resetAll">Reset all</button>
     </div>
-    <div id="interactionHelp">Right-click a client for movement and presence controls. This milestone changes only the browser preview; wmediumd remains unchanged.</div>
+    <div id="interactionHelp">Right-click a client for movement and presence controls. Static-world changes remain a browser preview.</div>
   </div>
 
   <hr>
@@ -227,7 +229,7 @@
     <strong id="roleMenuTitle">Client</strong>
     <button data-role-action="move">Move to destination…</button>
     <button data-role-action="presence">Disappear</button>
-    <button data-role-action="reset">Reset preview</button>
+    <button data-role-action="reset">Reset role</button>
   </div>
   <div id="err"></div>
 </main>
@@ -266,7 +268,8 @@
   let selected = null;       // role name
   let world3d = null;        // three objects for the current world
   const requestedMode = new URLSearchParams(location.search).get('mode');
-  const liveMode = requestedMode === 'live';
+  const interactiveLiveMode = requestedMode === 'interactive';
+  const liveMode = requestedMode === 'live' || interactiveLiveMode;
   const replayMode = requestedMode === 'replay';
   let liveSource = null;
   let liveTerminal = false;
@@ -283,6 +286,18 @@
     awaitingDestination: null,
     menuRole: null,
     hudRole: null,
+    apiEnabled: false,
+    leaseToken: null,
+    leaseOwner: null,
+    leaseTimer: null,
+    revision: 0,
+    initialRoles: {},
+    clientSequence: 0,
+    acknowledgedSequence: 0,
+    requestChain: Promise.resolve(),
+    pendingPosition: null,
+    positionTimer: null,
+    lastPositionSentAt: 0,
   };
   if (liveMode || replayMode) document.body.classList.add('live-presentation');
 
@@ -342,6 +357,7 @@
         const point = floorPoint(e);
         if (point) {
           setPositionOverride(interaction.drag.role, point);
+          schedulePosition(interaction.drag.role, point, false);
           update();
         }
         return;
@@ -361,8 +377,11 @@
     });
     el.addEventListener('pointerup', (e) => {
       if (interaction.drag) {
+        const role = interaction.drag.role;
+        const point = effectivePosition(role, frameAt(tMs)).slice();
         interaction.drag = null;
         main.classList.remove('dragging');
+        schedulePosition(role, point, true);
         update();
         return;
       }
@@ -445,6 +464,140 @@
       interaction.awaitingDestination = null;
       main.classList.remove('awaiting-destination');
     }
+  }
+  function interactionMessage(message, failed = false) {
+    $('#interactionSummary').innerHTML = '<b>' + (failed ? 'Control error' : 'Interactive RF') + '</b> · ' + esc(message);
+  }
+  async function apiJson(url, options = {}) {
+    const response = await fetch(url, Object.assign({
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/json'},
+    }, options));
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body.message || response.status + ' ' + response.statusText);
+      error.status = response.status;
+      error.code = body.error;
+      throw error;
+    }
+    return body;
+  }
+  function applyInteractionSnapshot(snapshot) {
+    interaction.apiEnabled = !!snapshot.enabled;
+    interaction.revision = Number(snapshot.revision || 0);
+    interaction.initialRoles = JSON.parse(JSON.stringify(snapshot.roles || {}));
+    if (interactiveLiveMode) {
+      for (const [role, state] of Object.entries(snapshot.roles || {})) {
+        if (!canInteractWith(role)) continue;
+        interaction.overrides[role] = {
+          position: state.position.slice(), present: !!state.present,
+        };
+      }
+    }
+    const badge = $('#interactionBadge');
+    badge.textContent = interaction.apiEnabled ? 'LIVE RF' : 'OBSERVER';
+    badge.classList.toggle('live-rf', interaction.apiEnabled);
+    badge.classList.toggle('observer', !interaction.apiEnabled);
+    $('#interactionHelp').textContent = interaction.apiEnabled
+      ? 'Select Interact to acquire control. Accepted movements atomically change wmediumd; closing the session restores its exact baseline.'
+      : 'Another browser may observe accepted movements, but live control is unavailable.';
+  }
+  async function refreshInteractionSnapshot() {
+    if (!interactiveLiveMode) return;
+    const snapshot = await apiJson('/api/demo/interactions');
+    applyInteractionSnapshot(snapshot);
+    update();
+  }
+  async function acquireInteractionLease() {
+    if (!interactiveLiveMode || !interaction.apiEnabled) return true;
+    if (interaction.leaseToken) return true;
+    const owner = interaction.leaseOwner ||
+      ('browser-' + Math.random().toString(36).slice(2, 10));
+    try {
+      const lease = await apiJson('/api/demo/interactions/lease', {
+        method: 'POST', body: JSON.stringify({owner}),
+      });
+      interaction.leaseOwner = owner;
+      interaction.leaseToken = lease.token;
+      interaction.revision = Number(lease.revision);
+      clearInterval(interaction.leaseTimer);
+      interaction.leaseTimer = setInterval(async () => {
+        if (!interaction.leaseToken) return;
+        try {
+          const renewed = await apiJson('/api/demo/interactions/lease', {
+            method: 'POST', body: JSON.stringify({token: interaction.leaseToken}),
+          });
+          interaction.revision = Math.max(interaction.revision, Number(renewed.revision));
+        } catch (error) {
+          interaction.leaseToken = null;
+          clearInterval(interaction.leaseTimer);
+          interactionMessage(error.message, true);
+          setInteractionMode('camera');
+        }
+      }, Math.max(5000, Number(lease.lease_seconds || 30) * 500));
+      interactionMessage('control acquired by ' + owner);
+      return true;
+    } catch (error) {
+      interactionMessage(error.message, true);
+      return false;
+    }
+  }
+  function sendMutation(operation, role, payload) {
+    if (!interactiveLiveMode || !interaction.leaseToken) return Promise.resolve(null);
+    const sequence = ++interaction.clientSequence;
+    interaction.requestChain = interaction.requestChain.then(async () => {
+      const body = Object.assign({}, payload, {
+        token: interaction.leaseToken,
+        expected_revision: interaction.revision,
+        client_sequence: sequence,
+      });
+      try {
+        const accepted = await apiJson(
+          '/api/demo/roles/' + encodeURIComponent(role) + '/' + operation,
+          {method: 'PUT', body: JSON.stringify(body)});
+        interaction.revision = Number(accepted.revision);
+        interaction.acknowledgedSequence = Math.max(
+          interaction.acknowledgedSequence, Number(accepted.client_sequence || sequence));
+        return accepted;
+      } catch (error) {
+        if (error.code === 'stale_revision') await refreshInteractionSnapshot();
+        interactionMessage(error.message, true);
+        throw error;
+      }
+    }).catch(() => null);
+    return interaction.requestChain;
+  }
+  function flushPosition() {
+    const pending = interaction.pendingPosition;
+    interaction.pendingPosition = null;
+    interaction.positionTimer = null;
+    if (!pending) return;
+    interaction.lastPositionSentAt = performance.now();
+    sendMutation('position', pending.role, {
+      position: pending.position, final: pending.final,
+    });
+  }
+  function schedulePosition(role, point, final) {
+    if (!interactiveLiveMode || !interaction.leaseToken) return;
+    interaction.pendingPosition = {role, position: point.slice(), final: !!final};
+    const elapsed = performance.now() - interaction.lastPositionSentAt;
+    if (final || elapsed >= 200) {
+      clearTimeout(interaction.positionTimer);
+      flushPosition();
+    } else if (!interaction.positionTimer) {
+      interaction.positionTimer = setTimeout(flushPosition, 200 - elapsed);
+    }
+  }
+  async function releaseInteractionLease() {
+    const token = interaction.leaseToken;
+    interaction.leaseToken = null;
+    clearInterval(interaction.leaseTimer);
+    if (!token) return;
+    try {
+      await apiJson('/api/demo/interactions/lease', {
+        method: 'DELETE', body: JSON.stringify({token}), keepalive: true,
+      });
+    } catch (_error) { /* expiration provides the same safe freeze semantics */ }
   }
   function predictedFor(role, point, g) {
     return interactionModel.predictLinks(world, g, role, point, band);
@@ -878,7 +1031,7 @@
     const selectedUsable = !!preview;
     $('#moveSelected').disabled = !selectedUsable;
     $('#presenceSelected').disabled = !selectedUsable;
-    $('#resetSelected').disabled = !selectedUsable || !interaction.overrides[role];
+    $('#resetSelected').disabled = !selectedUsable || !roleIsModified(role);
     if (!preview) {
       $('#interactionSummary').innerHTML = interaction.mode === 'interact'
         ? 'Click or drag a <b>client</b> in the room.'
@@ -891,7 +1044,10 @@
     const override = interaction.overrides[role];
     const movement = interaction.movement && interaction.movement.role === role
       ? interaction.movement : null;
-    let state = present ? (override ? 'preview moved' : 'scenario position') : 'RF absent preview';
+    let state = present
+      ? (interactiveLiveMode ? (roleIsModified(role) ? 'live moved' : 'live position')
+        : (override ? 'preview moved' : 'scenario position'))
+      : (interactiveLiveMode ? 'RF absent' : 'RF absent preview');
     if (movement) state = 'moving · ' + movement.speed_mps.toFixed(1) + ' m/s';
     if (interaction.awaitingDestination === role) state = 'click a destination';
     $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · ' + esc(state);
@@ -1142,7 +1298,19 @@
   }));
   ['#showLinks', '#showBackhaul', '#showTrails', '#showSta'].forEach((id) => $(id).addEventListener('change', update));
 
-  function setInteractionMode(mode) {
+  function roleIsModified(role) {
+    const current = interaction.overrides[role];
+    const initial = interaction.initialRoles[role];
+    if (!current || !initial) return !!current;
+    return current.present !== initial.present ||
+      Math.abs(current.position[0] - initial.position[0]) > 0.001 ||
+      Math.abs(current.position[1] - initial.position[1]) > 0.001;
+  }
+  async function setInteractionMode(mode) {
+    if (mode === 'interact' && interactiveLiveMode &&
+        !interaction.leaseToken && !(await acquireInteractionLease())) {
+      mode = 'camera';
+    }
     interaction.mode = mode;
     interaction.drag = null;
     if (mode !== 'interact') interaction.awaitingDestination = null;
@@ -1157,13 +1325,15 @@
         : 'drag to orbit · wheel to zoom · shift-drag to pan · space plays');
     update();
   }
-  function beginDestinationSelection(role) {
+  async function beginDestinationSelection(role) {
     if (!canInteractWith(role)) return;
+    if (interactiveLiveMode && !interaction.leaseToken &&
+        !(await acquireInteractionLease())) return;
     selected = role;
     interaction.hudRole = role;
     interaction.movement = null;
     interaction.awaitingDestination = role;
-    setInteractionMode('interact');
+    await setInteractionMode('interact');
     main.classList.add('awaiting-destination');
     $('#interactionSummary').innerHTML = '<b>' + esc(displayRole(role)) + '</b> · click its destination in the room';
   }
@@ -1178,6 +1348,7 @@
     setPositionOverride(role, start);
     if (durationMs < 40) {
       setPositionOverride(role, target);
+      schedulePosition(role, target, true);
       interaction.movement = null;
     } else {
       interaction.movement = {
@@ -1187,15 +1358,33 @@
     }
     update();
   }
-  function togglePresence(role) {
+  async function togglePresence(role) {
     if (!canInteractWith(role)) return;
+    if (interactiveLiveMode && !interaction.leaseToken &&
+        !(await acquireInteractionLease())) return;
     const present = effectivePresent(role, frameAt(tMs).g);
     setPresenceOverride(role, !present);
+    sendMutation('presence', role, {present: !present});
     if (present && interaction.movement && interaction.movement.role === role) interaction.movement = null;
     update();
   }
-  function resetAllInteractions() {
-    for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
+  async function resetLiveRole(role) {
+    const initial = interaction.initialRoles[role];
+    if (!initial) { resetRoleOverride(role); return; }
+    setPositionOverride(role, initial.position);
+    setPresenceOverride(role, initial.present);
+    await sendMutation('position', role, {position: initial.position, final: true});
+    await sendMutation('presence', role, {present: initial.present});
+  }
+  async function resetAllInteractions() {
+    if (interactiveLiveMode) {
+      if (!interaction.leaseToken && !(await acquireInteractionLease())) return;
+      for (const role of Object.keys(interaction.initialRoles)) {
+        if (canInteractWith(role) && roleIsModified(role)) await resetLiveRole(role);
+      }
+    } else {
+      for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
+    }
     interaction.movement = null;
     interaction.awaitingDestination = null;
     main.classList.remove('awaiting-destination', 'dragging');
@@ -1207,6 +1396,8 @@
     const fraction = (now - movement.started_at) / movement.duration_ms;
     setPositionOverride(movement.role,
       interactionModel.interpolate(movement.start, movement.destination, fraction));
+    const point = effectivePosition(movement.role, frameAt(tMs)).slice();
+    schedulePosition(movement.role, point, fraction >= 1);
     if (fraction >= 1) interaction.movement = null;
     return true;
   }
@@ -1217,7 +1408,8 @@
   $('#presenceSelected').addEventListener('click', () => togglePresence(interaction.hudRole || selected));
   $('#resetSelected').addEventListener('click', () => {
     const role = interaction.hudRole || selected;
-    if (role) resetRoleOverride(role);
+    if (role && interactiveLiveMode) resetLiveRole(role);
+    else if (role) resetRoleOverride(role);
     update();
   });
   $('#resetAll').addEventListener('click', resetAllInteractions);
@@ -1228,7 +1420,11 @@
     hideRoleMenu();
     if (action === 'move') beginDestinationSelection(role);
     else if (action === 'presence') togglePresence(role);
-    else if (action === 'reset') { resetRoleOverride(role); update(); }
+    else if (action === 'reset') {
+      if (interactiveLiveMode) resetLiveRole(role);
+      else resetRoleOverride(role);
+      update();
+    }
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
@@ -1260,6 +1456,10 @@
     if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
     if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
+    if (event.kind === 'interaction.position.accepted') return displayRole(p.role) + ' RF position applied';
+    if (event.kind === 'interaction.presence.accepted') return displayRole(p.role) + (p.present ? ' reappeared' : ' disappeared');
+    if (event.kind === 'interaction.lease.acquired') return 'Interactive control acquired';
+    if (event.kind === 'interaction.lease.released' || event.kind === 'interaction.lease.expired') return 'Interactive control released';
     if (event.kind === 'worker.error') return (p.fatal ? 'ERROR' : 'Transient warning') + ': ' + p.worker;
     if (event.kind === 'rf.restore.started') return 'Restoring the original RF matrix';
     if (event.kind === 'rf.restore.completed') return p.verified ? 'RF baseline restored' : 'RF restoration failed';
@@ -1279,6 +1479,21 @@
       verificationState = event.payload;
       actionPulseUntil = performance.now() + 6000;
     } else if (event.kind === 'demo.mark') storyState = event.payload.label;
+    else if (event.kind === 'interaction.position.accepted' ||
+             event.kind === 'interaction.presence.accepted') {
+      const p = event.payload || {};
+      interaction.revision = Math.max(interaction.revision, Number(p.revision || 0));
+      if (canInteractWith(p.role)) {
+        const locallyMoving = interaction.leaseToken &&
+          ((interaction.drag && interaction.drag.role === p.role) ||
+           (interaction.movement && interaction.movement.role === p.role));
+        const prior = interaction.overrides[p.role] || {};
+        interaction.overrides[p.role] = Object.assign({}, prior, {
+          position: locallyMoving && prior.position ? prior.position : p.position.slice(),
+          present: !!p.present,
+        });
+      }
+    }
     const label = eventLabel(event);
     if (label) recentEvents.push({world_time_ms: event.world_time_ms, label});
     if (recentEvents.length > 30) recentEvents = recentEvents.slice(-30);
@@ -1308,13 +1523,17 @@
     $('#scrub').disabled = true;
     $('#play').disabled = true;
     document.querySelectorAll('[data-speed]').forEach((button) => { button.disabled = true; });
-    $('#viewerTitle').textContent = 'EasyMesh immersive room demo';
-    $('#hint').textContent = 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan';
+    $('#viewerTitle').textContent = interactiveLiveMode
+      ? 'EasyMesh interactive room' : 'EasyMesh immersive room demo';
+    $('#hint').textContent = interactiveLiveMode
+      ? 'select Interact for live RF control · Camera orbits the room'
+      : 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan';
     try {
       const stateResponse = await fetch('/api/demo/current', { cache: 'no-store' });
       if (!stateResponse.ok) throw new Error(stateResponse.status + ' ' + stateResponse.statusText);
       const state = await stateResponse.json();
       await fetchWorldUrl(state.world_url);
+      if (interactiveLiveMode) await refreshInteractionSnapshot();
       applyLiveState(state);
       liveSource = new EventSource('/api/demo/events?after=' + encodeURIComponent(state.sequence));
       liveSource.onopen = () => {
@@ -1337,6 +1556,7 @@
       err('Could not enter live mode: ' + e.message);
     }
   }
+  window.addEventListener('pagehide', () => { releaseInteractionLease(); });
   function applyReplayUntil(value) {
     if (value < replayAppliedTime) {
       resetEventState(); replayIndex = 0;
