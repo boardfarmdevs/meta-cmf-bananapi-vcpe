@@ -150,6 +150,9 @@ class LiveConductor:
         room_state: Callable[[], dict[str, Any]] | None = None,
         interactive: bool = False,
         maximum_actions: int | None = None,
+        steering_transaction: Callable[
+            [str, str, str, str, Callable[[], Any]], Any
+        ] | None = None,
     ) -> None:
         if mode not in {"stimulus", "recommend", "act"}:
             raise ValueError(f"unsupported demo mode {mode!r}")
@@ -162,6 +165,7 @@ class LiveConductor:
         self.room_state = room_state
         self.interactive = interactive
         self.maximum_actions = maximum_actions
+        self.steering_transaction = steering_transaction
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
         self.errors: list[str] = []
@@ -819,13 +823,20 @@ class LiveConductor:
                         "action_window_open": window_open,
                         "automatic_actuation": self.mode == "act",
                         "automatic_actuation_ready": can_act,
+                        "actuation_path": (
+                            "room_serialized_rf_assist_btm"
+                            if self.steering_transaction is not None else
+                            "btm_request"
+                        ),
                         "optimization_goal": "best_eligible_same_network_band_ap",
                         "minimum_target_gain_rcpi": policy.config.minimum_target_gain_rcpi,
                         "fleet": {
                             **fleet,
                             "actionable_clients": len(steer_decisions),
                         },
-                        "actions_used": self.action_attempts,
+                        "actions_used": self.action_attempts + int(
+                            selected_action is not None and can_act
+                        ),
                         "maximum_actions": maximum_actions,
                         "observation_elapsed_ms": round(
                             (time.monotonic() - cycle_started) * 1000, 3
@@ -844,7 +855,27 @@ class LiveConductor:
                          "decision": decision.to_dict()},
                         producer="optimizer",
                     )
-                    result = actuator.execute(decision, snapshot)
+                    source_ap_role = self._ap_role_by_bssid.get(
+                        decision.source_bssid
+                    )
+                    target_ap_role = self._ap_role_by_bssid.get(
+                        decision.target_bssid or ""
+                    )
+                    execute_action = lambda: actuator.execute(decision, snapshot)
+                    if self.steering_transaction is not None:
+                        if source_ap_role is None or target_ap_role is None:
+                            raise ValueError(
+                                "steering source or target is not bound to a room AP"
+                            )
+                        result = self.steering_transaction(
+                            subject_role,
+                            source_ap_role,
+                            target_ap_role,
+                            decision.target_band or decision.current_band or "",
+                            execute_action,
+                        )
+                    else:
+                        result = execute_action()
                     if result.success:
                         self.action_successes += 1
                     self.store.emit(

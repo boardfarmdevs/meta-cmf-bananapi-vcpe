@@ -226,6 +226,24 @@ class RoomEngine:
     def recorded_world(self) -> dict[str, Any]:
         return self._call("recorded_world")
 
+    def steering_action(
+        self,
+        station_role: str,
+        source_ap_role: str,
+        target_ap_role: str,
+        band: str,
+        action: Callable[[], Any],
+    ) -> Any:
+        """Serialize optimizer RF assistance with all interactive mutations."""
+        return self._call(
+            "steering_action",
+            station_role,
+            source_ap_role,
+            target_ap_role,
+            band,
+            action,
+        )
+
     def recorded_documents(
         self,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:

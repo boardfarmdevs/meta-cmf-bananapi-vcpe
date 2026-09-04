@@ -224,25 +224,40 @@ this closed loop:
    without allowing the room to change during that transaction;
 6. apply the gain and five-second hold policy to every client;
 7. select at most one client, preferring the largest measured RCPI gain;
-8. discard stale non-serving scan-cache records and use a directed scan to
+8. enter one RoomEngine-owned steering transaction. The already-selected
+   target is temporarily made unambiguous to hwsim on the selected band, in
+   both directions: target `60 dB` SNR, source `20 dB`, and other APs
+   `-20 dB`;
+9. discard stale non-serving scan-cache records and use a directed scan to
    resolve only the nominated BSSID and SSID, including the hidden `iot_ssid`,
    then send a graceful mandated BTM through `gen/steer.sh --request-only`;
    if the client declines it, retry once with Disassociation Imminent while
-   retaining the same measured target; and
-9. verify the physical BSSID, controller ownership and traffic before checking
-   the whole fleet again.
+   retaining the same measured target;
+10. atomically restore and read back the exact authoritative room RF matrix,
+    start a new measurement epoch, and reject telemetry sampled while the
+    steering assist was active; and
+11. verify the physical BSSID, controller ownership and traffic before
+    checking the whole fleet again.
 
-The request-only path does not install another RF bias and does not force a
-client roam. Its targeted cache refresh establishes hidden-BSS ESS identity
-and prevents stale hwsim VAP records from competing with the nominated AP, but
-leaves the current room RF matrix untouched. The continuous path first avoids
-the BTM Disassociation Imminent flag so a cooperative client can move without
-being kicked off its serving BSS. If it declines, the same transaction makes
-one disassociation-imminent retry; the verifier still requires the exact
+The temporary RF assist is an explicit hwsim actuation aid, not an optimizer
+input and not an independent candidate measurement. The optimizer chooses the
+target first, solely from the controller's current and candidate telemetry.
+Only RoomEngine may then apply the temporary values; browser movement and
+other medium mutations are serialized behind it. The request-only steering
+helper cannot install a competing RF bias and cannot directly force a roam.
+The client still changes AP through the controller, EasyMesh Client Steering
+Request, 802.11v BTM, supplicant, authentication and association path.
+
+This assist is necessary because multiple hwsim VAP scan entries can otherwise
+present indistinguishable client-side signal values even when controller
+candidate RCPI correctly identifies a unique best AP. Every assist is visible
+as `rf.steering_assist.started` and `rf.steering_assist.completed` evidence.
+The latter must report `room_matrix_restored=true`. The continuous path first
+avoids the BTM Disassociation Imminent flag so a cooperative client can move
+without being kicked off its serving BSS. If it declines, the same transaction
+makes one disassociation-imminent retry; the verifier still requires the exact
 nominated BSSID and does not count a landing on a different AP as success. A
-later fleet cycle retries any unresolved client from its new live state. The
-client changes AP only through the normal controller, EasyMesh, BTM,
-supplicant and association path.
+later fleet cycle retries any unresolved client from its new live state.
 Full initial convergence may take several minutes because controller candidate
 queries and steering transactions are serialized deliberately. After the
 fleet converges, measurements continue indefinitely; a later room movement or

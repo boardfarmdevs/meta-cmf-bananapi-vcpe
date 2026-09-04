@@ -994,6 +994,182 @@ class InteractiveMediumSession:
             self.recovery.committed(generation)
         return applied
 
+    def steering_action(
+        self,
+        station_role: str,
+        source_ap_role: str,
+        target_ap_role: str,
+        band: str,
+        action: Callable[[], Any],
+    ) -> Any:
+        """Run one BTM action under a temporary, exactly-restored RF assist.
+
+        The optimizer has already selected the target from controller telemetry
+        before this method is entered.  This transaction only makes that one
+        nominated target unambiguous to hwsim's client-side scan/roam logic.
+        RoomEngine serialization prevents an interactive move from racing the
+        temporary generation, and the authoritative room matrix is restored
+        and read back before this method returns.
+        """
+        with self._lock:
+            if self._client is None:
+                raise InteractionError(
+                    503, "not_started", "interactive medium is unavailable"
+                )
+            if self._faulted is not None:
+                raise InteractionError(
+                    503, "session_faulted", self._faulted
+                )
+            if station_role not in self._allowed_roles:
+                raise InteractionError(
+                    400, "role_not_interactive",
+                    f"role {station_role!r} is not an interactive station",
+                )
+            if source_ap_role == target_ap_role:
+                raise InteractionError(
+                    409, "same_steering_ap", "source and target AP are identical"
+                )
+            ap_roles = sorted(
+                role for role, kind in self.world["roles"].items()
+                if kind == "fronthaul_ap"
+            )
+            if source_ap_role not in ap_roles or target_ap_role not in ap_roles:
+                raise InteractionError(
+                    400, "unknown_steering_ap", "source or target AP is not in the room"
+                )
+            target_binding = self.plan["bindings"][target_ap_role]
+            frequency = target_binding.get("fronthaul_frequencies_mhz", {}).get(band)
+            if frequency is None:
+                raise InteractionError(
+                    400, "unsupported_steering_band",
+                    f"target AP has no {band} GHz fronthaul",
+                )
+            frequency = int(frequency)
+            station_mac = str(
+                self.plan["bindings"][station_role]["radio_tx_mac"]
+            )
+            prior: list[dict[str, Any]] = []
+            temporary: list[dict[str, Any]] = []
+            for ap_role in ap_roles:
+                binding = self.plan["bindings"][ap_role]
+                if int(binding.get("fronthaul_frequencies_mhz", {}).get(band, -1)) != frequency:
+                    continue
+                radio = binding.get("band_radios", {}).get(band)
+                ap_mac = str((radio or {}).get("tx_mac") or binding["radio_tx_mac"])
+                desired = (
+                    60 if ap_role == target_ap_role
+                    else 20 if ap_role == source_ap_role
+                    else -20
+                )
+                for source, destination in (
+                    (ap_mac, station_mac), (station_mac, ap_mac)
+                ):
+                    key = (source, destination, frequency)
+                    if key not in self._applied_values:
+                        raise InteractionError(
+                            500, "steering_link_missing",
+                            f"room has no applied link {source} -> {destination} "
+                            f"at {frequency} MHz",
+                        )
+                    value, overridden = self._applied_values[key]
+                    prior.append({
+                        "source": source,
+                        "destination": destination,
+                        "frequency_mhz": frequency,
+                        "value": value,
+                        "override": overridden,
+                    })
+                    if (value, overridden) != (desired, True):
+                        temporary.append({
+                            "source": source,
+                            "destination": destination,
+                            "frequency_mhz": frequency,
+                            "value": desired,
+                            "override": True,
+                        })
+
+            self.store.emit(
+                "rf.steering_assist.started", self._world_time(),
+                {
+                    "station_role": station_role,
+                    "source_ap_role": source_ap_role,
+                    "target_ap_role": target_ap_role,
+                    "band": band,
+                    "frequency_mhz": frequency,
+                    "source_snr_db": 20,
+                    "target_snr_db": 60,
+                    "other_snr_db": -20,
+                    "changed_link_count": len(temporary),
+                },
+                producer="room-engine",
+            )
+            result: Any = None
+            action_error: BaseException | None = None
+            temporary_active = False
+            try:
+                if temporary:
+                    applied = self._apply_generation(temporary)
+                    temporary_active = True
+                    for item in applied:
+                        key = (
+                            item["source"], item["destination"],
+                            item["frequency_mhz"],
+                        )
+                        _, value, overridden = self._client.get_frequency_link(*key)
+                        if (value, overridden) != (item["value"], item["override"]):
+                            raise ActuatorError(
+                                "steering assist generation readback mismatch"
+                            )
+                        self._applied_values[key] = (value, overridden)
+                result = action()
+            except BaseException as error:
+                action_error = error
+            finally:
+                if temporary_active:
+                    restored = self._apply_generation(prior)
+                    for item in restored:
+                        key = (
+                            item["source"], item["destination"],
+                            item["frequency_mhz"],
+                        )
+                        _, value, overridden = self._client.get_frequency_link(*key)
+                        if (value, overridden) != (item["value"], item["override"]):
+                            self._faulted = (
+                                "steering assist failed to restore the room RF matrix"
+                            )
+                            if self.recovery is not None:
+                                self.recovery.failed(self._faulted)
+                            raise ActuatorError(self._faulted)
+                        self._applied_values[key] = (value, overridden)
+                    # Measurements collected while the temporary steering
+                    # matrix was active are not room truth.  Make the exact
+                    # restoration a new environment epoch so the optimizer
+                    # requires a fresh serving-link observation before its
+                    # next fleet decision.
+                    self._mark_rf_committed(station_role)
+                self.store.emit(
+                    "rf.steering_assist.completed", self._world_time(),
+                    {
+                        "station_role": station_role,
+                        "source_ap_role": source_ap_role,
+                        "target_ap_role": target_ap_role,
+                        "band": band,
+                        "frequency_mhz": frequency,
+                        "room_matrix_restored": True,
+                        "action_success": (
+                            None if result is None else
+                            bool(getattr(result, "success", True))
+                        ),
+                        "error": None if action_error is None else str(action_error),
+                        "daemon_generation": self._generation,
+                        "environment_epoch": self._environment_epoch,
+                    },
+                    producer="room-engine",
+                )
+            if action_error is not None:
+                raise action_error
+            return result
+
     def _mark_rf_committed(self, role: str | None = None) -> None:
         self._environment_epoch += 1
         self._last_rf_apply_monotonic = time.monotonic()

@@ -1361,6 +1361,7 @@
       const used = Number(optimizerState.actions_used || 0);
       const limit = Number(optimizerState.maximum_actions || 0);
       const fleet = optimizerState.fleet || {};
+      const assisted = optimizerState.actuation_path === 'room_serialized_rf_assist_btm';
       const stronger = Number(fleet.clients_with_stronger_ap || 0);
       const checked = Number(fleet.clients_checked || 0);
       const total = Number(fleet.clients_evaluated || 0);
@@ -1376,6 +1377,8 @@
         '<span>Fleet check</span><b>' + esc(checked) + ' / ' + esc(total) + ' clients</b>' +
         '<span>Stronger AP available</span><b>' + esc(stronger) + '</b>' +
         '<span>Action budget</span><b>' + esc(used) + ' / ' + esc(limit || '—') + '</b>' +
+        '<span>Actuation path</span><b>' + (assisted
+          ? 'serialized RF assist + BTM' : 'BTM request') + '</b>' +
         '<span>Automatic steering</span><b>' + (automatic
           ? (used >= limit ? 'limit reached' : fleet.converged ? 'fleet converged' :
             optimizerState.automatic_actuation_ready ? 'reconciling fleet' : 'waiting')
@@ -1788,6 +1791,12 @@
       return 'Optimizer waiting: ' + String(p.reason || 'fresh telemetry').replaceAll('_', ' ');
     }
     if (event.kind === 'optimizer.environment.changed') return 'RF changed; optimizer hold restarted';
+    if (event.kind === 'rf.steering_assist.started') {
+      return 'Steering RF assist: ' + displayRole(p.station_role) + ' → ' + displayRole(p.target_ap_role);
+    }
+    if (event.kind === 'rf.steering_assist.completed') {
+      return p.room_matrix_restored ? 'Room RF matrix restored exactly' : 'Room RF restoration failed';
+    }
     if (event.kind === 'optimizer.action') return p.phase === 'requested' ? 'BTM steer requested' : 'Steering request submitted';
     if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';

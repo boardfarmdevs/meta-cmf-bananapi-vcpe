@@ -233,6 +233,71 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertTrue(self.client.closed)
         self.assertTrue(self.store.current()["restored"])
 
+    def test_steering_assist_is_atomic_and_restores_room_matrix(self):
+        before_generation = self.client.generation
+        before_values = dict(self.client.values)
+        before_epoch = self.session.snapshot()["environment_epoch"]
+        observed = {}
+
+        def action():
+            observed["values"] = dict(self.client.values)
+            return "btm-submitted"
+
+        result = self.session.steering_action(
+            "sta_01", "gateway", "extender_1", "5", action
+        )
+
+        self.assertEqual(result, "btm-submitted")
+        self.assertEqual(self.client.generation, before_generation + 2)
+        self.assertEqual(self.client.values, before_values)
+        self.assertEqual(
+            observed["values"][(
+                "02:00:00:00:02:20", "02:00:00:00:03:00", 5180
+            )],
+            (60, True),
+        )
+        self.assertEqual(
+            observed["values"][(
+                "02:00:00:00:03:00", "02:00:00:00:02:20", 5180
+            )],
+            (60, True),
+        )
+        self.assertEqual(
+            observed["values"][(
+                "02:00:00:00:01:20", "02:00:00:00:03:00", 5180
+            )],
+            (20, True),
+        )
+        snapshot = self.session.snapshot()
+        self.assertEqual(snapshot["environment_epoch"], before_epoch + 1)
+        self.assertEqual(snapshot["last_rf_role"], "sta_01")
+        events = self.store.all()
+        self.assertIn("rf.steering_assist.started", [item["kind"] for item in events])
+        completed = next(
+            item for item in events
+            if item["kind"] == "rf.steering_assist.completed"
+        )
+        self.assertTrue(completed["payload"]["room_matrix_restored"])
+        self.assertEqual(completed["payload"]["environment_epoch"], before_epoch + 1)
+
+    def test_steering_assist_restores_after_action_failure(self):
+        before_values = dict(self.client.values)
+
+        def action():
+            raise RuntimeError("BTM failed")
+
+        with self.assertRaisesRegex(RuntimeError, "BTM failed"):
+            self.session.steering_action(
+                "sta_01", "gateway", "extender_1", "5", action
+            )
+        self.assertEqual(self.client.values, before_values)
+        completed = next(
+            item for item in self.store.all()
+            if item["kind"] == "rf.steering_assist.completed"
+        )
+        self.assertTrue(completed["payload"]["room_matrix_restored"])
+        self.assertEqual(completed["payload"]["error"], "BTM failed")
+
     def test_runtime_world_carries_source_geometry(self):
         runtime = InteractiveMediumSession.runtime_world(WORLD, LAYOUT)
         self.assertEqual(runtime["space"], LAYOUT["space"])
@@ -377,6 +442,22 @@ class RoomEngineTests(unittest.TestCase):
         self.assertEqual(movement["status"], "completed")
         self.assertTrue(self.engine.close())
         self.assertEqual(len(self.client.thread_ids), 1)
+
+    def test_steering_transaction_runs_on_the_medium_actor(self):
+        caller = threading.get_ident()
+        action_threads = []
+        self.engine.start()
+
+        result = self.engine.steering_action(
+            "sta_01", "gateway", "extender_1", "5",
+            lambda: action_threads.append(threading.get_ident()) or "submitted",
+        )
+
+        self.assertEqual(result, "submitted")
+        self.assertEqual(len(action_threads), 1)
+        self.assertNotEqual(action_threads[0], caller)
+        self.assertIn(action_threads[0], self.client.thread_ids)
+        self.assertTrue(self.engine.close())
 
     def test_close_during_movement_does_not_deadlock_or_accept_late_work(self):
         self.engine.start()

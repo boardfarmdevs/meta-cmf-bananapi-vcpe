@@ -296,6 +296,7 @@ def _interactive(args) -> int:
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
         interactive=True, maximum_actions=maximum_actions,
+        steering_transaction=interactions.steering_action,
     )
     server = RoomDemoServer(
         args.listen,
