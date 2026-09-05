@@ -222,8 +222,9 @@ this closed loop:
    complete roster on startup, or the moved client after an edit);
 5. collect same-SSID, same-band candidate measurements for all 20 clients
    without allowing the room to change during that transaction. In simulated
-   mode, the query channel is derived from the compiled live hwsim frequency,
-   not a stale requested channel retained in controller configuration;
+   mode, each exact BSSID's query channel is derived from its compiled live
+   hwsim frequency, not a stale requested channel retained in controller
+   configuration. Different agents may use different live channels;
 6. apply the gain and five-second hold policy to every client;
 7. select at most one client, preferring the largest measured RCPI gain;
 8. enter one RoomEngine-owned steering transaction. The already-selected

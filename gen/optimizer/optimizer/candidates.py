@@ -117,6 +117,7 @@ class ControllerCandidateProvider:
         retry_delay_seconds: float = 0.25,
         client_selector: ClientSelector | None = None,
         simulated_control_channels: dict[str, int] | None = None,
+        simulated_bss_channels: dict[str, int] | None = None,
     ) -> None:
         if max_parallel_agents < 1:
             raise ValueError("max_parallel_agents must be positive")
@@ -140,13 +141,24 @@ class ControllerCandidateProvider:
                 simulated_control_channels or LAB_CONTROL_CHANNELS
             ).items()
         }
+        self.simulated_bss_channels = {
+            normalize_mac(bssid): int(channel)
+            for bssid, channel in (simulated_bss_channels or {}).items()
+        }
         self.last_raw: list[dict[str, Any]] = []
         self.last_rejected_candidate_keys: set[tuple[str, str]] = set()
         self.last_selected_sta_macs: set[str] = set()
 
     def _channel(self, raw: dict[str, Any]) -> int:
         band = normalize_band(raw.get("band"))
+        bssid = normalize_mac(raw["bssid"]) if raw.get("bssid") else None
         channel = int(raw.get("channel") or 0)
+        if (
+            self.allow_simulated
+            and bssid is not None
+            and bssid in self.simulated_bss_channels
+        ):
+            return self.simulated_bss_channels[bssid]
         if (
             self.allow_simulated
             and band in self.simulated_control_channels

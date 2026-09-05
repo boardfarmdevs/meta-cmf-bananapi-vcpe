@@ -15,12 +15,42 @@ from room_demo.conductor import (
     LiveConductor,
     _deferred_state,
     _fleet_status,
+    _simulated_bss_channels,
     _single_action_state,
 )
 from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def test_live_simulated_channels_are_mapped_per_bssid(self):
+        plan = {"bindings": {
+            "extender_1": {
+                "role_type": "fronthaul_ap",
+                "band_radios": {"6": {
+                    "frequency_mhz": 5955,
+                    "interfaces": [{
+                        "mac": "02:00:00:00:01:60",
+                        "frequency_mhz": 5955,
+                    }],
+                }},
+            },
+            "extender_2": {
+                "role_type": "fronthaul_ap",
+                "band_radios": {"6": {
+                    "frequency_mhz": 6135,
+                    "interfaces": [{
+                        "mac": "02:00:00:00:02:60",
+                        "frequency_mhz": 6135,
+                    }],
+                }},
+            },
+        }}
+
+        self.assertEqual(_simulated_bss_channels(plan), {
+            "02:00:00:00:01:60": 1,
+            "02:00:00:00:02:60": 37,
+        })
+
     def test_unexpected_worker_failure_is_retained_as_fatal(self):
         conductor, store = self._conductor()
 

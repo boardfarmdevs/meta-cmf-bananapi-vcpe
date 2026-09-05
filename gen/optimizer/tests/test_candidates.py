@@ -106,7 +106,7 @@ def test_simulated_provider_uses_live_channel_over_controller_requested_channel(
         "http://controller",
         requester=request,
         allow_simulated=True,
-        simulated_control_channels={"2.4": 6, "5": 36, "6": 1},
+        simulated_bss_channels={BSSID: 1},
     )
     six_client = replace(client(), band="6")
     six_candidate = replace(inventory(), band="6")

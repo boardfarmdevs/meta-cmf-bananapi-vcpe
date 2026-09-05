@@ -146,25 +146,23 @@ def _channel_for_frequency(band: str, frequency_mhz: int) -> int:
     raise ValueError(f"unsupported compiled radio band {band!r}")
 
 
-def _simulated_control_channels(plan: dict[str, Any]) -> dict[str, int]:
-    """Return one authoritative live channel per simulated fronthaul band."""
+def _simulated_bss_channels(plan: dict[str, Any]) -> dict[str, int]:
+    """Map each live simulated BSSID to its compiled operating channel."""
     result: dict[str, int] = {}
-    aps = [
-        value for value in plan["bindings"].values()
-        if value["role_type"] == "fronthaul_ap"
-    ]
-    for band in ("2.4", "5", "6"):
-        frequencies = {
-            int(value["fronthaul_frequencies_mhz"][band])
-            for value in aps
-            if band in value.get("fronthaul_frequencies_mhz", {})
-        }
-        if len(frequencies) != 1:
-            raise ValueError(
-                f"room requires one live hwsim frequency for {band} GHz; "
-                f"found {sorted(frequencies)}"
-            )
-        result[band] = _channel_for_frequency(band, frequencies.pop())
+    for value in plan["bindings"].values():
+        if value["role_type"] != "fronthaul_ap":
+            continue
+        for band, radio in value.get("band_radios", {}).items():
+            fallback_frequency = radio.get("frequency_mhz")
+            for interface in radio.get("interfaces", []):
+                mac = interface.get("mac")
+                frequency = interface.get("frequency_mhz", fallback_frequency)
+                if mac and frequency:
+                    result[mac.lower()] = _channel_for_frequency(
+                        band, int(frequency)
+                    )
+    if not result:
+        raise ValueError("compiled room has no live simulated BSS channels")
     return result
 
 
@@ -648,7 +646,7 @@ class LiveConductor:
                 (self.interactive or client.sta_mac == self.hero_mac)
                 and policy.requires_candidate_measurement(client, observed_at)
             ),
-            simulated_control_channels=_simulated_control_channels(self.plan),
+            simulated_bss_channels=_simulated_bss_channels(self.plan),
         )
         observer = ControllerObserver(self.base_url, candidate_provider=provider)
         verify_observer = ControllerObserver(self.base_url)
