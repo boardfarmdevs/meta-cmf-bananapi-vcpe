@@ -32,7 +32,7 @@ console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
 room_address=${EASYMESH_ROOM_DEMO_HOST_IP:-$webui_address}
 room_port=${EASYMESH_ROOM_DEMO_PORT:-18891}
 http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
-boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8}
+boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-ddb5a2b9e1707562595afc7e4000a3b8efa3cd81}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
 extender_image=${EASYMESH_EXTENDER_IMAGE:-}
@@ -103,7 +103,7 @@ wait_agent() {
 }
 
 wait_http_ready() {
-    local label=$1 url=$2 retries
+    local label=$1 url=$2 deadline remaining request_timeout delay
     case "$http_ready_timeout" in
         ''|*[!0-9]*|0)
             echo "EASYMESH_LXD_HTTP_READY_TIMEOUT must be a positive integer" >&2
@@ -113,13 +113,23 @@ wait_http_ready() {
     # LXD's outer proxy may answer 503 briefly after the VM agent and the
     # guest-side service are ready. Bound the wait independently from each
     # connection/response attempt and require the real endpoint to return 2xx.
-    retries=$((http_ready_timeout / 2 + 1))
-    if curl -fsS --retry-all-errors --retry "$retries" --retry-delay 2 \
-        --retry-max-time "$http_ready_timeout" --connect-timeout 2 \
-        --max-time 10 "$url" >/dev/null; then
-        printf '%s ready: %s\n' "$label" "$url"
-        return 0
-    fi
+    deadline=$((SECONDS + http_ready_timeout))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        remaining=$((deadline - SECONDS))
+        [ "$remaining" -gt 0 ] || break
+        request_timeout=$remaining
+        [ "$request_timeout" -le 10 ] || request_timeout=10
+        if curl -fsS --connect-timeout 2 --max-time "$request_timeout" \
+            "$url" >/dev/null; then
+            printf '%s ready: %s\n' "$label" "$url"
+            return 0
+        fi
+        remaining=$((deadline - SECONDS))
+        [ "$remaining" -gt 0 ] || break
+        delay=$remaining
+        [ "$delay" -le 2 ] || delay=2
+        sleep "$delay"
+    done
     printf '%s did not become ready within %ss: %s\n' \
         "$label" "$http_ready_timeout" "$url" >&2
     return 1
@@ -244,7 +254,7 @@ push_inputs() {
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
         [easymesh-labctl]=gen/vm/scripts/guest/easymesh-labctl
-        [easymesh-health-audit]=gen/tests/health-audit.sh
+        [easymesh-health-audit]=gen/vm/scripts/guest/easymesh-health-audit
         [easymesh-package-cleanup]=gen/vm/scripts/guest/easymesh-package-cleanup
         [easymesh-prepare-thin-package]=gen/vm/scripts/guest/easymesh-prepare-thin-package
         [easymesh-complete-thin-firstboot]=gen/vm/scripts/guest/easymesh-complete-thin-firstboot
@@ -262,7 +272,7 @@ push_inputs() {
         "$name/home/easymesh/scale-topology.sh"
     lxc file push --mode 0755 "$root/gen/vm/scripts/61-return-steering-regression.sh" \
         "$name/home/easymesh/return-steering-test.sh"
-    lxc file push --mode 0755 "$root/gen/tests/health-audit.sh" \
+    lxc file push --mode 0755 "$root/gen/vm/scripts/guest/easymesh-health-audit" \
         "$name/home/easymesh/health-audit.sh"
     lxc exec "$name" -- chown -R easymesh:easymesh \
         /home/easymesh/easymesh-assets /home/easymesh/easymesh-provision \

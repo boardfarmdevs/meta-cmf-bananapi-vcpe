@@ -338,10 +338,17 @@ authority. Its dependency order is:
 86. replace those split titles with quoted "iot" and "private" labels in dark
     gray and dark blue, with padded placement and a wider clear client-link sector; and
 87. fit Optimize Layout to the available viewport without moving manually
-    positioned extenders, Agent-1, Controller, or clients.
+    positioned extenders, Agent-1, Controller, or clients;
+88. preserve onboarding state while answering early client-capability queries
+    (`0154`); and
+89. serialize command queues, statistics, candidate response/ACK completion and
+    controller radio-timer command access with a recursive lifetime guard
+    (`0155`). Preprocessing that stops/deletes radio threads stays outside the
+    guard. The compiled concurrency regression is
+    `gen/tests/orchestrator-completion-race-test.py SOURCE_TREE`.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0153`; the
+component or image build. The current source series ends at `0155`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
@@ -443,6 +450,15 @@ images come from the recorded source revision and the clean deployment passes
 model, metrics, backhaul, traffic, restart, steering, Console, and restoration
 gates. The exact build and runtime procedures are in
 [operations](../guide/operations.md).
+
+The controller's checked-in `em-cli.tar.gz` Go helper is a versioned recipe
+input, not Yocto sstate. Its SHA-256 is
+`fc0f610e61392a045215e4d04076468b759fd9f97ab7dcbb83c7b5173d96506b`
+(last refreshed in `bc2fcd8`). The 0905 changes do not alter its Go handlers.
+The recipe always overlays `index.html`, `script.js`, and `style.css` from
+the patched source, so the old static files inside the helper archive cannot
+mask the `0150`–`0153` WebUI changes. Changes to production Go sources require
+the separate rebuild procedure in the [build guide](../../build/README.md).
 
 ## Remaining engineering debt
 

@@ -3,7 +3,8 @@
 Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
 engineers.
 
-Status: current documentation for `codex/0902-clean` and the 0904 appliance.
+Status: current documentation for `codex/0905-clean` and the 0905 appliance;
+see [current state](current-state.md) for completed qualification evidence.
 
 This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
 node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel
@@ -85,6 +86,7 @@ boundary:
 - [Consolidated patch set](reference/patch-set.md)
 - [MediaTek single-wiphy radio model](reference/single-wiphy-radio-model.md)
 - [Metrics reporting and APIs](reference/metrics.md)
+- [Nested LXD UI and Prometheus/Grafana monitoring](reference/lxd-ui-and-monitoring.md)
 - [Commanded EasyMesh steering](reference/commanded-steering.md)
 - [wmediumd client carousel](reference/client-carousel.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)

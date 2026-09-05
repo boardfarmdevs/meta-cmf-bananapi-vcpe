@@ -1,0 +1,30 @@
+Subject: [PATCH] agent: preserve radio state when replying to client capability queries
+
+A client capability query is a synchronous read/reply, not completion of
+radio onboarding. The handler nevertheless marked its radio configured,
+including when report validation or transmission failed. During the 0905
+appliance reboot, early backhaul-client queries hit two extender radios
+before their WSC exchange. Those radios skipped configuration and the
+controller remained at 34 rather than 50 BSS records.
+
+Reply without changing the radio state. This also preserves pending M2,
+OneWifi configuration, topology synchronization and steering transactions
+when an unrelated capability query arrives. Retain the existing reply,
+message identifier, validation and failure reporting paths.
+
+Upstream-Status: Pending
+---
+ src/em/capability/em_capability.cpp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/em/capability/em_capability.cpp b/src/em/capability/em_capability.cpp
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -965,7 +965,6 @@ void em_capability_t::handle_client_cap_query(unsigned char *buff, unsigned int len)
+         em_printfout("Client cap report send failed for sta=%s",
+                 util::mac_to_string(sta).c_str());
+     }
+-    set_state(em_state_agent_configured);
+ }
+ 
+ int em_capability_t::handle_bsta_cap_query(unsigned char *buff, unsigned int len)

@@ -1,5 +1,9 @@
 # STA and AP metrics reporting
 
+For container CPU, memory, disk, processes and network counters, see
+[nested LXD UI and Prometheus/Grafana monitoring](lxd-ui-and-monitoring.md).
+Those resource metrics are separate from the EasyMesh radio reports below.
+
 ## Current state
 
 Metrics reporting is active on the rev130 five-agent lab. Every agent sends an

@@ -478,6 +478,43 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertEqual(station["path"][-1]["position"], [8.0, 2.0])
         self.assertNotEqual(station["presence"], [[0, mobility["duration_ms"]]])
 
+    def test_recording_preserves_colocated_gateway_movement(self):
+        self.session.position(
+            "gateway", token=self.lease["token"], expected_revision=0,
+            position=[2, 3], final=True,
+        )
+        self.session.start_recording(
+            token=self.lease["token"], expected_revision=1,
+            name="gateway movement",
+        )
+        time.sleep(0.01)
+        generation = self.client.generation
+        moved = self.session.position(
+            "gateway", token=self.lease["token"], expected_revision=1,
+            position=[3, 4], final=True,
+        )
+        self.assertEqual(moved["daemon_generation"], generation + 1)
+        self.assertIsNone(self.session.snapshot()["fault"])
+        time.sleep(0.21)
+        self.session.stop_recording(
+            token=self.lease["token"], expected_revision=2,
+        )
+        mobility, world = self.session.recorded_documents()
+        self.assertEqual(
+            {node["role"] for node in mobility["nodes"]}, set(WORLD["roles"])
+        )
+        gateway = next(
+            node for node in mobility["nodes"] if node["role"] == "gateway"
+        )
+        self.assertEqual(gateway["path"][0]["position"], [2.0, 3.0])
+        self.assertEqual(gateway["path"][-1]["position"], [3.0, 4.0])
+        self.assertNotIn("presence", gateway)
+        self.assertEqual(
+            world["generations"][-1]["positions"]["gateway"], [3.0, 4.0]
+        )
+        self.assertTrue(self.session.close())
+        self.assertEqual(self.client.values, {})
+
     def test_recording_preserves_an_extender_fronthaul_outage(self):
         self.session.start_recording(
             token=self.lease["token"], expected_revision=0,

@@ -138,7 +138,7 @@ sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-lab-runtime" \
     /usr/local/sbin/easymesh-lab-runtime
 sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-labctl" \
     /usr/local/sbin/easymesh-labctl
-sudo install -m 0755 "$repo/gen/tests/health-audit.sh" \
+sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-health-audit" \
     /usr/local/sbin/easymesh-health-audit
 sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-lab.service" \
     /etc/systemd/system/easymesh-lab.service

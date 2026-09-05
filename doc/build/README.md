@@ -83,10 +83,10 @@ first compile `unified-wifi-mesh`, rebuild the checked-in helper from that
 workdir, and then build the image again:
 
 ```sh
-bitbake unified-wifi-mesh -c compile
+bitbake -R ../clean-build.conf unified-wifi-mesh -c compile
 ../meta-cmf-bananapi-vcpe/gen/rebuild-em-cli-artifact.sh \
-  "$PWD/tmp/work/core2-32-rdk-linux/unified-wifi-mesh/1.0-r0"
-bitbake rdk-generic-broadband-image
+  "$PWD/tmp/work/core2-32-rdk-linux/unified-wifi-mesh/v0.3.1-r0"
+bitbake -R ../clean-build.conf rdk-generic-broadband-image
 ```
 
 Review and commit both the source patch and `em-cli.tar.gz`. Verify the helper

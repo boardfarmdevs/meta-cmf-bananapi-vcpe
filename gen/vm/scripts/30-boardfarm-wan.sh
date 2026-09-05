@@ -4,7 +4,7 @@ set -euo pipefail
 repo=/home/easymesh/boardfarm-open-0406/boardfarm-lab-staging
 
 test "$(sudo -u easymesh git -C "$repo" rev-parse HEAD)" = \
-    eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
+    ddb5a2b9e1707562595afc7e4000a3b8efa3cd81
 
 systemctl enable --now docker
 

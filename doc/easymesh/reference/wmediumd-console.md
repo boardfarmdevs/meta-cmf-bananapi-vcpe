@@ -22,7 +22,8 @@ scenario writer, steering optimizer or source of EasyMesh measurements.
 
 ## Implementation status
 
-Phases 1 and 2 are implemented in the current `codex/0831-clean` series:
+Phases 1 and 2 were introduced in `codex/0831-clean` and remain implemented
+in the canonical `codex/0905-clean` series:
 
 - patched wmediumd exposes bounded packet telemetry through a separate,
   host-only `-O` Unix socket;

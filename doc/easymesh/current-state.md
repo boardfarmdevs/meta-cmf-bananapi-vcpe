@@ -3,25 +3,40 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: `codex/0905-clean` is canonical; the fresh 0905 build and portable
-release are undergoing qualification. The prior accepted baseline below is
-historical and must not be cited as acceptance of the new 0905 artifacts.
+Status: **0905 is delivered and accepted for the 20-client profile** on
+rev140 and rev150 as of 2026-09-05 19:05 UTC. `codex/0905-clean` is canonical.
+Both complete role images were rebuilt, and the final thin tar was freshly
+imported on each host from zero nested instances. Rev140 passes the complete
+interactive API/browser and exact-restoration tests. Both deployed VMs pass
+post-cutover convergence and full health audits with zero native service
+restarts and zero packet loss for all 20 clients. The old VMs are retained,
+stopped and excluded from autostart. Earlier rejected candidates and the fixes
+they exposed are documented below; they are not the delivered archive.
+
+The first full-roster builder reboot failed: early client-capability queries
+incorrectly marked two extender radios configured before their WSC exchange,
+leaving 34 rather than 50 BSS records. Patch `0154` preserves the radio state
+while replying. Its compiled-handler regression reproduces the failure before
+the patch and passes after it. Both corrected role images also build
+successfully and pass the repeated reboot gates. The failed candidate and
+its original hashes are retained in release evidence.
 
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
 rebuilt in new build directories using the reviewed upstream source lock.
-The planned portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
+The portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
 20-client instances are named `rdkeasymesh-20-0905` on rev140 and rev150.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
 
-## Previous accepted baseline
+## Release contract
 
-| Item | Accepted value |
+| Item | Required value |
 | --- | --- |
-| Source branch | `codex/0831-clean` |
-| Runtime image source | EasyMesh through `0127`, OneWifi through `0022`, Wi-Fi HAL through `0030` |
+| Source branch | `codex/0905-clean` |
+| Image source commit | `9f5d64019aad4679c04b7e563ad00c6f0a47e23f` |
+| Runtime image source | EasyMesh through `0155`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
 | Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
@@ -34,22 +49,102 @@ link here instead of repeating versioned results.
 The WebUI displays six mesh nodes because the controller is shown separately
 from its colocated radio agent.
 
-## Accepted images
+## Fresh image artifacts
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `69cb6f064b779438264fdefbd54f4ef74367d917ffdf78a96685b40974c0719f` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `32d54805de07a5dd4d45412cd5664c49a9d028da755ec14dda8342cb60767d76` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260905143930.rootfs.lxc.tar.bz2` | `39af925bc4b46f4505baf98f754a4b527ea3de5e5ee6f6d85cd99fc983285896` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260905144620.rootfs.lxc.tar.bz2` | `b56b853db3d2362dd6f3854bfbaf86c93570ec7c8110134bbd0fb55e8208a17c` |
 
-Both images derive from the same source series through `0127`; their installed
-controller/Agent binaries remain role-specific. The latest reconciliation fix
-applies an Agent's complete Associated Clients snapshot to all of its
-radio-scoped controller models, including the valid zero-client withdrawal.
+Both images derive from the same clean source commit; their installed
+controller/Agent binaries remain role-specific. The initial cold build used
+`c5ae1d0e1371b7fbdd11c55124c39f8d97850b55`. The controller ran 5792 tasks
+successfully from an empty 0905 sstate directory, with zero external mirror
+hits. Its build ran 06:17:49–09:30:26 UTC. The extender ran 4988 tasks
+successfully, 09:31:25–09:41:41 UTC, reusing only outputs freshly built for
+0905. Neither role reused an older release's rootfs or compiled sstate.
+
+After the reboot defect was reproduced and fixed, both complete image targets
+were rebuilt at `73586e6` using only those fresh 0905 outputs. The corrected
+controller completed 5792 tasks (26 rerun), 11:07:41–11:13:56 UTC; the corrected
+extender completed 4988 tasks (24 rerun), 11:13:56–11:17:04 UTC. Those images
+passed the builder reboot gates but are superseded by the orchestration fix.
+Both full targets were rebuilt again at `9f5d640`: controller 5792 tasks
+(26 rerun), 14:38:56–14:45:40 UTC; extender 4988 tasks (24 rerun),
+14:45:44–14:49:13 UTC. The compiled concurrency regression passes against
+both actual patched source trees. The table lists these latest archives. Release
+provisioning recreates all nested nodes from the complete corrected archives;
+the diagnostic agent-only replacement is not a release input.
+
+The installed controller WebUI assets match the tested patched source exactly:
+`script.js` SHA-256
+`75d420edbd7c63b028327e6850a4626b2df8057503438ead556e3a4861f6e11c`;
+`index.html` SHA-256
+`4222b5188bf8d6e63f2446f489977bc714c7de299d020df4308cf41080843481`.
 IEEE 1905 is at `0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c,
 journald, and SNMP fixes are described in
 [the patch reference](reference/patch-set.md).
 
-## What works now
+The appliance pins Boardfarm lab staging to
+`ddb5a2b9e1707562595afc7e4000a3b8efa3cd81` on `codex/0905-clean`.
+This is the previous `eeb4803` lab configuration plus one required build fix:
+the WAN AFTR compilation stage now uses Debian Bookworm, matching its final
+runtime image. The former Bullseye stage failed on missing security packages
+after Debian 11 LTS ended on 2026-08-31. AFTR compiles successfully on Bookworm.
+The failed first appliance attempt is retained as evidence, not reused as the
+release builder. This dependency change does not alter either Yocto image.
+
+## Delivered 0905 appliance
+
+| Item | Accepted delivery |
+| --- | --- |
+| Outer archive | `rdkeasymesh-0905-thin.tar` |
+| Archive bytes | `2784440320` |
+| Archive SHA-256 | `a035a56c19f437dadaa9ebd36077cad07c05cdaf152680b61acddde75d313770` |
+| Packaged runtime source | `fd320b70d2a0cd04e010d2ab09e083f3df0d812b` |
+| Inner VM archive | `rdkeasymesh-0905-fd320b7-thin-lxd.tar.zst` |
+| Accepted profile | 20 clients: 10 private and 10 IoT, plus five mesh containers |
+| rev140 first boot | 18:27:12–18:44:44 UTC; zero to 25 nested instances, full audit pass |
+| rev150 first boot | 18:19:46–18:36:53 UTC; zero to 25 nested instances, full audit pass |
+| rev140 cutover | 19:01:31 UTC; final verification 19:04:52 UTC |
+| rev150 cutover | 19:01:03 UTC; final verification 19:04:54 UTC |
+
+The identical checksum-verified tar is stored on rev140 at
+`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-artifacts/rdkeasymesh-0905-thin.tar`
+and on rev150 at `/home/rev/releases/0905/rdkeasymesh-0905-thin.tar`, each with
+an adjacent `.sha256` file. Pre-package documentation was committed in the
+packaged source before export and deployment. The immutable manifest's
+original `status: candidate` is not rewritten after testing; acceptance is
+recorded here and in the host-side evidence, without changing the tested tar.
+Profile selectors for 50/100 clients remain available but are not accepted
+runtime/soak results.
+
+Both hosts now run `rdkeasymesh-20-0905` with autostart enabled:
+
+| Host | EasyMesh WebUI | wmediumd Console | Interactive room |
+| --- | --- | --- | --- |
+| rev140 | `http://192.168.2.140:18889/` | `http://192.168.2.140:18890/` | `http://192.168.2.140:18891/viewer/?mode=interactive` |
+| rev150 | `http://192.168.2.150:18889/` | `http://192.168.2.150:18890/` | `http://192.168.2.150:18891/viewer/?mode=interactive` |
+
+The final checks require a continuously converged, fully measured 20-client
+fleet for at least a minute, with a newer optimizer evaluation, before the
+full ownership/service/traffic audit. Both hosts pass. The rev140 manual and
+three-viewport topology browser checks also pass on these final public ports.
+
+Rollback VMs `rdkeasymesh-20-interactive` on rev140 and
+`rdkeasymesh-20-0904` on rev150 are stopped with autostart disabled. The old
+rev140 room's RF state was restored before shutdown. Their original LXD
+configurations are preserved as `release-evidence/final/rollback-old-config.yaml`
+under each host's release workspace. Do not start an old VM alongside the new
+one on the same public ports; perform deliberate room restoration and VM/port
+handoff if rollback is needed. Rejected archives and builder snapshots remain
+separate from this accepted delivery.
+
+## Carried-forward capabilities
+
+These functionality milestones predate the new image build. The separate
+0905 acceptance record below determines which fresh-delivery gates have run;
+this table is not evidence that every historical campaign was repeated.
 
 | Capability | State |
 | --- | --- |
@@ -75,43 +170,153 @@ journald, and SNMP fixes are described in
 | Completed 12-hour 20-client churn soak | Not yet claimed |
 | Validated 50/100-client runtime | Campaign automation exists; duration acceptance is not claimed until its recorded runs complete |
 
-## Acceptance
+## 0905 acceptance
 
-The clean LXD-VM deployment completed without an operator nudge:
+Completed before appliance packaging:
 
-```text
-model                    5 / 15 / 50 / 24
-fronthaul                10 private + 10 IoT
-current client metrics   20 / 20
-fresh backhaul signals   4 / 4
-gateway traffic          20 / 20 clients, 10 packets each, 0% loss
-service restarts         0
-NVRAM bind sources       5 / 5 persistent and non-empty
-optimizer observation    20 current links / 80 same-band candidate links
-optimizer closed loop    recommendation and acting crossover passed
-wmediumd Console         25 identities, 600 directed pairs, health ok
-SNMP                     one systemd-owned subagent, no launcher leak
-```
+- both complete role-image builds and installed WebUI asset checks;
+- two complete corrected-image builder VM reboots: both restore 5/15/50,
+  20 clients, 24 associated STAs, 20 live metrics and zero service restarts;
+  full audits verify NVRAM bindings, kernel/DB/API association ownership,
+  fresh uplink measurements and 0% packet loss for every client;
+- the compiled capability-query handler regression, failing before `0154`
+  and passing against both corrected Yocto source trees;
+- 236 Python tests, four WebUI suites against the fresh patched source,
+  room interaction JavaScript, helper-artifact and VM shell regressions;
+- real-browser candidate checks for quoted cohort labels, uplink bars,
+  manual layout preservation, and fitting three viewport sizes;
+- GitHub Pages manual search, keyboard controls, print, mobile layout, and
+  absence of live API writes in NO CONNECT mode; and
+- isolated real-daemon checks for concurrent control clients, rejection of
+  stale generations, atomic updates, frequency isolation and exact restoration.
 
-The Console also passed every REST resource, Prometheus export, live packet
-telemetry, provenance reporting, and rejection of writes in read-only mode.
+The first `ac18169` archive passed builder browser/proxy gates and fresh
+20-client imports on both hosts, each going from zero to 25 nested instances.
+Both full audits passed with zero packet loss. Rev140 also passed all four
+native away/return steering moves, the topology browser tests, embedded manual
+checks, and the browser-only timeout-card regression.
 
-The LXD VM deployment and guest reboot reconstruction reached
-`5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero RCPI
-values, four fresh backhaul signals, 20/20 working WLAN data paths, and zero
-OneWifi/EasyMesh restarts. The post-roam ownership regression remained correct
-for two 150-second stability windows, and the live optimizer subsequently
-completed three no-retry candidate-collection cycles.
+Its interactive test converged all 20 clients, then exposed a missing gateway
+track while recording a move of the colocated Agent-1. The session failed
+closed and verified exact RF restoration. Recording now captures and exports
+every movable role, including the gateway, rather than only roles permitted
+to disappear. Gateway presence remains protected. A regression reproduces the
+original failure and verifies the corrected movement, exported geometry, and
+exact restoration. This Python runtime fix does not change either Yocto image.
+The initial archive is superseded, not an accepted delivery.
+
+The corrected `017abf7` runtime archive (SHA-256
+`119342a7dd686c82828e1330aaaa5d3b6502e880aed39a16c164653e26e43bbb`)
+passed fresh 20-client imports on both hosts. Rev140 passed native steering,
+interactive API/browser/recording checks and exact RF restoration. However,
+the post-room full health audit found `em_ctrl NRestarts=1`, so this archive is
+also superseded, not accepted. Its retained Breakpad dump reports SIGABRT
+during orchestration: a radio-thread candidate response can delete the active
+command and its statistics while the manager timeout is still using them.
+
+Patch `0155` serializes command queue/stat operations, candidate response/ACK
+handling and controller radio-timer command access. It retains synchronous
+completion before the next candidate request is admitted. The compiled
+real-method concurrency regression fails on the previous source and passes
+with locking, including nested completion and immediate follow-up submission.
+Neither assertions nor service-restart counters are suppressed. Both complete
+role images have been rebuilt successfully, as recorded in the artifact table.
+
+The replacement-image builder `rdkeasymesh-20-0905-orch-builder` passes fresh
+25-container provisioning and two complete VM reboot/full-health gates,
+finishing at 15:25:10 UTC. Native steering and topology browser checks pass.
+However, room run `20260905T152622Z-private-client-room-walk-interactive` fails
+its initial 900-second convergence gate. Client `wlan-client-009` retains
+`freq_list=5955` and `scan_freq=5955`, while its strongest target AP now uses
+6135 MHz. The target is visible to a directed scan but excluded from the
+client's allowed association frequencies. This client-generation constraint
+is corrected in the client generator by selecting the enabled PHY channels
+within the requested band, rather than the initially active AP channels.
+Pool resume recreates legacy band-pinned clients using a configuration marker.
+The three-band regression fails before the fix and passes afterward, with
+disabled-channel exclusion, numeric ordering and deduplication; migration
+tests cover legacy and current clients. Inspection of the first candidate's
+persisted list also found hwsim's 5925 MHz 5 GHz edge incorrectly included as
+6 GHz. The `supported-phy-v2` correction excludes it while retaining the
+special 5935 MHz 6 GHz channel when supported; pool resume migrates the first
+candidate too. Increasing the test timeout is not acceptance. Room shutdown
+restores the exact saved RF state, and the controller restart counter remains
+zero. Evidence is retained under `release-evidence/orch-fix/`.
+
+Final band-scope runtime `23fb9c744494f19a5db568f3cd307a1ad93a1163` passes
+standard pool migration and two further whole-VM reboot/full-health checks,
+finishing at 17:54:47 UTC. Native away/return steering passes 4/4 and the real
+topology browser fits three viewport sizes. Room run
+`20260905T175555Z-private-client-room-walk-interactive` passes initial and final
+20-client convergence, authenticated single-writer controls, idempotence and
+stale-revision rejection, client/extender/gateway movement, presence outages,
+walking controls, recording export and observed steering with traffic
+verification. It completes with 22 optimizer actions, not a relaxed timeout.
+Real-browser dragging, preview isolation, reset, camera mode, lease release
+and embedded manual checks also pass. Room shutdown restores the exact RF
+snapshot; the post-room audit reports zero native service restarts and 0%
+packet loss for every client. Evidence is in `release-evidence/band-scope-v2/`.
+Local validation passes 251 Python tests with the unchanged optional skip,
+plus all seven portable-VM shell suites.
+
+The final `fd320b7` thin archive passes fresh imports and full audits on both
+hosts. Rev140 room run `20260905T184600Z-private-client-room-walk-interactive`
+passes the complete API controls and observed steering with 20 actions,
+real-browser dragging/preview/reset/lease checks, exact RF restoration at
+18:59:33 UTC and the full post-room audit with zero service restarts. Rev150
+also reaches settled 20-client room convergence and passes a full audit while
+the room is running. Both cutovers and subsequent live checks pass as recorded
+in the delivery table. Final evidence lives in `release-evidence/final/` on
+each host. The archive's `release.json` identifies its exact runtime source
+commit; documentation-only acceptance commits can follow without modifying
+the tested images or tar.
+
+One optional pre-existing daemon integration test is not a pass:
+`gen/wmediumd/configurator/tests/test_actuator.py:69` expects a second control
+connection to be rejected. The unchanged `0013` daemon patch deliberately
+permits concurrent generation-protected clients. Explicitly enabling that old
+test fails this assertion; the separate real-daemon protocol check above passes.
+The normal Python run skips this optional integration test. This unrelated
+test expectation was not changed for 0905.
 
 ## Runtime access
 
-| Runtime | EasyMesh WebUI | wmediumd Console |
-| --- | --- | --- |
-| bare metal | `http://HOST:8888` | `http://HOST:8890` |
-| LXD VM | `http://HOST:18889` | `http://HOST:18890` |
+| Runtime | EasyMesh WebUI | wmediumd Console | Interactive room |
+| --- | --- | --- | --- |
+| bare metal | `http://HOST:8888` | `http://HOST:8890` | `http://HOST:8891/viewer/?mode=interactive` |
+| LXD VM | `http://HOST:18889` | `http://HOST:18890` | `http://HOST:18891/viewer/?mode=interactive` |
 
 Host addresses are site configuration. They are selected during LXD VM build
 or import and are never baked into the portable artifact.
+
+## Optional container monitoring
+
+[Nested LXD UI and monitoring](reference/lxd-ui-and-monitoring.md) documents
+an opt-in loopback-only setup with metrics-only TLS authentication, Prometheus,
+Grafana provisioning and a bundled container dashboard. It observes the 25
+nested LXD containers, not the outer VM or EasyMesh radio metrics.
+
+On 2026-09-05, a temporary installation on the rev140 orchestration builder
+passes Prometheus configuration validation, authenticated scraping, the exact
+25-container roster comparison, Grafana data-source health and live queries
+for every dashboard panel. The nested LXD UI serves over verified TLS;
+anonymous metrics and administrative instance access using the metrics-only
+certificate both return HTTP 403. Browser identity enrollment and the
+operator's SSH setup remain installation steps, not claimed browser tests.
+The memory panel uses the observed LXD 6.9 `MemTotal - MemFree` semantics,
+including cache; this cgroup-v2 exporter does not emit the documented RSS
+family.
+
+Repeated setup preserves credentials, conflicting listeners are refused, and
+disable preserves operator-modified settings while restoring owned settings.
+Re-enable and repeated disable also pass. The temporary services, volumes,
+images, trust entry and credentials are removed before release packaging;
+the final full health audit passes with all service restart counters zero
+and zero packet loss for all 20 clients. Local Python validation passes
+244 tests with one unchanged optional skip, including eight new monitoring
+checks. Evidence is in `release-evidence/observability/`. The optional stack
+remains disabled in the delivered VMs; its tests do not substitute for the
+separate interactive-room release qualification.
 
 ## Important boundaries
 
@@ -146,6 +351,10 @@ Acceptance evidence is stored outside the source tree inside the appliance:
 ```text
 /home/easymesh/easymesh-evidence/
 ```
+
+The 0905 host-side build and release evidence is under
+`rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-evidence/`.
+The sibling `release-artifacts/` directory holds the thin tar and checksum.
 
 Evidence is intentionally outside the Git worktree and must record source
 revision, image hashes, topology, scenario inputs, timestamps, service restart

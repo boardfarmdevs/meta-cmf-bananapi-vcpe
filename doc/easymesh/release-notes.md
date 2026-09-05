@@ -19,10 +19,36 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   color-matched IoT/private labels, and a compact centered initial star.
   Optimize Layout fits the available pane without undoing manual device or
   client positions.
-- Targets fresh 20-client imports on rev140 and rev150. Build, import, and
+- Delivers fresh 20-client imports on rev140 and rev150. Build, import, and
   interactive-room acceptance results are recorded in
   [current state](https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/blob/codex/0905-clean/doc/easymesh/current-state.md);
   this section alone does not certify an untested artifact.
+- Fixes an onboarding race found by the fresh builder's reboot gate:
+  answering a client-capability query no longer marks an unconfigured radio
+  configured. Both complete role images include patch `0154`.
+- Pins the Boardfarm WAN AFTR build-stage migration to Bookworm, avoiding
+  the obsolete Bullseye package downloads encountered during the clean build.
+- Installs a checkout-aware health-audit wrapper so the appliance command
+  finds its shared observer helpers instead of resolving them below `/usr`.
+- Uses bounded HTTP retry loops compatible with rev140's curl 7.68, without
+  requiring the newer `--retry-all-errors` option.
+- Records and exports movement of the colocated gateway/Agent-1 as well as
+  clients and extenders. Gateway movement during recording no longer faults
+  the room; its protected presence control is unchanged.
+- Serializes orchestrator command lifetime with candidate responses, rejection
+  ACKs and controller radio timers. Patch `0155` prevents completion from
+  freeing active command statistics during a manager timeout, while preserving
+  immediate follow-up queries. Its compiled concurrency regression reproduces
+  the previous race; rebuilt images and the final 20-client appliance pass
+  the documented reboot, interactive-room and post-test health gates.
+- Keeps explicitly band-selected clients eligible for supported same-band AP
+  channels after reboot, rather than pinning them to channels active during
+  provisioning. Pool resume migrates legacy configurations; boundary tests
+  exclude hwsim's 5925 MHz 5 GHz edge from the 6 GHz allow-list.
+- Adds an opt-in nested LXD web UI and Prometheus/Grafana setup bundle with
+  loopback access, metrics-only TLS credentials, a provisioned container
+  dashboard, and documented rollback. Monitoring remains disabled in the
+  portable base image; credentials are generated separately after import.
 
 ## 0824
 
