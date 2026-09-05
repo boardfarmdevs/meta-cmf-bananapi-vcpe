@@ -33,6 +33,13 @@
     background: #faf8f3;
   }
   h1 { font-size: 17px; margin: 0 0 2px; font-weight: 600; }
+  .manual-link { display: inline-block; margin: 8px 0; color: var(--extender); font-weight: 600; }
+  #viewerManual { width: min(1160px, calc(100vw - 28px)); height: calc(100dvh - 28px); max-height: 960px; padding: 0; border: 1px solid var(--rule); border-radius: 10px; color: var(--ink); background: #faf8f3; }
+  #viewerManual::backdrop { background: rgba(24, 24, 30, .6); }
+  #viewerManual[open] { display: flex; flex-direction: column; }
+  #viewerManual header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--rule); }
+  #viewerManual header a { color: var(--extender); }
+  #viewerManual iframe { width: 100%; flex: 1; min-height: 0; border: 0; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
   label.field { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
   select, input[type=file] { width: 100%; font: inherit; padding: 5px 6px; border: 1px solid var(--rule); border-radius: 4px; background: #fff; color: var(--ink); }
@@ -138,6 +145,7 @@
 <body>
 <aside>
   <h1 id="viewerTitle">wmediumd world viewer</h1>
+  <a class="manual-link" id="openManual" href="manual.html" aria-haspopup="dialog">Manual &amp; Help</a>
   <div class="sub" id="worldmeta">Loading…</div>
   <div id="liveStatus" role="status" aria-live="polite"></div>
   <div class="sub" id="liveRun"></div>
@@ -242,6 +250,14 @@
   <div id="err"></div>
 </main>
 
+<dialog id="viewerManual" aria-labelledby="manualTitle">
+  <header>
+    <strong id="manualTitle">Room viewer manual</strong>
+    <div class="row"><a href="manual.html" target="_blank" rel="noopener">Open separately</a><button id="closeManual" type="button" autofocus>Close</button></div>
+  </header>
+  <iframe id="manualFrame" title="Searchable room viewer manual"></iframe>
+</dialog>
+<script src="manual-dialog.js"></script>
 <script src="vendor/three.min.js"></script>
 <script src="interaction-model.js"></script>
 <script>
@@ -1643,7 +1659,7 @@
   });
   function togglePlay() { if (liveMode) return; playing = !playing; $('#play').textContent = playing ? 'Pause' : 'Play'; lastTick = performance.now(); if (playing && world && tMs >= world.duration_ms) tMs = 0; }
   $('#play').addEventListener('click', togglePlay);
-  document.addEventListener('keydown', (e) => { if (e.code === 'Space' && !/INPUT|SELECT|BUTTON/.test(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
+  document.addEventListener('keydown', (e) => { if (!$('#viewerManual').open && e.code === 'Space' && !/INPUT|SELECT|BUTTON/.test(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
   document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => {
     speed = +b.dataset.speed; document.querySelectorAll('[data-speed]').forEach((x) => x.setAttribute('aria-pressed', x === b));
   }));
@@ -1863,6 +1879,7 @@
     }
   });
   document.addEventListener('keydown', (event) => {
+    if ($('#viewerManual').open) return;
     if (event.key !== 'Escape') return;
     hideRoleMenu();
     interaction.awaitingDestination = null;
