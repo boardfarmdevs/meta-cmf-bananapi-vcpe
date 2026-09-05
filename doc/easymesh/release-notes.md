@@ -2,6 +2,28 @@
 
 Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B or Wi-Fi EasyMesh versions.
 
+## 0905
+
+- Establishes `codex/0905-clean` and the rev140 workspace
+  `/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean` as canonical. Rebuilds both
+  role images from fresh Yocto build directories using an immutable upstream
+  lock, before producing the universal `rdkeasymesh-0905-thin.tar` appliance.
+- Includes the searchable 17-section in-viewer manual, complete fleet
+  reconciliation, movable mesh nodes, bounded fronthaul outages, and recorded
+  interactive movement controls.
+- Keeps the interactive viewer running during temporary candidate-metric
+  transport outages. Steering pauses, stale convergence is cleared, and a
+  capped retry backoff requires new measurements before evaluation resumes.
+  Malformed measurements and scripted-run failures remain fail-closed.
+- Adds extender uplink signal bars, larger station identities, quoted
+  color-matched IoT/private labels, and a compact centered initial star.
+  Optimize Layout fits the available pane without undoing manual device or
+  client positions.
+- Targets fresh 20-client imports on rev140 and rev150. Build, import, and
+  interactive-room acceptance results are recorded in
+  [current state](https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/blob/codex/0905-clean/doc/easymesh/current-state.md);
+  this section alone does not certify an untested artifact.
+
 ## 0824
 
 - Established the concise, current-state documentation set and the accepted container/hwsim/wmediumd architecture.

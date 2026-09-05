@@ -46,6 +46,10 @@ class CandidateMetricsError(RuntimeError):
     """The controller could not produce a trustworthy candidate snapshot."""
 
 
+class CandidateMetricsUnavailable(CandidateMetricsError):
+    """A temporary transport failure prevented a candidate measurement."""
+
+
 def operating_class(band: str | int, channel: int) -> int:
     """Return the 20 MHz global operating class used by the lab radio."""
     normalized = normalize_band(band)
@@ -86,10 +90,16 @@ def _default_request(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             detail = json.load(error)
         except (json.JSONDecodeError, UnicodeDecodeError):
             detail = {"message": error.read().decode(errors="replace")}
-        raise CandidateMetricsError(
+        error_type = (
+            CandidateMetricsUnavailable
+            if error.code in {408, 429, 502, 503, 504} else CandidateMetricsError
+        )
+        raise error_type(
             f"candidate query failed with HTTP {error.code}: {detail}"
         ) from error
-    except (OSError, TimeoutError, json.JSONDecodeError) as error:
+    except OSError as error:
+        raise CandidateMetricsUnavailable(f"candidate query failed: {error}") from error
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise CandidateMetricsError(f"candidate query failed: {error}") from error
 
 
@@ -296,7 +306,12 @@ class ControllerCandidateProvider:
                                 f": {error}" if self.request_attempts == 1
                                 else f" after {attempt} attempt(s): {error}"
                             )
-                            raise CandidateMetricsError(
+                            error_type = (
+                                CandidateMetricsUnavailable
+                                if isinstance(error, CandidateMetricsUnavailable)
+                                else CandidateMetricsError
+                            )
+                            raise error_type(
                                 f"candidate query failed for agent {agent} radio "
                                 f"{query_radio}{suffix}"
                             ) from error
@@ -434,7 +449,10 @@ class ControllerCandidateProvider:
             for transaction in transactions_by_agent[agent]
         ]
         if failures:
-            raise failures[sorted(failures)[0]]
+            failed_agent = min(failures, key=lambda agent: (
+                isinstance(failures[agent], CandidateMetricsUnavailable), agent
+            ))
+            raise failures[failed_agent]
 
         self.last_rejected_candidate_keys = {
             key

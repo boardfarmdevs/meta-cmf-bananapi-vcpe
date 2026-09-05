@@ -163,7 +163,7 @@ class EventStore:
                 "contaminated": True,
                 "contamination": copy.deepcopy(payload),
             })
-        elif kind == "optimizer.evaluation":
+        elif kind in {"optimizer.evaluation", "optimizer.measurement.unavailable"}:
             self._state["optimizer"] = copy.deepcopy(payload)
         elif kind == "network.snapshot":
             self._state["network"] = copy.deepcopy(payload)

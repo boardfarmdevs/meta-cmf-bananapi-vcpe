@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from optimizer.actuator import SteerActuator
-from optimizer.candidates import CandidateMetricsError, ControllerCandidateProvider
+from optimizer.candidates import (
+    CandidateMetricsError, CandidateMetricsUnavailable, ControllerCandidateProvider,
+)
 from optimizer.config import load_policy
 from optimizer.model import normalize_band, parse_time
 from optimizer.observer import ControllerObserver
@@ -89,6 +91,16 @@ def _single_action_state(
             last_action_at=previous.last_action_at,
         ))
     return state
+
+
+def _interrupted_measurement_state(state: PolicyState) -> PolicyState:
+    """Restart unacted holds without discarding cooldown or action history."""
+    return PolicyState(tuple(
+        replace(item, phase="stable", source_bssid=None, target_bssid=None,
+                condition_since=None)
+        if item.phase in {"holding", "recommended"} else item
+        for item in state.clients
+    ))
 
 
 def _ranked_action_batch(decisions, limit: int):
@@ -690,8 +702,10 @@ class LiveConductor:
             if self.maximum_actions is not None else int(optimizer["max_actions"])
         )
         observed_epoch: int | None = None
+        consecutive_measurement_failures = 0
         while not self.stop_event.is_set() and self._active():
             cycle_started = time.monotonic()
+            retry_delay = 0.0
             try:
                 room_before = self.room_state() if self.room_state else None
                 if room_before is not None:
@@ -735,6 +749,7 @@ class LiveConductor:
                 self._candidate_active.set()
                 with self._controller_lock:
                     snapshot = observer.observe()
+                consecutive_measurement_failures = 0
                 room_after = self.room_state() if self.room_state else None
                 if room_before is not None and room_after is not None:
                     before_key = (
@@ -1047,13 +1062,46 @@ class LiveConductor:
                                 producer="optimizer",
                             )
                             break
+            except CandidateMetricsUnavailable as error:
+                if not self.interactive:
+                    self._record_error("optimizer", error, fatal=True)
+                    return
+                consecutive_measurement_failures += 1
+                retry_delay = min(
+                    30.0,
+                    max(5.0, interval) * 2 ** min(consecutive_measurement_failures - 1, 3),
+                )
+                state = _interrupted_measurement_state(state)
+                self._record_error("optimizer", error, fatal=False)
+                self.store.emit(
+                    "optimizer.measurement.unavailable", self._time(),
+                    {
+                        "status": "unavailable",
+                        "mode": self.mode,
+                        "reason": "candidate_metrics_unavailable",
+                        "message": str(error),
+                        "consecutive_failures": consecutive_measurement_failures,
+                        "retry_delay_seconds": retry_delay,
+                        "automatic_actuation": self.mode == "act",
+                        "automatic_actuation_ready": False,
+                        "actions_used": self.action_attempts,
+                        "maximum_actions": maximum_actions,
+                        "policy_hold_reset": True,
+                        "fleet": {"measurement_complete": False, "converged": False},
+                        "failed_transactions": [
+                            transaction for transaction in provider.last_raw
+                            if "error" in transaction
+                        ],
+                    },
+                    producer="optimizer",
+                )
             except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
                 self._record_error("optimizer", error, fatal=True)
                 return
             finally:
                 self._candidate_active.clear()
             elapsed = time.monotonic() - cycle_started
-            if self._sleep(max(0.1, interval - elapsed)):
+            if self._sleep(retry_delay or max(0.1, interval - elapsed)):
                 break
 
     def summary(self) -> dict[str, Any]:

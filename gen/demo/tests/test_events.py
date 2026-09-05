@@ -46,6 +46,14 @@ class EventStoreTests(unittest.TestCase):
         self.store.publish(event(2, "scenario.clock"))
         self.assertEqual([item["sequence"] for item in self.store.after(1)], [2])
 
+    def test_measurement_outage_replaces_old_convergence_until_recovered(self):
+        self.store.emit("optimizer.evaluation", 0, {"fleet": {"converged": True}})
+        unavailable = {"status": "unavailable", "automatic_actuation_ready": False}
+        self.store.emit("optimizer.measurement.unavailable", 100, unavailable)
+        self.assertEqual(self.store.current()["optimizer"], unavailable)
+        self.store.emit("optimizer.evaluation", 200, {"fleet": {"converged": False}})
+        self.assertNotIn("status", self.store.current()["optimizer"])
+
     def test_rejects_out_of_order_event(self):
         self.store.publish(event(1, "scenario.started"))
         with self.assertRaisesRegex(ValueError, "strictly increasing"):

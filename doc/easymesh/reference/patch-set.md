@@ -325,13 +325,23 @@ authority. Its dependency order is:
 78. apply an associated-STA metrics report to its exact BSS owner;
 79. reject signal samples that predate the current association epoch;
 80. retain an exact-owner backhaul sample through model reconciliation; and
-81. choose a controller-first landscape topology layout consistently across
-    RDK and prplMesh presentations; and
+81. use the controller-first landscape layout for branches, with folded chains
+    and the centered RDK star override described below;
 82. preserve signed local BTM-dispatch failures and emit a correlation tuple
-    for the Agent-to-OneWifi action-frame handoff.
+    for the Agent-to-OneWifi action-frame handoff;
+83. show segmented client signal meters in the topology;
+84. center Agent-1 in a compact RDK star with extenders surrounding it, applying
+    the layout on first display and preserving manual positions on refresh;
+85. show exact-parent wireless extender signal bars, enlarge client identities
+    without changing band/channel text, and place two-line IoT/private cohort
+    titles in a reserved bubble sector clear of default client RF paths;
+86. replace those split titles with quoted "iot" and "private" labels in dark
+    gray and dark blue, with padded placement and a wider clear client-link sector; and
+87. fit Optimize Layout to the available viewport without moving manually
+    positioned extenders, Agent-1, Controller, or clients.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0148`; the
+component or image build. The current source series ends at `0153`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering

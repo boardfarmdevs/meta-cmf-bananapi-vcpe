@@ -147,6 +147,10 @@ EASYMESH_CORE_PATCHES = " \
     file://0147-controller-preserve-negotiated-profile.patch \
     file://0148-agent-report-local-btm-dispatch-failures.patch \
     file://0149-cli-show-segmented-client-signal-meter.patch \
+    file://0150-cli-center-agent-in-compact-star-layout.patch \
+    file://0151-cli-show-extender-uplink-bars-and-readable-labels.patch \
+    file://0152-cli-use-quoted-color-matched-cohort-labels.patch \
+    file://0153-cli-fit-topology-without-rearranging-nodes.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

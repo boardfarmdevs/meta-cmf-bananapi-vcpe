@@ -155,7 +155,7 @@ lxc list
 Set values appropriate to that host:
 
 ```bash
-LAB_VM=rdkeasymesh-20-0904
+LAB_VM=rdkeasymesh-20-0905
 LAB_HOST_IP=192.168.2.140
 LAB_VM_IP=10.142.138.250
 ```

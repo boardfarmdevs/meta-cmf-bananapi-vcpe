@@ -4,17 +4,20 @@ import tempfile
 import unittest
 from pathlib import Path
 import sys
+from unittest.mock import Mock, patch
 
 if sys.version_info < (3, 9):
     raise unittest.SkipTest("optimizer runtime requires Python 3.9 or newer")
 
 from optimizer.model import ClientObservation, MeshHealth, Snapshot
-from optimizer.policy import Decision, Evaluation
+from optimizer.candidates import CandidateMetricsError, CandidateMetricsUnavailable
+from optimizer.policy import Decision, Evaluation, PolicyConfig
 from optimizer.state import ClientPolicyState, PolicyState
 from room_demo.conductor import (
     LiveConductor,
     _deferred_state,
     _fleet_status,
+    _interrupted_measurement_state,
     _ranked_action_batch,
     _simulated_bss_channels,
     _single_action_state,
@@ -23,6 +26,113 @@ from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def _run_optimizer(self, observations, *, interactive=True, evaluation_state=None):
+        conductor, store = self._conductor()
+        conductor.interactive = interactive
+        conductor.mode = "act"
+        conductor.manifest.update({"policy": "policy.yaml", "optimizer": {
+            "allow_simulated_candidates": True, "request_only": True,
+            "interval_seconds": 5, "action_window_ms": [0, 1000], "max_actions": 10,
+        }})
+        store.emit("demo.state", 0, {"state": "running"})
+        snapshot = Snapshot(
+            schema_version=1, sequence=1, controller_url="http://controller",
+            observed_at="2026-09-03T00:00:00Z", health=MeshHealth(1, 1),
+            clients=(), candidates=(),
+        )
+        observer = Mock()
+        observer.observe.side_effect = [snapshot if item is None else item for item in observations]
+        policy = Mock(config=PolicyConfig())
+        policy.evaluate.return_value = Evaluation("hash", (Decision(
+            sta_mac=conductor.hero_mac, action="none", reason="test_observed",
+            source_bssid="02:00:00:00:01:01",
+        ),), evaluation_state or PolicyState())
+        provider = Mock(last_raw=[{"request": {}, "error": "HTTP 504"}], last_selected_sta_macs=set())
+        actuator = Mock()
+        with patch("room_demo.conductor.load_policy", return_value=PolicyConfig()), \
+             patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
+             patch("room_demo.conductor.ThresholdPolicy", return_value=policy), \
+             patch("room_demo.conductor.ControllerCandidateProvider", return_value=provider), \
+             patch("room_demo.conductor.ControllerObserver", side_effect=[observer, Mock()]), \
+             patch("room_demo.conductor.SteerActuator", return_value=actuator), \
+             patch.object(conductor, "_sleep", side_effect=[False] * (len(observations) - 1) + [True]) as sleeper:
+            conductor._run_worker("optimizer", conductor._optimizer_worker)
+        self.assertFalse(conductor._candidate_active.is_set())
+        self.assertFalse(conductor._controller_lock.locked())
+        return conductor, store, policy, actuator, sleeper
+
+    def test_interactive_measurement_outage_retries_without_steering(self):
+        conductor, store, policy, actuator, sleeper = self._run_optimizer([
+            CandidateMetricsUnavailable("HTTP 504"), CandidateMetricsUnavailable("HTTP 504"), None,
+        ])
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(len(conductor.warnings), 2)
+        self.assertEqual(store.current()["state"], "running")
+        self.assertEqual(policy.evaluate.call_count, 1)
+        self.assertEqual(conductor.action_attempts, 0)
+        actuator.execute.assert_not_called()
+        self.assertEqual([call.args[0] for call in sleeper.call_args_list[:2]], [5, 10])
+        unavailable = store.current()["latest"]["optimizer.measurement.unavailable"]["payload"]
+        self.assertEqual(unavailable["consecutive_failures"], 2)
+        self.assertFalse(unavailable["automatic_actuation_ready"])
+        self.assertFalse(unavailable["fleet"]["converged"])
+        self.assertEqual(len(unavailable["failed_transactions"]), 1)
+        self.assertEqual(store.current()["optimizer"]["decision"]["reason"], "test_observed")
+        self.assertNotIn("status", store.current()["optimizer"])
+
+    def test_outage_backoff_is_capped_and_resets_after_a_good_measurement(self):
+        failures = [CandidateMetricsUnavailable("HTTP 504") for _index in range(5)]
+        conductor, store, _policy, actuator, sleeper = self._run_optimizer(
+            failures + [None, CandidateMetricsUnavailable("HTTP 504")]
+        )
+        waits = [call.args[0] for call in sleeper.call_args_list]
+        self.assertEqual(waits[:5], [5, 10, 20, 30, 30])
+        self.assertEqual(waits[-1], 5)
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(store.current()["optimizer"]["status"], "unavailable")
+        actuator.execute.assert_not_called()
+
+    def test_outage_restarts_an_unacted_hold_before_the_next_evaluation(self):
+        holding = PolicyState((ClientPolicyState(
+            sta_mac="02:00:00:00:0c:00", phase="holding",
+            condition_since="2026-09-03T00:00:00Z", last_action_at="2026-09-02T00:00:00Z",
+        ),))
+        conductor, _store, policy, _actuator, _sleeper = self._run_optimizer(
+            [None, CandidateMetricsUnavailable("HTTP 504"), None], evaluation_state=holding,
+        )
+        prior = policy.evaluate.call_args_list[-1].args[1].for_sta(conductor.hero_mac)
+        self.assertEqual(prior.phase, "stable")
+        self.assertIsNone(prior.condition_since)
+        self.assertEqual(prior.last_action_at, "2026-09-02T00:00:00Z")
+
+    def test_outage_keeps_pending_cooldown_and_backoff_history(self):
+        for phase in ["pending", "cooldown", "backoff"]:
+            prior = PolicyState((ClientPolicyState(
+                sta_mac="02:00:00:00:0c:00", phase=phase,
+                target_bssid="02:00:00:00:04:01", failure_count=2,
+                pending_since="2026-09-03T00:00:00Z", cooldown_until="2026-09-03T00:00:30Z",
+                backoff_until="2026-09-03T00:01:00Z", last_action_at="2026-09-03T00:00:00Z",
+            ),))
+            self.assertEqual(_interrupted_measurement_state(prior), prior)
+
+    def test_scripted_measurement_outage_still_fails_closed(self):
+        conductor, _store, policy, actuator, sleeper = self._run_optimizer(
+            [CandidateMetricsUnavailable("HTTP 504")], interactive=False,
+        )
+        self.assertEqual(len(conductor.errors), 1)
+        policy.evaluate.assert_not_called()
+        actuator.execute.assert_not_called()
+        sleeper.assert_not_called()
+
+    def test_invalid_candidate_measurement_still_fails_closed_in_interactive_mode(self):
+        conductor, _store, policy, actuator, sleeper = self._run_optimizer(
+            [CandidateMetricsError("unexpected measurement")],
+        )
+        self.assertEqual(len(conductor.errors), 1)
+        policy.evaluate.assert_not_called()
+        actuator.execute.assert_not_called()
+        sleeper.assert_not_called()
+
     def test_live_simulated_channels_are_mapped_per_bssid(self):
         plan = {"bindings": {
             "extender_1": {

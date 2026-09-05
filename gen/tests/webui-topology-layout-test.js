@@ -112,6 +112,43 @@ assert.ok(controller.topologyNodeExtent({
   STAList: cohortStations
 }) > 240, 'expanded SSID groups did not increase D3 collision spacing');
 
+for (const ssid of ['private_ssid', 'iot_ssid']) {
+  for (const count of [1, 2, 5, 10]) {
+    const stations = Array.from({length: count}, (_value, index) => ({
+      staMAC: `02:00:00:01:00:${index.toString(16).padStart(2, '0')}`, ssid
+    }));
+    const hauls = controller.topologyHaulGeometry([{name: 'clients', ssid}], stations);
+    const label = controller.topologySSIDLabel(hauls[0]);
+    assert.equal(label.text, ssid === 'private_ssid' ? '"private"' : '"iot"');
+    assert.equal(label.color, ssid === 'private_ssid' ? '#1e3a8a' : '#374151');
+    assert.equal(label.fontSize, 20);
+    const halfWidth = ssid === 'private_ssid' ? 44 : 26;
+    const corners = [-halfWidth, halfWidth].flatMap(offsetX => [-12, 12].map(offsetY => ({
+      x: label.x + offsetX, y: label.y + offsetY
+    })));
+    for (const station of stations) {
+      const placement = controller.topologySTAPlacement(station, stations, hauls, 'label-test');
+      const deltaX = placement.to.x - placement.from.x;
+      const deltaY = placement.to.y - placement.from.y;
+      for (const corner of corners) {
+        const progress = Math.max(0, Math.min(1,
+          ((corner.x - placement.from.x) * deltaX + (corner.y - placement.from.y) * deltaY) /
+          (deltaX * deltaX + deltaY * deltaY)));
+        const distance = Math.hypot(
+          corner.x - placement.from.x - progress * deltaX,
+          corner.y - placement.from.y - progress * deltaY);
+        assert.ok(distance > 11, 'quoted SSID title overlaps the client link corridor');
+      }
+    }
+    assert.ok(corners.every(corner => Math.hypot(corner.x, corner.y) < hauls[0].radius - 4),
+      'quoted title lacks padding inside its SSID bubble');
+  }
+}
+assert.deepEqual(controller.topologySSIDLabel({
+  ssid: 'mesh_backhaul', offset: {x: 140, y: 0}, radius: 80
+}), {x: 140, y: 0, text: 'mesh_backhaul', fontSize: 16, color: '#9b9a9aff'},
+  'cohort aliases changed an infrastructure SSID label');
+
 const landscapeNodes = [
   { id: 'controller', name: 'Controller', haulTypes: [], STAList: [] },
   { id: 'agent', name: 'Agent-1', haulTypes: cohortHauls, STAList: cohortStations },
@@ -124,15 +161,49 @@ const landscapeStarEdges = [
   { from: 'controller', to: 'agent' },
   ...[1, 2, 3, 4].map(index => ({ from: 'agent', to: `extender-${index}` }))
 ];
+const originalStar = deepClone({nodes: landscapeNodes, edges: landscapeStarEdges});
 const landscapeStar = controller.topologyLandscapeLayout(
   landscapeNodes, landscapeStarEdges, 1600, 900
 );
 assert.equal(landscapeStar.size, landscapeNodes.length);
 const landscapeController = landscapeStar.get('controller');
 assert.ok(landscapeController, 'Controller is missing from the hierarchy');
-assert.ok(landscapeNodes.slice(1).every(node =>
-  landscapeStar.get(node.id).x > landscapeController.x),
-  'two-level star nodes were not placed after the Controller');
+assert.deepEqual(landscapeStar.get('agent'), {x: 0, y: 0},
+  'Agent-1 is not the center of the star');
+assert.equal(landscapeController.x, 0,
+  'Controller is not adjacent to the centered Agent-1');
+assert.ok(landscapeController.y < 0);
+for (const [index, node] of landscapeNodes.slice(2).entries()) {
+  const position = landscapeStar.get(node.id);
+  assert.equal(Math.sign(position.x), index % 2 === 0 ? -1 : 1,
+    'extenders do not follow the floor-plan left/right ordering');
+  assert.equal(Math.sign(position.y), index < 2 ? -1 : 1,
+    'extenders do not surround Agent-1 above and below');
+}
+for (const [index, node] of landscapeNodes.entries()) {
+  for (const peer of landscapeNodes.slice(index + 1)) {
+    const position = landscapeStar.get(node.id);
+    const other = landscapeStar.get(peer.id);
+    assert.ok(Math.hypot(position.x - other.x, position.y - other.y) >=
+      controller.topologyNodeExtent(node) + controller.topologyNodeExtent(peer) + 24,
+    `${node.name} and ${peer.name} lack clearance for SSID groups and labels`);
+  }
+}
+assert.ok(Math.max(...[...landscapeStar.values()].map(position => Math.abs(position.x))) < 500,
+  'star layout leaves excessive horizontal space between mesh nodes');
+assert.deepEqual({nodes: landscapeNodes, edges: landscapeStarEdges}, originalStar,
+  'star layout changed the controller model');
+assert.deepEqual(controller.topologyStarLayout(
+  [...landscapeNodes].reverse(),
+  [...landscapeStarEdges].reverse().map(edge => ({source: {id: edge.from}, target: {id: edge.to}}))
+), landscapeStar, 'star layout depends on discovery order or D3 edge mutation');
+const agentRootStar = controller.topologyStarLayout(
+  landscapeNodes.slice(1), landscapeStarEdges.slice(1));
+assert.deepEqual(agentRootStar.get('agent'), {x: 0, y: 0},
+  'star without a separate Controller lost its centered Agent-1');
+assert.equal(controller.topologyStarLayout(landscapeNodes, [
+  ...landscapeStarEdges.slice(0, -1), {from: 'extender-3', to: 'extender-4'}
+]), null, 'a real multihop branch was incorrectly rendered as a star');
 assert.equal(new Set(landscapeNodes.slice(1).map(node => {
   const position = landscapeStar.get(node.id);
   return `${position.x.toFixed(3)},${position.y.toFixed(3)}`;
@@ -351,8 +422,8 @@ assert.strictEqual(controller.topologySimulationNodes(simulation), renderTopolog
 assert.deepEqual(controller.topologySimulationNodes(null), []);
 assert.match(controller.optimizeTopologyLayout.toString(), /topologySimulationNodes\(simulation\)/,
   'Optimize Layout does not operate on the D3 render-node set');
-assert.match(controller.optimizeTopologyLayout.toString(), /topologyLandscapeLayout/,
-  'Optimize Layout does not use the deterministic landscape hierarchy');
+assert.doesNotMatch(controller.optimizeTopologyLayout.toString(), /topologyLandscapeLayout/,
+  'Optimize Layout replaced the operator arrangement with a canonical hierarchy');
 assert.deepEqual(topology, original, 'selecting simulation nodes changed the API model');
 
 const originalGetElementById = document.getElementById;
@@ -395,11 +466,16 @@ document.getElementById = originalGetElementById;
 let fitted = false;
 const layoutEvents = [];
 let tickCount = 0;
-const layoutNodes = deepClone(renderTopology.nodes);
-layoutNodes.forEach(node => {
-  node.fx = node.x === undefined || node.x === null ? 0 : node.x;
-  node.fy = node.y === undefined || node.y === null ? 0 : node.y;
+const layoutNodes = deepClone(landscapeNodes);
+const manualPositions = [
+  [300, -140], [300, 100], [600, 500], [-100, -300], [-100, 500], [600, -300]
+];
+layoutNodes.forEach((node, index) => {
+  [node.x, node.y] = manualPositions[index];
+  node.fx = node.x;
+  node.fy = node.y;
 });
+const beforeOptimize = layoutNodes.map(node => [node.id, node.x, node.y]);
 const fakeSimulation = {
   nodes: () => layoutNodes,
   on(name) {
@@ -407,8 +483,8 @@ const fakeSimulation = {
     return () => layoutEvents.push('paint');
   },
   stop() {
-    assert.ok(layoutNodes.every(node => node.fx === null && node.fy === null),
-      'Optimize Layout did not release every rendered node');
+    assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
+      'Optimize Layout released the operator-fixed nodes');
     return this;
   },
   alpha(value) { assert.equal(value, 1); return this; },
@@ -428,6 +504,7 @@ controller.nodePositionCache = new Map();
 controller.staPositionCache.set('manual-client', {
   ownerId: 'agent-1', ssid: 'private_ssid', x: 100, y: 200
 });
+const beforeClientPositions = [...controller.staPositionCache.entries()];
 controller.topologyLayoutGeneration = 0;
 controller.topologyRenderPending = false;
 controller.showNotification = () => {};
@@ -435,8 +512,10 @@ controller.fitTopologyToView = () => { fitted = true; layoutEvents.push('fit'); 
 controller.updateTopologyVisualization = () => { layoutEvents.push('redraw'); };
 controller.optimizeTopologyLayout();
 assert.equal(controller.nodePositionCache.size, layoutNodes.length);
-assert.equal(controller.staPositionCache.size, 0,
-  'Optimize Layout did not reset manual client positions');
+assert.deepEqual([...controller.staPositionCache.entries()], beforeClientPositions,
+  'Optimize Layout discarded manual client positions');
+assert.deepEqual(layoutNodes.map(node => [node.id, node.x, node.y]), beforeOptimize,
+  'Optimize Layout rearranged extenders or moved Agent-1/Controller');
 assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
   'optimized render positions were not fixed and cached');
 assert.equal(tickCount, 0, 'Optimize Layout still ran the non-deterministic force solver');

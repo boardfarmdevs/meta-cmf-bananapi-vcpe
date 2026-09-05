@@ -1,11 +1,13 @@
 # Portable LXD VM releases
 
-The 0904 handoff consists of one universal thin appliance for each EasyMesh
-implementation:
+Each EasyMesh implementation has one universal thin appliance. RDK EasyMesh
+0905 is the new release under qualification; prplMesh remains at its separate
+0904 checkpoint. See the RDK [current state](../current-state.md) for acceptance
+evidence rather than treating the release name as proof of qualification.
 
 | Artifact | Selectable clients | Default host ports |
 | --- | --- | --- |
-| `rdkeasymesh-0904-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890`, live room `18891` |
+| `rdkeasymesh-0905-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890`, live room `18891` |
 | `prplmesh-0904-thin.tar` | 20, 50, or 100 | wmediumd Console `8090`, Controller UI `8091`, live room `18891` |
 
 There are no profile-specific downloads. Import selects exactly one immutable
@@ -24,16 +26,16 @@ alone.
 Place one archive and its adjacent checksum in an empty directory:
 
 ```sh
-sha256sum -c STACK-0904-thin.tar.sha256
-tar -xf STACK-0904-thin.tar
-cd STACK-0904-thin
+sha256sum -c rdkeasymesh-0905-thin.tar.sha256
+tar -xf rdkeasymesh-0905-thin.tar
+cd rdkeasymesh-0905-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
 ./import.sh --profile 20
 ```
 
-Replace `STACK` with `rdkeasymesh` or `prplmesh`. Select profile `50` or `100`
+For prplMesh use `prplmesh-0904-thin` instead. Select profile `50` or `100`
 only when the host meets the resources in `release.json`. Import refuses a
 missing or invalid choice and does not overwrite an existing instance.
 
@@ -75,7 +77,7 @@ PRPLMESH_UI_HOST_IP=192.168.2.140 \
   ./import.sh --profile 50
 ```
 
-Default instance names are `rdkeasymesh-PROFILE-0904` and
+Default instance names are `rdkeasymesh-PROFILE-0905` and
 `prplmesh-PROFILE-0904`. The bundled README documents name and port overrides
 for multiple labs on one host.
 
@@ -84,9 +86,9 @@ for multiple labs on one host.
 RDK EasyMesh:
 
 ```sh
-lxc exec rdkeasymesh-20-0904 -- \
+lxc exec rdkeasymesh-20-0905 -- \
   /usr/local/sbin/easymesh-labctl check
-lxc exec rdkeasymesh-20-0904 -- \
+lxc exec rdkeasymesh-20-0905 -- \
   journalctl -fu easymesh-lab.service
 ```
 
@@ -106,8 +108,8 @@ Both imported VMs default to `boot.autostart=true`. `lxc stop INSTANCE` and
 Each outer tar contains one directory:
 
 ```text
-STACK-0904-thin/
-|-- STACK-0904-COMMIT-thin-lxd.tar.zst  LXD VM backup
+STACK-RELEASE-thin/
+|-- STACK-RELEASE-COMMIT-thin-lxd.tar.zst  LXD VM backup
 |-- import.sh                            profile and site reconciliation
 |-- install-host.sh                      Ubuntu 22.04/24.04 host setup
 |-- README.md                            operator instructions
@@ -118,14 +120,12 @@ STACK-0904-thin/
 `-- SHA256SUMS                           inner integrity manifest
 ```
 
-Only four files need distribution:
+For the RDK 0905 release, distribute these two files together:
 
 ```text
-EasyMesh-LXD-0904/
-|-- rdkeasymesh-0904-thin.tar
-|-- rdkeasymesh-0904-thin.tar.sha256
-|-- prplmesh-0904-thin.tar
-`-- prplmesh-0904-thin.tar.sha256
+EasyMesh-LXD-0905/
+|-- rdkeasymesh-0905-thin.tar
+`-- rdkeasymesh-0905-thin.tar.sha256
 ```
 
 Google Drive is transport only. Never replace an archive without also

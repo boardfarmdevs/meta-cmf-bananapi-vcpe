@@ -1,5 +1,11 @@
 # Interactive EasyMesh room manual
 
+The viewer includes a searchable, printable **Manual & Help** panel covering
+all controls, live and NO CONNECT modes, signals, fleet convergence, recording,
+walkthroughs, troubleshooting, and operator commands. It also opens separately
+at `viewer/manual.html`, on both rev140 and the GitHub Pages preview. Reading
+the manual does not pause the room or acquire an RF control lease.
+
 ## Purpose and present boundary
 
 The interactive room connects the 3D home directly to the live RDK lab. A
@@ -66,7 +72,7 @@ On the outer LXD host, expose VM port 8891 once. Substitute the VM name,
 outer-host address, and VM address shown by `lxc list`:
 
 ```bash
-lxc config device add rdkeasymesh-20-interactive room-demo-viewer proxy \
+lxc config device add rdkeasymesh-20-0905 room-demo-viewer proxy \
   nat=true \
   listen=tcp:192.168.2.140:18891 \
   connect=tcp:10.142.138.250:8891
@@ -296,10 +302,21 @@ candidate inventories never mix. For each client, the optimizer measures all
 eligible same-network, same-band APs. A client becomes eligible when another
 AP is strictly stronger (at least one RCPI unit in this interactive
 reconciliation mode) for the configured five-second hold. If several clients
-are eligible together, the optimizer moves the client with the largest RCPI
-gain first. Only one BTM transaction runs at a time. The next complete fleet
-measurement then determines the next action. Exact ties do not roam, avoiding
+are eligible together, the optimizer selects up to three clients per measured
+snapshot, weakest serving link first and largest RCPI gain as a tie-breaker.
+Only one individually verified BTM transaction runs at a time. The next
+complete fleet measurement determines the next batch. Exact ties do not roam, avoiding
 gratuitous ping-pong.
+
+In interactive mode, a temporary candidate-query transport failure (including
+HTTP 504) pauses the optimizer without closing the viewer or restoring the room.
+The optimizer card explicitly shows **Measurements unavailable**: the old
+candidate snapshot and convergence claim are not reused. Retries use a 5, 10,
+20, then 30-second capped backoff with the default polling interval. A complete
+fresh observation is required before evaluation resumes, and unacted policy
+holds restart while cooldown and action history remain intact. Failed query
+details are retained in `optimizer.measurement.unavailable` events. Malformed or
+untrustworthy measurements still fail the run, and scripted runs remain strict.
 
 At initial startup and after every committed room movement, the room performs
 this closed loop:
@@ -315,7 +332,8 @@ this closed loop:
    hwsim frequency, not a stale requested channel retained in controller
    configuration. Different agents may use different live channels;
 6. apply the gain and five-second hold policy to every client;
-7. select at most one client, preferring the largest measured RCPI gain;
+7. select a bounded batch, normally up to three clients, weakest serving
+   link first;
 8. enter one RoomEngine-owned steering transaction. The already-selected
    target is temporarily made unambiguous to hwsim on the selected band, in
    both directions: target `60 dB` SNR, source `20 dB`, and other APs
@@ -332,8 +350,9 @@ this closed loop:
     start a new measurement-freshness epoch without changing the room
     environment epoch, and reject telemetry sampled while the steering assist
     was active; and
-11. verify the physical BSSID, controller ownership and traffic before
-    checking the whole fleet again.
+11. verify the physical BSSID, controller ownership and traffic before the
+    next client in the batch. Abort on changed room state or failed outcome;
+    check the whole fleet again after the batch.
 
 The temporary RF assist is an explicit hwsim actuation aid, not an optimizer
 input and not an independent candidate measurement. The optimizer chooses the

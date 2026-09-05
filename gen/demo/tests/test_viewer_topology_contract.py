@@ -54,6 +54,13 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("Restore fronthaul", source)
         self.assertIn("role !== 'gateway'", source)
 
+    def test_candidate_outage_clears_old_optimizer_cards(self):
+        source = VIEWER.read_text(encoding="utf-8")
+
+        self.assertIn("optimizerState.status === 'unavailable'", source)
+        self.assertIn("Automatic steering paused", source)
+        self.assertIn("optimizer.measurement.unavailable') optimizerState = event.payload", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,115 @@
+Subject: [PATCH] cli: center Agent-1 in compact star topologies
+
+Place the co-located Agent-1 at the center of a true star, with extenders
+in close, consistently ordered pairs around it and Controller just above.
+Account for complete SSID group extents when spacing the nodes. Apply the
+layout on first display and when entering a new star, preserving manual
+positions across client and metric refreshes. Keep branch and chain layouts.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2445,6 +2445,51 @@
+     });
+   }
+ 
++  topologyStarLayout(nodes, edges) {
++    const rendered = Array.isArray(nodes) ? nodes : [];
++    const agent = rendered.find(node => /^agent-1$/i.test(String(node?.name || '')));
++    if (!agent) return null;
++    const controller = rendered.find(node => /^controller$/i.test(String(node?.name || '')));
++    const satellites = rendered.filter(node => node !== agent && node !== controller)
++      .sort((left, right) => String(left.name || left.id)
++        .localeCompare(String(right.name || right.id), undefined, {numeric: true}));
++    if (satellites.length < 2) return null;
++
++    const endpointId = endpoint => String(
++      endpoint && typeof endpoint === 'object' ? endpoint.id : endpoint
++    );
++    const expected = new Set(satellites.map(node =>
++      JSON.stringify([String(agent.id), String(node.id)])));
++    if (controller) expected.add(JSON.stringify([String(controller.id), String(agent.id)]));
++    const actual = new Set((Array.isArray(edges) ? edges : []).map(edge =>
++      JSON.stringify([endpointId(edge?.from ?? edge?.source), endpointId(edge?.to ?? edge?.target)])));
++    if (actual.size !== expected.size || [...actual].some(edge => !expected.has(edge))) return null;
++
++    const extentFor = node => Math.max(80, Number(this.topologyNodeExtent(node)) || 80);
++    const gap = 32;
++    const agentExtent = extentFor(agent);
++    const satelliteExtent = Math.max(...satellites.map(extentFor));
++    const rows = Math.ceil(satellites.length / 2);
++    const rowSpacing = satelliteExtent * 2 + gap;
++    const nearestRow = rows % 2 === 0 ? rowSpacing / 2 : 0;
++    const separation = agentExtent + satelliteExtent + gap;
++    const columnOffset = Math.max(satelliteExtent + gap / 2,
++      Math.sqrt(Math.max(0, separation * separation - nearestRow * nearestRow)));
++    const positions = new Map([[String(agent.id), {x: 0, y: 0}]]);
++    satellites.forEach((node, index) => {
++      positions.set(String(node.id), {
++        x: index % 2 === 0 ? -columnOffset : columnOffset,
++        y: (Math.floor(index / 2) - (rows - 1) / 2) * rowSpacing
++      });
++    });
++    if (controller) {
++      positions.set(String(controller.id), {
++        x: 0, y: -(agentExtent + extentFor(controller) + gap)
++      });
++    }
++    return positions;
++  }
++
+   /**
+    * Build a deterministic left-to-right hierarchy for a landscape viewport.
+    * Dense levels wrap into additional columns so a four-extender star uses a
+@@ -2452,6 +2497,8 @@
+    * bubbles and their clients, which keeps the fitted result inside the pane.
+    */
+   topologyLandscapeLayout(nodes, edges, width = 1600, height = 900) {
++    const star = this.topologyStarLayout(nodes, edges);
++    if (star) return star;
+     const rendered = Array.isArray(nodes) ? nodes : [];
+     const byId = new Map(rendered.map(node => [String(node.id), node]));
+     const children = new Map(rendered.map(node => [String(node.id), new Set()]));
+@@ -3345,6 +3392,16 @@
+     if (!this.topology?.nodes?.length) return;
+ 
+     const renderTopology = this.topologyRenderSnapshot(this.topology);
++    const starPositions = this.topologyStarLayout(renderTopology.nodes, renderTopology.edges);
++    const starSignature = starPositions
++      ? JSON.stringify(renderTopology.edges.map(edge => [String(edge.from), String(edge.to)]).sort())
++      : null;
++    const arrangeStar = starPositions &&
++      (starSignature !== this.topologyStarSignature || this.nodePositionCache.size === 0);
++    this.topologyStarSignature = starSignature;
++    if (arrangeStar) {
++      for (const [id, position] of starPositions) this.nodePositionCache.set(id, position);
++    }
+     const currentNodeIds = new Set(renderTopology.nodes.map(n => String(n.id)));
+     for (const key of this.nodePositionCache.keys()) {
+       if (!currentNodeIds.has(key)) {
+@@ -4025,6 +4082,11 @@
+         });
+     });
+ 
++    if (arrangeStar) {
++      simulation.on('tick')();
++      this.fitTopologyToView();
++    }
++
+     function dragstarted(event, d) {
+       self.beginTopologyInteraction();
+       if (!event.active) simulation.alphaTarget(0.3).restart();
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2024,7 +2024,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-signal-meter-1"></script>
++    <script src="static/script.js?v=topology-centered-star-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

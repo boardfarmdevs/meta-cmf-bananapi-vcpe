@@ -159,19 +159,19 @@ EASYMESH_ROOM_DEMO_PORT=29891 \
         > "$stage/nested-delayed.out"
 test "$(cat "$ready_count")" = 2
 ready_line=$(grep -nF \
-    'exec rdkeasymesh-20-0904 -- lxc query /1.0 ' "$log" \
+    'exec rdkeasymesh-20-0905 -- lxc query /1.0 ' "$log" \
     | tail -1 | cut -d: -f1)
 select_line=$(grep -nF \
-    'exec rdkeasymesh-20-0904 -- /usr/local/sbin/easymesh-select-thin-profile 20 ' \
+    'exec rdkeasymesh-20-0905 -- /usr/local/sbin/easymesh-select-thin-profile 20 ' \
     "$log" | cut -d: -f1)
 proxy_line=$(grep -nF \
-    'config device add rdkeasymesh-20-0904 easymesh-webui proxy ' \
+    'config device add rdkeasymesh-20-0905 easymesh-webui proxy ' \
     "$log" | tail -1 | cut -d: -f1)
 reload_line=$(grep -nF \
-    'exec rdkeasymesh-20-0904 -- systemctl daemon-reload ' \
+    'exec rdkeasymesh-20-0905 -- systemctl daemon-reload ' \
     "$log" | tail -1 | cut -d: -f1)
 start_line=$(grep -nF \
-    'exec rdkeasymesh-20-0904 -- systemctl --no-block start easymesh-lab.service ' \
+    'exec rdkeasymesh-20-0905 -- systemctl --no-block start easymesh-lab.service ' \
     "$log" | tail -1 | cut -d: -f1)
 test "$ready_line" -lt "$select_line"
 test "$select_line" -lt "$proxy_line"
