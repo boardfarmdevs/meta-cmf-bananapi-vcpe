@@ -23,6 +23,11 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   interactive-room acceptance results are recorded in
   [current state](https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/blob/codex/0905-clean/doc/easymesh/current-state.md);
   this section alone does not certify an untested artifact.
+- Fixes an onboarding race found by the fresh builder's reboot gate:
+  answering a client-capability query no longer marks an unconfigured radio
+  configured. Both complete role images include patch `0154`.
+- Pins the Boardfarm WAN AFTR build-stage migration to Bookworm, avoiding
+  the obsolete Bullseye package downloads encountered during the clean build.
 
 ## 0824
 

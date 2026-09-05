@@ -11,9 +11,9 @@ The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
 leaving 34 rather than 50 BSS records. Patch `0154` preserves the radio state
 while replying. Its compiled-handler regression reproduces the failure before
-the patch and passes after it. Corrected role images and repeated reboot gates
-are required before packaging; the original hashes below are not a deployable
-release acceptance claim.
+the patch and passes after it. Both corrected role images also build
+successfully. Repeated reboot gates remain required before packaging; the
+failed candidate and its original hashes are retained in release evidence.
 
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
@@ -29,8 +29,8 @@ link here instead of repeating versioned results.
 | Item | Required value |
 | --- | --- |
 | Source branch | `codex/0905-clean` |
-| Image source commit | `c5ae1d0e1371b7fbdd11c55124c39f8d97850b55` |
-| Runtime image source | EasyMesh through `0153`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
+| Image source commit | `73586e6bb572d88bd53c4bc92a9d508bd89f7a79` |
+| Runtime image source | EasyMesh through `0154`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
 | Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
@@ -47,15 +47,24 @@ from its colocated radio agent.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260905061756.rootfs.lxc.tar.bz2` | `90b4ff84810c6c50355ba0789bfcec9a2fd22e89ce42fe87c2e608c6404965f3` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260905093132.rootfs.lxc.tar.bz2` | `3c1f6ea19ea978e0d475249110b4bc86b8bed7f5a6d47df15d6cecf22a8ba55e` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260905110813.rootfs.lxc.tar.bz2` | `745168ffbcc0724d37a5a5e21306749d648527ebbfc503445c1d2b551024ffa3` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260905111432.rootfs.lxc.tar.bz2` | `f13ff68babb03f4250fa41427efd320b1d34bf97dd264102dae7d3f0816111bf` |
 
 Both images derive from the same clean source commit; their installed
-controller/Agent binaries remain role-specific. The controller ran 5792 tasks
+controller/Agent binaries remain role-specific. The initial cold build used
+`c5ae1d0e1371b7fbdd11c55124c39f8d97850b55`. The controller ran 5792 tasks
 successfully from an empty 0905 sstate directory, with zero external mirror
 hits. Its build ran 06:17:49–09:30:26 UTC. The extender ran 4988 tasks
 successfully, 09:31:25–09:41:41 UTC, reusing only outputs freshly built for
 0905. Neither role reused an older release's rootfs or compiled sstate.
+
+After the reboot defect was reproduced and fixed, both complete image targets
+were rebuilt at `73586e6` using only those fresh 0905 outputs. The corrected
+controller completed 5792 tasks (26 rerun), 11:07:41–11:13:56 UTC; the corrected
+extender completed 4988 tasks (24 rerun), 11:13:56–11:17:04 UTC. The table lists
+these corrected archives, not the superseded first candidates. Release
+provisioning recreates all nested nodes from the complete corrected archives;
+the diagnostic agent-only replacement is not a release input.
 
 The installed controller WebUI assets match the tested patched source exactly:
 `script.js` SHA-256
@@ -110,6 +119,8 @@ this table is not evidence that every historical campaign was repeated.
 Completed before appliance packaging:
 
 - both complete role-image builds and installed WebUI asset checks;
+- the compiled capability-query handler regression, failing before `0154`
+  and passing against both corrected Yocto source trees;
 - 235 Python tests, four WebUI suites against the fresh patched source,
   room interaction JavaScript, helper-artifact and VM shell regressions;
 - real-browser candidate checks for quoted cohort labels, uplink bars,
