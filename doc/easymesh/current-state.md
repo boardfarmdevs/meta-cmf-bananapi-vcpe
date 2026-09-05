@@ -10,9 +10,12 @@ but rev140 room acceptance found a gateway-recording defect. Its corrected
 runtime was repackaged and freshly imported on both hosts. Interactive API,
 browser and exact-restoration checks then passed, but the final rev140 audit
 rejected the candidate because the controller had restarted once. Patch
-`0155` addresses the command-completion race exposed by that run. Complete
-image rebuilds, replacement thin packaging and fresh qualification are pending;
-the old live labs have not been cut over.
+`0155` addresses the command-completion race exposed by that run. Both complete
+image rebuilds and two fresh builder reboot/health checks pass. The next room
+qualification fails initial convergence: the 6 GHz client's fixed frequency
+list excludes an AP's post-reboot channel. Replacement thin packaging and
+fresh import qualification remain pending; the old live labs have not been
+cut over.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -36,8 +39,8 @@ link here instead of repeating versioned results.
 | Item | Required value |
 | --- | --- |
 | Source branch | `codex/0905-clean` |
-| Image source commit | `73586e6bb572d88bd53c4bc92a9d508bd89f7a79` |
-| Runtime image source | EasyMesh through `0154`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
+| Image source commit | `9f5d64019aad4679c04b7e563ad00c6f0a47e23f` |
+| Runtime image source | EasyMesh through `0155`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
 | Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
@@ -54,8 +57,8 @@ from its colocated radio agent.
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260905110813.rootfs.lxc.tar.bz2` | `745168ffbcc0724d37a5a5e21306749d648527ebbfc503445c1d2b551024ffa3` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260905111432.rootfs.lxc.tar.bz2` | `f13ff68babb03f4250fa41427efd320b1d34bf97dd264102dae7d3f0816111bf` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260905143930.rootfs.lxc.tar.bz2` | `39af925bc4b46f4505baf98f754a4b527ea3de5e5ee6f6d85cd99fc983285896` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260905144620.rootfs.lxc.tar.bz2` | `b56b853db3d2362dd6f3854bfbaf86c93570ec7c8110134bbd0fb55e8208a17c` |
 
 Both images derive from the same clean source commit; their installed
 controller/Agent binaries remain role-specific. The initial cold build used
@@ -68,8 +71,12 @@ successfully, 09:31:25–09:41:41 UTC, reusing only outputs freshly built for
 After the reboot defect was reproduced and fixed, both complete image targets
 were rebuilt at `73586e6` using only those fresh 0905 outputs. The corrected
 controller completed 5792 tasks (26 rerun), 11:07:41–11:13:56 UTC; the corrected
-extender completed 4988 tasks (24 rerun), 11:13:56–11:17:04 UTC. The table lists
-these corrected archives, not the superseded first candidates. Release
+extender completed 4988 tasks (24 rerun), 11:13:56–11:17:04 UTC. Those images
+passed the builder reboot gates but are superseded by the orchestration fix.
+Both full targets were rebuilt again at `9f5d640`: controller 5792 tasks
+(26 rerun), 14:38:56–14:45:40 UTC; extender 4988 tasks (24 rerun),
+14:45:44–14:49:13 UTC. The compiled concurrency regression passes against
+both actual patched source trees. The table lists these latest archives. Release
 provisioning recreates all nested nodes from the complete corrected archives;
 the diagnostic agent-only replacement is not a release input.
 
@@ -170,11 +177,23 @@ handling and controller radio-timer command access. It retains synchronous
 completion before the next candidate request is admitted. The compiled
 real-method concurrency regression fails on the previous source and passes
 with locking, including nested completion and immediate follow-up submission.
-Neither assertions nor service-restart counters are suppressed. The two
-complete role images must be rebuilt before another thin archive is created.
+Neither assertions nor service-restart counters are suppressed. Both complete
+role images have been rebuilt successfully, as recorded in the artifact table.
 
-Replacement image builds, packaging and fresh imports on both hosts remain
-pending. Their results must be recorded before calling the
+The replacement-image builder `rdkeasymesh-20-0905-orch-builder` passes fresh
+25-container provisioning and two complete VM reboot/full-health gates,
+finishing at 15:25:10 UTC. Native steering and topology browser checks pass.
+However, room run `20260905T152622Z-private-client-room-walk-interactive` fails
+its initial 900-second convergence gate. Client `wlan-client-009` retains
+`freq_list=5955` and `scan_freq=5955`, while its strongest target AP now uses
+6135 MHz. The target is visible to a directed scan but excluded from the
+client's allowed association frequencies. This client-generation constraint
+remains unfixed; increasing the test timeout is not acceptance. Room shutdown
+restores the exact saved RF state, and the controller restart counter remains
+zero. Evidence is retained under `release-evidence/orch-fix/`.
+
+Full replacement-image room acceptance, packaging and fresh imports on both
+hosts remain pending. Their results must be recorded before calling the
 delivered appliance accepted. The archive's `release.json`
 identifies its exact runtime source commit; documentation-only commits can
 follow the image-source commit without changing either image.
@@ -196,6 +215,34 @@ test expectation was not changed for 0905.
 
 Host addresses are site configuration. They are selected during LXD VM build
 or import and are never baked into the portable artifact.
+
+## Optional container monitoring
+
+[Nested LXD UI and monitoring](reference/lxd-ui-and-monitoring.md) documents
+an opt-in loopback-only setup with metrics-only TLS authentication, Prometheus,
+Grafana provisioning and a bundled container dashboard. It observes the 25
+nested LXD containers, not the outer VM or EasyMesh radio metrics.
+
+On 2026-09-05, a temporary installation on the rev140 orchestration builder
+passes Prometheus configuration validation, authenticated scraping, the exact
+25-container roster comparison, Grafana data-source health and live queries
+for every dashboard panel. The nested LXD UI serves over verified TLS;
+anonymous metrics and administrative instance access using the metrics-only
+certificate both return HTTP 403. Browser identity enrollment and the
+operator's SSH setup remain installation steps, not claimed browser tests.
+The memory panel uses the observed LXD 6.9 `MemTotal - MemFree` semantics,
+including cache; this cgroup-v2 exporter does not emit the documented RSS
+family.
+
+Repeated setup preserves credentials, conflicting listeners are refused, and
+disable preserves operator-modified settings while restoring owned settings.
+Re-enable and repeated disable also pass. The temporary services, volumes,
+images, trust entry and credentials are removed before release packaging;
+the final full health audit passes with all service restart counters zero
+and zero packet loss for all 20 clients. Local Python validation passes
+244 tests with one unchanged optional skip, including eight new monitoring
+checks. Evidence is in `release-evidence/observability/`. Nothing is enabled
+on either old live lab, and these results do not clear the room-release gate.
 
 ## Important boundaries
 

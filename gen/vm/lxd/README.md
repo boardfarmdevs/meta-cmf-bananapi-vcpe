@@ -17,6 +17,12 @@ The guest kernel owns hwsim. This keeps the radio module, wiphys and medium
 lifecycle inside the appliance instead of crossing an outer system-container
 namespace.
 
+Optional nested-container management and resource graphs are provided by
+[`observability/`](observability/README.md). The detailed
+[LXD UI and monitoring guide](../../../doc/easymesh/reference/lxd-ui-and-monitoring.md)
+covers secure browser access, Prometheus, Grafana, validation and removal.
+Enable it after import; do not export its generated credentials or data.
+
 ## Use the universal appliance
 
 For normal installation, start with `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` and its

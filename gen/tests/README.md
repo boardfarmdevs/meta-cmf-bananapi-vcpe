@@ -4,6 +4,17 @@ This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
 
+`test_lxd_observability.py` checks the optional nested-LXD monitoring bundle's
+dashboard filters, verified scrape configuration, shell syntax and reference
+links. Its Compose checks require the v2 plugin but no running Docker daemon:
+
+```sh
+python3 -m pytest -q gen/tests/test_lxd_observability.py
+```
+
+Live installation, authentication and rollback checks are documented in
+[LXD UI and container monitoring](../../doc/easymesh/reference/lxd-ui-and-monitoring.md).
+
 `hwsim-monitor-ack.sh` is a live Linux 7 multichannel regression. It briefly
 enables the normally-down `hwsim0` radiotap monitor, generates acknowledged
 client traffic, and rejects a kernel Oops, wmediumd death, or nl80211 deadlock.

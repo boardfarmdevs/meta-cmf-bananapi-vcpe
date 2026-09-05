@@ -86,6 +86,7 @@ boundary:
 - [Consolidated patch set](reference/patch-set.md)
 - [MediaTek single-wiphy radio model](reference/single-wiphy-radio-model.md)
 - [Metrics reporting and APIs](reference/metrics.md)
+- [Nested LXD UI and Prometheus/Grafana monitoring](reference/lxd-ui-and-monitoring.md)
 - [Commanded EasyMesh steering](reference/commanded-steering.md)
 - [wmediumd client carousel](reference/client-carousel.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)
