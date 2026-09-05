@@ -4,16 +4,17 @@ Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
 Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
-passed on 2026-09-05 UTC; appliance and imported-runtime qualification are
-pending. A successful image build is not a claim of live acceptance.
+passed on 2026-09-05 UTC. Corrected images also passed two complete builder
+VM reboots and full health audits. Portable import and interactive-room
+qualification remain pending.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
 leaving 34 rather than 50 BSS records. Patch `0154` preserves the radio state
 while replying. Its compiled-handler regression reproduces the failure before
 the patch and passes after it. Both corrected role images also build
-successfully. Repeated reboot gates remain required before packaging; the
-failed candidate and its original hashes are retained in release evidence.
+successfully and pass the repeated reboot gates. The failed candidate and
+its original hashes are retained in release evidence.
 
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
@@ -119,6 +120,10 @@ this table is not evidence that every historical campaign was repeated.
 Completed before appliance packaging:
 
 - both complete role-image builds and installed WebUI asset checks;
+- two complete corrected-image builder VM reboots: both restore 5/15/50,
+  20 clients, 24 associated STAs, 20 live metrics and zero service restarts;
+  full audits verify NVRAM bindings, kernel/DB/API association ownership,
+  fresh uplink measurements and 0% packet loss for every client;
 - the compiled capability-query handler regression, failing before `0154`
   and passing against both corrected Yocto source trees;
 - 235 Python tests, four WebUI suites against the fresh patched source,
@@ -130,8 +135,8 @@ Completed before appliance packaging:
 - isolated real-daemon checks for concurrent control clients, rejection of
   stale generations, atomic updates, frequency isolation and exact restoration.
 
-Fresh builder, rev140/rev150 import, live traffic/steering, interactive-room
-movement and restoration gates remain pending. Their results must be recorded
+Final builder browser/proxy checks, rev140/rev150 import, live steering,
+interactive-room movement and restoration gates remain pending. Their results must be recorded
 before calling the delivered appliance accepted. The archive's `release.json`
 identifies its exact runtime source commit; documentation-only commits can
 follow the image-source commit without changing either image.

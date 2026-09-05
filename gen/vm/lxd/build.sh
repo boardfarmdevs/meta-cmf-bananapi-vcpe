@@ -116,6 +116,7 @@ wait_http_ready() {
     deadline=$((SECONDS + http_ready_timeout))
     while [ "$SECONDS" -lt "$deadline" ]; do
         remaining=$((deadline - SECONDS))
+        [ "$remaining" -gt 0 ] || break
         request_timeout=$remaining
         [ "$request_timeout" -le 10 ] || request_timeout=10
         if curl -fsS --connect-timeout 2 --max-time "$request_timeout" \
