@@ -5,8 +5,9 @@ open before using the lab.
 
 Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
 passed on 2026-09-05 UTC. Corrected images also passed two complete builder
-VM reboots and full health audits. Portable import and interactive-room
-qualification remain pending.
+VM reboots and full health audits. Initial thin imports passed on both hosts,
+but rev140 room acceptance found a gateway-recording defect. The corrected
+runtime must be repackaged and freshly imported before final qualification.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -126,7 +127,7 @@ Completed before appliance packaging:
   fresh uplink measurements and 0% packet loss for every client;
 - the compiled capability-query handler regression, failing before `0154`
   and passing against both corrected Yocto source trees;
-- 235 Python tests, four WebUI suites against the fresh patched source,
+- 236 Python tests, four WebUI suites against the fresh patched source,
   room interaction JavaScript, helper-artifact and VM shell regressions;
 - real-browser candidate checks for quoted cohort labels, uplink bars,
   manual layout preservation, and fitting three viewport sizes;
@@ -135,9 +136,24 @@ Completed before appliance packaging:
 - isolated real-daemon checks for concurrent control clients, rejection of
   stale generations, atomic updates, frequency isolation and exact restoration.
 
-Final builder browser/proxy checks, rev140/rev150 import, live steering,
-interactive-room movement and restoration gates remain pending. Their results must be recorded
-before calling the delivered appliance accepted. The archive's `release.json`
+The first `ac18169` archive passed builder browser/proxy gates and fresh
+20-client imports on both hosts, each going from zero to 25 nested instances.
+Both full audits passed with zero packet loss. Rev140 also passed all four
+native away/return steering moves, the topology browser tests, embedded manual
+checks, and the browser-only timeout-card regression.
+
+Its interactive test converged all 20 clients, then exposed a missing gateway
+track while recording a move of the colocated Agent-1. The session failed
+closed and verified exact RF restoration. Recording now captures and exports
+every movable role, including the gateway, rather than only roles permitted
+to disappear. Gateway presence remains protected. A regression reproduces the
+original failure and verifies the corrected movement, exported geometry, and
+exact restoration. This Python runtime fix does not change either Yocto image.
+The initial archive is superseded, not an accepted delivery.
+
+Corrected-runtime interactive acceptance, repackaging, and fresh imports on
+both hosts remain pending. Their results must be recorded before calling the
+delivered appliance accepted. The archive's `release.json`
 identifies its exact runtime source commit; documentation-only commits can
 follow the image-source commit without changing either image.
 

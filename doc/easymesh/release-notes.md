@@ -32,6 +32,9 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   finds its shared observer helpers instead of resolving them below `/usr`.
 - Uses bounded HTTP retry loops compatible with rev140's curl 7.68, without
   requiring the newer `--retry-all-errors` option.
+- Records and exports movement of the colocated gateway/Agent-1 as well as
+  clients and extenders. Gateway movement during recording no longer faults
+  the room; its protected presence control is unchanged.
 
 ## 0824
 

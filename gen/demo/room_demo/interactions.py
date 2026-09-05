@@ -592,7 +592,7 @@ class InteractiveMediumSession:
                         "position": list(self._roles[role]["position"]),
                         "present": bool(self._roles[role]["present"]),
                     }]
-                    for role in self._presence_roles
+                    for role in self._movable_roles
                 },
             }
             self._recorded_mobility = None
@@ -644,7 +644,7 @@ class InteractiveMediumSession:
         tick_ms = 200
         duration_ms = max(tick_ms, math.ceil((elapsed + 1) / tick_ms) * tick_ms)
         nodes = []
-        for role in self._presence_roles:
+        for role in self._movable_roles:
             frames = copy.deepcopy(self._recording["frames"][role])
             positions = [frames[0]]
             for frame in frames[1:]:
