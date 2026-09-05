@@ -443,6 +443,34 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertEqual(station["path"][-1]["position"], [8.0, 2.0])
         self.assertNotEqual(station["presence"], [[0, mobility["duration_ms"]]])
 
+    def test_recording_preserves_an_extender_fronthaul_outage(self):
+        self.session.start_recording(
+            token=self.lease["token"], expected_revision=0,
+            name="extender outage",
+        )
+        time.sleep(0.01)
+        self.session.presence(
+            "extender_1", token=self.lease["token"], expected_revision=0,
+            present=False,
+        )
+        time.sleep(0.01)
+        self.session.presence(
+            "extender_1", token=self.lease["token"], expected_revision=1,
+            present=True,
+        )
+        self.session.stop_recording(
+            token=self.lease["token"], expected_revision=2,
+        )
+        mobility, world = self.session.recorded_documents()
+        extender = next(
+            item for item in mobility["nodes"] if item["role"] == "extender_1"
+        )
+        self.assertIn("presence", extender)
+        self.assertNotEqual(
+            extender["presence"], [[0, mobility["duration_ms"]]]
+        )
+        self.assertEqual(world["schema"], "wmdcfg.world-plan.v1")
+
 
 class RoomEngineTests(unittest.TestCase):
     def setUp(self):
