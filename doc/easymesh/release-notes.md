@@ -35,6 +35,11 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
 - Records and exports movement of the colocated gateway/Agent-1 as well as
   clients and extenders. Gateway movement during recording no longer faults
   the room; its protected presence control is unchanged.
+- Serializes orchestrator command lifetime with candidate responses, rejection
+  ACKs and controller radio timers. Patch `0155` prevents completion from
+  freeing active command statistics during a manager timeout, while preserving
+  immediate follow-up queries. Its compiled concurrency regression reproduces
+  the previous race; replacement image and appliance acceptance are required.
 
 ## 0824
 

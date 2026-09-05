@@ -6,8 +6,13 @@ open before using the lab.
 Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
 passed on 2026-09-05 UTC. Corrected images also passed two complete builder
 VM reboots and full health audits. Initial thin imports passed on both hosts,
-but rev140 room acceptance found a gateway-recording defect. The corrected
-runtime must be repackaged and freshly imported before final qualification.
+but rev140 room acceptance found a gateway-recording defect. Its corrected
+runtime was repackaged and freshly imported on both hosts. Interactive API,
+browser and exact-restoration checks then passed, but the final rev140 audit
+rejected the candidate because the controller had restarted once. Patch
+`0155` addresses the command-completion race exposed by that run. Complete
+image rebuilds, replacement thin packaging and fresh qualification are pending;
+the old live labs have not been cut over.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -151,8 +156,25 @@ original failure and verifies the corrected movement, exported geometry, and
 exact restoration. This Python runtime fix does not change either Yocto image.
 The initial archive is superseded, not an accepted delivery.
 
-Corrected-runtime interactive acceptance, repackaging, and fresh imports on
-both hosts remain pending. Their results must be recorded before calling the
+The corrected `017abf7` runtime archive (SHA-256
+`119342a7dd686c82828e1330aaaa5d3b6502e880aed39a16c164653e26e43bbb`)
+passed fresh 20-client imports on both hosts. Rev140 passed native steering,
+interactive API/browser/recording checks and exact RF restoration. However,
+the post-room full health audit found `em_ctrl NRestarts=1`, so this archive is
+also superseded, not accepted. Its retained Breakpad dump reports SIGABRT
+during orchestration: a radio-thread candidate response can delete the active
+command and its statistics while the manager timeout is still using them.
+
+Patch `0155` serializes command queue/stat operations, candidate response/ACK
+handling and controller radio-timer command access. It retains synchronous
+completion before the next candidate request is admitted. The compiled
+real-method concurrency regression fails on the previous source and passes
+with locking, including nested completion and immediate follow-up submission.
+Neither assertions nor service-restart counters are suppressed. The two
+complete role images must be rebuilt before another thin archive is created.
+
+Replacement image builds, packaging and fresh imports on both hosts remain
+pending. Their results must be recorded before calling the
 delivered appliance accepted. The archive's `release.json`
 identifies its exact runtime source commit; documentation-only commits can
 follow the image-source commit without changing either image.

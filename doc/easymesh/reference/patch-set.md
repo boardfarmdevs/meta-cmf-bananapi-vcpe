@@ -338,10 +338,17 @@ authority. Its dependency order is:
 86. replace those split titles with quoted "iot" and "private" labels in dark
     gray and dark blue, with padded placement and a wider clear client-link sector; and
 87. fit Optimize Layout to the available viewport without moving manually
-    positioned extenders, Agent-1, Controller, or clients.
+    positioned extenders, Agent-1, Controller, or clients;
+88. preserve onboarding state while answering early client-capability queries
+    (`0154`); and
+89. serialize command queues, statistics, candidate response/ACK completion and
+    controller radio-timer command access with a recursive lifetime guard
+    (`0155`). Preprocessing that stops/deletes radio threads stays outside the
+    guard. The compiled concurrency regression is
+    `gen/tests/orchestrator-completion-race-test.py SOURCE_TREE`.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0154`; the
+component or image build. The current source series ends at `0155`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
