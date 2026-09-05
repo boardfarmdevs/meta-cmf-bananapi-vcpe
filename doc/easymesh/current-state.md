@@ -194,7 +194,11 @@ within the requested band, rather than the initially active AP channels.
 Pool resume recreates legacy band-pinned clients using a configuration marker.
 The three-band regression fails before the fix and passes afterward, with
 disabled-channel exclusion, numeric ordering and deduplication; migration
-tests cover legacy and current clients. Live requalification remains pending;
+tests cover legacy and current clients. Inspection of the first candidate's
+persisted list also found hwsim's 5925 MHz 5 GHz edge incorrectly included as
+6 GHz. The `supported-phy-v2` correction excludes it while retaining the
+special 5935 MHz 6 GHz channel when supported; pool resume migrates the first
+candidate too. Live requalification of this final band scope remains pending;
 increasing the test timeout is not acceptance. Room shutdown
 restores the exact saved RF state, and the controller restart counter remains
 zero. Evidence is retained under `release-evidence/orch-fix/`.

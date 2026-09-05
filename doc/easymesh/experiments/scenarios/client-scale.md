@@ -118,13 +118,19 @@ The shared hwsim PHY capabilities are read from the mesh containers; a missing
 supported band fails provisioning. Changing the regulatory domain requires
 regenerating this configuration against the new enabled-channel set.
 
-The `user.easymesh.band-scope=supported-phy-v1` instance marker identifies this
+The `user.easymesh.band-scope=supported-phy-v2` instance marker identifies this
 configuration contract. Pool `up` recreates legacy explicitly band-pinned
 clients without that marker, even if currently associated, while retaining
 healthy `auto` clients. This can interrupt those clients and change their
 radio identity: stop active room experiments and preserve their evidence
 before upgrading the pool. Fresh thin imports generate the new configuration
 directly; no in-place `wpa_cli` policy override is needed.
+
+The lower 6 GHz channel-center boundary includes the special 5935 MHz channel
+but excludes hwsim's 5925 MHz 5 GHz channel. The first `supported-phy-v1`
+candidate included that 5 GHz edge by mistake; it is also recreated by pool
+resume. Tests explicitly cover both edges, rather than equating allocation
+edges with valid 6 GHz channel centers.
 
 On a development host, remove the selected profile's clients:
 

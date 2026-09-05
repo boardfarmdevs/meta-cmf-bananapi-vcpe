@@ -68,8 +68,8 @@ supported_band_frequencies() {
         $1 == "*" && $3 == "MHz" && $0 !~ /\(disabled\)/ {
             frequency=$2 + 0
             if ((band == "2.4" && frequency >= 2400 && frequency < 2500) ||
-                (band == "5"   && frequency >= 5000 && frequency < 5925) ||
-                (band == "6"   && frequency >= 5925 && frequency <= 7125))
+                (band == "5"   && frequency >= 5000 && frequency < 5935) ||
+                (band == "6"   && frequency >= 5935 && frequency <= 7115))
                 printf "%d\n", frequency
         }
     ' | sort -nu | paste -sd ' ' -
@@ -236,7 +236,7 @@ up)
     lxc config set "$CT" user.easymesh.ssid "$SSID"
     lxc config set "$CT" user.easymesh.security "$SECURITY"
     lxc config set "$CT" user.easymesh.band "$BAND"
-    [ "$BAND" = auto ] || lxc config set "$CT" user.easymesh.band-scope supported-phy-v1
+    [ "$BAND" = auto ] || lxc config set "$CT" user.easymesh.band-scope supported-phy-v2
     # base image already has iw + wpa_supplicant + the WNM binary; only apk-install
     # if we fell back to the raw Alpine base
     if [ "$BASE_IMG" = "$SRC_IMG" ]; then

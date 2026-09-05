@@ -75,7 +75,7 @@ def test_client_startup_replaces_old_dhcp_lease_before_udhcpc():
 
 @pytest.mark.parametrize(
     ("band", "expected"),
-    (("2.4", "2412 2484"), ("5", "5180 5825"), ("6", "5935 5955 6135 6195 7115")),
+    (("2.4", "2412 2484"), ("5", "5180 5825 5925"), ("6", "5935 5955 6135 6195 7115")),
 )
 def test_band_scope_includes_future_ap_channels_without_crossing_bands(band, expected):
     helper = CLIENT_HELPER.read_text()
@@ -93,6 +93,7 @@ Wiphy phy0
         * 5180 MHz [36] (30.0 dBm)
         * 5260 MHz [52] (disabled)
         * 5825 MHz [165] (30.0 dBm)
+        * 5925 MHz [185] (33.0 dBm)
         * 5935 MHz [2] (33.0 dBm)
         * 5955 MHz [1] (33.0 dBm)
         * 5975 MHz [5] (disabled)
@@ -125,7 +126,7 @@ lxc() {
 
 @pytest.mark.parametrize(
     ("band", "scope", "expected"),
-    (("6", "", 1), ("6", "supported-phy-v1", 0), ("auto", "", 0)),
+    (("6", "", 1), ("6", "supported-phy-v1", 1), ("6", "supported-phy-v2", 0), ("auto", "", 0)),
 )
 def test_pool_recreates_legacy_band_pinned_clients(band, scope, expected):
     function = re.search(r"(client_ready\(\) \{.*?\n\})", POOL.read_text(), re.S)
@@ -150,4 +151,4 @@ lxc() {
 """ + function[1] + '\nclient_ready wlan-client-009 private 10 private_ssid sae "$CLIENT_BAND"\n'
     result = subprocess.run(("bash", "-c", script), env=environment, capture_output=True)
     assert result.returncode == expected
-    assert 'user.easymesh.band-scope supported-phy-v1' in CLIENT_HELPER.read_text()
+    assert 'user.easymesh.band-scope supported-phy-v2' in CLIENT_HELPER.read_text()

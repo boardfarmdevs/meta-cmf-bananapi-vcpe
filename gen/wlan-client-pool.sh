@@ -128,7 +128,7 @@ client_ready() {
         || { [ "$band" = auto ] && [ -z "$configured_band" ]; } \
         || return 1
     if [ "$band" != auto ]; then
-        [ "$(lxc config get "$name" user.easymesh.band-scope 2>/dev/null)" = supported-phy-v1 ] || return 1
+        [ "$(lxc config get "$name" user.easymesh.band-scope 2>/dev/null)" = supported-phy-v2 ] || return 1
     fi
     lxc exec "$name" -- iw dev wlan0 link 2>/dev/null | grep -Fq "SSID: $ssid" || return 1
     freq=$(lxc exec "$name" -- iw dev wlan0 link 2>/dev/null | awk '/freq:/ {print $2; exit}')
@@ -136,8 +136,8 @@ client_ready() {
     case "$band" in
         auto) ;;
         2.4) [ "$freq" -ge 2400 ] 2>/dev/null && [ "$freq" -lt 2500 ] || return 1 ;;
-        5)   [ "$freq" -ge 5000 ] 2>/dev/null && [ "$freq" -lt 5925 ] || return 1 ;;
-        6)   [ "$freq" -ge 5925 ] 2>/dev/null && [ "$freq" -le 7125 ] || return 1 ;;
+        5)   [ "$freq" -ge 5000 ] 2>/dev/null && [ "$freq" -lt 5935 ] || return 1 ;;
+        6)   [ "$freq" -ge 5935 ] 2>/dev/null && [ "$freq" -le 7115 ] || return 1 ;;
         *) return 1 ;;
     esac
     lxc exec "$name" -- ip -4 -o addr show wlan0 2>/dev/null | grep -q 'inet '
