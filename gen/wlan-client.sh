@@ -59,42 +59,20 @@ done
 CT="wlan-client${INST:+-$INST}"
 PROFILE="$CT"
 
-# Resolve a band request against the channels which the live mesh is actually
-# advertising.  A band preference is not a channel preference: pinning 6 GHz
-# to one historical frequency (6135 MHz) made a valid 5955 MHz lab impossible
-# to join.  Keep every observed frequency in the selected band so a client can
-# still roam between APs if their same-band channels later differ.
-active_band_frequencies() {
-    local band=$1 container frequencies
+supported_band_frequencies() {
+    local band=$1 container
     for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
         lxc info "$container" >/dev/null 2>&1 || continue
-        lxc exec "$container" -- iw dev 2>/dev/null || true
+        lxc exec "$container" -- iw phy 2>/dev/null || true
     done | awk -v band="$band" '
-        $1 == "channel" {
-            frequency=$3
-            gsub(/[^0-9]/, "", frequency)
+        $1 == "*" && $3 == "MHz" && $0 !~ /\(disabled\)/ {
+            frequency=$2 + 0
             if ((band == "2.4" && frequency >= 2400 && frequency < 2500) ||
-                (band == "5"   && frequency >= 5000 && frequency < 5955) ||
-                (band == "6"   && frequency >= 5955 && frequency <= 7115))
-                seen[frequency]=1
+                (band == "5"   && frequency >= 5000 && frequency < 5925) ||
+                (band == "6"   && frequency >= 5925 && frequency <= 7125))
+                printf "%d\n", frequency
         }
-        END {
-            separator=""
-            for (frequency in seen) {
-                values[++count]=frequency + 0
-            }
-            for (i=1; i<=count; i++)
-                for (j=i+1; j<=count; j++)
-                    if (values[j] < values[i]) {
-                        value=values[i]; values[i]=values[j]; values[j]=value
-                    }
-            for (i=1; i<=count; i++) {
-                printf "%s%d", separator, values[i]
-                separator=" "
-            }
-            if (count)
-                printf "\n"
-        }'
+    ' | sort -nu | paste -sd ' ' -
 }
 
 # Initialize a container without physical hwsim devices in its profile, attach
@@ -176,9 +154,9 @@ up)
     case "$BAND" in
         auto) FREQ_DIRECTED= ;;
         2.4|5|6)
-            EXPECTED_FREQS=$(active_band_frequencies "$BAND")
+            EXPECTED_FREQS=$(supported_band_frequencies "$BAND")
             if [ -z "$EXPECTED_FREQS" ]; then
-                echo "$CT: no active $BAND GHz AP frequency was found" >&2
+                echo "$CT: no supported $BAND GHz PHY frequency was found" >&2
                 exit 1
             fi
             FREQ_DIRECTED="\n scan_freq=$EXPECTED_FREQS\n freq_list=$EXPECTED_FREQS"
@@ -258,6 +236,7 @@ up)
     lxc config set "$CT" user.easymesh.ssid "$SSID"
     lxc config set "$CT" user.easymesh.security "$SECURITY"
     lxc config set "$CT" user.easymesh.band "$BAND"
+    [ "$BAND" = auto ] || lxc config set "$CT" user.easymesh.band-scope supported-phy-v1
     # base image already has iw + wpa_supplicant + the WNM binary; only apk-install
     # if we fell back to the raw Alpine base
     if [ "$BASE_IMG" = "$SRC_IMG" ]; then

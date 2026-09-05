@@ -13,7 +13,8 @@ rejected the candidate because the controller had restarted once. Patch
 `0155` addresses the command-completion race exposed by that run. Both complete
 image rebuilds and two fresh builder reboot/health checks pass. The next room
 qualification fails initial convergence: the 6 GHz client's fixed frequency
-list excludes an AP's post-reboot channel. Replacement thin packaging and
+list excludes an AP's post-reboot channel. A supported-PHY band-scope fix and
+legacy-client migration are implemented; live requalification, thin packaging and
 fresh import qualification remain pending; the old live labs have not been
 cut over.
 
@@ -188,7 +189,13 @@ its initial 900-second convergence gate. Client `wlan-client-009` retains
 `freq_list=5955` and `scan_freq=5955`, while its strongest target AP now uses
 6135 MHz. The target is visible to a directed scan but excluded from the
 client's allowed association frequencies. This client-generation constraint
-remains unfixed; increasing the test timeout is not acceptance. Room shutdown
+is corrected in the client generator by selecting the enabled PHY channels
+within the requested band, rather than the initially active AP channels.
+Pool resume recreates legacy band-pinned clients using a configuration marker.
+The three-band regression fails before the fix and passes afterward, with
+disabled-channel exclusion, numeric ordering and deduplication; migration
+tests cover legacy and current clients. Live requalification remains pending;
+increasing the test timeout is not acceptance. Room shutdown
 restores the exact saved RF state, and the controller restart counter remains
 zero. Evidence is retained under `release-evidence/orch-fix/`.
 

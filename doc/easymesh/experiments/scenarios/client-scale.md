@@ -110,6 +110,22 @@ an old global WLAN address before invoking BusyBox `udhcpc`, preventing a
 recovery retry from retaining the prior lease as a secondary address. The hook
 is refreshed even when an older `wlan-client-base` image alias is reused.
 
+Explicit `--band` clients persist both supplicant frequency lists from the
+enabled PHY channels in that band, not just the AP channels active during
+creation. This permits same-band roaming after AP channel selection changes
+on reboot while retaining the selected band and excluding disabled channels.
+The shared hwsim PHY capabilities are read from the mesh containers; a missing
+supported band fails provisioning. Changing the regulatory domain requires
+regenerating this configuration against the new enabled-channel set.
+
+The `user.easymesh.band-scope=supported-phy-v1` instance marker identifies this
+configuration contract. Pool `up` recreates legacy explicitly band-pinned
+clients without that marker, even if currently associated, while retaining
+healthy `auto` clients. This can interrupt those clients and change their
+radio identity: stop active room experiments and preserve their evidence
+before upgrading the pool. Fresh thin imports generate the new configuration
+directly; no in-place `wpa_cli` policy override is needed.
+
 On a development host, remove the selected profile's clients:
 
 ```sh
