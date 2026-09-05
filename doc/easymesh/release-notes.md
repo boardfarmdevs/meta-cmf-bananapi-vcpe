@@ -40,6 +40,14 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   freeing active command statistics during a manager timeout, while preserving
   immediate follow-up queries. Its compiled concurrency regression reproduces
   the previous race; replacement image and appliance acceptance are required.
+- Keeps explicitly band-selected clients eligible for supported same-band AP
+  channels after reboot, rather than pinning them to channels active during
+  provisioning. Pool resume migrates legacy configurations; boundary tests
+  exclude hwsim's 5925 MHz 5 GHz edge from the 6 GHz allow-list.
+- Adds an opt-in nested LXD web UI and Prometheus/Grafana setup bundle with
+  loopback access, metrics-only TLS credentials, a provisioned container
+  dashboard, and documented rollback. Monitoring remains disabled in the
+  portable base image; credentials are generated separately after import.
 
 ## 0824
 

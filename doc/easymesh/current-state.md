@@ -11,12 +11,12 @@ runtime was repackaged and freshly imported on both hosts. Interactive API,
 browser and exact-restoration checks then passed, but the final rev140 audit
 rejected the candidate because the controller had restarted once. Patch
 `0155` addresses the command-completion race exposed by that run. Both complete
-image rebuilds and two fresh builder reboot/health checks pass. The next room
-qualification fails initial convergence: the 6 GHz client's fixed frequency
-list excludes an AP's post-reboot channel. A supported-PHY band-scope fix and
-legacy-client migration are implemented; live requalification, thin packaging and
-fresh import qualification remain pending; the old live labs have not been
-cut over.
+image rebuilds pass. A subsequent room gate exposed a 6 GHz client frequency
+list pinned to initially active AP channels. The supported-PHY band-scope fix
+and legacy-client migration now pass two fresh builder reboots, complete
+interactive API/browser/manual checks, exact restoration and the final health
+audit. Replacement thin packaging and fresh import qualification remain
+pending; the old live labs have not been cut over.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -198,13 +198,28 @@ tests cover legacy and current clients. Inspection of the first candidate's
 persisted list also found hwsim's 5925 MHz 5 GHz edge incorrectly included as
 6 GHz. The `supported-phy-v2` correction excludes it while retaining the
 special 5935 MHz 6 GHz channel when supported; pool resume migrates the first
-candidate too. Live requalification of this final band scope remains pending;
-increasing the test timeout is not acceptance. Room shutdown
+candidate too. Increasing the test timeout is not acceptance. Room shutdown
 restores the exact saved RF state, and the controller restart counter remains
 zero. Evidence is retained under `release-evidence/orch-fix/`.
 
-Full replacement-image room acceptance, packaging and fresh imports on both
-hosts remain pending. Their results must be recorded before calling the
+Final band-scope runtime `23fb9c744494f19a5db568f3cd307a1ad93a1163` passes
+standard pool migration and two further whole-VM reboot/full-health checks,
+finishing at 17:54:47 UTC. Native away/return steering passes 4/4 and the real
+topology browser fits three viewport sizes. Room run
+`20260905T175555Z-private-client-room-walk-interactive` passes initial and final
+20-client convergence, authenticated single-writer controls, idempotence and
+stale-revision rejection, client/extender/gateway movement, presence outages,
+walking controls, recording export and observed steering with traffic
+verification. It completes with 22 optimizer actions, not a relaxed timeout.
+Real-browser dragging, preview isolation, reset, camera mode, lease release
+and embedded manual checks also pass. Room shutdown restores the exact RF
+snapshot; the post-room audit reports zero native service restarts and 0%
+packet loss for every client. Evidence is in `release-evidence/band-scope-v2/`.
+Local validation passes 251 Python tests with the unchanged optional skip,
+plus all seven portable-VM shell suites.
+
+Replacement packaging and fresh imports on both hosts remain pending.
+Their results must be recorded before calling the
 delivered appliance accepted. The archive's `release.json`
 identifies its exact runtime source commit; documentation-only commits can
 follow the image-source commit without changing either image.
