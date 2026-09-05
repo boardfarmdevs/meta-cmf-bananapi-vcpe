@@ -194,7 +194,7 @@
         <option value="3">3.0 m/s run</option>
       </select>
     </div>
-    <div id="interactionSummary">Select <b>Interact</b>, then drag a client.</div>
+    <div id="interactionSummary">Select <b>Interact</b>, then drag a client or extender.</div>
     <div class="interaction-actions">
       <button id="moveSelected" disabled>Move to…</button>
       <button id="presenceSelected" disabled>Disappear</button>
@@ -205,7 +205,7 @@
       <button id="recordInteraction">Start recording</button>
       <button id="downloadRecording" disabled>Download world</button>
     </div>
-    <div id="interactionHelp">Drag clients or right-click a client/extender for presence controls. Static-world changes remain a browser preview.</div>
+    <div id="interactionHelp">Drag clients or non-gateway extenders; right-click either for movement and RF-presence controls. Static-world changes remain a browser preview.</div>
   </div>
 
   <hr>
@@ -296,6 +296,7 @@
     hudRole: null,
     apiEnabled: false,
     presenceRoles: [],
+    movableRoles: [],
     leaseToken: null,
     leaseOwner: null,
     leaseTimer: null,
@@ -348,7 +349,7 @@
           return;
         }
         const role = pickedRole(e);
-        if (role && canInteractWith(role)) {
+        if (role && canMoveRole(role)) {
           if (interactiveLiveMode && interaction.movement) {
             await controlMovement('cancel');
           }
@@ -413,7 +414,7 @@
       const role = pickedRole(e);
       if (!role || !canControlRole(role)) { hideRoleMenu(); return; }
       selected = role;
-      interaction.hudRole = canInteractWith(role) ? role : null;
+      interaction.hudRole = canMoveRole(role) ? role : null;
       showRoleMenu(role, e.clientX, e.clientY);
       update();
     });
@@ -472,8 +473,14 @@
     }
     return world.roles[role] === 'fronthaul_ap' && role !== 'gateway';
   }
+  function canMoveRole(role) {
+    if (!world || !role) return false;
+    if (interactiveLiveMode) return interaction.movableRoles.includes(role);
+    return canInteractWith(role) ||
+      (world.roles[role] === 'fronthaul_ap' && role !== 'gateway');
+  }
   function canControlRole(role) {
-    return canInteractWith(role) || canChangePresence(role);
+    return canMoveRole(role) || canChangePresence(role);
   }
   function setPositionOverride(role, point) {
     const previous = interaction.overrides[role] || {};
@@ -530,6 +537,7 @@
   function applyInteractionSnapshot(snapshot) {
     interaction.apiEnabled = !!snapshot.enabled;
     interaction.presenceRoles = (snapshot.presence_roles || []).slice();
+    interaction.movableRoles = (snapshot.movable_roles || []).slice();
     interaction.revision = Number(snapshot.revision || 0);
     if (!Object.keys(interaction.initialRoles).length) {
       interaction.initialRoles = JSON.parse(JSON.stringify(snapshot.roles || {}));
@@ -688,36 +696,44 @@
       });
     } catch (_error) { /* expiration provides the same safe freeze semantics */ }
   }
-  function predictedFor(role, point, g) {
-    return interactionModel.predictLinks(world, g, role, point, band).filter(
+  function predictedFor(role, point, g, positions = null) {
+    return interactionModel.predictLinks(
+      world, g, role, point, band, positions).filter(
+      (item) => effectivePresent(item.role, g));
+  }
+  function predictedMeshFor(role, point, g, positions = null) {
+    return interactionModel.predictMeshLinks(
+      world, g, role, point, band, positions).filter(
       (item) => effectivePresent(item.role, g));
   }
   // Strongest present AP->station link on the band, per station (downlink).
   function bestServing(g, positions = null) {
     const best = {};
-    for (const l of g.links) {
-      if (l.link_class !== 'fronthaul' || !isAp(l.source_role)) continue;
-      if (!effectivePresent(l.source_role, g) || !effectivePresent(l.destination_role, g)) continue;
-      if (interaction.overrides[l.destination_role] && positions) continue;
-      const s = l.snr_db_by_band[band];
-      if (!best[l.destination_role] || s > best[l.destination_role].snr) best[l.destination_role] = { ap: l.source_role, snr: s, link: l };
-    }
     if (positions) {
-      for (const role of Object.keys(interaction.overrides)) {
+      for (const role of Object.keys(world.roles || {})) {
         if (!canInteractWith(role) || !effectivePresent(role, g) || !positions[role]) continue;
-        const links = predictedFor(role, positions[role], g);
+        const links = predictedFor(role, positions[role], g, positions);
         if (!links.length) continue;
         const strongest = links[0];
         best[role] = {
           ap: strongest.role,
           snr: strongest.snr_db,
           link: {
-            link_class: 'fronthaul', source_role: strongest.role, destination_role: role,
-            distance_m: strongest.distance_m, wall_loss_db: strongest.wall_loss_db,
+            link_class: 'fronthaul', source_role: strongest.role,
+            destination_role: role, distance_m: strongest.distance_m,
+            wall_loss_db: strongest.wall_loss_db,
             snr_db_by_band: {[band]: strongest.snr_db}, preview: true,
           },
         };
       }
+      return best;
+    }
+    for (const l of g.links) {
+      if (l.link_class !== 'fronthaul' || !isAp(l.source_role)) continue;
+      if (!effectivePresent(l.source_role, g) || !effectivePresent(l.destination_role, g)) continue;
+      if (interaction.overrides[l.destination_role] && positions) continue;
+      const s = l.snr_db_by_band[band];
+      if (!best[l.destination_role] || s > best[l.destination_role].snr) best[l.destination_role] = { ap: l.source_role, snr: s, link: l };
     }
     return best;
   }
@@ -910,6 +926,29 @@
         ghost.add(ghostRing);
         ghost.visible = false;
         root.add(ghost);
+      } else if (role !== 'gateway') {
+        ghost = new THREE.Group();
+        const ghostBody = new THREE.Mesh(
+          new THREE.ConeGeometry(0.58, 0.88, 4),
+          new THREE.MeshBasicMaterial({
+            color: 0x6f3e8e, transparent: true, opacity: 0.34,
+            depthTest: false, wireframe: true,
+          }));
+        ghostBody.position.y = AP_H + 0.44;
+        ghostBody.renderOrder = 12;
+        ghost.add(ghostBody);
+        const ghostRing = new THREE.Mesh(
+          new THREE.RingGeometry(0.52, 0.72, 32),
+          new THREE.MeshBasicMaterial({
+            color: 0x6f3e8e, transparent: true, opacity: 0.62,
+            side: THREE.DoubleSide, depthTest: false,
+          }));
+        ghostRing.rotation.x = -Math.PI / 2;
+        ghostRing.position.y = 0.02;
+        ghostRing.renderOrder = 12;
+        ghost.add(ghostRing);
+        ghost.visible = false;
+        root.add(ghost);
       }
       root.add(grp);
       nodes[role] = { grp, post, head, ring, tag, gauge, ghost, color, ap, h };
@@ -1022,7 +1061,8 @@
         mat.color.setHex(identity);
       }
       if (n.ghost) {
-        n.ghost.visible = !!interaction.previewPositions[role] && present && showSta;
+        n.ghost.visible = !!interaction.previewPositions[role] && present &&
+          (n.ap || showSta);
         if (n.ghost.visible) {
           const preview = interaction.previewPositions[role];
           n.ghost.position.copy(P(preview[0], preview[1], 0));
@@ -1174,8 +1214,15 @@
       ? link.walls.map((wall) => wall.name).join(', ') : 'none';
   }
   function rolePreview(role, g, pos) {
-    if (!role || !canInteractWith(role) || !pos[role]) return null;
-    const candidates = predictedFor(role, pos[role], g);
+    if (!role || !canMoveRole(role) || !pos[role]) return null;
+    if (isAp(role)) {
+      const peers = predictedMeshFor(role, pos[role], g, pos);
+      return {
+        role, point: pos[role], ap: true, candidates: peers,
+        strongest: peers[0] || null, associated: null, associatedRole: null,
+      };
+    }
+    const candidates = predictedFor(role, pos[role], g, pos);
     const associated = associatedRole(role, g);
     return {
       role,
@@ -1187,7 +1234,7 @@
     };
   }
   function renderInteractionOverlays(g, pos) {
-    const role = interaction.hudRole || (canInteractWith(selected) ? selected : null);
+    const role = interaction.hudRole || (canMoveRole(selected) ? selected : null);
     const previewActive = interaction.mode === 'interact' ||
       !!interaction.overrides[role] || !!interaction.previewPositions[role];
     const preview = previewActive ? rolePreview(role, g, pos) : null;
@@ -1199,14 +1246,23 @@
     }
     if (preview && effectivePresent(role, g)) {
       const links = [];
-      if (preview.strongest) links.push({item: preview.strongest, color: new THREE.Color(0x6f3e8e)});
-      if (preview.associated && preview.associated.role !== preview.strongest.role) {
+      if (preview.ap) {
+        for (const item of preview.candidates) {
+          links.push({item, color: new THREE.Color(0x6f3e8e)});
+        }
+      } else if (preview.strongest) {
+        links.push({item: preview.strongest, color: new THREE.Color(0x6f3e8e)});
+      }
+      if (!preview.ap && preview.associated && preview.strongest &&
+          preview.associated.role !== preview.strongest.role) {
         links.push({item: preview.associated, color: new THREE.Color(0x05a9cf)});
       }
       for (const entry of links) {
         const peer = pos[entry.item.role];
         if (!peer) continue;
-        points.push(peer[0], AP_H + 0.34, -peer[1], preview.point[0], STA_H + 0.34, -preview.point[1]);
+        const previewHeight = preview.ap ? AP_H : STA_H;
+        points.push(peer[0], AP_H + 0.34, -peer[1],
+          preview.point[0], previewHeight + 0.34, -preview.point[1]);
         colors.push(entry.color.r, entry.color.g, entry.color.b, entry.color.r, entry.color.g, entry.color.b);
         for (const wall of entry.item.walls) highlightedWalls.add(wall.name);
       }
@@ -1233,11 +1289,11 @@
   }
 
   function renderInteractionControls(g, pos) {
-    const role = interaction.hudRole || (canInteractWith(selected) ? selected : null);
+    const role = interaction.hudRole || (canMoveRole(selected) ? selected : null);
     const preview = rolePreview(role, g, pos);
     const selectedUsable = !!preview;
     $('#moveSelected').disabled = !selectedUsable;
-    $('#presenceSelected').disabled = !selectedUsable;
+    $('#presenceSelected').disabled = !selectedUsable || !canChangePresence(role);
     $('#resetSelected').disabled = !selectedUsable || !roleIsModified(role);
     const activeMovement = interaction.movement &&
       ['running', 'paused'].includes(interaction.movement.status)
@@ -1253,13 +1309,15 @@
       !interaction.recording.export_ready;
     if (!preview) {
       $('#interactionSummary').innerHTML = interaction.mode === 'interact'
-        ? 'Click or drag a <b>client</b> in the room.'
-        : 'Select <b>Interact</b>, then drag a client.';
+        ? 'Click or drag a <b>client or extender</b> in the room.'
+        : 'Select <b>Interact</b>, then drag a client or extender.';
       $('#spatialHud').style.display = 'none';
       return;
     }
     const present = effectivePresent(role, g);
-    $('#presenceSelected').textContent = present ? 'Disappear' : 'Reappear';
+    $('#presenceSelected').textContent = preview.ap
+      ? (present ? 'Disable fronthaul' : 'Restore fronthaul')
+      : (present ? 'Disappear' : 'Reappear');
     const override = interaction.overrides[role];
     const localPreview = interaction.previewPositions[role];
     const movement = activeMovement && activeMovement.role === role
@@ -1291,6 +1349,34 @@
         Math.ceil(remaining / movement.speed_mps) + ' s</b>';
     }
     const hud = $('#spatialHud');
+    if (preview.ap) {
+      const actualBackhaul = actualBackhaulFor(role) || {};
+      const servingClients = (networkState && networkState.clients || []).filter(
+        (item) => item.connected_role === role).length;
+      const peer = strongest;
+      const actualParent = actualBackhaul.parent_role
+        ? displayRole(actualBackhaul.parent_role) : 'not reported';
+      const actualBand = actualBackhaul.band || actualBackhaul.band_name || '';
+      const actualChannel = actualBackhaul.channel || actualBackhaul.channel_number;
+      const actualLink = [actualParent];
+      if (actualBand) actualLink.push(actualBand + (String(actualBand).includes('GHz') ? '' : ' GHz'));
+      if (actualChannel != null) actualLink.push('ch ' + actualChannel);
+      hud.innerHTML = '<div class="hud-title"><span>' + esc(displayRole(role)) + '</span><span>mesh node</span></div>' +
+        '<div class="hud-grid"><span>Position</span><b>' + preview.point[0].toFixed(1) + ', ' + preview.point[1].toFixed(1) + ' m</b>' +
+        '<span>Moved</span><b>' + moved.toFixed(1) + ' m</b>' + movementRow +
+        '<span>Fronthaul</span><b>' + (present ? 'available' : 'disabled') + '</b>' +
+        '<span>Serving clients</span><b>' + servingClients + '</b>' +
+        '<span>Actual parent</span><b>' + esc(actualLink.join(' · ')) + '</b>' +
+        '<span>Modeled mesh peer</span><b>' + esc(peer ? displayRole(peer.role) : 'none') + '</b>' +
+        '<span>Distance / walls</span><b>' + (peer ? peer.distance_m.toFixed(1) + ' m / ' + peer.wall_count : 'N/A') + '</b>' +
+        '<span>Wall loss</span><b>' + (peer ? peer.wall_loss_db.toFixed(1) + ' dB' : 'N/A') + '</b>' +
+        '<span>Predicted mesh SNR</span><b>' + (peer ? peer.snr_db + ' dB at ' + esc(band) + ' GHz' : 'N/A') + '</b></div>' +
+        '<div class="candidate">Moving this extender updates every three-band client link and mesh-peer link in one RF generation.<br>Modeled mesh peers: ' +
+        preview.candidates.slice(0, 4).map((item) => esc(displayRole(item.role)) + ' ' + item.snr_db + ' dB').join(' · ') + '</div>';
+      hud.style.display = interaction.mode === 'interact' ? 'block' : 'none';
+      if (hud.style.display === 'block') positionSpatialHud(role);
+      return;
+    }
     hud.innerHTML = '<div class="hud-title"><span>' + esc(displayRole(role)) + '</span><span>' + esc(band) + ' GHz</span></div>' +
       '<div class="hud-grid"><span>Position</span><b>' + preview.point[0].toFixed(1) + ', ' + preview.point[1].toFixed(1) + ' m</b>' +
       '<span>Moved</span><b>' + moved.toFixed(1) + ' m</b>' + movementRow +
@@ -1492,7 +1578,7 @@
   }
   function pick(e) {
     selected = pickedRole(e);
-    if (canInteractWith(selected)) interaction.hudRole = selected;
+    if (canMoveRole(selected)) interaction.hudRole = selected;
     update();
   }
   function showRoleMenu(role, clientX, clientY) {
@@ -1504,7 +1590,7 @@
       ? (present ? 'Disappear' : 'Reappear')
       : (present ? 'Disable fronthaul' : 'Restore fronthaul');
     menu.querySelector('[data-role-action=move]').style.display =
-      canInteractWith(role) ? '' : 'none';
+      canMoveRole(role) ? '' : 'none';
     menu.querySelector('[data-role-action=reset]').style.display =
       roleIsModified(role) ? '' : 'none';
     menu.style.display = 'block';
@@ -1595,13 +1681,13 @@
     $('#cameraMode').setAttribute('aria-pressed', mode === 'camera');
     $('#interactMode').setAttribute('aria-pressed', mode === 'interact');
     $('#hint').textContent = mode === 'interact'
-      ? 'drag a client · right-click a client/extender for controls · switch to Camera to orbit'
+      ? 'drag a client or extender · right-click for controls · switch to Camera to orbit'
       : (liveMode ? 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan'
         : 'drag to orbit · wheel to zoom · shift-drag to pan · space plays');
     update();
   }
   async function beginDestinationSelection(role) {
-    if (!canInteractWith(role)) return;
+    if (!canMoveRole(role)) return;
     if (interactiveLiveMode && !interaction.leaseToken &&
         !(await acquireInteractionLease())) return;
     selected = role;
@@ -1663,9 +1749,9 @@
   async function resetLiveRole(role) {
     const initial = interaction.initialRoles[role];
     if (!initial) { resetRoleOverride(role); return; }
-    if (canInteractWith(role)) setPositionOverride(role, initial.position);
+    if (canMoveRole(role)) setPositionOverride(role, initial.position);
     setPresenceOverride(role, initial.present);
-    if (canInteractWith(role)) {
+    if (canMoveRole(role)) {
       await sendMutation('position', role, {position: initial.position, final: true});
     }
     await sendMutation('presence', role, {present: initial.present});
@@ -2015,7 +2101,7 @@
     loadWorld, update, frameAt: (t) => frameAt(t),
     bestServing: (g) => bestServing(g),
     setTime: (t) => { tMs = t; update(); },
-    select: (r) => { selected = r; interaction.hudRole = canInteractWith(r) ? r : null; update(); },
+    select: (r) => { selected = r; interaction.hudRole = canMoveRole(r) ? r : null; update(); },
     setBand: (b) => { band = b; update(); },
     setInteractionMode,
     setPreviewPosition: (role, point) => { setPositionOverride(role, point); update(); },
