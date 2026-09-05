@@ -58,6 +58,15 @@ IEEE 1905 is at `0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c,
 journald, and SNMP fixes are described in
 [the patch reference](reference/patch-set.md).
 
+The appliance pins Boardfarm lab staging to
+`ddb5a2b9e1707562595afc7e4000a3b8efa3cd81` on `codex/0905-clean`.
+This is the previous `eeb4803` lab configuration plus one required build fix:
+the WAN AFTR compilation stage now uses Debian Bookworm, matching its final
+runtime image. The former Bullseye stage failed on missing security packages
+after Debian 11 LTS ended on 2026-08-31. AFTR compiles successfully on Bookworm.
+The failed first appliance attempt is retained as evidence, not reused as the
+release builder. This dependency change does not alter either Yocto image.
+
 ## Carried-forward capabilities
 
 These functionality milestones predate the new image build. The separate

@@ -64,7 +64,7 @@ clone_pinned_repo() {
     test "$(sudo -u easymesh git -C "$destination" rev-parse HEAD)" = "$expected"
 }
 
-clone_pinned_repo boardfarm-lab-staging main eeb4803c00dc1cae2dda05eb6e1b52c06ad79aa8
+clone_pinned_repo boardfarm-lab-staging codex/0905-clean ddb5a2b9e1707562595afc7e4000a3b8efa3cd81
 
 if [ ! -x "$boardfarm_workspace/.venv/bin/python" ]; then
     sudo -H -u easymesh /snap/bin/uv venv --python 3.13.15 \
