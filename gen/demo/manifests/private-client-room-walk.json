@@ -16,6 +16,7 @@
     "interval_seconds": 5,
     "action_window_ms": [150000, 220000],
     "max_actions": 1,
+    "interactive_action_batch_size": 3,
     "allow_simulated_candidates": true,
     "request_only": true
   },

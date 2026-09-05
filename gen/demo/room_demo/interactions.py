@@ -103,7 +103,14 @@ class InteractiveMediumSession:
             if world["roles"][role] == "station"
             or (world["roles"][role] == "fronthaul_ap" and role != "gateway")
         )
-        self._movable_roles = self._presence_roles
+        # Moving the gateway means moving the colocated Agent-1 radios in the
+        # RF room.  The controller process and WAN remain where they are, and
+        # gateway presence remains protected; only its fronthaul/backhaul
+        # geometry is mutable.
+        self._movable_roles = tuple(
+            role for role in sorted(world["roles"])
+            if world["roles"][role] in {"station", "fronthaul_ap"}
+        )
         layout_nodes = {item["role"]: dict(item) for item in layout.get("nodes", [])}
         self._nodes = {
             role: {"role": role, **layout_nodes.get(role, {})}
@@ -1014,7 +1021,7 @@ class InteractiveMediumSession:
     def _extender_links(
         self, role: str, *, include_backhaul: bool = False
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Return every fronthaul key affected by one extender's presence.
+        """Return every RF key affected by one mesh AP's room state.
 
         Presence changes leave mesh backhaul/control connectivity intact and
         model only loss/restoration of client-serving RF. Position changes
@@ -1152,7 +1159,7 @@ class InteractiveMediumSession:
             ) * 3 * 2
         if not updates:
             raise InteractionError(
-                500, "no_links", f"extender {role!r} resolved no live fronthaul links"
+                500, "no_links", f"mesh AP {role!r} resolved no live RF links"
             )
         if len(updates) > expected_maximum:
             raise InteractionError(
@@ -1168,7 +1175,10 @@ class InteractiveMediumSession:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if role in self._allowed_roles:
             return self._station_links(role)
-        if role in self._presence_roles:
+        if (
+            role in self._movable_roles
+            and self.world["roles"][role] == "fronthaul_ap"
+        ):
             return self._extender_links(
                 role, include_backhaul=(change == "position")
             )

@@ -219,7 +219,7 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertIn("extender_1", snapshot["presence_roles"])
         self.assertIn("extender_1", snapshot["movable_roles"])
         self.assertNotIn("gateway", snapshot["presence_roles"])
-        self.assertNotIn("gateway", snapshot["movable_roles"])
+        self.assertIn("gateway", snapshot["movable_roles"])
 
         absent = self.session.presence(
             "extender_1", token=self.lease["token"], expected_revision=0,
@@ -269,15 +269,29 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertEqual(backhaul[0]["peer_role"], "gateway")
         self.assertEqual(backhaul[0]["band"], "5")
 
+    def test_colocated_gateway_agent_is_movable_but_cannot_disappear(self):
+        initial_generation = self.client.generation
+        result = self.session.position(
+            "gateway", token=self.lease["token"], expected_revision=0,
+            position=[3, 4], final=True,
+        )
+        self.assertEqual(result["position"], [3.0, 4.0])
+        self.assertEqual(result["changed_link_count"], 4)
+        self.assertEqual(self.client.generation, initial_generation + 1)
+        self.assertEqual(
+            {item["link_class"] for item in result["links"]},
+            {"fronthaul", "backhaul"},
+        )
+        with self.assertRaisesRegex(InteractionError, "not interactive"):
+            self.session.presence(
+                "gateway", token=self.lease["token"], expected_revision=1,
+                present=False,
+            )
+
     def test_wrong_lease_and_non_station_are_rejected(self):
         with self.assertRaisesRegex(InteractionError, "does not match"):
             self.session.position(
                 "sta_01", token="wrong", expected_revision=0,
-                position=[4, 2], final=True,
-            )
-        with self.assertRaisesRegex(InteractionError, "not interactive"):
-            self.session.position(
-                "gateway", token=self.lease["token"], expected_revision=0,
                 position=[4, 2], final=True,
             )
         with self.assertRaisesRegex(InteractionError, "not interactive"):

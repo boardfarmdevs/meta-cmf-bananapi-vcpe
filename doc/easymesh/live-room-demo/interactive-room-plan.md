@@ -598,9 +598,10 @@ required update count <= daemon atomic max_updates
 
 If not, the UI disables that action and explains why. Splitting one conceptual
 AP move across visible generations is not accepted as atomic behavior. The
-current 20-client profile is accepted: one non-gateway extender changes 120
+current 20-client profile is accepted: one mesh node changes 120
 directed fronthaul keys and 24 directed mesh-peer keys, for a maximum of 144
-keys in one generation. Gateway movement remains disabled.
+keys in one generation. For the gateway this moves the co-located Agent-1 RF
+geometry only; controller/WAN presence remains protected.
 
 ## Delivery phases
 
@@ -632,12 +633,17 @@ The first Phase 0 foundation is now implemented:
   bounded to 120 directed keys in the 20-client profile; it preserves the
   container, identity and backhaul while the optimizer evacuates and later
   reconverges clients from controller-reported measurements;
-- each non-gateway extender can be dragged or moved along a server-owned path;
+- each mesh node, including the co-located gateway/Agent-1 radios, can be
+  dragged or moved along a server-owned path;
   one accepted position updates all three-band fronthaul and mesh-peer links
   in one bounded generation, while observed parentage and client ownership
   remain controller truth;
 - environment epochs prevent movement from being mixed with candidate
   measurement and reset the optimizer hold;
+- interactive fleet convergence reuses one stable controller-measured snapshot
+  for a bounded batch of up to three sequential, individually verified BTM
+  actions, prioritizing the weakest serving links and aborting on any room
+  change or failed outcome;
 - unexpected medium instances/generations contaminate the run instead of
   being silently retried; and
 - a checksummed recovery record is persisted before every RF write. The

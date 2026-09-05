@@ -15,6 +15,7 @@ from room_demo.conductor import (
     LiveConductor,
     _deferred_state,
     _fleet_status,
+    _ranked_action_batch,
     _simulated_bss_channels,
     _single_action_state,
 )
@@ -171,6 +172,39 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertEqual(state.for_sta(first).phase, "pending")
         self.assertEqual(state.for_sta(second).phase, "holding")
         self.assertIsNone(state.for_sta(second).pending_since)
+
+    def test_interactive_batch_prioritizes_weak_links_and_honors_limit(self):
+        decisions = (
+            Decision(
+                sta_mac="02:00:00:00:03:00", action="steer", reason="ready",
+                source_bssid="02:00:00:00:01:01",
+                target_bssid="02:00:00:00:04:01",
+                current_rcpi=110, target_rcpi=150,
+            ),
+            Decision(
+                sta_mac="02:00:00:00:04:00", action="steer", reason="ready",
+                source_bssid="02:00:00:00:01:01",
+                target_bssid="02:00:00:00:04:01",
+                current_rcpi=80, target_rcpi=100,
+            ),
+            Decision(
+                sta_mac="02:00:00:00:05:00", action="steer", reason="ready",
+                source_bssid="02:00:00:00:01:01",
+                target_bssid="02:00:00:00:04:01",
+                current_rcpi=80, target_rcpi=130,
+            ),
+            Decision(
+                sta_mac="02:00:00:00:06:00", action="hold", reason="stable",
+                source_bssid="02:00:00:00:01:01", current_rcpi=60,
+            ),
+        )
+
+        batch = _ranked_action_batch(decisions, 2)
+
+        self.assertEqual(
+            [item.sta_mac for item in batch],
+            ["02:00:00:00:05:00", "02:00:00:00:04:00"],
+        )
 
     def test_fleet_convergence_uses_measured_best_ap_not_hold_phase(self):
         clients = (

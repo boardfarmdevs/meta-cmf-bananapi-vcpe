@@ -108,7 +108,9 @@
   #err { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); max-width: 480px; background: #fff; border: 1px solid var(--rule); padding: 16px 20px; display: none; }
   #spatialHud {
     position: absolute; display: none; pointer-events: none; z-index: 20;
-    width: 244px; padding: 8px 10px; border-radius: 7px;
+    top: 14px; right: 14px; left: auto; width: 264px;
+    max-width: calc(100% - 28px); max-height: calc(100% - 48px);
+    overflow-y: auto; padding: 8px 10px; border-radius: 7px;
     color: #fff; background: rgba(38, 31, 43, .92); box-shadow: 0 4px 18px rgba(0,0,0,.22);
     font-size: 11px; line-height: 1.35;
   }
@@ -205,7 +207,7 @@
       <button id="recordInteraction">Start recording</button>
       <button id="downloadRecording" disabled>Download world</button>
     </div>
-    <div id="interactionHelp">Drag clients or non-gateway extenders; right-click either for movement and RF-presence controls. Static-world changes remain a browser preview.</div>
+    <div id="interactionHelp">Drag clients or any mesh node; right-click for movement controls. Client and extender RF-presence controls remain available, while the co-located controller/agent stays present. Static-world changes remain a browser preview.</div>
   </div>
 
   <hr>
@@ -476,8 +478,7 @@
   function canMoveRole(role) {
     if (!world || !role) return false;
     if (interactiveLiveMode) return interaction.movableRoles.includes(role);
-    return canInteractWith(role) ||
-      (world.roles[role] === 'fronthaul_ap' && role !== 'gateway');
+    return canInteractWith(role) || world.roles[role] === 'fronthaul_ap';
   }
   function canControlRole(role) {
     return canMoveRole(role) || canChangePresence(role);
@@ -926,12 +927,13 @@
         ghost.add(ghostRing);
         ghost.visible = false;
         root.add(ghost);
-      } else if (role !== 'gateway') {
+      } else {
         ghost = new THREE.Group();
         const ghostBody = new THREE.Mesh(
           new THREE.ConeGeometry(0.58, 0.88, 4),
           new THREE.MeshBasicMaterial({
-            color: 0x6f3e8e, transparent: true, opacity: 0.34,
+            color: role === 'gateway' ? COL.gateway : 0x6f3e8e,
+            transparent: true, opacity: 0.34,
             depthTest: false, wireframe: true,
           }));
         ghostBody.position.y = AP_H + 0.44;
@@ -940,7 +942,8 @@
         const ghostRing = new THREE.Mesh(
           new THREE.RingGeometry(0.52, 0.72, 32),
           new THREE.MeshBasicMaterial({
-            color: 0x6f3e8e, transparent: true, opacity: 0.62,
+            color: role === 'gateway' ? COL.gateway : 0x6f3e8e,
+            transparent: true, opacity: 0.62,
             side: THREE.DoubleSide, depthTest: false,
           }));
         ghostRing.rotation.x = -Math.PI / 2;
@@ -1315,7 +1318,9 @@
       return;
     }
     const present = effectivePresent(role, g);
-    $('#presenceSelected').textContent = preview.ap
+    $('#presenceSelected').textContent = role === 'gateway'
+      ? 'Presence protected'
+      : preview.ap
       ? (present ? 'Disable fronthaul' : 'Restore fronthaul')
       : (present ? 'Disappear' : 'Reappear');
     const override = interaction.overrides[role];
@@ -1354,7 +1359,9 @@
       const servingClients = (networkState && networkState.clients || []).filter(
         (item) => item.connected_role === role).length;
       const peer = strongest;
-      const actualParent = actualBackhaul.parent_role
+      const actualParent = role === 'gateway'
+        ? 'co-located controller'
+        : actualBackhaul.parent_role
         ? displayRole(actualBackhaul.parent_role) : 'not reported';
       const actualBand = actualBackhaul.band || actualBackhaul.band_name || '';
       const actualChannel = actualBackhaul.channel || actualBackhaul.channel_number;
@@ -1374,7 +1381,6 @@
         '<div class="candidate">Moving this extender updates every three-band client link and mesh-peer link in one RF generation.<br>Modeled mesh peers: ' +
         preview.candidates.slice(0, 4).map((item) => esc(displayRole(item.role)) + ' ' + item.snr_db + ' dB').join(' · ') + '</div>';
       hud.style.display = interaction.mode === 'interact' ? 'block' : 'none';
-      if (hud.style.display === 'block') positionSpatialHud(role);
       return;
     }
     hud.innerHTML = '<div class="hud-title"><span>' + esc(displayRole(role)) + '</span><span>' + esc(band) + ' GHz</span></div>' +
@@ -1391,23 +1397,6 @@
       '<div class="candidate">Walls: ' + esc(associated ? wallNames(associated) : 'unknown') + '<br>Best candidates: ' +
       preview.candidates.slice(0, 3).map((item) => esc(displayRole(item.role)) + ' ' + item.snr_db + ' dB').join(' · ') + '</div>';
     hud.style.display = interaction.mode === 'interact' ? 'block' : 'none';
-    if (hud.style.display === 'block') positionSpatialHud(role);
-  }
-
-  function positionSpatialHud(role) {
-    if (!world3d || !world3d.nodes[role]) return;
-    const node = world3d.nodes[role];
-    const preview = interaction.previewPositions[role];
-    const point = preview ? P(preview[0], preview[1], 0) : node.grp.position.clone();
-    point.y += node.h + 0.8;
-    point.project(camera);
-    const hud = $('#spatialHud');
-    const width = main.clientWidth, height = main.clientHeight;
-    const x = (point.x * 0.5 + 0.5) * width;
-    const y = (-point.y * 0.5 + 0.5) * height;
-    const hw = hud.offsetWidth || 244, hh = hud.offsetHeight || 180;
-    hud.style.left = Math.max(8, Math.min(width - hw - 8, x + 18)) + 'px';
-    hud.style.top = Math.max(8, Math.min(height - hh - 8, y - hh / 2)) + 'px';
   }
 
   function esc(value) {
@@ -1476,6 +1465,8 @@
         '<span>Hold</span><b>' + esc(Number(d.hold_seconds || 0).toFixed(1)) + ' s</b>' +
         '<span>Fleet check</span><b>' + esc(checked) + ' / ' + esc(total) + ' clients</b>' +
         '<span>Stronger AP available</span><b>' + esc(stronger) + '</b>' +
+        '<span>Next measured batch</span><b>' + esc(optimizerState.action_batch_size || 0) +
+          ' / ' + esc(optimizerState.action_batch_limit || 1) + '</b>' +
         '<span>Action budget</span><b>' + esc(used) + ' / ' + esc(limit || '—') + '</b>' +
         '<span>Actuation path</span><b>' + (assisted
           ? 'serialized RF assist + BTM' : 'BTM request') + '</b>' +
@@ -1586,9 +1577,11 @@
     interaction.menuRole = role;
     $('#roleMenuTitle').textContent = displayRole(role);
     const present = effectivePresent(role, frameAt(tMs).g);
-    menu.querySelector('[data-role-action=presence]').textContent = canInteractWith(role)
+    const presenceAction = menu.querySelector('[data-role-action=presence]');
+    presenceAction.textContent = canInteractWith(role)
       ? (present ? 'Disappear' : 'Reappear')
       : (present ? 'Disable fronthaul' : 'Restore fronthaul');
+    presenceAction.style.display = canChangePresence(role) ? '' : 'none';
     menu.querySelector('[data-role-action=move]').style.display =
       canMoveRole(role) ? '' : 'none';
     menu.querySelector('[data-role-action=reset]').style.display =
@@ -1905,7 +1898,14 @@
     if (event.kind === 'rf.steering_assist.completed') {
       return p.room_matrix_restored ? 'Room RF matrix restored exactly' : 'Room RF restoration failed';
     }
-    if (event.kind === 'optimizer.action') return p.phase === 'requested' ? 'BTM steer requested' : 'Steering request submitted';
+    if (event.kind === 'optimizer.action') {
+      const batch = Number(p.batch_size || 1) > 1
+        ? ' (' + p.batch_index + '/' + p.batch_size + ')' : '';
+      return (p.phase === 'requested' ? 'BTM steer requested' : 'Steering request submitted') + batch;
+    }
+    if (event.kind === 'optimizer.batch.aborted') {
+      return 'Steering batch paused: ' + String(p.reason || 'remeasure').replaceAll('_', ' ');
+    }
     if (event.kind === 'optimizer.verification') return p.success ? 'Association and traffic verified' : 'Steering verification failed';
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
     if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
@@ -1940,6 +1940,9 @@
     else if (event.kind === 'health.sample') healthState = event.payload;
     else if (event.kind === 'optimizer.action') {
       actionState = event.payload;
+      if (optimizerState && event.payload.actions_used != null) {
+        optimizerState.actions_used = event.payload.actions_used;
+      }
       actionPulseUntil = performance.now() + 5000;
     } else if (event.kind === 'optimizer.verification') {
       verificationState = event.payload;
@@ -2092,7 +2095,6 @@
       if (replayMode) applyReplayUntil(tMs);
       update();
     } else if (interactionChanged) update();
-    else if (interaction.mode === 'interact' && interaction.hudRole) positionSpatialHud(interaction.hudRole);
     lastTick = now;
     if (world3d) renderer.render(scene, camera);
   }

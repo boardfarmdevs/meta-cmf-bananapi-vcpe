@@ -91,6 +91,28 @@ def _single_action_state(
     return state
 
 
+def _ranked_action_batch(decisions, limit: int):
+    """Choose a bounded fleet batch, moving weakest serving links first.
+
+    Every decision in the batch comes from one controller-measured candidate
+    snapshot. Actions remain sequential and individually verified; batching
+    avoids repeating the expensive whole-fleet candidate query after every
+    single BTM request.
+    """
+    if limit <= 0:
+        return []
+    actionable = [item for item in decisions if item.action == "steer"]
+    actionable.sort(key=lambda item: (
+        item.current_rcpi if item.current_rcpi is not None else 221,
+        -(
+            (item.target_rcpi if item.target_rcpi is not None else -1)
+            - (item.current_rcpi if item.current_rcpi is not None else -1)
+        ),
+        item.sta_mac,
+    ))
+    return actionable[:limit]
+
+
 def _fleet_status(snapshot, selected_sta_macs: set[str]) -> dict[str, Any]:
     """Summarize measured best-AP convergence independently of policy phase."""
     better: list[dict[str, Any]] = []
@@ -784,13 +806,12 @@ class LiveConductor:
                     item for item in evaluation.decisions if item.action == "steer"
                 ]
                 fleet = _fleet_status(snapshot, provider.last_selected_sta_macs)
-                selected_action = max(
-                    steer_decisions,
-                    key=lambda item: (
-                        (item.target_rcpi or 0) - (item.current_rcpi or 0),
-                        item.sta_mac,
-                    ),
-                    default=None,
+                ranked_steer_decisions = _ranked_action_batch(
+                    steer_decisions, len(steer_decisions)
+                )
+                selected_action = (
+                    ranked_steer_decisions[0]
+                    if ranked_steer_decisions else None
                 )
                 preferred_role, preferred_mac, _preferred_container = preferred_subject
                 preferred_decision = next(
@@ -815,6 +836,17 @@ class LiveConductor:
                     and window_open
                     and self.action_attempts < maximum_actions
                 )
+                configured_batch_size = max(
+                    1, int(optimizer.get("interactive_action_batch_size", 1))
+                )
+                batch_size = configured_batch_size if self.interactive else 1
+                remaining_actions = max(0, maximum_actions - self.action_attempts)
+                action_batch = (
+                    ranked_steer_decisions[:min(batch_size, remaining_actions)]
+                    if can_act else []
+                )
+                if action_batch:
+                    selected_action = action_batch[0]
                 if steer_decisions and self.mode == "recommend":
                     state = _recommendation_state(prior, evaluation)
                 elif steer_decisions and self.mode == "act" and not can_act:
@@ -866,58 +898,124 @@ class LiveConductor:
                             **fleet,
                             "actionable_clients": len(steer_decisions),
                         },
-                        "actions_used": self.action_attempts + int(
-                            selected_action is not None and can_act
-                        ),
+                        "actions_used": self.action_attempts,
                         "maximum_actions": maximum_actions,
+                        "action_batch_size": len(action_batch),
+                        "action_batch_limit": batch_size,
+                        "action_batch_subjects": [
+                            self._role_by_mac.get(item.sta_mac, item.sta_mac)
+                            for item in action_batch
+                        ],
                         "observation_elapsed_ms": round(
                             (time.monotonic() - cycle_started) * 1000, 3
                         ),
                     },
                     producer="optimizer",
                 )
-                if selected_action is not None and can_act:
-                    decision = selected_action
-                    subject_mac = decision.sta_mac
-                    subject_role = self._role_by_mac[subject_mac]
-                    self.action_attempts += 1
-                    self.store.emit(
-                        "optimizer.action", now,
-                        {"phase": "requested", "subject_role": subject_role,
-                         "decision": decision.to_dict()},
-                        producer="optimizer",
-                    )
-                    source_ap_role = self._ap_role_by_bssid.get(
-                        decision.source_bssid
-                    )
-                    target_ap_role = self._ap_role_by_bssid.get(
-                        decision.target_bssid or ""
-                    )
-                    execute_action = lambda: actuator.execute(decision, snapshot)
-                    if self.steering_transaction is not None:
-                        if source_ap_role is None or target_ap_role is None:
-                            raise ValueError(
-                                "steering source or target is not bound to a room AP"
-                            )
-                        result = self.steering_transaction(
-                            subject_role,
-                            source_ap_role,
-                            target_ap_role,
-                            decision.target_band or decision.current_band or "",
-                            execute_action,
+                if action_batch:
+                    batch_guard = None
+                    if room_after is not None:
+                        batch_guard = (
+                            room_after["revision"],
+                            room_after["environment_epoch"],
+                            room_after["daemon"]["instance_id"],
                         )
-                    else:
-                        result = execute_action()
-                    if result.success:
-                        self.action_successes += 1
-                    self.store.emit(
-                        "optimizer.action", self._time(),
-                        {"phase": "submitted", "subject_role": subject_role,
-                         "decision": decision.to_dict(),
-                         "result": result.to_dict()},
-                        producer="optimizer",
-                    )
-                    if result.success:
+                    for batch_index, decision in enumerate(action_batch, 1):
+                        if batch_index > 1 and self.room_state is not None:
+                            current_room = self.room_state()
+                            current_guard = (
+                                current_room["revision"],
+                                current_room["environment_epoch"],
+                                current_room["daemon"]["instance_id"],
+                            )
+                            if (
+                                current_guard != batch_guard
+                                or current_room.get("movement_active")
+                            ):
+                                self.store.emit(
+                                    "optimizer.batch.aborted", self._time(),
+                                    {
+                                        "reason": (
+                                            "movement_active"
+                                            if current_room.get("movement_active")
+                                            else "room_environment_changed"
+                                        ),
+                                        "completed_actions": batch_index - 1,
+                                        "planned_actions": len(action_batch),
+                                        "expected": batch_guard,
+                                        "actual": current_guard,
+                                    },
+                                    producer="optimizer",
+                                )
+                                break
+                            # The policy initially left deferred batch members
+                            # in holding state. Mark only the action that is
+                            # about to be sent as pending, so an interrupted
+                            # batch cannot leave unsent clients in timeout.
+                            state = state.replace(
+                                evaluation.state.for_sta(decision.sta_mac)
+                            )
+                        subject_mac = decision.sta_mac
+                        subject_role = self._role_by_mac[subject_mac]
+                        self.action_attempts += 1
+                        self.store.emit(
+                            "optimizer.action", self._time(),
+                            {"phase": "requested", "subject_role": subject_role,
+                             "decision": decision.to_dict(),
+                             "batch_index": batch_index,
+                             "batch_size": len(action_batch),
+                             "actions_used": self.action_attempts,
+                             "measurement_reused": batch_index > 1},
+                            producer="optimizer",
+                        )
+                        source_ap_role = self._ap_role_by_bssid.get(
+                            decision.source_bssid
+                        )
+                        target_ap_role = self._ap_role_by_bssid.get(
+                            decision.target_bssid or ""
+                        )
+                        execute_action = lambda current=decision: actuator.execute(
+                            current, snapshot
+                        )
+                        if self.steering_transaction is not None:
+                            if source_ap_role is None or target_ap_role is None:
+                                raise ValueError(
+                                    "steering source or target is not bound to a room AP"
+                                )
+                            result = self.steering_transaction(
+                                subject_role,
+                                source_ap_role,
+                                target_ap_role,
+                                decision.target_band or decision.current_band or "",
+                                execute_action,
+                            )
+                        else:
+                            result = execute_action()
+                        if result.success:
+                            self.action_successes += 1
+                        self.store.emit(
+                            "optimizer.action", self._time(),
+                            {"phase": "submitted", "subject_role": subject_role,
+                             "decision": decision.to_dict(),
+                             "result": result.to_dict(),
+                             "batch_index": batch_index,
+                             "batch_size": len(action_batch),
+                             "actions_used": self.action_attempts,
+                             "measurement_reused": batch_index > 1},
+                            producer="optimizer",
+                        )
+                        if not result.success:
+                            self.store.emit(
+                                "optimizer.batch.aborted", self._time(),
+                                {
+                                    "reason": "steering_request_failed",
+                                    "completed_actions": batch_index - 1,
+                                    "planned_actions": len(action_batch),
+                                    "subject_role": subject_role,
+                                },
+                                producer="optimizer",
+                            )
+                            break
                         verified = verifier.verify(
                             decision.sta_mac,
                             decision.target_bssid,
@@ -932,9 +1030,23 @@ class LiveConductor:
                                 "subject_role": subject_role,
                                 "subject_mac": subject_mac,
                                 "target_bssid": decision.target_bssid,
+                                "batch_index": batch_index,
+                                "batch_size": len(action_batch),
                             },
                             producer="optimizer",
                         )
+                        if not verified.success:
+                            self.store.emit(
+                                "optimizer.batch.aborted", self._time(),
+                                {
+                                    "reason": "verification_failed",
+                                    "completed_actions": batch_index - 1,
+                                    "planned_actions": len(action_batch),
+                                    "subject_role": subject_role,
+                                },
+                                producer="optimizer",
+                            )
+                            break
             except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
                 self._record_error("optimizer", error, fatal=True)
                 return

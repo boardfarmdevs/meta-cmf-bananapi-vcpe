@@ -11,7 +11,8 @@ the normal station, agent, controller, and optimizer paths to react.
 The current safe boundary is deliberately narrow:
 
 - every one of the 20 bound WLAN clients can be moved, hidden, or restored;
-- every non-gateway extender can be moved; the gateway remains fixed;
+- every client and mesh node can be moved, including the co-located
+  controller/Agent-1 radios;
 - one browser holds the control lease while any number of browsers observe;
 - all mutations pass through one serialized `RoomEngine`, and retries with the
   same command ID cannot apply RF twice;
@@ -100,7 +101,9 @@ static viewer remains labeled **PREVIEW ONLY**.
 1. Select **Interact**. The browser acquires a 30-second renewable lease.
 2. Drag a client across the floor.
 3. Watch the spatial panel for coordinates, distance, walls, wall loss,
-   predicted SNR, current AP, strongest AP, and measured RCPI.
+   predicted SNR, current AP, strongest AP, and measured RCPI. The panel is
+   pinned to the upper-right of the viewport so it never follows the selected
+   role across or obscures the room drawing.
 4. Release the pointer to submit the one authoritative final position.
 5. Watch the event list for `RF position applied`, then watch measured RCPI,
    optimizer state, and the cyan observed-association line.
@@ -141,25 +144,39 @@ or BTM request is a separate, visible closed-loop outcome. Releasing or losing
 the control lease cancels the walk safely and also freezes the last accepted
 position.
 
-## Move an extender
+## Move a mesh node
 
-Use the same direct drag or **Move to destination…** control on Extender-1
-through Extender-4. The gateway cannot be moved. The purple ghost and
-AP-to-peer paths preview the new position; pointer-up commits one atomic RF
-generation. In the 20-client profile that generation updates:
+Use the same direct drag or **Move to destination…** control on Agent-1 and
+Extender-1 through Extender-4. Moving Agent-1 moves the co-located agent's
+three radio roles through the RF room; it does not relocate or interrupt the
+controller process, WAN, or management path. The red gateway or purple
+extender ghost and AP-to-peer paths preview the new position; pointer-up
+commits one atomic RF generation. In the 20-client profile that generation
+updates:
 
 - 120 directed client-serving values: 20 clients, three bands, both
   directions; and
 - 24 directed mesh-peer values: four other mesh nodes, three bands, both
   directions.
 
-The extender container, permanent radio identity, NVRAM, controller record,
+The mesh-node container, permanent radio identity, NVRAM, controller record,
 and all processes remain intact. Moving the icon does not assign a backhaul
 parent or force clients onto an AP. wmediumd receives the new geometry, then
 ordinary association, controller telemetry, EasyMesh topology, and the
 optimizer determine the observed outcome. The room's **Actual parent** field
 comes from the live controller graph; its **Modeled mesh peer** field is only
-the strongest geometric path on the selected viewer band.
+the strongest geometric path on the selected viewer band. Agent-1 has no
+wireless parent because it is the co-located controller/root agent.
+
+After any accepted room movement, the optimizer waits for the room generation
+to settle and obtains one fresh, controller-reported fleet snapshot. It then
+steers up to three clients from that snapshot, weakest serving link first.
+Those BTM requests remain sequential and each association plus traffic result
+is verified before the next request. The batch is stopped immediately if the
+room moves again, the medium instance changes, a request fails, or verification
+fails; a new measurement cycle then begins. This removes the former full-fleet
+remeasurement between every individual client while preserving measured input,
+normal Wi-Fi/EasyMesh actuation, and bounded failure behavior.
 
 Moving an extender whose fronthaul is disabled still updates its mesh geometry
 while keeping all client-serving links at minimum SNR. Restoring the
@@ -441,8 +458,9 @@ body; it receives the original response without advancing world or medium
 state. Reusing that ID with different content returns a conflict. Presence uses
 `PUT /api/demo/roles/sta_mobile_01/presence` and a boolean `present` member.
 The same presence request accepts `extender_1` through `extender_4` to disable
-or restore their fronthaul; it rejects `gateway`. Extender position and
-movement requests accept those same four extenders and reject `gateway`.
+or restore their fronthaul; it rejects `gateway`. Position and movement
+requests accept those four extenders plus `gateway`. Gateway presence remains
+protected.
 The response identifies the accepted revision, daemon generation, role state,
 changed-link count, and calculated per-AP/per-band link budget. Tokens are
 never included in the event stream.
