@@ -1,0 +1,194 @@
+Subject: [PATCH] cli: show extender uplink bars and readable cohort labels
+
+Display a segmented signal meter beside each wireless extender using its
+actual upstream link metric. Preserve fresh, stale and unknown status and
+refresh the meter in place without changing node positions.
+
+Enlarge client identities without changing band/channel text. Show the IoT
+and private cohorts as two-line iot_/ssid and sta_/ssid titles in a reserved
+sector inside each bubble, clear of the default station RF paths. Keep real
+SSID values and manually dragged client positions unchanged.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3065,9 +3065,31 @@
+       updateDatum(edge);
+       d3.select(this).select('text').text(self.topologyBackhaulLinkLabel(edge));
+     });
++    group.selectAll('g.backhaul-signal-bars').each(function(edge) {
++      updateDatum(edge);
++      self.updateTopologyBackhaulMeter(d3.select(this), edge);
++    });
+     return true;
+   }
+ 
++  updateTopologyBackhaulMeter(selection, edge) {
++    const signal = this.topologyBackhaulSignal(edge);
++    signal.color = !signal.available ? '#64748b' : signal.rssi >= -55 ? '#15803d'
++      : signal.rssi >= -67 ? '#2563eb' : signal.rssi >= -75 ? '#d97706' : '#dc2626';
++    const parentX = Number(edge?.source?.x);
++    const nodeX = Number(edge?.target?.x);
++    const direction = Number.isFinite(parentX) && Number.isFinite(nodeX) ? parentX - nodeX : -1;
++    this.updateTopologySignalMeter(selection, {
++      signal, iconSize: 35,
++      from: {x: -2.5 + direction, y: -2.5}, to: {x: -2.5, y: -2.5}
++    }, 'backhaul-signal-segment');
++    const description = signal.available ? `${signal.rssi} dBm` :
++      signal.stale ? `stale, last ${signal.rssi} dBm` : 'unknown';
++    const label = `Uplink to ${edge?.source?.name || edge?.from || 'parent AP'}: ${description}`;
++    selection.attr('data-signal-status', signal.status).attr('aria-label', label);
++    selection.select('title').text(label);
++  }
++
+   topologyClientMetricsSignature(clients = this.clients) {
+     return JSON.stringify((Array.isArray(clients) ? clients : []).map(client => {
+       const metrics = client?.client_metrics || {};
+@@ -3246,9 +3268,9 @@
+     return { x, y, width, height: segmentHeight, side: away };
+   }
+ 
+-  updateTopologySignalMeter(selection, staData) {
++  updateTopologySignalMeter(selection, staData, segmentClass = 'sta-signal-segment') {
+     const level = this.topologySignalLevel(staData.signal);
+-    selection.selectAll('rect.sta-signal-segment')
++    selection.selectAll(`rect.${segmentClass}`)
+       .attr('x', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).x)
+       .attr('y', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).y)
+       .attr('width', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).width)
+@@ -3644,15 +3666,25 @@
+             tooltip.style('display', 'none');
+           });
+ 
+-        g.append('text')
+-          .attr('x', offset.x)
+-          .attr('y', offset.y)
++        const label = self.topologySSIDLabel(item);
++        const heading = g.append('text')
++          .attr('class', 'ssid-label')
++          .attr('data-ssid', ssid)
++          .attr('aria-label', ssid)
++          .attr('x', label.x)
++          .attr('y', label.y)
+           .attr('text-anchor', 'middle')
+           .attr('dominant-baseline', 'middle')
+-          .attr('font-size', '16px')
+-          .attr('fill', '#9b9a9aff')
++          .attr('font-size', label.lines.length === 2 ? '20px' : '16px')
++          .attr('fill', label.lines.length === 2 ? '#475569' : '#9b9a9aff')
+           .attr('font-weight', 'bold')
+-          .text(ssid);
++          .attr('stroke', '#fff').attr('stroke-width', 2).attr('paint-order', 'stroke')
++          .style('pointer-events', 'none');
++        label.lines.forEach((line, index) => {
++          heading.append('tspan').attr('x', label.x)
++            .attr('y', label.y + (index - (label.lines.length - 1) / 2) * 22)
++            .text(line);
++        });
+       });
+ 
+       // STA Placement
+@@ -3869,9 +3901,9 @@
+           staElement.append('text')
+             .attr('class', 'sta-identity-label')
+             .attr('x', to.x)
+-            .attr('y', to.y + data.iconSize / 2 + 11)
++            .attr('y', to.y + data.iconSize / 2 + 15)
+             .attr('text-anchor', 'middle')
+-            .attr('font-size', '10px')
++            .attr('font-size', '14px')
+             .attr('font-weight', '600')
+             .attr('fill', '#333')
+             .attr('stroke', '#fff')
+@@ -3884,7 +3916,7 @@
+           staElement.append('text')
+             .attr('class', 'sta-channel-label')
+             .attr('x', to.x)
+-            .attr('y', to.y + data.iconSize / 2 + 23)
++            .attr('y', to.y + data.iconSize / 2 + 29)
+             .attr('text-anchor', 'middle')
+             .attr('font-size', '9px')
+             .attr('font-weight', '600')
+@@ -3912,6 +3944,16 @@
+         isController = true;
+       }
+ 
++      const uplink = edges.find(item => String(item.to) === String(d.id));
++      if (uplink && self.topologyIsWirelessBackhaul(uplink)) {
++        const meter = g.append('g').attr('class', 'backhaul-signal-bars')
++          .attr('role', 'img').style('pointer-events', 'none').datum(uplink);
++        meter.append('title');
++        meter.selectAll('rect').data(Array.from({length: 10}, (_value, index) => index))
++          .enter().append('rect').attr('class', 'backhaul-signal-segment');
++        self.updateTopologyBackhaulMeter(meter, uplink);
++      }
++
+       g.append('image')
+         .attr('xlink:href', nodeIconUrl)
+         .attr('x', isController ? -25 : -20)
+@@ -4017,6 +4059,9 @@
+ 
+     simulation.on('tick', () => {
+       node.attr('transform', d => `translate(${d.x},${d.y})`);
++      node.selectAll('g.backhaul-signal-bars').each(function(uplink) {
++        self.updateTopologyBackhaulMeter(d3.select(this), uplink);
++      });
+ 
+       edge.attr('d', d => {
+         const from = d.source;
+@@ -4106,10 +4151,10 @@
+         .attr('y', d.to.y - d.iconSize / 2);
+       selection.select('text.sta-identity-label')
+         .attr('x', d.to.x)
+-        .attr('y', d.to.y + d.iconSize / 2 + 11);
++        .attr('y', d.to.y + d.iconSize / 2 + 15);
+       selection.select('text.sta-channel-label')
+         .attr('x', d.to.x)
+-        .attr('y', d.to.y + d.iconSize / 2 + 23);
++        .attr('y', d.to.y + d.iconSize / 2 + 29);
+     }
+ 
+     function staDragStarted(event) {
+@@ -4197,6 +4242,16 @@
+     ), 80);
+   }
+ 
++  topologySSIDLabel(geometry) {
++    const prefix = geometry.ssid === 'private_ssid' ? 'sta_'
++      : geometry.ssid === 'iot_ssid' ? 'iot_' : null;
++    return {
++      x: geometry.offset.x + (prefix ? geometry.radius * 0.58 : 0),
++      y: geometry.offset.y,
++      lines: prefix ? [prefix, 'ssid'] : [geometry.ssid]
++    };
++  }
++
+   /** Place one station on the inner edge of its authoritative SSID bubble. */
+   topologySTAPlacement(sta, staList, haulGeometry, nodeId = '') {
+     const ssid = String(sta?.ssid || '');
+@@ -4215,7 +4270,10 @@
+     const cacheKey = this.normalizeMac(sta?.staMAC);
+     const ownerId = String(nodeId || '');
+     const cached = this.staPositionCache.get(cacheKey);
+-    const angle = -Math.PI / 2 + (2 * Math.PI * cohortIndex) / cohortCount;
++    const titledCohort = ssid === 'private_ssid' || ssid === 'iot_ssid';
++    const angle = titledCohort && cohortCount > 1
++      ? Math.PI / 3 + (4 * Math.PI / 3) * cohortIndex / (cohortCount - 1)
++      : -Math.PI / 2 + (2 * Math.PI * cohortIndex) / cohortCount;
+     let to = {
+       x: target.offset.x + edgeRadius * Math.cos(angle),
+       y: target.offset.y + edgeRadius * Math.sin(angle)
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2024,7 +2024,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-centered-star-1"></script>
++    <script src="static/script.js?v=topology-uplink-bars-labels-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

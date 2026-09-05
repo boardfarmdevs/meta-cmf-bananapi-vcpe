@@ -1,0 +1,82 @@
+Subject: [PATCH] cli: use quoted color-matched cohort labels
+
+Replace the split SSID headings with single-line "iot" and "private"
+labels in dark gray and dark blue. Keep the actual SSIDs intact. Reserve
+a wider clear sector for the headings and position each label inside its
+bubble with room around the text and away from the default RF paths.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3667,7 +3667,7 @@
+           });
+ 
+         const label = self.topologySSIDLabel(item);
+-        const heading = g.append('text')
++        g.append('text')
+           .attr('class', 'ssid-label')
+           .attr('data-ssid', ssid)
+           .attr('aria-label', ssid)
+@@ -3675,16 +3675,12 @@
+           .attr('y', label.y)
+           .attr('text-anchor', 'middle')
+           .attr('dominant-baseline', 'middle')
+-          .attr('font-size', label.lines.length === 2 ? '20px' : '16px')
+-          .attr('fill', label.lines.length === 2 ? '#475569' : '#9b9a9aff')
++          .attr('font-size', `${label.fontSize}px`)
++          .attr('fill', label.color)
+           .attr('font-weight', 'bold')
+           .attr('stroke', '#fff').attr('stroke-width', 2).attr('paint-order', 'stroke')
+-          .style('pointer-events', 'none');
+-        label.lines.forEach((line, index) => {
+-          heading.append('tspan').attr('x', label.x)
+-            .attr('y', label.y + (index - (label.lines.length - 1) / 2) * 22)
+-            .text(line);
+-        });
++          .style('pointer-events', 'none')
++          .text(label.text);
+       });
+ 
+       // STA Placement
+@@ -4243,12 +4239,14 @@
+   }
+ 
+   topologySSIDLabel(geometry) {
+-    const prefix = geometry.ssid === 'private_ssid' ? 'sta_'
+-      : geometry.ssid === 'iot_ssid' ? 'iot_' : null;
++    const cohort = geometry.ssid === 'private_ssid' ? 'private'
++      : geometry.ssid === 'iot_ssid' ? 'iot' : null;
+     return {
+-      x: geometry.offset.x + (prefix ? geometry.radius * 0.58 : 0),
++      x: geometry.offset.x + geometry.radius * (cohort === 'private' ? 0.55 : cohort === 'iot' ? 0.38 : 0),
+       y: geometry.offset.y,
+-      lines: prefix ? [prefix, 'ssid'] : [geometry.ssid]
++      text: cohort ? `"${cohort}"` : geometry.ssid,
++      fontSize: cohort ? 20 : 16,
++      color: cohort === 'private' ? '#1e3a8a' : cohort === 'iot' ? '#374151' : '#9b9a9aff'
+     };
+   }
+ 
+@@ -4272,7 +4270,7 @@
+     const cached = this.staPositionCache.get(cacheKey);
+     const titledCohort = ssid === 'private_ssid' || ssid === 'iot_ssid';
+     const angle = titledCohort && cohortCount > 1
+-      ? Math.PI / 3 + (4 * Math.PI / 3) * cohortIndex / (cohortCount - 1)
++      ? 2 * Math.PI / 5 + (6 * Math.PI / 5) * cohortIndex / (cohortCount - 1)
+       : -Math.PI / 2 + (2 * Math.PI * cohortIndex) / cohortCount;
+     let to = {
+       x: target.offset.x + edgeRadius * Math.cos(angle),
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2024,7 +2024,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-uplink-bars-labels-1"></script>
++    <script src="static/script.js?v=topology-quoted-cohorts-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

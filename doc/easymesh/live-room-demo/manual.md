@@ -7,6 +7,10 @@ turns a deterministic model of a home into live RF conditions, observes the
 real EasyMesh response, runs the external reference optimizer, optionally sends
 one real steering request, and presents the result in one browser view.
 
+This document covers the precooked timed presentation. For live drag,
+destination, disappearance, lease, API, and restoration operation, use the
+[interactive room manual](interactive-room-manual.md).
+
 The default profile keeps the accepted lab fully loaded:
 
 - one controller and colocated agent;
@@ -151,7 +155,7 @@ lxc list
 Set values appropriate to that host:
 
 ```bash
-LAB_VM=rdkeasymesh-20-0904
+LAB_VM=rdkeasymesh-20-0905
 LAB_HOST_IP=192.168.2.140
 LAB_VM_IP=10.142.138.250
 ```
@@ -278,26 +282,36 @@ lock.
 
 - dashed red/amber/green: **scenario-best** AP for the selected display band;
 - solid cyan: **actual controller-observed association**;
-- dashed gold: optimizer's current measured target.
+- dashed gold: optimizer's current measured target; and
+- solid dark blue: **actual controller-observed wireless-backhaul parent**.
 
 The lines are intentionally independent. A dashed green scenario-best line is
 not proof that the client has associated there. During a useful crossover the
 cyan line can remain on the old AP while the gold line identifies a better
 candidate. It moves only after the real client and controller converge.
 
-The room's `Extender-1` through `Extender-4` names are stable manifest/container
-roles. RDK's controller may assign its displayed `Extender-N` ordinal in a
-different discovery order. The conductor resolves both serving and candidate
-links by their live BSSID ownership, so geometry and lines use the stable room
-role. When the controller label differs, the Hero card shows it in
-parentheses rather than silently treating the ordinal as an identity.
+Room positions remain bound to stable manifest/container roles. RDK's
+controller may assign its displayed `Extender-N` ordinal in a different
+discovery order, so the conductor does not bind the room by that label. It
+joins each controller node to a room role through live BSSID ownership and
+then displays the controller's current device name on that physical room
+position. Client association lines and wireless-backhaul parent lines use the
+same controller topology snapshot as the unchanged EasyMesh Network Topology
+view. A star or multihop change therefore appears in both views without
+changing the room geometry.
+
+The geometric AP-to-AP RF graph is not shown as live mesh topology. It remains
+available only in the offline Golden World viewer, where no controller graph
+exists. This prevents an RF-capable link from being mistaken for an actual
+backhaul association.
 
 ### 8.3 Left-side cards
 
 `Scenario` states the current audience narrative marker.
 
-`Whole lab` reports mesh-device, client, private/IoT cohort, controller-model,
-and health counts. A healthy full model is `5/15/50/24`.
+`Whole lab` reports mesh-device, client, private/IoT cohort, actual topology
+shape and backhaul-edge count, controller-model, and health counts. A healthy
+full model is `5/15/50/24`.
 
 `Hero client` reports the real serving device and BSSID, band, SSID, associated
 RCPI/RSSI, and the latest data-plane ping result.
@@ -324,10 +338,50 @@ policy changes, action, verification, health, and RF restoration.
 
 In live mode, world selection, file input, play, speed, and scrub are disabled
 because the runner owns time. Camera orbit, shift-pan, wheel zoom, band display,
-labels, trails, scenario links, and backhaul controls remain available.
+labels, trails, scenario links, and actual-backhaul controls remain available.
 
 Changing the display band changes only visualization of Golden World SNR. It
 does not change client or AP configuration.
+
+The **Interactive room** card is **LIVE RF** when the writable room service is
+running and **PREVIEW ONLY** when viewing a static world. In live mode, a drag
+previews locally until pointer-up; pointer-up applies one atomic wmediumd
+transaction. Association still changes only through station/EasyMesh behavior.
+
+To place a client directly:
+
+1. select **Interact**;
+2. point at a client head and drag it across the room floor;
+3. read the floating spatial panel while dragging; and
+4. use **Reset role** or **Reset all** to return to scenario truth.
+
+The panel follows the selected client but remains within the viewport. It
+shows room coordinates, distance moved, current and strongest APs, distance,
+walls crossed, wall loss, predicted SNR, current measured RCPI when available,
+metric age, and the three strongest predicted candidates. Walls crossed by
+the associated or strongest path are highlighted amber. The purple line is
+the preview's strongest path; cyan remains the controller-observed association.
+
+For visible movement at a defined speed:
+
+1. choose `0.6`, `1.4`, or `3.0 m/s` in **Destination speed**;
+2. right-click the client and select **Move to destination…**;
+3. click the destination on the floor; and
+4. observe the dashed route, destination ring, remaining distance, estimated
+   time, wall crossings, and changing candidate ranking.
+
+The **Move to…** button performs the same operation for the selected client.
+Press Escape to cancel destination selection or an in-progress preview move.
+
+Right-click and choose **Disappear**, or use the card button, to make a role
+RF-absent by applying the minimum SNR on all affected links. **Reappear**
+recomputes its links at the retained position and allows normal recovery.
+Switch back to
+**Camera** to orbit or shift-pan without moving a client.
+
+Predicted geometry, applied/read-back SNR and measured controller RCPI remain
+separate. A browser preview is never evidence that RF or association changed;
+the committed event and subsequent network observation are the evidence.
 
 ### 8.5 Companion Network Topology signal meter
 
@@ -396,9 +450,13 @@ curl -N 'http://127.0.0.1:8891/api/demo/events?after=100'
 ```
 
 The common event envelope includes `run_id`, global `sequence`, wall-clock
-`recorded_at`, authoritative `world_time_ms`, `producer`, `kind`, and
-`payload`. Runner-local sequence numbers are retained as
-`payload.producer_sequence`. HTTP `POST` returns 405.
+`recorded_at`, monotonic `run_elapsed_ms`, `scenario_time_ms`, compatibility
+`world_time_ms`, `producer`, `kind`, `payload`, and event-chain hashes.
+Runner-local sequence numbers are retained as `payload.producer_sequence`.
+Scripted/replay servers reject writes. The interactive service exposes only
+its bounded control routes, protected by a run-scoped operator capability,
+renewable lease, idempotent command ID and `ETag`/`If-Match` world revision.
+All accepted mutations are serialized by one `RoomEngine`.
 
 ## 11. Evidence and offline replay
 

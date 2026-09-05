@@ -86,6 +86,49 @@ assert.equal(controller.topologyIsWirelessBackhaul({
   ...unresolvedWireless, mediaType: 'Ethernet'
 }), false, 'Ethernet backhaul was presented as radio signal telemetry');
 
+function renderMeter(edge) {
+  const segments = Array.from({length: 10}, () => ({}));
+  const attributes = {};
+  const selection = {
+    attr(name, value) { attributes[name] = value; return this; },
+    select() { return {text(value) { attributes.title = value; }}; },
+    selectAll(selector) {
+      assert.equal(selector, 'rect.backhaul-signal-segment');
+      return {
+        attr(name, value) {
+          segments.forEach((segment, index) => {
+            segment[name] = typeof value === 'function' ? value(index) : value;
+          });
+          return this;
+        }
+      };
+    }
+  };
+  controller.updateTopologyBackhaulMeter(selection, edge);
+  return {segments, attributes};
+}
+
+const meterEdge = {...freshEdge, source: {name: 'Agent-1', x: 0}, target: {x: 300}};
+const originalMeterEdge = structuredClone(meterEdge);
+const strongMeter = renderMeter(meterEdge);
+assert.ok(strongMeter.segments.every(segment => segment.fill === '#15803d'));
+assert.ok(strongMeter.segments.every(segment => segment.x > 15),
+  'extender meter was placed on the side facing its parent link');
+assert.match(strongMeter.attributes['aria-label'], /Uplink to Agent-1: -41 dBm/);
+assert.equal(strongMeter.attributes['data-signal-status'], 'fresh');
+assert.deepEqual(meterEdge, originalMeterEdge, 'meter rendering mutated the controller signal');
+assert.ok(renderMeter({...meterEdge, target: {x: -300}}).segments.every(segment => segment.x < -20));
+assert.equal(renderMeter({...freshEdge, signal: {
+  status: 'fresh', rcpi: 60, rssi_dbm: -80, observed_at: observed(1)
+}}).segments.filter(segment => segment.opacity === 1).length, 3,
+  'weak uplink did not use the shared ten-level signal scale');
+for (const edge of [staleEdge, unknownEdge]) {
+  const meter = renderMeter(edge);
+  assert.ok(meter.segments.every(segment => segment.fill === '#e2e8f0'),
+    'stale or unknown uplink was presented as a current strong signal');
+  assert.match(meter.attributes['aria-label'], /stale|unknown/);
+}
+
 const topology = {
   nodes: [{ id: 'agent-1' }, { id: 'extender-1' }],
   edges: [freshEdge]

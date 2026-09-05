@@ -3,12 +3,20 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: `codex/0831-clean` release candidate.
+Status: `codex/0905-clean` is canonical; the fresh 0905 build and portable
+release are undergoing qualification. The prior accepted baseline below is
+historical and must not be cited as acceptance of the new 0905 artifacts.
+
+The canonical build workspace is
+`rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
+rebuilt in new build directories using the reviewed upstream source lock.
+The planned portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
+20-client instances are named `rdkeasymesh-20-0905` on rev140 and rev150.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
 
-## Accepted baseline
+## Previous accepted baseline
 
 | Item | Accepted value |
 | --- | --- |

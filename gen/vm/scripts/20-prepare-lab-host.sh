@@ -11,7 +11,7 @@ meta_workspace=/home/easymesh/git
 boardfarm_workspace=/home/easymesh/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-}
-runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0831-clean}
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0905-clean}
 alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then

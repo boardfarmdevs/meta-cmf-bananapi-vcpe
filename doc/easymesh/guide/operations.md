@@ -11,14 +11,16 @@
 | Bare-metal Ubuntu 24.04/Linux 7 host | performance, scale and kernel debugging |
 | Ubuntu 22.04/24.04 LXD host | portable appliance import and operation |
 
-`codex/0831-clean` is authoritative. Runtime results are comparable only
+`codex/0905-clean` is authoritative. Runtime results are comparable only
 when source revision, image hashes, kernel, topology, clients, medium backend
 and test parameters match.
 
 ## Image provenance
 
-Every deployment must record the exact image filenames and hashes. The current
-fully rebuilt pair is:
+Every deployment must record the exact image filenames and hashes. The
+historical accepted pair below predates 0905; use the current build's actual
+outputs and the acceptance record in [current state](../current-state.md),
+not these old filenames, for a 0905 deployment:
 
 ```text
 host/runtime source       codex/0831-clean
@@ -410,12 +412,13 @@ curl -fsS http://127.0.0.1:8890/api/v1/controls | jq .
 Use `lxc exec INSTANCE -- bash` for guest access. There is no provider-specific
 SSH port or mounted host directory.
 
-On the Network Topology page, **Optimize Layout** only rearranges the rendered
-graph. It places the controller on the left, advances each backhaul generation
-from left to right, wraps dense generations into additional columns, and uses
-the full landscape viewport while accounting for SSID and client extents. It
-then caches the positions across topology refreshes and fits the complete graph
-into the pane. It does not issue an EasyMesh, steering, policy or wmediumd
+On the Network Topology page, **Optimize Layout** fits the complete graph to
+the available pane without rearranging devices or clients. Swapping extenders
+between the top/bottom or left/right, or moving Agent-1 and Controller, keeps
+that arrangement. It changes only the view's zoom and pan, accounts for SSID
+and client extents, and retains positions across topology refreshes. Initial
+display still uses a compact centered star or the branch/chain hierarchy.
+It does not issue an EasyMesh, steering, policy or wmediumd
 command. **Export** downloads the current topology as JSON data or the visible
 diagram as a portable SVG or PNG; SVG and PNG exports embed the displayed node
 icons.

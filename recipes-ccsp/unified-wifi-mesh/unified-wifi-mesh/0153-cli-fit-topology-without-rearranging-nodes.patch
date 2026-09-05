@@ -1,0 +1,94 @@
+Subject: [PATCH] cli: fit topology without rearranging operator positions
+
+Make Optimize Layout preserve all displayed device and client positions and
+fit the complete diagram to the viewport. Moving extenders between rows or
+sides must survive optimization, as must manual Agent-1 and Controller moves.
+Keep deterministic centered-star/hierarchical placement for initial display.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2620,7 +2620,7 @@
+   }
+ 
+   /**
+-   * Arrange only the on-screen graph as a landscape hierarchy. This never
++   * Fit the on-screen graph while preserving operator positions. This never
+    * sends an EasyMesh command or changes the actual network.
+    */
+   optimizeTopologyLayout() {
+@@ -2637,44 +2637,26 @@
+     this.topologyRenderPending = false;
+     if (button) button.disabled = true;
+ 
+-    this.nodePositionCache?.clear();
+-    this.staPositionCache?.clear();
+-    nodes.forEach(node => {
+-      node.fx = null;
+-      node.fy = null;
+-      node.vx = 0;
+-      node.vy = 0;
+-    });
+-
+-    this.showNotification('Arranging the topology for this landscape viewport…', 'info');
++    this.showNotification('Fitting topology to the viewport without moving nodes…', 'info');
+     const paint = simulation.on('tick');
+     simulation.stop();
+-    const positions = this.topologyLandscapeLayout(
+-      nodes,
+-      this.topology?.edges || [],
+-      this.topologyView?.width || 1600,
+-      this.topologyView?.height || 900
+-    );
+-    nodes.forEach(node => {
+-      const position = positions.get(String(node.id));
+-      if (!position) return;
+-      node.x = position.x;
+-      node.y = position.y;
+-    });
+-    if (typeof paint === 'function') paint();
+-
+     nodes.forEach(node => {
++      node.x = node.fx ?? node.x;
++      node.y = node.fy ?? node.y;
+       if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+       node.fx = node.x;
+       node.fy = node.y;
++      node.vx = 0;
++      node.vy = 0;
+       this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
+     });
++    if (typeof paint === 'function') paint();
+ 
+     this.topologyLayoutInProgress = false;
+     this.topologyRenderPending = false;
+     this.fitTopologyToView();
+     if (button) button.disabled = false;
+-    this.showNotification('Topology diagram arranged', 'success');
++    this.showNotification('Topology fitted; node positions preserved', 'success');
+   }
+ 
+   /**
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -379,7 +379,7 @@
+                                     </button>
+                                 </div>
+                             </div>
+-                            <button class="btn btn-primary" id="optimize-topology">
++                            <button class="btn btn-primary" id="optimize-topology" title="Fit to available space without moving devices or clients">
+                                 <i class="fas fa-magic"></i> Optimize Layout
+                             </button>
+                         </div>
+@@ -2024,7 +2024,7 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-quoted-cohorts-1"></script>
++    <script src="static/script.js?v=topology-preserve-arrangement-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

@@ -798,8 +798,9 @@ node gen/tests/webui-topology-layout-test.js "$script"
 
 Verifies topology-edge fresh, stale and unknown signal handling; RCPI `0`;
 legacy and future timestamps; band/channel/signal labels; Ethernet exclusion;
-and metric-only in-place refresh without a D3 relayout. A true parent/child
-structural change must still rebuild the graph.
+extender meter strength, direction and accessible parent labels; and metric-only
+in-place refresh without a D3 relayout. Stale and unknown meters must stay
+unlit. A true parent/child structural change must still rebuild the graph.
 
 ### `webui-mesh-device-signal-test.js`
 
@@ -815,10 +816,13 @@ button state and presents a successful notification.
 
 ### `webui-topology-layout-test.js`
 
-Verifies BSS band labels, SSID/client geometry, edge placement, draggable
+Verifies BSS band labels, SSID/client geometry, quoted color-matched cohort
+titles with padded bounds clear of default client RF paths, edge placement, draggable
 clients, steering pulse/trail state, signal bars, channel display, exact
-backhaul parent rendering, responsive resize, the deterministic landscape
-optimizer, position caching, and the rule that a metric-only two-second poll
+backhaul parent rendering, responsive resize, compact star layouts centered
+on Agent-1 with clearance for SSID groups, branch/chain layout preservation,
+position caching, Optimize Layout preserving operator device/client positions,
+and the rule that a metric-only two-second poll
 must not rebuild or move the graph. The API model must remain immutable through
 all rendering operations.
 

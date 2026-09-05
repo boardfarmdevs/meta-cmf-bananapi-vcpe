@@ -8,7 +8,8 @@ set -euo pipefail
 # makes the target radio preferable in wmediumd and primes the minimal test
 # supplicant's scan cache before sending the real EasyMesh BTM request.  The
 # exact medium state is restored on every exit path.  --request-only preserves
-# the unassisted standards path when client acceptance policy is under test.
+# the current medium, resolves the nominated BSSID with a directed scan (also
+# for a hidden SSID), and then uses the unassisted standards BTM path.
 
 usage() {
     cat >&2 <<'EOF'
@@ -25,8 +26,9 @@ STA may be a WebUI label such as sta-03/iot-14 or a station MAC. TARGET may be a
 live topology node name such as agent-1/extender-2 or a target BSSID. Without
 overrides, the target BSSID is selected on the STA's current SSID and band.
 Default mode applies a temporary, exactly-restored wmediumd RF bias and verifies
-the physical and controller-visible move. --request-only sends only the BTM
-request; the station may legitimately reject it or remain on its current AP.
+the physical and controller-visible move. --request-only does not alter RF: it
+resolves the same-ESS candidate with a directed scan and then sends the BTM
+request. The station may legitimately reject it or remain on its current AP.
 EOF
     exit 2
 }
@@ -105,6 +107,119 @@ lxc_exec_bounded() {
     shift
     timeout --signal=TERM --kill-after=2 "$limit" \
         lxc exec -T -n "$@"
+}
+
+scan_target_candidate() {
+    local refresh_bssids refresh_bssid
+    refresh_bssids=$source_bssid
+    while IFS= read -r refresh_bssid; do
+        [[ -n $refresh_bssid ]] || continue
+        [[ ${refresh_bssid,,} == "${source_bssid,,}" ]] && continue
+        [[ ${refresh_bssid,,} == "${target_bssid,,}" ]] && continue
+        refresh_bssids+=" $refresh_bssid"
+    done < <(jq -r --argjson band "$target_band" --arg ssid "$target_ssid" '
+        [.nodes[]?.haulTypes[]?.BSSList[]?
+          | select(.Band == $band and (.ssid // "") == $ssid)
+          | (.BSSID // "" | ascii_downcase)]
+        | unique[]' <<<"$topology")
+    status_action "Refreshing the eligible BSS cache and resolving candidate $target_bssid on '$target_ssid' at ${target_frequency} MHz."
+    set +e
+    lxc_exec_bounded 20 "$client" -- sh -c '
+        frequency=$1
+        target=$2
+        ssid=$3
+        refresh=$4
+        ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
+        # Keep the BTM decision tied to the candidate we are resolving now.
+        # hwsim clients can otherwise retain empty-SSID and old probe-response
+        # records for several VAPs on the same radio.  The associated BSS is
+        # retained by wpa_supplicant; the directed scan repopulates the target.
+        wpa_cli -i wlan0 bss_flush 0 >/dev/null 2>&1 || exit 3
+        # The associated BSS cannot be flushed, and other populated VAP
+        # records can also retain signal from an earlier steering assist.
+        # Refresh every eligible non-target BSS under this generation before
+        # resolving the nominated target last.
+        scan_one() {
+            bssid=$1
+            tries=0
+            while [ "$tries" -lt 20 ]; do
+                request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
+                    "bssid=$bssid" "ssid $ssid_hex" 2>/dev/null || true)
+                if [ "$request" = OK ]; then
+                    sleep 0.5
+                    return 0
+                fi
+                sleep 0.1
+                tries=$((tries + 1))
+            done
+            return 1
+        }
+        for bssid in $refresh; do
+            scan_one "$bssid" || true
+        done
+        attempt=0
+        while [ "$attempt" -lt 3 ]; do
+            request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
+                "bssid=$target" "ssid $ssid_hex" 2>/dev/null || true)
+            elapsed=0
+            while [ "$elapsed" -lt 20 ]; do
+                scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+                if [ "$request" = OK ] && printf "%s\n" "$scan" | \
+                    awk -F "\t" -v b="$target" -v s="$ssid" '\''
+                        tolower($1) == tolower(b) && $5 == s { found = 1 }
+                        END { exit found ? 0 : 1 }
+                    '\''; then
+                    exit 0
+                fi
+                sleep 0.1
+                elapsed=$((elapsed + 1))
+            done
+            if [ "$request" != OK ]; then
+                sleep 0.5
+            fi
+            request=
+            scan=
+            attempt=$((attempt + 1))
+        done
+
+        # Exit 2 distinguishes an RF-visible hidden beacon from a cache
+        # record whose ESS identity was resolved by the directed probe.
+        scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
+        if printf "%s\n" "$scan" | awk -F "\t" -v b="$target" '\''
+            tolower($1) == tolower(b) { found = 1 }
+            END { exit found ? 0 : 1 }
+        '\''; then
+            exit 2
+        fi
+    ' sh "$target_frequency" "$target_bssid" "$target_ssid" \
+        "$refresh_bssids" >/dev/null 2>&1
+    local scan_rc=$?
+    set -e
+    if ((scan_rc != 0)); then
+        if ((scan_rc == 2)); then
+            echo "steer.sh: target $target_bssid is RF-visible, but its hidden ESS identity '$target_ssid' was not resolved; no BTM request was sent" >&2
+        else
+            echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan; no BTM request was sent" >&2
+        fi
+        return "$scan_rc"
+    fi
+    status_pass "The target BSSID and ESS identity are present in the station scan cache."
+}
+
+wait_target_association() {
+    local seconds=$1
+    lxc_exec_bounded "$((seconds + 2))" "$client" -- sh -c '
+        target=$1
+        count=$2
+        while [ "$count" -gt 0 ]; do
+            current=$(iw dev wlan0 link 2>/dev/null |
+                awk '\''/Connected to/{value=tolower($3)} END{print value}'\'')
+            [ "$current" = "$target" ] && exit 0
+            sleep 1
+            count=$((count - 1))
+        done
+        exit 1
+    ' sh "$target_bssid" "$seconds" >/dev/null 2>&1
 }
 
 operating_tuple_for_frequency() {
@@ -352,26 +467,6 @@ if [[ $reported_channel =~ ^[1-9][0-9]*$ && $reported_channel != "$target_channe
     status_note "Controller reports channel $reported_channel, but $target_owner/$target_interface is live on ${target_frequency}MHz (channel $target_channel); using the live AP state."
 fi
 
-if ((request_only)); then
-    status_action "Using standards-only mode; no temporary RF preference will be applied."
-    announce_steering planned
-    status_wait_seconds "$preview_seconds" "highlighting $sta_input in the topology before the request"
-    announce_steering moving
-    status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
-    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
-        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel"
-    exit $?
-fi
-
-[[ $source_bssid =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
-    echo "steer.sh: live topology has no serving BSSID for $sta_input; refusing an unsafe RF bias" >&2
-    exit 1
-}
-[[ -x $bias_tool ]] || {
-    echo "steer.sh: deterministic steering helper is missing: $bias_tool" >&2
-    exit 1
-}
-
 mapfile -t client_identity < <(jq -r --arg input "$sta_input" --arg sta "$sta" '
     [.stations[]?
       | select(.role == "wlan-client" or .role == "iot-client")
@@ -386,6 +481,62 @@ if ((${#client_identity[@]} != 1)); then
     exit 1
 fi
 IFS=$'\t' read -r client station_radio <<<"${client_identity[0]}"
+timeout --signal=TERM --kill-after=2 5 lxc info "$client" >/dev/null 2>&1 || {
+    echo "steer.sh: client container '$client' is not available" >&2
+    exit 1
+}
+if ! lxc_exec_bounded 5 "$client" -- true >/dev/null 2>&1; then
+    echo "steer.sh: nested LXD cannot execute commands in '$client'; no steering request was sent" >&2
+    exit 1
+fi
+
+if ((request_only)); then
+    status_action "Using standards-only mode; no temporary RF preference will be applied."
+    announce_steering planned
+    status_wait_seconds "$preview_seconds" "highlighting $sta_input in the topology before the request"
+    announce_steering moving
+    scan_target_candidate
+    link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
+    physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
+    if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
+        status_pass "The station reassociated during candidate discovery; no BTM request was needed."
+        exit 0
+    fi
+    status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
+    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" gentle
+    status_wait_seconds 4 "allowing the client to accept the graceful BTM request"
+    if wait_target_association 1; then
+        status_pass "The station accepted the graceful BTM request."
+        exit 0
+    fi
+    status_action "The client did not accept the graceful request; escalating to a disassociation-imminent BTM while retaining the same measured target."
+    lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
+        /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" || {
+        echo "steer.sh: controller steering command failed" >&2
+        exit 1
+    }
+    # A disassociation-imminent request can return before the client reaches
+    # the nominated AP.  Keep the caller's serialized RF transaction active
+    # until the physical outcome is known; otherwise RoomEngine could restore
+    # its temporary steering assist before the BTM timer expires.
+    status_wait "Waiting up to 10s for the escalated BTM to reach $target_bssid."
+    if wait_target_association 10; then
+        status_pass "The station accepted the escalated BTM request."
+        exit 0
+    fi
+    echo "steer.sh: station did not accept/reassociate to $target_bssid" >&2
+    exit 1
+fi
+
+[[ $source_bssid =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
+    echo "steer.sh: live topology has no serving BSSID for $sta_input; refusing an unsafe RF bias" >&2
+    exit 1
+}
+[[ -x $bias_tool ]] || {
+    echo "steer.sh: deterministic steering helper is missing: $bias_tool" >&2
+    exit 1
+}
 
 mapfile -t source_identities < <(radio_identity_for_node "$source_name")
 mapfile -t mesh_radios < <(jq -r '
@@ -402,15 +553,6 @@ if ((${#mesh_radios[@]} < 2)); then
     exit 1
 fi
 IFS=$'\t' read -r source_owner source_radio <<<"${source_identities[0]}"
-timeout --signal=TERM --kill-after=2 5 lxc info "$client" >/dev/null 2>&1 || {
-    echo "steer.sh: client container '$client' is not available" >&2
-    exit 1
-}
-if ! lxc_exec_bounded 5 "$client" -- true >/dev/null 2>&1; then
-    echo "steer.sh: nested LXD cannot execute commands in '$client'; no RF bias was applied" >&2
-    exit 1
-fi
-
 bias_state=$(mktemp /tmp/easymesh-steer-bias.XXXXXX.json)
 bias_active=0
 steering_announced=0
@@ -475,64 +617,12 @@ if ((bias_rc != 0)); then
 fi
 bias_active=1
 
-status_action "Scanning ${target_frequency} MHz so the station can see candidate $target_bssid."
-set +e
-lxc_exec_bounded 12 "$client" -- sh -c '
-    frequency=$1
-    target=$2
-    ssid=$3
-    ssid_hex=$(printf "%s" "$ssid" | od -An -tx1 | tr -d " \n")
-    attempt=0
-    while [ "$attempt" -lt 3 ]; do
-        request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
-            "bssid=$target" "ssid $ssid_hex" 2>/dev/null || true)
-        elapsed=0
-        while [ "$elapsed" -lt 20 ]; do
-            scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
-            if [ "$request" = OK ] && printf "%s\n" "$scan" | \
-                awk -F "\t" -v b="$target" -v s="$ssid" '\''
-                    tolower($1) == tolower(b) && $5 == s { found = 1 }
-                    END { exit found ? 0 : 1 }
-                '\''; then
-                exit 0
-            fi
-            sleep 0.1
-            elapsed=$((elapsed + 1))
-        done
-        if [ "$request" != OK ]; then
-            sleep 0.5
-        fi
-        request=
-        scan=
-        attempt=$((attempt + 1))
-    done
-
-    # Report a more precise failure boundary to the caller. Exit 2 means the
-    # BSSID is RF-visible, but no cache record resolves it to the target ESS.
-    scan=$(wpa_cli -i wlan0 scan_results 2>/dev/null || true)
-    if printf "%s\n" "$scan" | awk -F "\t" -v b="$target" '\''
-        tolower($1) == tolower(b) { found = 1 }
-        END { exit found ? 0 : 1 }
-    '\''; then
-        exit 2
-    fi
-' sh "$target_frequency" "$target_bssid" "$target_ssid" >/dev/null 2>&1
-scan_rc=$?
-set -e
-if ((scan_rc != 0)); then
-    if ((scan_rc == 2)); then
-        echo "steer.sh: target $target_bssid is RF-visible, but its hidden ESS identity '$target_ssid' was not resolved; no BTM request was sent" >&2
-    else
-        echo "steer.sh: target $target_bssid was absent from the ${target_frequency}MHz candidate scan; no BTM request was sent" >&2
-    fi
-    exit "$scan_rc"
-fi
+scan_target_candidate
 link=$(lxc_exec_bounded 6 "$client" -- iw dev wlan0 link 2>/dev/null || true)
 physical_bssid=$(awk '/Connected to/{value=$3} END{print value}' <<<"$link")
 if [[ ${physical_bssid,,} == "$target_bssid" ]]; then
     status_pass "The station reassociated during RF preparation; no BTM request was needed."
 else
-    status_pass "The target BSSID and ESS identity are present in the station scan cache."
     status_action "Sending the EasyMesh BTM request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     set +e
     # The native command transport has a 30-second I/O bound and controller
