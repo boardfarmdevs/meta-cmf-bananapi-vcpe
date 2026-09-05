@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo=${EASYMESH_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
+exec "$repo/gen/tests/health-audit.sh" "$@"

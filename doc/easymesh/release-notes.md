@@ -28,6 +28,8 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   configured. Both complete role images include patch `0154`.
 - Pins the Boardfarm WAN AFTR build-stage migration to Bookworm, avoiding
   the obsolete Bullseye package downloads encountered during the clean build.
+- Installs a checkout-aware health-audit wrapper so the appliance command
+  finds its shared observer helpers instead of resolving them below `/usr`.
 
 ## 0824
 

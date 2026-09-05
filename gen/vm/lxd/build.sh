@@ -244,7 +244,7 @@ push_inputs() {
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
         [easymesh-labctl]=gen/vm/scripts/guest/easymesh-labctl
-        [easymesh-health-audit]=gen/tests/health-audit.sh
+        [easymesh-health-audit]=gen/vm/scripts/guest/easymesh-health-audit
         [easymesh-package-cleanup]=gen/vm/scripts/guest/easymesh-package-cleanup
         [easymesh-prepare-thin-package]=gen/vm/scripts/guest/easymesh-prepare-thin-package
         [easymesh-complete-thin-firstboot]=gen/vm/scripts/guest/easymesh-complete-thin-firstboot
@@ -262,7 +262,7 @@ push_inputs() {
         "$name/home/easymesh/scale-topology.sh"
     lxc file push --mode 0755 "$root/gen/vm/scripts/61-return-steering-regression.sh" \
         "$name/home/easymesh/return-steering-test.sh"
-    lxc file push --mode 0755 "$root/gen/tests/health-audit.sh" \
+    lxc file push --mode 0755 "$root/gen/vm/scripts/guest/easymesh-health-audit" \
         "$name/home/easymesh/health-audit.sh"
     lxc exec "$name" -- chown -R easymesh:easymesh \
         /home/easymesh/easymesh-assets /home/easymesh/easymesh-provision \
