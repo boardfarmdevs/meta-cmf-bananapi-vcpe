@@ -151,6 +151,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0151-cli-show-extender-uplink-bars-and-readable-labels.patch \
     file://0152-cli-use-quoted-color-matched-cohort-labels.patch \
     file://0153-cli-fit-topology-without-rearranging-nodes.patch \
+    file://0154-agent-preserve-state-on-client-capability-query.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 

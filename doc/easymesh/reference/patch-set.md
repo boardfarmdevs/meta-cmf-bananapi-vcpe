@@ -341,7 +341,7 @@ authority. Its dependency order is:
     positioned extenders, Agent-1, Controller, or clients.
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0153`; the
+component or image build. The current source series ends at `0154`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering

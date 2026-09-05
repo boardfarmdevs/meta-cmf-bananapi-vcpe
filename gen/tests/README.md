@@ -9,6 +9,18 @@ enables the normally-down `hwsim0` radiotap monitor, generates acknowledged
 client traffic, and rejects a kernel Oops, wmediumd death, or nl80211 deadlock.
 Run it only on a healthy lab whose monitor interface is down.
 
+`client-capability-state-test.py` compiles the actual patched capability-query
+handler with isolated reply/state test doubles. It requires Python 3 and g++,
+but no running lab. Test both successful and failed replies, preserved radio
+state, response identity, and malformed-input guards with:
+
+```sh
+python3 gen/tests/client-capability-state-test.py \
+  /path/to/unified-wifi-mesh/git/src/em/capability/em_capability.cpp
+```
+
+The unpatched handler fails its state assertion; patch `0154` makes it pass.
+
 ## Basic lab concepts
 
 ### Devices and containers

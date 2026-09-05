@@ -7,6 +7,14 @@ Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
 passed on 2026-09-05 UTC; appliance and imported-runtime qualification are
 pending. A successful image build is not a claim of live acceptance.
 
+The first full-roster builder reboot failed: early client-capability queries
+incorrectly marked two extender radios configured before their WSC exchange,
+leaving 34 rather than 50 BSS records. Patch `0154` preserves the radio state
+while replying. Its compiled-handler regression reproduces the failure before
+the patch and passes after it. Corrected role images and repeated reboot gates
+are required before packaging; the original hashes below are not a deployable
+release acceptance claim.
+
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
 rebuilt in new build directories using the reviewed upstream source lock.
