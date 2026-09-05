@@ -590,14 +590,17 @@ passes.
 
 Client movement has a small bounded delta. Moving an AP at 100 clients can
 require about 600 directed three-band fronthaul keys plus backhaul changes.
-Before enabling gateway/extender movement, preflight verifies:
+Before enabling an extender movement for a selected profile, preflight verifies:
 
 ```text
 required update count <= daemon atomic max_updates
 ```
 
 If not, the UI disables that action and explains why. Splitting one conceptual
-AP move across visible generations is not accepted as atomic behavior.
+AP move across visible generations is not accepted as atomic behavior. The
+current 20-client profile is accepted: one non-gateway extender changes 120
+directed fronthaul keys and 24 directed mesh-peer keys, for a maximum of 144
+keys in one generation. Gateway movement remains disabled.
 
 ## Delivery phases
 
@@ -629,6 +632,10 @@ The first Phase 0 foundation is now implemented:
   bounded to 120 directed keys in the 20-client profile; it preserves the
   container, identity and backhaul while the optimizer evacuates and later
   reconverges clients from controller-reported measurements;
+- each non-gateway extender can be dragged or moved along a server-owned path;
+  one accepted position updates all three-band fronthaul and mesh-peer links
+  in one bounded generation, while observed parentage and client ownership
+  remain controller truth;
 - environment epochs prevent movement from being mixed with candidate
   measurement and reset the optimizer hold;
 - unexpected medium instances/generations contaminate the run instead of

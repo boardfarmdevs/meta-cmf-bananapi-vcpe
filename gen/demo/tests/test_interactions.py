@@ -149,6 +149,9 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.lease = self.session.acquire("browser-test")
 
     def test_position_is_atomic_revisioned_and_frequency_qualified(self):
+        # The initial room is complete: four station/AP directions plus both
+        # directions of the gateway/extender backhaul in this one-band fixture.
+        self.assertEqual(len(self.client.applied[0]), 6)
         result = self.session.position(
             "sta_01", token=self.lease["token"], expected_revision=0,
             position=[8, 2], final=True, client_sequence=7,
@@ -214,7 +217,9 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         initial_generation = self.client.generation
         snapshot = self.session.snapshot()
         self.assertIn("extender_1", snapshot["presence_roles"])
+        self.assertIn("extender_1", snapshot["movable_roles"])
         self.assertNotIn("gateway", snapshot["presence_roles"])
+        self.assertNotIn("gateway", snapshot["movable_roles"])
 
         absent = self.session.presence(
             "extender_1", token=self.lease["token"], expected_revision=0,
@@ -243,6 +248,27 @@ class InteractiveMediumSessionTests(unittest.TestCase):
             "extender_1", "extender_1",
         ])
 
+    def test_extender_move_updates_fronthaul_and_backhaul_atomically(self):
+        initial_generation = self.client.generation
+        result = self.session.position(
+            "extender_1", token=self.lease["token"], expected_revision=0,
+            position=[8, 4], final=True,
+        )
+        self.assertEqual(result["position"], [8.0, 4.0])
+        self.assertEqual(result["changed_link_count"], 4)
+        self.assertEqual(self.client.generation, initial_generation + 1)
+        self.assertEqual(
+            {item["link_class"] for item in result["links"]},
+            {"fronthaul", "backhaul"},
+        )
+        self.assertEqual(len(self.client.applied[-1]), 4)
+        backhaul = [
+            item for item in result["links"]
+            if item["link_class"] == "backhaul"
+        ]
+        self.assertEqual(backhaul[0]["peer_role"], "gateway")
+        self.assertEqual(backhaul[0]["band"], "5")
+
     def test_wrong_lease_and_non_station_are_rejected(self):
         with self.assertRaisesRegex(InteractionError, "does not match"):
             self.session.position(
@@ -252,11 +278,6 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(InteractionError, "not interactive"):
             self.session.position(
                 "gateway", token=self.lease["token"], expected_revision=0,
-                position=[4, 2], final=True,
-            )
-        with self.assertRaisesRegex(InteractionError, "not interactive"):
-            self.session.position(
-                "extender_1", token=self.lease["token"], expected_revision=0,
                 position=[4, 2], final=True,
             )
         with self.assertRaisesRegex(InteractionError, "not interactive"):

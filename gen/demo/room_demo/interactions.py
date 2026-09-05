@@ -103,6 +103,7 @@ class InteractiveMediumSession:
             if world["roles"][role] == "station"
             or (world["roles"][role] == "fronthaul_ap" and role != "gateway")
         )
+        self._movable_roles = self._presence_roles
         layout_nodes = {item["role"]: dict(item) for item in layout.get("nodes", [])}
         self._nodes = {
             role: {"role": role, **layout_nodes.get(role, {})}
@@ -153,10 +154,36 @@ class InteractiveMediumSession:
                 self._generation = status.generation
                 self._max_updates = status.max_updates
                 self._started_at = time.monotonic()
-                initial_updates = []
+                # Apply the complete room, including AP-to-AP geometry.  A
+                # later extender move and Reset role must return to the same
+                # room state that was active at session start, not introduce
+                # backhaul modeling only after the first move.  Several role
+                # calculations touch the same fronthaul/AP-peer key, so reduce
+                # them to one deterministic atomic update.
+                initial_by_key: dict[
+                    tuple[str, str, int], dict[str, Any]
+                ] = {}
                 for role in self._allowed_roles:
                     updates, _ = self._links_for_role(role)
-                    initial_updates.extend(updates)
+                    for item in updates:
+                        key = (
+                            item["source"], item["destination"],
+                            int(item["frequency_mhz"]),
+                        )
+                        initial_by_key[key] = item
+                for role in self._movable_roles:
+                    if self.world["roles"][role] != "fronthaul_ap":
+                        continue
+                    updates, _ = self._extender_links(
+                        role, include_backhaul=True
+                    )
+                    for item in updates:
+                        key = (
+                            item["source"], item["destination"],
+                            int(item["frequency_mhz"]),
+                        )
+                        initial_by_key[key] = item
+                initial_updates = list(initial_by_key.values())
                 if len(initial_updates) > status.max_updates:
                     raise ActuatorError(
                         f"initial room requires {len(initial_updates)} updates, "
@@ -197,6 +224,7 @@ class InteractiveMediumSession:
                         "revision": self._revision,
                         "allowed_roles": list(self._allowed_roles),
                         "presence_roles": list(self._presence_roles),
+                        "movable_roles": list(self._movable_roles),
                         "daemon_instance_id": status.instance_id,
                         "daemon_generation": self._generation,
                         "environment_epoch": self._environment_epoch,
@@ -255,6 +283,7 @@ class InteractiveMediumSession:
                 ),
                 "allowed_roles": list(self._allowed_roles),
                 "presence_roles": list(self._presence_roles),
+                "movable_roles": list(self._movable_roles),
                 "roles": copy.deepcopy(self._roles),
                 "lease": lease or {"held": False},
                 "daemon": {
@@ -401,7 +430,9 @@ class InteractiveMediumSession:
         client_sequence: Any = None,
     ) -> dict[str, Any]:
         with self._lock:
-            self._validate_mutation(role, token, expected_revision)
+            self._validate_mutation(
+                role, token, expected_revision, allowed_roles=self._movable_roles
+            )
             self._cancel_role_movement(role, "direct_position")
             now = time.monotonic()
             if not final and now - self._last_update_at < self.minimum_update_interval:
@@ -693,9 +724,11 @@ class InteractiveMediumSession:
         speed_mps: Any,
         client_sequence: Any = None,
     ) -> dict[str, Any]:
-        """Start a server-owned constant-speed path for one station role."""
+        """Start a server-owned constant-speed path for one movable role."""
         with self._lock:
-            self._validate_mutation(role, token, expected_revision)
+            self._validate_mutation(
+                role, token, expected_revision, allowed_roles=self._movable_roles
+            )
             target = self._clamp_position(destination)
             try:
                 speed = float(speed_mps)
@@ -979,14 +1012,15 @@ class InteractiveMediumSession:
         return updates, summary
 
     def _extender_links(
-        self, role: str
+        self, role: str, *, include_backhaul: bool = False
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Return every fronthaul key affected by one extender's presence.
 
-        Mesh backhaul and control connectivity deliberately remain intact.
-        This models loss and restoration of client-serving RF so real clients,
-        controller telemetry, and the optimizer can evacuate and reconverge
-        without rebuilding inventory or changing the extender identity.
+        Presence changes leave mesh backhaul/control connectivity intact and
+        model only loss/restoration of client-serving RF. Position changes
+        additionally update every directed mesh-peer link so a physical move
+        can affect both fronthaul selection and backhaul topology without
+        rebuilding inventory or changing the extender identity.
         """
         positions = {
             name: tuple(value["position"]) for name, value in self._roles.items()
@@ -1028,6 +1062,7 @@ class InteractiveMediumSession:
                         "override": True,
                     })
                 summary.append({
+                    "link_class": "fronthaul",
                     "station_role": station_role,
                     "band": band,
                     "frequency_mhz": int(frequency),
@@ -1035,7 +1070,86 @@ class InteractiveMediumSession:
                     "wall_loss_db": down["wall_loss_db"],
                     "snr_db": int(down["snr_db_by_band"][band]),
                 })
+        if include_backhaul:
+            # Fronthaul presence and mesh availability are independent demo
+            # controls.  A disabled fronthaul may still be repositioned; its
+            # live backhaul geometry therefore uses all provisioned mesh
+            # nodes as present while client-serving links remain at minimum
+            # SNR until the fronthaul is restored.
+            backhaul_present = dict(present)
+            ap_roles = sorted(
+                name for name, kind in self.world["roles"].items()
+                if kind == "fronthaul_ap"
+            )
+            for ap_role in ap_roles:
+                backhaul_present[ap_role] = True
+            for peer_role in ap_roles:
+                if peer_role == role:
+                    continue
+                peer = self._nodes[peer_role]
+                peer_binding = self.plan["bindings"][peer_role]
+                outgoing = directed_link(
+                    ap, peer, positions, backhaul_present, self.layout,
+                    {"seed": 0}, self._revision + 1, "backhaul",
+                )
+                incoming = directed_link(
+                    peer, ap, positions, backhaul_present, self.layout,
+                    {"seed": 0}, self._revision + 1, "backhaul",
+                )
+                for band in ("2.4", "5", "6"):
+                    radio = ap_binding.get("band_radios", {}).get(band)
+                    peer_radio = peer_binding.get("band_radios", {}).get(band)
+                    source_frequency = ap_binding.get(
+                        "fronthaul_frequencies_mhz", {}
+                    ).get(band)
+                    peer_frequency = peer_binding.get(
+                        "fronthaul_frequencies_mhz", {}
+                    ).get(band)
+                    if (
+                        radio is None or peer_radio is None
+                        or source_frequency is None or peer_frequency is None
+                    ):
+                        continue
+                    source_mac = str(
+                        radio.get("tx_mac") or ap_binding["radio_tx_mac"]
+                    )
+                    peer_mac = str(
+                        peer_radio.get("tx_mac") or peer_binding["radio_tx_mac"]
+                    )
+                    updates.extend((
+                        {
+                            "source": source_mac,
+                            "destination": peer_mac,
+                            "frequency_mhz": int(source_frequency),
+                            "value": int(outgoing["snr_db_by_band"][band]),
+                            "override": True,
+                        },
+                        {
+                            "source": peer_mac,
+                            "destination": source_mac,
+                            "frequency_mhz": int(peer_frequency),
+                            "value": int(incoming["snr_db_by_band"][band]),
+                            "override": True,
+                        },
+                    ))
+                    summary.append({
+                        "link_class": "backhaul",
+                        "peer_role": peer_role,
+                        "band": band,
+                        "source_frequency_mhz": int(source_frequency),
+                        "peer_frequency_mhz": int(peer_frequency),
+                        "distance_m": outgoing["distance_m"],
+                        "wall_loss_db": outgoing["wall_loss_db"],
+                        "snr_db": int(outgoing["snr_db_by_band"][band]),
+                    })
         expected_maximum = len(self._allowed_roles) * 3 * 2
+        if include_backhaul:
+            expected_maximum += (
+                sum(
+                    kind == "fronthaul_ap"
+                    for kind in self.world["roles"].values()
+                ) - 1
+            ) * 3 * 2
         if not updates:
             raise InteractionError(
                 500, "no_links", f"extender {role!r} resolved no live fronthaul links"
@@ -1045,17 +1159,19 @@ class InteractiveMediumSession:
                 422,
                 "extender_delta_too_large",
                 f"role {role!r} resolved {len(updates)} RF keys; "
-                f"extender limit is {expected_maximum}",
+                f"extender movement limit is {expected_maximum}",
             )
         return updates, summary
 
     def _links_for_role(
-        self, role: str
+        self, role: str, *, change: str = "position"
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if role in self._allowed_roles:
             return self._station_links(role)
         if role in self._presence_roles:
-            return self._extender_links(role)
+            return self._extender_links(
+                role, include_backhaul=(change == "position")
+            )
         raise InteractionError(
             400, "role_not_interactive", f"role {role!r} is not interactive"
         )
@@ -1309,7 +1425,7 @@ class InteractiveMediumSession:
         self, role: str, change: str, *, client_sequence: Any
     ) -> dict[str, Any]:
         assert self._client is not None
-        updates, links = self._links_for_role(role)
+        updates, links = self._links_for_role(role, change=change)
         changed = [
             item
             for item in updates

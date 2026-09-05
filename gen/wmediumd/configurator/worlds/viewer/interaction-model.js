@@ -97,12 +97,15 @@
    * preserves an exact preview for the current golden worlds while allowing a
    * future artifact to carry the propagation object explicitly.
    */
-  function inferredReferenceSnr(world, generation, role, band) {
+  function inferredReferenceSnr(
+    world, generation, role, band, linkClass = 'fronthaul'
+  ) {
     const model = propagation(world);
     const values = [];
     for (const link of generation.links || []) {
-      if (link.link_class !== 'fronthaul' || link.destination_role !== role) continue;
-      if (!world.roles || world.roles[link.source_role] === 'station') continue;
+      if (link.link_class !== linkClass || link.destination_role !== role) continue;
+      if (linkClass === 'fronthaul' &&
+          (!world.roles || world.roles[link.source_role] === 'station')) continue;
       const snr = Number(link.snr_db_by_band && link.snr_db_by_band[band]);
       if (!Number.isFinite(snr) || snr <= model.minimum_snr_db || snr >= model.maximum_snr_db) continue;
       const distance = Math.max(Number(link.distance_m), model.reference_distance_m);
@@ -114,14 +117,44 @@
     return inferred == null ? Number(model.reference_snr_db_by_band[band]) : inferred;
   }
 
-  function predictLinks(world, generation, role, point, band) {
+  function predictLinks(world, generation, role, point, band, positions = null) {
     if (!BANDS.includes(String(band))) throw new Error('unsupported band ' + band);
     const model = propagation(world);
     const referenceSnr = inferredReferenceSnr(world, generation, role, String(band));
     const results = [];
     for (const peer of Object.keys(world.roles || {})) {
       if (world.roles[peer] === 'station' || !generation.present[peer]) continue;
-      const peerPoint = generation.positions[peer];
+      const peerPoint = positions && positions[peer]
+        ? positions[peer] : generation.positions[peer];
+      if (!peerPoint) continue;
+      const path = pathAnalysis(world, peerPoint, point);
+      const distance = Math.max(path.distance_m, model.reference_distance_m);
+      const pathLoss = 10 * model.path_loss_exponent *
+        Math.log10(distance / model.reference_distance_m);
+      const raw = Math.round(referenceSnr - pathLoss - path.wall_loss_db);
+      results.push({
+        role: peer,
+        distance_m: path.distance_m,
+        wall_count: path.wall_count,
+        walls: path.walls,
+        wall_loss_db: path.wall_loss_db,
+        path_loss_db: pathLoss,
+        snr_db: Math.max(model.minimum_snr_db, Math.min(model.maximum_snr_db, raw)),
+      });
+    }
+    return results.sort((a, b) => b.snr_db - a.snr_db || a.role.localeCompare(b.role));
+  }
+
+  function predictMeshLinks(world, generation, role, point, band, positions = null) {
+    if (!BANDS.includes(String(band))) throw new Error('unsupported band ' + band);
+    const model = propagation(world);
+    const referenceSnr = inferredReferenceSnr(
+      world, generation, role, String(band), 'backhaul');
+    const results = [];
+    for (const peer of Object.keys(world.roles || {})) {
+      if (peer === role || world.roles[peer] === 'station' || !generation.present[peer]) continue;
+      const peerPoint = positions && positions[peer]
+        ? positions[peer] : generation.positions[peer];
       if (!peerPoint) continue;
       const path = pathAnalysis(world, peerPoint, point);
       const distance = Math.max(path.distance_m, model.reference_distance_m);
@@ -159,6 +192,7 @@
     movementDurationMs,
     pathAnalysis,
     predictLinks,
+    predictMeshLinks,
     roomSize,
     segmentsCross,
   };

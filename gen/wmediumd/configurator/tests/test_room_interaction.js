@@ -33,6 +33,16 @@ const generation = {
       distance_m: 7, wall_loss_db: 5,
       snr_db_by_band: {'2.4': 32, '5': 28, '6': 25},
     },
+    {
+      link_class: 'backhaul', source_role: 'gateway', destination_role: 'extender_1',
+      distance_m: 8, wall_loss_db: 5,
+      snr_db_by_band: {'2.4': 31, '5': 27, '6': 24},
+    },
+    {
+      link_class: 'backhaul', source_role: 'extender_1', destination_role: 'gateway',
+      distance_m: 8, wall_loss_db: 5,
+      snr_db_by_band: {'2.4': 31, '5': 27, '6': 24},
+    },
   ],
 };
 
@@ -51,6 +61,21 @@ assert.strictEqual(nearExtender[0].distance_m, 1);
 assert.strictEqual(nearExtender[0].wall_count, 0);
 assert.strictEqual(nearExtender[0].snr_db, 50);
 assert.strictEqual(nearExtender[1].wall_count, 1);
+
+const movedPositions = Object.assign({}, generation.positions, {extender_1: [3, 2]});
+const afterExtenderMove = model.predictLinks(
+  world, generation, 'sta_01', generation.positions.sta_01, '5', movedPositions);
+assert.strictEqual(afterExtenderMove[0].role, 'extender_1');
+assert.strictEqual(afterExtenderMove[0].distance_m, 1);
+assert.strictEqual(afterExtenderMove[0].wall_count, 0);
+
+const meshPeers = model.predictMeshLinks(
+  world, generation, 'extender_1', movedPositions.extender_1, '5', movedPositions);
+assert.strictEqual(meshPeers.length, 1);
+assert.strictEqual(meshPeers[0].role, 'gateway');
+assert.strictEqual(meshPeers[0].distance_m, 2);
+assert.strictEqual(meshPeers[0].wall_count, 0);
+assert.strictEqual(meshPeers[0].snr_db, 44);
 
 assert.deepStrictEqual(model.interpolate([1, 1], [5, 3], 0.5), [3, 2]);
 assert.strictEqual(model.movementDurationMs([0, 0], [3, 4], 1), 5000);
