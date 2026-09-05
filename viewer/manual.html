@@ -288,7 +288,8 @@
     <tbody>
       <tr><td>The rev140 room URL refuses connections.</td><td>The server may be stopped. Confirm lab-network access, the appliance, its port proxy, and the room process. Refreshing cannot restart it. Use the public sandbox while the operator investigates.</td></tr>
       <tr><td>The room draws but nothing roams.</td><td>Check NO CONNECT/preview versus LIVE RF, optimizer authority, action budget, stronger candidates, and measurement freshness. Recommend mode never sends the steer.</td></tr>
-      <tr><td>The room says disconnected or failed.</td><td>Check the run's latest worker/error events and summary. Candidate-query timeouts can end the run and trigger RF restoration. Confirm the process is alive before trusting old cards.</td></tr>
+      <tr><td>The optimizer says Measurements unavailable.</td><td>In interactive mode, temporary candidate-query timeouts pause steering, not the viewer. The previous candidate/convergence result is discarded. With the default interval, retries back off for 5, 10, 20, then at most 30 seconds; a full fresh measurement must succeed before evaluation resumes. Unacted holds restart; cooldown and action history remain intact. Inspect the measurement-unavailable event for failed query details.</td></tr>
+      <tr><td>The room says disconnected or failed.</td><td>Check the run's latest worker/error events and summary. Invalid measurements, other fatal worker errors, and scripted-run query failures still stop the run and trigger RF restoration. Confirm the process is alive before trusting old cards.</td></tr>
       <tr><td>Interact requests a token or returns 403.</td><td>Use the current run's operator capability, available to the operator inside the appliance. A previous run's token is not valid.</td></tr>
       <tr><td>Another operator holds control / lease conflict.</td><td>Coordinate with that browser, release its control, or allow its lease to expire. Observation remains available.</td></tr>
       <tr><td>A position is rejected as stale or conflicting.</td><td>Reload authoritative interaction state and retry the intended edit. Do not replay old revisions or change an already-used command ID's content.</td></tr>
@@ -304,7 +305,7 @@
 </section>
 <section id="operations" aria-labelledby="operations-title">
   <h2 id="operations-title">15. Operator setup and shutdown</h2>
-  <p>Run these commands inside the RDK appliance, from its checked-out repository. The current rev140 appliance is <code>rdkeasymesh-20-interactive</code>. The commands below require shell access; the public website does not run them.</p>
+  <p>Run these commands inside the RDK appliance, from its checked-out repository. The 0905 appliance is <code>rdkeasymesh-20-0905</code> on rev140 and rev150, using canonical branch <code>codex/0905-clean</code>. The commands below require shell access; the public website does not run them.</p>
   <pre><code>cd /home/easymesh/git/meta-cmf-bananapi-vcpe
 gen/tests/health-audit.sh
 gen/demo/room-demo check

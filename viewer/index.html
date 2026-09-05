@@ -1453,7 +1453,17 @@
           (trafficState == null ? 'waiting' : trafficState.success ? 'pass' + (trafficState.rtt_ms == null ? '' : ' · ' + esc(trafficState.rtt_ms) + ' ms') : 'FAIL') + '</b></div>';
       }
     }
-    if (optimizerState) {
+    if (optimizerState && optimizerState.status === 'unavailable') {
+      $('#optimizerMetrics').innerHTML =
+        '<div><span class="phase">MEASUREMENTS UNAVAILABLE</span></div>' +
+        '<p><b>' + (optimizerState.automatic_actuation
+          ? 'Automatic steering paused' : 'Recommendations paused') + '</b></p>' +
+        '<div class="sub">Waiting for a complete fresh candidate snapshot. The room remains interactive.</div>' +
+        '<div class="metric-grid"><span>Retry backoff</span><b>' +
+          esc(optimizerState.retry_delay_seconds) + ' s</b>' +
+        '<span>Consecutive failures</span><b>' + esc(optimizerState.consecutive_failures) + '</b></div>' +
+        '<p class="sub" style="overflow-wrap:anywhere">' + esc(optimizerState.message) + '</p>';
+    } else if (optimizerState) {
       const d = optimizerState.decision || {}, state = optimizerState.policy_state || {};
       const target = targetRole();
       let phase = state.phase || (d.action === 'steer' ? 'eligible' : 'stable');
@@ -1908,6 +1918,9 @@
     if (event.kind === 'optimizer.measurement.waiting') {
       return 'Optimizer waiting: ' + String(p.reason || 'fresh telemetry').replaceAll('_', ' ');
     }
+    if (event.kind === 'optimizer.measurement.unavailable') {
+      return 'Candidate metrics unavailable; optimizer paused with ' + p.retry_delay_seconds + 's retry backoff';
+    }
     if (event.kind === 'optimizer.environment.changed') return 'RF changed; optimizer hold restarted';
     if (event.kind === 'rf.steering_assist.started') {
       return 'Steering RF assist: ' + displayRole(p.station_role) + ' → ' + displayRole(p.target_ap_role);
@@ -1952,7 +1965,8 @@
   function applyDemoEvent(event, advanceClock = true) {
     if (advanceClock) tMs = Math.max(0, Math.min(world.duration_ms, Number(event.world_time_ms) || 0));
     if (event.kind === 'network.snapshot') networkState = event.payload;
-    else if (event.kind === 'optimizer.evaluation') optimizerState = event.payload;
+    else if (event.kind === 'optimizer.evaluation' ||
+             event.kind === 'optimizer.measurement.unavailable') optimizerState = event.payload;
     else if (event.kind === 'traffic.sample') trafficState = event.payload;
     else if (event.kind === 'health.sample') healthState = event.payload;
     else if (event.kind === 'optimizer.action') {
