@@ -58,6 +58,7 @@ without creating an appliance:
 ./test-profiles.sh
 ./test-build-storage.sh
 ./test-import-storage.sh
+bash ./test-runtime-branch.sh
 ```
 
 ## Build a clean appliance

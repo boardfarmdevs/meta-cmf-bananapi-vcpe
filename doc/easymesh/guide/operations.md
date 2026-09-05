@@ -17,31 +17,10 @@ and test parameters match.
 
 ## Image provenance
 
-Every deployment must record the exact image filenames and hashes. The
-historical accepted pair below predates 0905; use the current build's actual
-outputs and the acceptance record in [current state](../current-state.md),
-not these old filenames, for a 0905 deployment:
-
-```text
-host/runtime source       codex/0831-clean
-image content             EasyMesh 0127; OneWifi 0022; Wi-Fi HAL 0030
-kernel                    7.0.0-30-generic
-controller image          X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2
-extender image            X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2
-```
-
-These hashes identify this pair; do not apply them to a newer rebuild:
-
-```sh
-sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2
-```
-
-```text
-69cb6f064b779438264fdefbd54f4ef74367d917ffdf78a96685b40974c0719f  controller
-32d54805de07a5dd4d45412cd5664c49a9d028da755ec14dda8342cb60767d76  extender
-```
-
-For any current pair, verify and retain its hashes before use:
+Every deployment must record the exact image filenames and hashes. The fresh
+0905 pair, source commit, complete build results and runtime qualification are
+recorded in [current state](../current-state.md). Do not substitute older
+images or infer acceptance from a filename. Verify and retain the hashes:
 
 ```sh
 sha256sum X86EMLTRBPI*.rootfs.lxc.tar.bz2

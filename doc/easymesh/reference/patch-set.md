@@ -444,6 +444,15 @@ model, metrics, backhaul, traffic, restart, steering, Console, and restoration
 gates. The exact build and runtime procedures are in
 [operations](../guide/operations.md).
 
+The controller's checked-in `em-cli.tar.gz` Go helper is a versioned recipe
+input, not Yocto sstate. Its SHA-256 is
+`fc0f610e61392a045215e4d04076468b759fd9f97ab7dcbb83c7b5173d96506b`
+(last refreshed in `bc2fcd8`). The 0905 changes do not alter its Go handlers.
+The recipe always overlays `index.html`, `script.js`, and `style.css` from
+the patched source, so the old static files inside the helper archive cannot
+mask the `0150`–`0153` WebUI changes. Changes to production Go sources require
+the separate rebuild procedure in the [build guide](../../build/README.md).
+
 ## Remaining engineering debt
 
 - Replace fixed CLI tree storage with a length-tracked serializer.

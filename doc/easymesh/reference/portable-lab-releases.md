@@ -81,6 +81,13 @@ Default instance names are `rdkeasymesh-PROFILE-0905` and
 `prplmesh-PROFILE-0904`. The bundled README documents name and port overrides
 for multiple labs on one host.
 
+When replacing an existing lab, first qualify the new instance on spare host
+ports if resources permit. Before reassigning the normal ports, stop any active
+room gracefully and verify its RF-restoration record. Retain the old VM for
+rollback, stop it, and set its `boot.autostart` to `false`; do not leave two
+auto-starting instances claiming the same host ports. The importer never
+overwrites an existing instance or chooses which old VM to retire.
+
 ## Verify and operate
 
 RDK EasyMesh:

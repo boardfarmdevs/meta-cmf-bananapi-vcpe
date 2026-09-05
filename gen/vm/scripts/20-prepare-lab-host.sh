@@ -36,7 +36,9 @@ if [ ! -d "$meta_workspace/meta-cmf-bananapi-vcpe/.git" ]; then
         "$meta_workspace/meta-cmf-bananapi-vcpe"
 fi
 if [ "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" != \
-    "$expected_meta_head" ]; then
+    "$expected_meta_head" ] || \
+   [ "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" symbolic-ref --short -q HEAD || true)" != \
+    "$runtime_branch" ]; then
     test -z "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" status --porcelain)"
     if [ -f "$meta_bundle" ]; then
         sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" fetch \

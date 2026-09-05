@@ -3,25 +3,26 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: `codex/0905-clean` is canonical; the fresh 0905 build and portable
-release are undergoing qualification. The prior accepted baseline below is
-historical and must not be cited as acceptance of the new 0905 artifacts.
+Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
+passed on 2026-09-05 UTC; appliance and imported-runtime qualification are
+pending. A successful image build is not a claim of live acceptance.
 
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
 rebuilt in new build directories using the reviewed upstream source lock.
-The planned portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
+The portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
 20-client instances are named `rdkeasymesh-20-0905` on rev140 and rev150.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
 
-## Previous accepted baseline
+## Release contract
 
-| Item | Accepted value |
+| Item | Required value |
 | --- | --- |
-| Source branch | `codex/0831-clean` |
-| Runtime image source | EasyMesh through `0127`, OneWifi through `0022`, Wi-Fi HAL through `0030` |
+| Source branch | `codex/0905-clean` |
+| Image source commit | `c5ae1d0e1371b7fbdd11c55124c39f8d97850b55` |
+| Runtime image source | EasyMesh through `0153`; complete retained OneWifi, Wi-Fi HAL and IEEE 1905 series |
 | Kernel | Linux `7.0.0-30-generic` |
 | Runtime | bare metal for performance/debug; LXD VM for portable appliance use |
 | Medium | patched multichannel wmediumd |
@@ -34,22 +35,34 @@ link here instead of repeating versioned results.
 The WebUI displays six mesh nodes because the controller is shown separately
 from its colocated radio agent.
 
-## Accepted images
+## Fresh image artifacts
 
 | Role | Artifact | SHA-256 |
 | --- | --- | --- |
-| Controller | `X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `69cb6f064b779438264fdefbd54f4ef74367d917ffdf78a96685b40974c0719f` |
-| Extender | `X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2` | `32d54805de07a5dd4d45412cd5664c49a9d028da755ec14dda8342cb60767d76` |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260905061756.rootfs.lxc.tar.bz2` | `90b4ff84810c6c50355ba0789bfcec9a2fd22e89ce42fe87c2e608c6404965f3` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260905093132.rootfs.lxc.tar.bz2` | `3c1f6ea19ea978e0d475249110b4bc86b8bed7f5a6d47df15d6cecf22a8ba55e` |
 
-Both images derive from the same source series through `0127`; their installed
-controller/Agent binaries remain role-specific. The latest reconciliation fix
-applies an Agent's complete Associated Clients snapshot to all of its
-radio-scoped controller models, including the valid zero-client withdrawal.
+Both images derive from the same clean source commit; their installed
+controller/Agent binaries remain role-specific. The controller ran 5792 tasks
+successfully from an empty 0905 sstate directory, with zero external mirror
+hits. Its build ran 06:17:49–09:30:26 UTC. The extender ran 4988 tasks
+successfully, 09:31:25–09:41:41 UTC, reusing only outputs freshly built for
+0905. Neither role reused an older release's rootfs or compiled sstate.
+
+The installed controller WebUI assets match the tested patched source exactly:
+`script.js` SHA-256
+`75d420edbd7c63b028327e6850a4626b2df8057503438ead556e3a4861f6e11c`;
+`index.html` SHA-256
+`4222b5188bf8d6e63f2446f489977bc714c7de299d020df4308cf41080843481`.
 IEEE 1905 is at `0006`. The retained OneWifi, Wi-Fi HAL, libwebconfig, log4c,
 journald, and SNMP fixes are described in
 [the patch reference](reference/patch-set.md).
 
-## What works now
+## Carried-forward capabilities
+
+These functionality milestones predate the new image build. The separate
+0905 acceptance record below determines which fresh-delivery gates have run;
+this table is not evidence that every historical campaign was repeated.
 
 | Capability | State |
 | --- | --- |
@@ -75,40 +88,40 @@ journald, and SNMP fixes are described in
 | Completed 12-hour 20-client churn soak | Not yet claimed |
 | Validated 50/100-client runtime | Campaign automation exists; duration acceptance is not claimed until its recorded runs complete |
 
-## Acceptance
+## 0905 acceptance
 
-The clean LXD-VM deployment completed without an operator nudge:
+Completed before appliance packaging:
 
-```text
-model                    5 / 15 / 50 / 24
-fronthaul                10 private + 10 IoT
-current client metrics   20 / 20
-fresh backhaul signals   4 / 4
-gateway traffic          20 / 20 clients, 10 packets each, 0% loss
-service restarts         0
-NVRAM bind sources       5 / 5 persistent and non-empty
-optimizer observation    20 current links / 80 same-band candidate links
-optimizer closed loop    recommendation and acting crossover passed
-wmediumd Console         25 identities, 600 directed pairs, health ok
-SNMP                     one systemd-owned subagent, no launcher leak
-```
+- both complete role-image builds and installed WebUI asset checks;
+- 235 Python tests, four WebUI suites against the fresh patched source,
+  room interaction JavaScript, helper-artifact and VM shell regressions;
+- real-browser candidate checks for quoted cohort labels, uplink bars,
+  manual layout preservation, and fitting three viewport sizes;
+- GitHub Pages manual search, keyboard controls, print, mobile layout, and
+  absence of live API writes in NO CONNECT mode; and
+- isolated real-daemon checks for concurrent control clients, rejection of
+  stale generations, atomic updates, frequency isolation and exact restoration.
 
-The Console also passed every REST resource, Prometheus export, live packet
-telemetry, provenance reporting, and rejection of writes in read-only mode.
+Fresh builder, rev140/rev150 import, live traffic/steering, interactive-room
+movement and restoration gates remain pending. Their results must be recorded
+before calling the delivered appliance accepted. The archive's `release.json`
+identifies its exact runtime source commit; documentation-only commits can
+follow the image-source commit without changing either image.
 
-The LXD VM deployment and guest reboot reconstruction reached
-`5/15/50/24`, 20/20 matching physical/API client owners, 20/20 nonzero RCPI
-values, four fresh backhaul signals, 20/20 working WLAN data paths, and zero
-OneWifi/EasyMesh restarts. The post-roam ownership regression remained correct
-for two 150-second stability windows, and the live optimizer subsequently
-completed three no-retry candidate-collection cycles.
+One optional pre-existing daemon integration test is not a pass:
+`gen/wmediumd/configurator/tests/test_actuator.py:69` expects a second control
+connection to be rejected. The unchanged `0013` daemon patch deliberately
+permits concurrent generation-protected clients. Explicitly enabling that old
+test fails this assertion; the separate real-daemon protocol check above passes.
+The normal Python run skips this optional integration test. This unrelated
+test expectation was not changed for 0905.
 
 ## Runtime access
 
-| Runtime | EasyMesh WebUI | wmediumd Console |
-| --- | --- | --- |
-| bare metal | `http://HOST:8888` | `http://HOST:8890` |
-| LXD VM | `http://HOST:18889` | `http://HOST:18890` |
+| Runtime | EasyMesh WebUI | wmediumd Console | Interactive room |
+| --- | --- | --- | --- |
+| bare metal | `http://HOST:8888` | `http://HOST:8890` | `http://HOST:8891/viewer/?mode=interactive` |
+| LXD VM | `http://HOST:18889` | `http://HOST:18890` | `http://HOST:18891/viewer/?mode=interactive` |
 
 Host addresses are site configuration. They are selected during LXD VM build
 or import and are never baked into the portable artifact.
@@ -146,6 +159,10 @@ Acceptance evidence is stored outside the source tree inside the appliance:
 ```text
 /home/easymesh/easymesh-evidence/
 ```
+
+The 0905 host-side build and release evidence is under
+`rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-evidence/`.
+The sibling `release-artifacts/` directory holds the thin tar and checksum.
 
 Evidence is intentionally outside the Git worktree and must record source
 revision, image hashes, topology, scenario inputs, timestamps, service restart
