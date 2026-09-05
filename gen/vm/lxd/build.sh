@@ -103,7 +103,7 @@ wait_agent() {
 }
 
 wait_http_ready() {
-    local label=$1 url=$2 retries
+    local label=$1 url=$2 deadline remaining request_timeout delay
     case "$http_ready_timeout" in
         ''|*[!0-9]*|0)
             echo "EASYMESH_LXD_HTTP_READY_TIMEOUT must be a positive integer" >&2
@@ -113,13 +113,22 @@ wait_http_ready() {
     # LXD's outer proxy may answer 503 briefly after the VM agent and the
     # guest-side service are ready. Bound the wait independently from each
     # connection/response attempt and require the real endpoint to return 2xx.
-    retries=$((http_ready_timeout / 2 + 1))
-    if curl -fsS --retry-all-errors --retry "$retries" --retry-delay 2 \
-        --retry-max-time "$http_ready_timeout" --connect-timeout 2 \
-        --max-time 10 "$url" >/dev/null; then
-        printf '%s ready: %s\n' "$label" "$url"
-        return 0
-    fi
+    deadline=$((SECONDS + http_ready_timeout))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        remaining=$((deadline - SECONDS))
+        request_timeout=$remaining
+        [ "$request_timeout" -le 10 ] || request_timeout=10
+        if curl -fsS --connect-timeout 2 --max-time "$request_timeout" \
+            "$url" >/dev/null; then
+            printf '%s ready: %s\n' "$label" "$url"
+            return 0
+        fi
+        remaining=$((deadline - SECONDS))
+        [ "$remaining" -gt 0 ] || break
+        delay=$remaining
+        [ "$delay" -le 2 ] || delay=2
+        sleep "$delay"
+    done
     printf '%s did not become ready within %ss: %s\n' \
         "$label" "$http_ready_timeout" "$url" >&2
     return 1

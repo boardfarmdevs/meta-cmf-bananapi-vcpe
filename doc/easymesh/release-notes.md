@@ -30,6 +30,8 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   the obsolete Bullseye package downloads encountered during the clean build.
 - Installs a checkout-aware health-audit wrapper so the appliance command
   finds its shared observer helpers instead of resolving them below `/usr`.
+- Uses bounded HTTP retry loops compatible with rev140's curl 7.68, without
+  requiring the newer `--retry-all-errors` option.
 
 ## 0824
 
