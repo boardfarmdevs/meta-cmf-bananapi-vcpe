@@ -46,6 +46,14 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("Stronger AP available", source)
         self.assertIn("reconciling fleet", source)
 
+    def test_extender_outage_is_a_bounded_fronthaul_control(self):
+        source = VIEWER.read_text(encoding="utf-8")
+
+        self.assertIn("snapshot.presence_roles", source)
+        self.assertIn("Disable fronthaul", source)
+        self.assertIn("Restore fronthaul", source)
+        self.assertIn("role !== 'gateway'", source)
+
 
 if __name__ == "__main__":
     unittest.main()

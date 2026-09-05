@@ -625,6 +625,10 @@ The first Phase 0 foundation is now implemented:
 - public canonical geometry is shared by compilation and live interaction;
 - client coordinates are quantized to 5 cm, unchanged integer RF values are
   recorded as no-ops, and one client remains bounded to 30 directed keys;
+- each non-gateway extender has a reversible fronthaul-presence control,
+  bounded to 120 directed keys in the 20-client profile; it preserves the
+  container, identity and backhaul while the optimizer evacuates and later
+  reconverges clients from controller-reported measurements;
 - environment epochs prevent movement from being mixed with candidate
   measurement and reset the optimizer hold;
 - unexpected medium instances/generations contaminate the run instead of

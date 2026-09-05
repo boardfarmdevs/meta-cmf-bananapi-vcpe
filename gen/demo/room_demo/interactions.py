@@ -60,6 +60,7 @@ class InteractiveMediumSession:
         self._client: ControlClient | None = None
         self._instance_id: str | None = None
         self._generation = 0
+        self._max_updates = 0
         self._revision = 0
         self._environment_epoch = 0
         self._measurement_epoch = 0
@@ -92,6 +93,15 @@ class InteractiveMediumSession:
         self._allowed_roles = tuple(
             role for role in sorted(world["roles"])
             if world["roles"][role] == "station"
+        )
+        # Extender presence is mutable so a presenter can create a reversible
+        # fronthaul-service outage without stopping the container, changing
+        # its identity, or disturbing its backhaul/control-plane state. The
+        # gateway is deliberately excluded from this bounded demo control.
+        self._presence_roles = tuple(
+            role for role in sorted(world["roles"])
+            if world["roles"][role] == "station"
+            or (world["roles"][role] == "fronthaul_ap" and role != "gateway")
         )
         layout_nodes = {item["role"]: dict(item) for item in layout.get("nodes", [])}
         self._nodes = {
@@ -141,6 +151,7 @@ class InteractiveMediumSession:
                 self._client = client
                 self._instance_id = status.instance_id
                 self._generation = status.generation
+                self._max_updates = status.max_updates
                 self._started_at = time.monotonic()
                 initial_updates = []
                 for role in self._allowed_roles:
@@ -185,6 +196,7 @@ class InteractiveMediumSession:
                     {
                         "revision": self._revision,
                         "allowed_roles": list(self._allowed_roles),
+                        "presence_roles": list(self._presence_roles),
                         "daemon_instance_id": status.instance_id,
                         "daemon_generation": self._generation,
                         "environment_epoch": self._environment_epoch,
@@ -242,6 +254,7 @@ class InteractiveMediumSession:
                     for value in self._movements.values()
                 ),
                 "allowed_roles": list(self._allowed_roles),
+                "presence_roles": list(self._presence_roles),
                 "roles": copy.deepcopy(self._roles),
                 "lease": lease or {"held": False},
                 "daemon": {
@@ -330,7 +343,14 @@ class InteractiveMediumSession:
             raise InteractionError(403, "lease_mismatch", "interactive control lease does not match")
         return self._lease
 
-    def _validate_mutation(self, role: str, token: str, expected_revision: Any) -> None:
+    def _validate_mutation(
+        self,
+        role: str,
+        token: str,
+        expected_revision: Any,
+        *,
+        allowed_roles: tuple[str, ...] | None = None,
+    ) -> None:
         if self._client is None:
             raise InteractionError(503, "not_started", "interactive medium is unavailable")
         if self._faulted is not None:
@@ -339,7 +359,7 @@ class InteractiveMediumSession:
                 f"interactive medium was restored after an actuator failure: {self._faulted}",
             )
         self._require_lease(token)
-        if role not in self._allowed_roles:
+        if role not in (self._allowed_roles if allowed_roles is None else allowed_roles):
             raise InteractionError(400, "role_not_interactive", f"role {role!r} is not interactive")
         try:
             revision = int(expected_revision)
@@ -412,7 +432,9 @@ class InteractiveMediumSession:
         if not isinstance(present, bool):
             raise InteractionError(400, "invalid_presence", "present must be true or false")
         with self._lock:
-            self._validate_mutation(role, token, expected_revision)
+            self._validate_mutation(
+                role, token, expected_revision, allowed_roles=self._presence_roles
+            )
             if not present:
                 self._cancel_role_movement(role, "role_absent")
             previous = copy.deepcopy(self._roles[role])
@@ -532,7 +554,7 @@ class InteractiveMediumSession:
                         "position": list(self._roles[role]["position"]),
                         "present": bool(self._roles[role]["present"]),
                     }]
-                    for role in self._allowed_roles
+                    for role in self._presence_roles
                 },
             }
             self._recorded_mobility = None
@@ -584,7 +606,7 @@ class InteractiveMediumSession:
         tick_ms = 200
         duration_ms = max(tick_ms, math.ceil((elapsed + 1) / tick_ms) * tick_ms)
         nodes = []
-        for role in self._allowed_roles:
+        for role in self._presence_roles:
             frames = copy.deepcopy(self._recording["frames"][role])
             positions = [frames[0]]
             for frame in frames[1:]:
@@ -895,7 +917,9 @@ class InteractiveMediumSession:
                 )
             return payload
 
-    def _links_for_role(self, role: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def _station_links(
+        self, role: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         positions = {
             name: tuple(value["position"]) for name, value in self._roles.items()
         }
@@ -954,9 +978,98 @@ class InteractiveMediumSession:
             )
         return updates, summary
 
+    def _extender_links(
+        self, role: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return every fronthaul key affected by one extender's presence.
+
+        Mesh backhaul and control connectivity deliberately remain intact.
+        This models loss and restoration of client-serving RF so real clients,
+        controller telemetry, and the optimizer can evacuate and reconverge
+        without rebuilding inventory or changing the extender identity.
+        """
+        positions = {
+            name: tuple(value["position"]) for name, value in self._roles.items()
+        }
+        present = {
+            name: bool(value["present"]) for name, value in self._roles.items()
+        }
+        ap = self._nodes[role]
+        ap_binding = self.plan["bindings"][role]
+        updates: list[dict[str, Any]] = []
+        summary: list[dict[str, Any]] = []
+        for station_role in self._allowed_roles:
+            station = self._nodes[station_role]
+            station_binding = self.plan["bindings"][station_role]
+            down = directed_link(
+                ap, station, positions, present, self.layout, {"seed": 0},
+                self._revision + 1, "fronthaul",
+            )
+            up = directed_link(
+                station, ap, positions, present, self.layout, {"seed": 0},
+                self._revision + 1, "fronthaul",
+            )
+            for band in ("2.4", "5", "6"):
+                frequency = ap_binding.get("fronthaul_frequencies_mhz", {}).get(band)
+                if frequency is None:
+                    continue
+                radio = ap_binding.get("band_radios", {}).get(band)
+                ap_mac = str((radio or {}).get("tx_mac") or ap_binding["radio_tx_mac"])
+                station_mac = str(station_binding["radio_tx_mac"])
+                for source, destination, value in (
+                    (ap_mac, station_mac, down["snr_db_by_band"][band]),
+                    (station_mac, ap_mac, up["snr_db_by_band"][band]),
+                ):
+                    updates.append({
+                        "source": source,
+                        "destination": destination,
+                        "frequency_mhz": int(frequency),
+                        "value": int(value),
+                        "override": True,
+                    })
+                summary.append({
+                    "station_role": station_role,
+                    "band": band,
+                    "frequency_mhz": int(frequency),
+                    "distance_m": down["distance_m"],
+                    "wall_loss_db": down["wall_loss_db"],
+                    "snr_db": int(down["snr_db_by_band"][band]),
+                })
+        expected_maximum = len(self._allowed_roles) * 3 * 2
+        if not updates:
+            raise InteractionError(
+                500, "no_links", f"extender {role!r} resolved no live fronthaul links"
+            )
+        if len(updates) > expected_maximum:
+            raise InteractionError(
+                422,
+                "extender_delta_too_large",
+                f"role {role!r} resolved {len(updates)} RF keys; "
+                f"extender limit is {expected_maximum}",
+            )
+        return updates, summary
+
+    def _links_for_role(
+        self, role: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if role in self._allowed_roles:
+            return self._station_links(role)
+        if role in self._presence_roles:
+            return self._extender_links(role)
+        raise InteractionError(
+            400, "role_not_interactive", f"role {role!r} is not interactive"
+        )
+
     def _apply_generation(self, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Apply exactly the expected next generation under exclusive ownership."""
         assert self._client is not None
+        if len(updates) > self._max_updates:
+            raise InteractionError(
+                422,
+                "medium_update_limit",
+                f"mutation requires {len(updates)} RF keys; daemon limit is "
+                f"{self._max_updates}",
+            )
         status = self._client.status()
         if (
             status.instance_id != self._instance_id

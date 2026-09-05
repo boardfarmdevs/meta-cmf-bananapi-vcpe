@@ -210,6 +210,39 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertFalse(self.session.snapshot()["lease"]["held"])
         self.assertFalse(self.session.snapshot()["roles"]["sta_01"]["present"])
 
+    def test_extender_fronthaul_can_disappear_and_reappear_atomically(self):
+        initial_generation = self.client.generation
+        snapshot = self.session.snapshot()
+        self.assertIn("extender_1", snapshot["presence_roles"])
+        self.assertNotIn("gateway", snapshot["presence_roles"])
+
+        absent = self.session.presence(
+            "extender_1", token=self.lease["token"], expected_revision=0,
+            present=False,
+        )
+        self.assertFalse(absent["present"])
+        self.assertEqual(absent["changed_link_count"], 2)
+        self.assertTrue(all(item["snr_db"] == -20 for item in absent["links"]))
+        self.assertTrue(all(item["value"] == -20 for item in self.client.applied[-1]))
+        self.assertEqual(self.client.generation, initial_generation + 1)
+
+        restored = self.session.presence(
+            "extender_1", token=self.lease["token"], expected_revision=1,
+            present=True,
+        )
+        self.assertTrue(restored["present"])
+        self.assertEqual(restored["changed_link_count"], 2)
+        self.assertTrue(all(item["value"] > -20 for item in self.client.applied[-1]))
+        self.assertEqual(self.client.generation, initial_generation + 2)
+
+        committed = [
+            item for item in self.store.all()
+            if item["kind"] == "room.presence.committed"
+        ]
+        self.assertEqual([item["payload"]["role"] for item in committed], [
+            "extender_1", "extender_1",
+        ])
+
     def test_wrong_lease_and_non_station_are_rejected(self):
         with self.assertRaisesRegex(InteractionError, "does not match"):
             self.session.position(
@@ -220,6 +253,16 @@ class InteractiveMediumSessionTests(unittest.TestCase):
             self.session.position(
                 "gateway", token=self.lease["token"], expected_revision=0,
                 position=[4, 2], final=True,
+            )
+        with self.assertRaisesRegex(InteractionError, "not interactive"):
+            self.session.position(
+                "extender_1", token=self.lease["token"], expected_revision=0,
+                position=[4, 2], final=True,
+            )
+        with self.assertRaisesRegex(InteractionError, "not interactive"):
+            self.session.presence(
+                "gateway", token=self.lease["token"], expected_revision=0,
+                present=False,
             )
 
     def test_close_restores_exact_override_state(self):

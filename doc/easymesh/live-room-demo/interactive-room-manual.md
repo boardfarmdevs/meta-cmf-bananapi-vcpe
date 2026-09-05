@@ -148,10 +148,41 @@ The role can be repositioned while absent. Select **Reappear** to recompute
 all links at that location and let normal scanning, association, telemetry,
 and controller ownership recover.
 
+## Disable and restore an extender's fronthaul
+
+Right-click **Extender-1** through **Extender-4** and select **Disable
+fronthaul**. The gateway is intentionally protected from this control. One
+RoomEngine transaction sets every affected AP-to-client and client-to-AP link
+on 2.4, 5 and 6 GHz to the world's minimum SNR. In the 20-client profile this
+is a bounded 120-key atomic generation.
+
+This is a client-service RF outage, not container deletion or a power-cycle.
+The extender's container, OneWifi/EasyMesh processes, NVRAM identities,
+controller record and mesh backhaul remain intact. Keeping the control plane
+available makes the experiment repeatable and lets the external optimizer
+observe and evacuate the affected clients through ordinary EasyMesh/BTM
+transactions. The room greys the unavailable extender and removes it from
+the modeled-best paths. The unchanged RDK Network Topology page continues to
+show controller-observed associations, including any transient old links
+while convergence is in progress.
+
+The optimizer continues complete fleet measurements while the extender is
+unavailable. It never chooses the disabled AP because its model-backed
+candidate measurements reflect the minimum-SNR links. Select **Restore
+fronthaul** to atomically reapply the exact room geometry. Clients return only
+when the restored extender is the strongest eligible same-SSID, same-band AP;
+there is no forced assignment to it. Full evacuation and return are serialized
+one client at a time and can therefore take several optimizer cycles.
+
+This control must not be described as an abrupt hardware power-loss test: the
+agent and backhaul deliberately remain online. Actual container or radio
+lifecycle failure belongs to the separate appliance-resilience tests.
+
 ## Reset and multi-browser behavior
 
-The current transitional controls use **Reset role** for that client's
-session-start position/presence and **Reset all** for every changed client.
+The current transitional controls use **Reset role** for that role's
+session-start position/presence and **Reset all** for every changed client or
+extender.
 They use ordinary revisioned RF transactions and never recreate radios,
 containers or identities. The accepted interface will separate **Undo**,
 **Clear overrides**, and **Stop and restore**, because those operations have
@@ -368,6 +399,9 @@ world revision as an `ETag`. A retry must reuse the exact same `command_id` and
 body; it receives the original response without advancing world or medium
 state. Reusing that ID with different content returns a conflict. Presence uses
 `PUT /api/demo/roles/sta_mobile_01/presence` and a boolean `present` member.
+The same presence request accepts `extender_1` through `extender_4` to disable
+or restore their fronthaul; it rejects `gateway`. Extender position and
+movement routes remain unavailable.
 The response identifies the accepted revision, daemon generation, role state,
 changed-link count, and calculated per-AP/per-band link budget. Tokens are
 never included in the event stream.

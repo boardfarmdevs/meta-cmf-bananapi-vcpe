@@ -205,7 +205,7 @@
       <button id="recordInteraction">Start recording</button>
       <button id="downloadRecording" disabled>Download world</button>
     </div>
-    <div id="interactionHelp">Right-click a client for movement and presence controls. Static-world changes remain a browser preview.</div>
+    <div id="interactionHelp">Drag clients or right-click a client/extender for presence controls. Static-world changes remain a browser preview.</div>
   </div>
 
   <hr>
@@ -295,6 +295,7 @@
     menuRole: null,
     hudRole: null,
     apiEnabled: false,
+    presenceRoles: [],
     leaseToken: null,
     leaseOwner: null,
     leaseTimer: null,
@@ -410,9 +411,9 @@
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const role = pickedRole(e);
-      if (!role || !canInteractWith(role)) { hideRoleMenu(); return; }
+      if (!role || !canControlRole(role)) { hideRoleMenu(); return; }
       selected = role;
-      interaction.hudRole = role;
+      interaction.hudRole = canInteractWith(role) ? role : null;
       showRoleMenu(role, e.clientX, e.clientY);
       update();
     });
@@ -462,6 +463,17 @@
   }
   function canInteractWith(role) {
     return !!world && world.roles[role] === 'station';
+  }
+  function canChangePresence(role) {
+    if (!world || !role) return false;
+    if (canInteractWith(role)) return true;
+    if (interactiveLiveMode) {
+      return interaction.presenceRoles.includes(role);
+    }
+    return world.roles[role] === 'fronthaul_ap' && role !== 'gateway';
+  }
+  function canControlRole(role) {
+    return canInteractWith(role) || canChangePresence(role);
   }
   function setPositionOverride(role, point) {
     const previous = interaction.overrides[role] || {};
@@ -517,13 +529,14 @@
   }
   function applyInteractionSnapshot(snapshot) {
     interaction.apiEnabled = !!snapshot.enabled;
+    interaction.presenceRoles = (snapshot.presence_roles || []).slice();
     interaction.revision = Number(snapshot.revision || 0);
     if (!Object.keys(interaction.initialRoles).length) {
       interaction.initialRoles = JSON.parse(JSON.stringify(snapshot.roles || {}));
     }
     if (interactiveLiveMode) {
       for (const [role, state] of Object.entries(snapshot.roles || {})) {
-        if (!canInteractWith(role)) continue;
+        if (!canControlRole(role)) continue;
         interaction.overrides[role] = {
           position: state.position.slice(), present: !!state.present,
         };
@@ -543,7 +556,7 @@
     badge.classList.toggle('live-rf', interaction.apiEnabled);
     badge.classList.toggle('observer', !interaction.apiEnabled);
     $('#interactionHelp').textContent = interaction.apiEnabled
-      ? 'Select Interact to acquire control. Accepted movements atomically change wmediumd; closing the session restores its exact baseline.'
+      ? 'Select Interact to acquire control. Client movement and extender fronthaul outages atomically change wmediumd; closing the session restores its exact baseline.'
       : 'Another browser may observe accepted movements, but live control is unavailable.';
   }
   async function refreshInteractionSnapshot() {
@@ -676,7 +689,8 @@
     } catch (_error) { /* expiration provides the same safe freeze semantics */ }
   }
   function predictedFor(role, point, g) {
-    return interactionModel.predictLinks(world, g, role, point, band);
+    return interactionModel.predictLinks(world, g, role, point, band).filter(
+      (item) => effectivePresent(item.role, g));
   }
   // Strongest present AP->station link on the band, per station (downlink).
   function bestServing(g, positions = null) {
@@ -1486,7 +1500,13 @@
     interaction.menuRole = role;
     $('#roleMenuTitle').textContent = displayRole(role);
     const present = effectivePresent(role, frameAt(tMs).g);
-    menu.querySelector('[data-role-action=presence]').textContent = present ? 'Disappear' : 'Reappear';
+    menu.querySelector('[data-role-action=presence]').textContent = canInteractWith(role)
+      ? (present ? 'Disappear' : 'Reappear')
+      : (present ? 'Disable fronthaul' : 'Restore fronthaul');
+    menu.querySelector('[data-role-action=move]').style.display =
+      canInteractWith(role) ? '' : 'none';
+    menu.querySelector('[data-role-action=reset]').style.display =
+      roleIsModified(role) ? '' : 'none';
     menu.style.display = 'block';
     const mw = menu.offsetWidth || 172, mh = menu.offsetHeight || 110;
     menu.style.left = Math.max(5, Math.min(main.clientWidth - mw - 5, clientX - rect.left)) + 'px';
@@ -1575,7 +1595,7 @@
     $('#cameraMode').setAttribute('aria-pressed', mode === 'camera');
     $('#interactMode').setAttribute('aria-pressed', mode === 'interact');
     $('#hint').textContent = mode === 'interact'
-      ? 'drag a client · right-click for movement/presence · switch to Camera to orbit'
+      ? 'drag a client · right-click a client/extender for controls · switch to Camera to orbit'
       : (liveMode ? 'live runner clock · drag to orbit · wheel to zoom · shift-drag to pan'
         : 'drag to orbit · wheel to zoom · shift-drag to pan · space plays');
     update();
@@ -1631,7 +1651,7 @@
     update();
   }
   async function togglePresence(role) {
-    if (!canInteractWith(role)) return;
+    if (!canChangePresence(role)) return;
     if (interactiveLiveMode && !interaction.leaseToken &&
         !(await acquireInteractionLease())) return;
     const present = effectivePresent(role, frameAt(tMs).g);
@@ -1643,16 +1663,18 @@
   async function resetLiveRole(role) {
     const initial = interaction.initialRoles[role];
     if (!initial) { resetRoleOverride(role); return; }
-    setPositionOverride(role, initial.position);
+    if (canInteractWith(role)) setPositionOverride(role, initial.position);
     setPresenceOverride(role, initial.present);
-    await sendMutation('position', role, {position: initial.position, final: true});
+    if (canInteractWith(role)) {
+      await sendMutation('position', role, {position: initial.position, final: true});
+    }
     await sendMutation('presence', role, {present: initial.present});
   }
   async function resetAllInteractions() {
     if (interactiveLiveMode) {
       if (!interaction.leaseToken && !(await acquireInteractionLease())) return;
       for (const role of Object.keys(interaction.initialRoles)) {
-        if (canInteractWith(role) && roleIsModified(role)) await resetLiveRole(role);
+        if (canControlRole(role) && roleIsModified(role)) await resetLiveRole(role);
       }
     } else {
       for (const role of Object.keys(interaction.overrides)) delete interaction.overrides[role];
@@ -1802,7 +1824,12 @@
     if (event.kind === 'traffic.sample' && !p.success) return 'Hero traffic probe failed';
     if (event.kind === 'health.sample' && p.healthy === false) return 'Lab health degraded';
     if (event.kind === 'room.position.committed') return displayRole(p.role) + ' RF position applied';
-    if (event.kind === 'room.presence.committed') return displayRole(p.role) + (p.present ? ' reappeared' : ' disappeared');
+    if (event.kind === 'room.presence.committed') {
+      const ap = world && world.roles[p.role] === 'fronthaul_ap';
+      return displayRole(p.role) + (ap
+        ? (p.present ? ' fronthaul restored' : ' fronthaul disabled')
+        : (p.present ? ' reappeared' : ' disappeared'));
+    }
     if (event.kind === 'interaction.movement.started') return displayRole(p.movement.role) + ' started walking';
     if (event.kind === 'interaction.movement.paused') return displayRole(p.movement.role) + ' walk paused';
     if (event.kind === 'interaction.movement.resumed') return displayRole(p.movement.role) + ' walk resumed';
@@ -1836,7 +1863,7 @@
              event.kind === 'room.presence.committed') {
       const p = event.payload || {};
       interaction.revision = Math.max(interaction.revision, Number(p.revision || 0));
-      if (canInteractWith(p.role)) {
+      if (canControlRole(p.role)) {
         const locallyMoving = interaction.leaseToken &&
           ((interaction.drag && interaction.drag.role === p.role) ||
            (!interactiveLiveMode && interaction.movement &&
