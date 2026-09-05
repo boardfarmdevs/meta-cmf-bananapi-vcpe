@@ -19,7 +19,7 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   color-matched IoT/private labels, and a compact centered initial star.
   Optimize Layout fits the available pane without undoing manual device or
   client positions.
-- Targets fresh 20-client imports on rev140 and rev150. Build, import, and
+- Delivers fresh 20-client imports on rev140 and rev150. Build, import, and
   interactive-room acceptance results are recorded in
   [current state](https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/blob/codex/0905-clean/doc/easymesh/current-state.md);
   this section alone does not certify an untested artifact.
@@ -39,7 +39,8 @@ Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B
   ACKs and controller radio timers. Patch `0155` prevents completion from
   freeing active command statistics during a manager timeout, while preserving
   immediate follow-up queries. Its compiled concurrency regression reproduces
-  the previous race; replacement image and appliance acceptance are required.
+  the previous race; rebuilt images and the final 20-client appliance pass
+  the documented reboot, interactive-room and post-test health gates.
 - Keeps explicitly band-selected clients eligible for supported same-band AP
   channels after reboot, rather than pinning them to channels active during
   provisioning. Pool resume migrates legacy configurations; boundary tests

@@ -3,20 +3,15 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: `codex/0905-clean` is canonical. Both fresh 0905 Yocto image builds
-passed on 2026-09-05 UTC. Corrected images also passed two complete builder
-VM reboots and full health audits. Initial thin imports passed on both hosts,
-but rev140 room acceptance found a gateway-recording defect. Its corrected
-runtime was repackaged and freshly imported on both hosts. Interactive API,
-browser and exact-restoration checks then passed, but the final rev140 audit
-rejected the candidate because the controller had restarted once. Patch
-`0155` addresses the command-completion race exposed by that run. Both complete
-image rebuilds pass. A subsequent room gate exposed a 6 GHz client frequency
-list pinned to initially active AP channels. The supported-PHY band-scope fix
-and legacy-client migration now pass two fresh builder reboots, complete
-interactive API/browser/manual checks, exact restoration and the final health
-audit. Replacement thin packaging and fresh import qualification remain
-pending; the old live labs have not been cut over.
+Status: **0905 is delivered and accepted for the 20-client profile** on
+rev140 and rev150 as of 2026-09-05 19:05 UTC. `codex/0905-clean` is canonical.
+Both complete role images were rebuilt, and the final thin tar was freshly
+imported on each host from zero nested instances. Rev140 passes the complete
+interactive API/browser and exact-restoration tests. Both deployed VMs pass
+post-cutover convergence and full health audits with zero native service
+restarts and zero packet loss for all 20 clients. The old VMs are retained,
+stopped and excluded from autostart. Earlier rejected candidates and the fixes
+they exposed are documented below; they are not the delivered archive.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -98,6 +93,52 @@ runtime image. The former Bullseye stage failed on missing security packages
 after Debian 11 LTS ended on 2026-08-31. AFTR compiles successfully on Bookworm.
 The failed first appliance attempt is retained as evidence, not reused as the
 release builder. This dependency change does not alter either Yocto image.
+
+## Delivered 0905 appliance
+
+| Item | Accepted delivery |
+| --- | --- |
+| Outer archive | `rdkeasymesh-0905-thin.tar` |
+| Archive bytes | `2784440320` |
+| Archive SHA-256 | `a035a56c19f437dadaa9ebd36077cad07c05cdaf152680b61acddde75d313770` |
+| Packaged runtime source | `fd320b70d2a0cd04e010d2ab09e083f3df0d812b` |
+| Inner VM archive | `rdkeasymesh-0905-fd320b7-thin-lxd.tar.zst` |
+| Accepted profile | 20 clients: 10 private and 10 IoT, plus five mesh containers |
+| rev140 first boot | 18:27:12–18:44:44 UTC; zero to 25 nested instances, full audit pass |
+| rev150 first boot | 18:19:46–18:36:53 UTC; zero to 25 nested instances, full audit pass |
+| rev140 cutover | 19:01:31 UTC; final verification 19:04:52 UTC |
+| rev150 cutover | 19:01:03 UTC; final verification 19:04:54 UTC |
+
+The identical checksum-verified tar is stored on rev140 at
+`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-artifacts/rdkeasymesh-0905-thin.tar`
+and on rev150 at `/home/rev/releases/0905/rdkeasymesh-0905-thin.tar`, each with
+an adjacent `.sha256` file. Pre-package documentation was committed in the
+packaged source before export and deployment. The immutable manifest's
+original `status: candidate` is not rewritten after testing; acceptance is
+recorded here and in the host-side evidence, without changing the tested tar.
+Profile selectors for 50/100 clients remain available but are not accepted
+runtime/soak results.
+
+Both hosts now run `rdkeasymesh-20-0905` with autostart enabled:
+
+| Host | EasyMesh WebUI | wmediumd Console | Interactive room |
+| --- | --- | --- | --- |
+| rev140 | `http://192.168.2.140:18889/` | `http://192.168.2.140:18890/` | `http://192.168.2.140:18891/viewer/?mode=interactive` |
+| rev150 | `http://192.168.2.150:18889/` | `http://192.168.2.150:18890/` | `http://192.168.2.150:18891/viewer/?mode=interactive` |
+
+The final checks require a continuously converged, fully measured 20-client
+fleet for at least a minute, with a newer optimizer evaluation, before the
+full ownership/service/traffic audit. Both hosts pass. The rev140 manual and
+three-viewport topology browser checks also pass on these final public ports.
+
+Rollback VMs `rdkeasymesh-20-interactive` on rev140 and
+`rdkeasymesh-20-0904` on rev150 are stopped with autostart disabled. The old
+rev140 room's RF state was restored before shutdown. Their original LXD
+configurations are preserved as `release-evidence/final/rollback-old-config.yaml`
+under each host's release workspace. Do not start an old VM alongside the new
+one on the same public ports; perform deliberate room restoration and VM/port
+handoff if rollback is needed. Rejected archives and builder snapshots remain
+separate from this accepted delivery.
 
 ## Carried-forward capabilities
 
@@ -218,11 +259,17 @@ packet loss for every client. Evidence is in `release-evidence/band-scope-v2/`.
 Local validation passes 251 Python tests with the unchanged optional skip,
 plus all seven portable-VM shell suites.
 
-Replacement packaging and fresh imports on both hosts remain pending.
-Their results must be recorded before calling the
-delivered appliance accepted. The archive's `release.json`
-identifies its exact runtime source commit; documentation-only commits can
-follow the image-source commit without changing either image.
+The final `fd320b7` thin archive passes fresh imports and full audits on both
+hosts. Rev140 room run `20260905T184600Z-private-client-room-walk-interactive`
+passes the complete API controls and observed steering with 20 actions,
+real-browser dragging/preview/reset/lease checks, exact RF restoration at
+18:59:33 UTC and the full post-room audit with zero service restarts. Rev150
+also reaches settled 20-client room convergence and passes a full audit while
+the room is running. Both cutovers and subsequent live checks pass as recorded
+in the delivery table. Final evidence lives in `release-evidence/final/` on
+each host. The archive's `release.json` identifies its exact runtime source
+commit; documentation-only acceptance commits can follow without modifying
+the tested images or tar.
 
 One optional pre-existing daemon integration test is not a pass:
 `gen/wmediumd/configurator/tests/test_actuator.py:69` expects a second control
@@ -267,8 +314,9 @@ images, trust entry and credentials are removed before release packaging;
 the final full health audit passes with all service restart counters zero
 and zero packet loss for all 20 clients. Local Python validation passes
 244 tests with one unchanged optional skip, including eight new monitoring
-checks. Evidence is in `release-evidence/observability/`. Nothing is enabled
-on either old live lab, and these results do not clear the room-release gate.
+checks. Evidence is in `release-evidence/observability/`. The optional stack
+remains disabled in the delivered VMs; its tests do not substitute for the
+separate interactive-room release qualification.
 
 ## Important boundaries
 
