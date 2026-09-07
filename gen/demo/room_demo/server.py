@@ -6,7 +6,6 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import secrets
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .engine import RoomEngine
@@ -21,12 +20,10 @@ class RoomDemoServer:
         store: EventStore,
         viewer_root: Path,
         interactions: RoomEngine | None = None,
-        operator_token: str | None = None,
     ):
         self.store = store
         self.viewer_root = viewer_root.resolve()
         self.interactions = interactions
-        self.operator_token = operator_token
         handler = self._handler()
         self.httpd = ThreadingHTTPServer(address, handler)
         self.httpd.daemon_threads = True
@@ -55,7 +52,6 @@ class RoomDemoServer:
         store = self.store
         viewer_root = self.viewer_root
         interactions = self.interactions
-        operator_token = self.operator_token
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "EasyMeshRoomDemo/0.1"
@@ -101,7 +97,7 @@ class RoomDemoServer:
                 revision = value.get("revision") if isinstance(value, dict) else None
                 self._json(value, status, revision=revision)
 
-            def _body(self) -> dict:
+            def _body(self, maximum: int = 64 * 1024) -> dict:
                 media_type = self.headers.get("Content-Type", "").split(";", 1)[0]
                 if media_type.strip().lower() != "application/json":
                     raise InteractionError(
@@ -113,7 +109,7 @@ class RoomDemoServer:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError as error:
                     raise InteractionError(400, "invalid_length", "invalid Content-Length") from error
-                if length <= 0 or length > 64 * 1024:
+                if length <= 0 or length > maximum:
                     raise InteractionError(400, "invalid_body", "a JSON body is required")
                 try:
                     value = json.loads(self.rfile.read(length))
@@ -132,21 +128,6 @@ class RoomDemoServer:
                         403,
                         "origin_mismatch",
                         "cross-origin interactive writes are not allowed",
-                    )
-
-            def _require_operator(self) -> None:
-                self._require_same_origin()
-                if operator_token is None:
-                    return
-                supplied = self.headers.get("Authorization", "")
-                prefix = "Bearer "
-                if not supplied.startswith(prefix) or not secrets.compare_digest(
-                    supplied[len(prefix):], operator_token
-                ):
-                    raise InteractionError(
-                        401,
-                        "operator_authorization_required",
-                        "a valid run-scoped operator capability is required",
                     )
 
             def _expected_revision(self, body: dict) -> int:
@@ -259,7 +240,9 @@ class RoomDemoServer:
                     current = store.current()
                     self._json(current, revision=current["world_revision"])
                 elif parsed.path == "/api/demo/world":
-                    self._json(store.world)
+                    self._json(store.initial_world if parse_qs(parsed.query).get("initial") == ["1"] else store.current_world())
+                elif parsed.path == "/api/demo/worlds" and interactions is not None:
+                    self._json(interactions.world_catalog())
                 elif parsed.path == "/api/demo/events":
                     self._events(parsed)
                 elif parsed.path == "/api/demo/events.json":
@@ -289,9 +272,27 @@ class RoomDemoServer:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
-                    self._require_operator()
-                    body = self._body()
+                    self._require_same_origin()
+                    body = self._body(4 * 1024 * 1024 if parsed.path == "/api/demo/world/apply" else 64 * 1024)
                     command_id = str(body.get("command_id") or "")
+                    if parsed.path == "/api/demo/traffic-probe":
+                        self._interaction_json(interactions.select_traffic_probe(
+                            str(body.get("role") or ""), token=str(body.get("token") or ""),
+                            expected_revision=self._expected_revision(body), command_id=command_id,
+                        ))
+                        return
+                    if parsed.path == "/api/demo/playback":
+                        self._interaction_json(interactions.playback_control(
+                            str(body.get("action") or ""), token=str(body.get("token") or ""),
+                            expected_revision=self._expected_revision(body), command_id=command_id,
+                        ))
+                        return
+                    if parsed.path == "/api/demo/world/apply":
+                        self._interaction_json(interactions.apply_world(
+                            body.get("world"), token=str(body.get("token") or ""),
+                            expected_revision=self._expected_revision(body), command_id=command_id,
+                        ))
+                        return
                     if parsed.path == "/api/demo/interactions/lease":
                         if body.get("token"):
                             self._interaction_json(interactions.renew(
@@ -352,7 +353,7 @@ class RoomDemoServer:
                     return
                 role, operation = matched
                 try:
-                    self._require_operator()
+                    self._require_same_origin()
                     body = self._body()
                     common = {
                         "token": str(body.get("token") or ""),
@@ -381,7 +382,7 @@ class RoomDemoServer:
                     self.send_error(HTTPStatus.METHOD_NOT_ALLOWED, "read-only milestone")
                     return
                 try:
-                    self._require_operator()
+                    self._require_same_origin()
                     body = self._body()
                     command_id = str(body.get("command_id") or "")
                     if parsed.path == "/api/demo/interactions/lease":

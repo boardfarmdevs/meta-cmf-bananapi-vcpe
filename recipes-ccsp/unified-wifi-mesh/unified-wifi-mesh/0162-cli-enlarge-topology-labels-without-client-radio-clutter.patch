@@ -1,0 +1,207 @@
+Subject: [PATCH] cli: enlarge topology labels and keep client radio details in hover
+
+Use larger client, mesh-node and quoted SSID names. Place identity labels
+around nearby obstacles without moving nodes or hiding names. Reserve room
+inside SSID bubbles for titles and keep band/channel details in client hover.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3816,8 +3816,8 @@
+                 .attr('x', -data.iconSize / 2).attr('y', -data.iconSize / 2)
+                 .attr('width', data.iconSize).attr('height', data.iconSize);
+               movingClient.append('text')
+-                .attr('y', data.iconSize / 2 + 13).attr('text-anchor', 'middle')
+-                .attr('font-size', '11px').attr('font-weight', '800')
++                .attr('y', data.iconSize / 2 + 24).attr('text-anchor', 'middle')
++                .attr('font-size', '22px').attr('font-weight', '800')
+                 .attr('fill', '#5b21b6').attr('stroke', '#fff').attr('stroke-width', 3)
+                 .attr('paint-order', 'stroke')
+                 .text(`${moveEffect.clientName || staIdentity} moving`);
+@@ -3866,9 +3866,9 @@
+           staElement.append('text')
+             .attr('class', 'sta-identity-label')
+             .attr('x', to.x)
+-            .attr('y', to.y + data.iconSize / 2 + 15)
++            .attr('y', to.y + data.iconSize / 2 + 24)
+             .attr('text-anchor', 'middle')
+-            .attr('font-size', '14px')
++            .attr('font-size', '22px')
+             .attr('font-weight', '600')
+             .attr('fill', '#333')
+             .attr('stroke', '#fff')
+@@ -3878,24 +3878,8 @@
+             .attr('opacity', moveEffect ? 0 : 1)
+             .text(staIdentity);
+ 
+-          staElement.append('text')
+-            .attr('class', 'sta-channel-label')
+-            .attr('x', to.x)
+-            .attr('y', to.y + data.iconSize / 2 + 29)
+-            .attr('text-anchor', 'middle')
+-            .attr('font-size', '9px')
+-            .attr('font-weight', '600')
+-            .attr('fill', '#475569')
+-            .attr('stroke', '#fff')
+-            .attr('stroke-width', 3)
+-            .attr('paint-order', 'stroke')
+-            .style('pointer-events', 'none')
+-            .attr('opacity', moveEffect ? 0 : 1)
+-            .text(Number(sta.channel) > 0
+-              ? `${self.topologyBandLabel(sta.band)} ch ${sta.channel}` : '');
+-
+           if (moveEffect) {
+-            staElement.selectAll('.sta-icon,.sta-identity-label,.sta-channel-label,.sta-signal-bars')
++            staElement.selectAll('.sta-icon,.sta-identity-label,.sta-signal-bars')
+               .transition().delay(1250).duration(250).attr('opacity', 1);
+           }
+ 
+@@ -3952,10 +3936,11 @@
+         });
+ 
+       g.append('text')
++        .attr('class', 'mesh-identity-label')
+         .attr('x', 0)
+-        .attr('y', isController ? 36 : 32)
++        .attr('y', isController ? 48 : 42)
+         .attr('text-anchor', 'middle')
+-        .attr('font-size', '13px')
++        .attr('font-size', '22px')
+         .attr('fill', '#333')
+         .attr('font-weight', 'bold')
+         .attr('stroke', '#fff')
+@@ -4093,6 +4078,7 @@
+     });
+ 
+     simulation.on('tick')();
++    this.layoutTopologyLabels();
+     this.fitTopologyToView();
+ 
+     function dragstarted(event, d) {
+@@ -4114,10 +4100,7 @@
+         .attr('y', d.to.y - d.iconSize / 2);
+       selection.select('text.sta-identity-label')
+         .attr('x', d.to.x)
+-        .attr('y', d.to.y + d.iconSize / 2 + 15);
+-      selection.select('text.sta-channel-label')
+-        .attr('x', d.to.x)
+-        .attr('y', d.to.y + d.iconSize / 2 + 29);
++        .attr('y', d.to.y + d.iconSize / 2 + 24);
+     }
+ 
+     function staDragStarted(event) {
+@@ -4144,6 +4127,7 @@
+         y: d.to.y
+       });
+       d3.select(this).style('cursor', 'grab');
++      self.layoutTopologyLabels();
+       self.endTopologyInteraction();
+       self.fitTopologyToView();
+     }
+@@ -4164,6 +4148,7 @@
+       d.x = d.fx;
+       d.y = d.fy;
+       simulation.on('tick')();
++      self.layoutTopologyLabels();
+       self.endTopologyInteraction();
+       self.fitTopologyToView();
+     }
+@@ -4176,7 +4161,7 @@
+   topologyHaulGeometry(haulTypes, staList = []) {
+     const items = Array.isArray(haulTypes) ? haulTypes : [];
+     const stations = Array.isArray(staList) ? staList : [];
+-    const layoutRadius = items.length > 1 ? 140 : 0;
++    const layoutRadius = items.length > 1 ? 150 : 0;
+ 
+     return items.map((haul, index) => {
+       const ssid = String(haul?.ssid || '');
+@@ -4185,7 +4170,7 @@
+       // Preserve a clear current-lab minimum and grow gently for denser future
+       // cohorts without letting one group consume the entire graph.
+       const radius = isClientCohort
+-        ? Math.min(145, Math.max(110, 100 + stationCount * 2))
++        ? Math.min(155, Math.max(120, 110 + stationCount * 2))
+         : 80;
+       const angle = items.length > 0 ? (2 * Math.PI / items.length) * index : 0;
+       return {
+@@ -4213,10 +4198,10 @@
+       : geometry.ssid === 'iot_ssid' ? 'iot' : null;
+     const backhaul = geometry.ssid === 'mesh_backhaul';
+     return {
+-      x: geometry.offset.x + geometry.radius * (cohort === 'private' ? 0.55 : cohort === 'iot' ? 0.38 : 0),
++      x: geometry.offset.x + geometry.radius * (cohort === 'private' ? 0.48 : cohort === 'iot' ? 0.38 : 0),
+       y: geometry.offset.y,
+       text: cohort ? `"${cohort}"` : backhaul ? '"backhaul"' : geometry.ssid,
+-      fontSize: cohort ? 20 : 16,
++      fontSize: cohort ? 26 : 22,
+       color: cohort === 'private' ? '#1e3a8a' : cohort === 'iot' ? '#374151' : backhaul ? '#8b1e24' : '#9b9a9aff'
+     };
+   }
+@@ -4260,11 +4245,65 @@
+       ownerId,
+       ssid,
+       edgeRadius,
+-      from: { x: target.offset.x, y: target.offset.y },
++      from: { x: target.offset.x - (titledCohort ? target.radius * 0.2 : 0), y: target.offset.y },
+       to
+     };
+   }
+ 
++  topologyClientLabelPosition(center, iconSize, size, obstacles) {
++    let best = null;
++    let bestScore = Infinity;
++    for (const gap of [6, 18, 36, 60, 96]) {
++      const horizontal = iconSize / 2 + gap + size.width / 2;
++      const vertical = iconSize / 2 + gap + size.height / 2;
++      for (const [offsetX, offsetY] of [[0, vertical], [0, -vertical],
++        [horizontal, 0], [-horizontal, 0], [horizontal, vertical],
++        [-horizontal, vertical], [horizontal, -vertical], [-horizontal, -vertical]]) {
++        const candidate = {x: center.x + offsetX - size.width / 2,
++          y: center.y + offsetY - size.height / 2, ...size};
++        const overlap = obstacles.reduce((total, box) => total +
++          Math.max(0, Math.min(candidate.x + candidate.width + 4, box.x + box.width) - Math.max(candidate.x - 4, box.x)) *
++          Math.max(0, Math.min(candidate.y + candidate.height + 4, box.y + box.height) - Math.max(candidate.y - 4, box.y)), 0);
++        const score = overlap * 10000 + Math.hypot(offsetX, offsetY);
++        if (score < bestScore) {
++          best = candidate;
++          bestScore = score;
++        }
++      }
++    }
++    return best;
++  }
++
++  layoutTopologyLabels() {
++    const root = this.topologyView?.group?.node();
++    const matrix = root?.getScreenCTM();
++    if (!matrix || matrix.a <= 0 || matrix.d <= 0) return;
++    const localBox = element => {
++      const box = element.getBoundingClientRect();
++      return {x: (box.left - matrix.e) / matrix.a, y: (box.top - matrix.f) / matrix.d,
++        width: box.width / matrix.a, height: box.height / matrix.d};
++    };
++    const obstacles = Array.from(root.querySelectorAll(
++      '.node image, .ssid-label, .sta-icon, .sta-signal-bars, .backhaul-signal-bars, .channel-label'
++    ), localBox);
++    for (const label of root.querySelectorAll('.mesh-identity-label, .sta-identity-label')) {
++      const data = d3.select(label.parentNode).datum();
++      const isClient = label.classList.contains('sta-identity-label');
++      const nodeRef = isClient ? data.nodeRef : data;
++      const nodeX = nodeRef.fx ?? nodeRef.x ?? 0;
++      const nodeY = nodeRef.fy ?? nodeRef.y ?? 0;
++      const center = {x: nodeX + (isClient ? data.to.x : 0), y: nodeY + (isClient ? data.to.y : 0)};
++      const iconSize = isClient ? data.iconSize : Number(label.parentNode.querySelector('image').getAttribute('width'));
++      const bounds = label.getBBox();
++      const baseline = Number(label.getAttribute('y')) - bounds.y;
++      const placement = this.topologyClientLabelPosition(
++        center, iconSize, {width: bounds.width, height: bounds.height}, obstacles);
++      label.setAttribute('x', placement.x + placement.width / 2 - nodeX);
++      label.setAttribute('y', placement.y + baseline - nodeY);
++      obstacles.push(placement);
++    }
++  }
++
+   /**
+    * generate the sign wave connecting to node and STA
+    */

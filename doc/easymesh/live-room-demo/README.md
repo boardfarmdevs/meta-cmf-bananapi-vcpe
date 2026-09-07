@@ -12,6 +12,11 @@ presentation. Start here:
   conventions.
 - [Interactive room manual](interactive-room-manual.md) — current live RF
   controls, destination movement, recording, restoration and diagnostics.
+- [Fixed-pool world switching](../reference/live-world-switching.md) — loading a
+  world immediately updates the lab while retaining the default 20-client appliance.
+- [Local and internet access](../reference/room-viewer-remote-access.md) —
+  existing HTTP/SSE transport, protected remote access, and a proposed
+  local-default connection experience; no runtime changes enabled.
 - [Interactive room architecture and improvement plan](interactive-room-plan.md)
   — governing single-writer, causality, state, security, recovery and phased
   acceptance design.

@@ -21,7 +21,9 @@ Optional nested-container management and resource graphs are provided by
 [`observability/`](observability/README.md). The detailed
 [LXD UI and monitoring guide](../../../doc/easymesh/reference/lxd-ui-and-monitoring.md)
 covers secure browser access, Prometheus, Grafana, validation and removal.
-Enable it after import; do not export its generated credentials or data.
+Enable with `--monitoring` during import or separately afterward; do not export
+its generated credentials or data. First network setup on an active lab requires
+the explicit maintenance option described in the guide.
 
 ## Use the universal appliance
 
@@ -137,9 +139,11 @@ EASYMESH_ROOM_DEMO_PORT=28891 \
   ./build.sh start
 ```
 
-The complete lab starts automatically after the VM boots. Imported appliance
-VMs also default to LXD `boot.autostart=true`; disable it explicitly when an
-outer host must not start the VM after reboot:
+The complete lab starts automatically after you start the VM. New builds and
+imports set LXD `boot.autostart=false`, so rebooting the outer host does not
+start the VM. The import command itself starts the VM once to provision it.
+Use `lxc start` for subsequent manual starts. To disable autostart on an older
+import:
 
 ```sh
 lxc config set rdkeasymesh-20-@EASYMESH_RELEASE_ID@ boot.autostart false
@@ -316,3 +320,14 @@ EASYMESH_LAB_PROFILE=20 ./build.sh delete
 
 The delete command is destructive. It does not delete LXD itself, storage
 pools, networks, source checkouts, or another lab instance.
+## Optional container management and metrics
+
+For browser-ready inner LXD UI and a provisioned Grafana dashboard, use
+`bash import.sh --profile 20 --monitoring` when importing a newly packaged
+thin release, or `bash observability/enable.sh VM HOST_IPV4 LABEL` for an
+existing running VM. The option downloads two monitoring images (or uses
+preloaded copies); omit it to preserve the normal offline thin-import contract.
+Browser ports default to HTTPS 18892 (LXD) and HTTPS 18893 (Grafana), with
+certificate/password authentication. Outer VM autostart remains unchanged.
+See [setup and first login](observability/README.md) and the
+[detailed reference](../../../doc/easymesh/reference/lxd-ui-and-monitoring.md).

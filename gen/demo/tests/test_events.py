@@ -23,6 +23,19 @@ def event(sequence: int, kind: str, **payload):
 
 
 class EventStoreTests(unittest.TestCase):
+    def test_probe_selection_clears_old_sample_and_ignores_late_old_identity(self):
+        old = {"role": "sta_old", "selection": 0}
+        selected = {"role": "sta_new", "selection": 1}
+        self.store.emit("traffic.sample", 0, {"traffic_probe": old, "success": True})
+        self.store.emit("traffic.probe.selected", 0, {"traffic_probe": selected, "revision": 1})
+        self.assertNotIn("traffic.sample", self.store.current()["latest"])
+        self.store.emit("traffic.sample", 0, {"traffic_probe": old, "success": True})
+        self.assertNotIn("traffic.sample", self.store.current()["latest"])
+        self.store.emit("network.snapshot", 0, {"traffic_probe": old,
+            "clients": [{"role": "sta_old"}, {"role": "sta_new"}], "hero": {"role": "sta_old"}})
+        self.assertEqual(self.store.current()["traffic_probe"], selected)
+        self.assertEqual(self.store.current()["network"]["hero"]["role"], "sta_new")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -51,6 +64,18 @@ class EventStoreTests(unittest.TestCase):
         unavailable = {"status": "unavailable", "automatic_actuation_ready": False}
         self.store.emit("optimizer.measurement.unavailable", 100, unavailable)
         self.assertEqual(self.store.current()["optimizer"], unavailable)
+
+    def test_rf_changes_invalidate_old_convergence_and_progress_survives_reload(self):
+        self.store.emit("optimizer.evaluation", 0, {"fleet": {"converged": True}, "client_decisions": [{"reason": "ready"}]})
+        self.store.emit("optimizer.environment.changed", 0, {"environment_epoch": 2})
+        current = self.store.current()["optimizer"]
+        self.assertEqual(current["fleet"], {})
+        self.assertEqual(current["client_decisions"], [])
+        self.assertFalse(current["automatic_actuation_ready"])
+        self.store.emit("optimizer.progress", 0, {"phase": "candidate_queries", "completed_queries": 2, "total_queries": 5})
+        self.assertEqual(self.store.current()["optimizer"]["progress"]["completed_queries"], 2)
+        self.store.emit("optimizer.evaluation", 0, {"evaluated_at": "2026-09-07T03:00:00Z"})
+        self.assertNotIn("progress", self.store.current()["optimizer"])
         self.store.emit("optimizer.evaluation", 200, {"fleet": {"converged": False}})
         self.assertNotIn("status", self.store.current()["optimizer"])
 

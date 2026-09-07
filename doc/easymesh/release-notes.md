@@ -2,6 +2,33 @@
 
 Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B or Wi-Fi EasyMesh versions.
 
+## 0906
+
+- Refreshes the accepted 0905 thin appliance with the tested rev140 room and
+  topology updates. This is a runtime/static-asset refresh, not another Yocto
+  rebuild; native binaries, kernel and wmediumd retain their 0905 identities.
+- Includes automatic world loading, fixed-pool presence and RF updates,
+  per-client convergence fixes, unified Play/Pause and dragging, and consistent
+  red/yellow/green signal meters with grey unavailable segments in both views.
+- Keeps the normal 20-client profile and six displayed mesh nodes. Smaller
+  worlds take unused clients offline without deleting or resizing containers.
+  The universal importer still requires `--profile 20|50|100`; only profile 20
+  is covered by the latest room acceptance.
+- Carries the complete source snapshot, including uncommitted tested changes,
+  with its base commit and checksums in `release.json`. The base commit alone
+  does not identify this release. No source commit or branch is created by
+  packaging.
+- Updates the offline controller image with the same tested WebUI assets, so
+  new containers receive the palette without a later live overlay. Rootfs
+  metadata and all other file contents are preserved. The extender has no
+  native WebUI and its complete accepted archive remains byte-identical.
+- Leaves existing rev140/rev150 deployments and the 0905 rollback artifact
+  unchanged. See [the refresh reference](reference/release-0906.md) and the
+  adjacent release evidence for packaging and fresh-import verification.
+- Disables outer-VM autostart by default for new builds/imports. Import still
+  starts provisioning once; subsequent outer-host reboots require an explicit
+  `lxc start`. Existing VM autostart is separately disabled on rev120/140/150.
+
 ## 0905
 
 - Establishes `codex/0905-clean` and the rev140 workspace

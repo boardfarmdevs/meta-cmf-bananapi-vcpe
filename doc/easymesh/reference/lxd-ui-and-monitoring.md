@@ -3,11 +3,111 @@
 Audience: operators who want to inspect the containers **inside** an EasyMesh
 LXD VM, then graph their CPU, memory, interface traffic, disk I/O and processes.
 
-This is an opt-in management-plane addition. It does not start automatically
-when the lab is built or imported, change RF conditions, install agents in the
+This is an opt-in management-plane addition. Import with `--monitoring` to enable
+it; otherwise it stays disabled. It does not change RF conditions, install agents in the
 Yocto/Alpine containers, or change the immutable client profile. Consult
 [current state](../current-state.md) for release acceptance; enabling monitoring
 does not turn a failed lab audit into a pass.
+
+## Browser-ready setup (RDK and prplMesh, 0906)
+
+For an existing running RDK VM, execute on its physical LXD host:
+
+```sh
+SOURCE=/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/meta-cmf-bananapi-vcpe
+LAB_MONITORING_ALLOW_RESTART=1 bash "$SOURCE/gen/vm/lxd/observability/enable.sh" \
+  rdkeasymesh-20-0906 192.168.2.140 rev140-rdk-0906
+```
+
+The equivalent prplMesh source command is
+`bash deploy/lxd-vm/observability/enable.sh VM HOST_IPV4 LABEL`. Both importers
+accept `bash import.sh --profile 20 --monitoring` in newly packaged releases.
+Older immutable 0906 archives remain unchanged; use the source helper for them.
+Only RDK on rev140 is deployed/tested for this change; prplMesh support is source-only.
+
+| Browser service on rev140 | URL | Authentication |
+| --- | --- | --- |
+| Inner LXD full bundled UI | `https://192.168.2.140:18892/` | Browser certificate and trust enrollment |
+| Grafana container dashboard | `https://192.168.2.140:18893/` | Generated per-VM admin password |
+
+From a trusted shell on rev140, obtain first-login credentials privately:
+
+```sh
+lxc exec rdkeasymesh-20-0906 -- lxc --force-local config trust add --name=lab-browser
+lxc exec rdkeasymesh-20-0906 -- cat /opt/easymesh-observability/secrets/grafana-admin-password
+```
+
+Follow LXD UI's certificate creation/import flow, then supply the enrollment
+token. It grants inner-LXD administrative access: do not share it with observers.
+Grafana username is `admin`; create Viewer-role accounts for read-only users.
+The provisioned container dashboard opens as Grafana's home dashboard and has
+lab/project/container selectors, CPU, memory, network, disk, process and OOM views.
+
+Both browser endpoints use generated self-signed TLS certificates. Verify their
+SHA-256 fingerprints through the host shell before accepting the browser warning:
+
+```sh
+lxc exec rdkeasymesh-20-0906 -- openssl x509 -in /var/snap/lxd/common/lxd/server.crt -noout -fingerprint -sha256
+lxc exec rdkeasymesh-20-0906 -- openssl x509 -in /opt/easymesh-observability/secrets/grafana.crt -noout -fingerprint -sha256
+```
+
+The helper binds UI/API 8443 and Grafana 3000 to the VM management IPv4 and
+adds only `lab-lxd-ui` / `lab-grafana` outer NAT proxies. Prometheus 9090 and
+authenticated metrics 8444 remain loopback-only. Override browser ports with
+`LAB_LXD_UI_PORT` / `LAB_GRAFANA_PORT` if several VMs share one physical host.
+VM `boot.autostart` is not changed. Restrict management access to a trusted LAN
+or VPN; do not forward these ports indiscriminately onto the Internet.
+
+Older RDK Boardfarm checks assumed that the VM contained exactly two Docker
+containers. Setup's `prepare-rdk.py` narrowly changes those checks to count only
+the two Boardfarm names, backing up their previous scripts under the managed
+state directory. Without this fix, monitoring could incorrectly trigger WAN
+teardown/rebuild on a later lab restart. The source build/rebuild/audit scripts
+include the same correction. prplMesh does not use this RDK compatibility step.
+
+First network-enabled setup replaces an unexposed cloned LXD server identity
+with a unique per-VM certificate. Its `reload-lxd.sh` maintenance helper first
+stops active room/lab units while LXD is available, restarts LXD, then restores
+those units. Set `LAB_MONITORING_ALLOW_RESTART=1` explicitly for that first
+maintenance operation on an active lab; allow several minutes for recovery.
+It refuses a transitioning lab. Repeated setup preserves identity and does not
+restart the lab. Fresh thin imports enable monitoring before starting the lab.
+Do not use an ordinary `systemctl reload snap.lxd.daemon` on a live lab: the
+snap restarts its daemon and `Requires=` dependencies can stop the room/lab.
+The first rev140 installation exposed this coupling and required lab recovery;
+`RestartMode=direct` also failed to prevent it, so the final helper does not
+rely on that setting. Existing exposed LXD identities are
+preserved. All generated certificates expire after one year; schedule renewal.
+
+The following numbered sections retain the detailed **local-only / SSH-tunnel
+alternative**. Do not run that alternative over a browser-ready installation:
+its loopback addresses differ. Use the same `enable.sh` command for repeat setup.
+
+### rev140 acceptance record (2026-09-07)
+
+- RDK `rdkeasymesh-20-0906` only; no deployment to rev150 or prplMesh/rev120.
+- Authenticated LXD browser shows all 25 running containers; Grafana login
+  opens the provisioned dashboard with 25-container CPU/memory/network data.
+- Prometheus targets are UP; all ten dashboard panel expressions return data.
+  Anonymous metrics/LXD inventory requests are forbidden, Grafana user API
+  requires login, and the metrics certificate cannot manage LXD instances.
+- Room health reports 20 active clients, six topology nodes and a converged
+  optimizer. The native lab health audit passes; grey cursors and floor-level
+  dashed mesh links also pass the browser regression.
+- Repeat enablement preserves credentials, native container/service identities,
+  the LXD daemon, room process and existing Docker container identities.
+- With the Go-runtime target configured, six reload rounds using home and
+  single-client dashboard tabs pass with no Grafana restarts or JavaScript
+  errors; sampled memory is 307.4–316.9 MiB under the unchanged 512 MiB cap.
+- Corrected Boardfarm fast-path verification completes in one second with
+  monitoring running, preserving both WAN/DHCP container identities.
+- Both source bundles pass 19 configuration/helper tests; mocked imports prove
+  optional monitoring runs before initial lab startup. prplMesh is source-tested
+  only. Existing immutable thin archives are not rebuilt by this change.
+
+Evidence and browser screenshots: `/home/rev/work/lab-monitoring-0906/` on rev140
+and the editing workstation. Test browser credentials are revoked after use;
+users must enroll their own browser identity. Outer VM autostart remains false.
 
 ## 1. Choose the correct LXD server
 
@@ -46,7 +146,10 @@ The source files live at `gen/vm/lxd/observability/`:
 
 | File | Purpose |
 | --- | --- |
-| `setup.sh` | Install configuration, generate credentials, enable loopback LXD listeners |
+| `enable.sh` | Host-side browser-ready setup, start monitoring, add authenticated browser ports |
+| `setup.sh` | VM-side configuration and credentials; loopback by default |
+| `reload-lxd.sh` | Explicit first-identity maintenance: ordered lab stop, daemon restart, lab restore |
+| `prepare-rdk.py` | Backed-up compatibility repair for older RDK Boardfarm inventory checks |
 | `disable.sh` | Stop this Compose project, revoke its metrics certificate, restore owned LXD settings |
 | `compose.yaml` | Version-pinned Prometheus and Grafana services with persistent volumes |
 | `.env.example` | Image references and browser-facing Grafana URL |
@@ -94,7 +197,9 @@ Docker for Boardfarm; do not install a second Docker daemon.
 
 Reserve approximately 1 GiB of additional memory headroom: each monitoring
 container is capped at 512 MiB and half a CPU. These caps are limits, not
-measured consumption. Prometheus keeps up to seven days or 1 GB of TSDB blocks,
+measured consumption. Grafana's `GOMEMLIMIT=256MiB` soft Go-runtime target
+reserves headroom beneath its container cap; the initial untuned configuration
+hit that cap during repeated dashboard loads on rev140. Prometheus keeps up to seven days or 1 GB of TSDB blocks,
 whichever retention policy removes old blocks first. WAL/head data, Grafana
 state, image layers and logs need additional disk space; the retention flag
 is not a hard quota on the entire Docker volume. Budget several GiB and check
@@ -138,8 +243,8 @@ from rev140 to rev150 before its `lxc file push`. Keep this source directory
 for deliberate reinstallation; do not copy another VM's installed `/opt`
 directory because it contains that VM's credentials.
 
-Setup checks that it is running as root in a configured appliance with a
-`bpibroadband` instance. It selects the local Unix-socket LXD server explicitly
+Setup checks that it is running as root in a configured RDK or prplMesh appliance.
+It selects the local Unix-socket LXD server explicitly
 with `--force-local`, rather than following a user's default remote.
 
 It then:
@@ -201,7 +306,7 @@ contract unless separately packaged and checksummed.
 
 ## 6. Open the three UIs through SSH
 
-Default listeners are intentionally inaccessible directly from the LAN. The
+For this local-only alternative, listeners are inaccessible directly from the LAN. The
 EasyMesh ports `18889`, `18890` and `18891` remain unchanged. Use an SSH session
 whose final destination is the **VM**, jumping through the outer host.
 
@@ -278,18 +383,18 @@ Leave that SSH process running:
 | --- | --- |
 | Nested LXD | `https://127.0.0.1:18443` |
 | Prometheus | `http://127.0.0.1:19090` |
-| Grafana | `http://127.0.0.1:13000` |
+| Grafana | `https://127.0.0.1:13000` |
 
 For rev150, change the jump host to `rev@192.168.2.150` and use its VM IP.
 For simultaneous sessions, use local ports `28443`, `29090`, `23000` for that
 second tunnel. Set its installed `.env` to
-`GRAFANA_PUBLIC_URL=http://127.0.0.1:23000/` and recreate Grafana with
+`GRAFANA_PUBLIC_URL=https://127.0.0.1:23000/` and recreate Grafana with
 `docker compose up -d grafana`. The guest ports remain `8443/9090/3000`.
 
-Do not bind SSH forwards to `0.0.0.0`. Do not expose unauthenticated Prometheus
-on a host NAT proxy. If shared LAN access is required, deploy an authenticated
-TLS reverse proxy and firewall allowlist as a separate, reviewed change;
-retain client-certificate authentication for the administrative LXD endpoint.
+Set `GRAFANA_PUBLIC_URL=https://127.0.0.1:13000/` for the first tunnel as well,
+then `docker compose up -d grafana`. Do not bind SSH forwards to `0.0.0.0` or
+expose unauthenticated Prometheus. For shared LAN access, use the browser-ready
+helper instead and retain its authentication and network restrictions.
 
 ## 7. Authenticate to nested LXD
 
@@ -370,7 +475,7 @@ browser-facing link (not the Docker-internal Grafana address):
 ```sh
 lxc --force-local config get user.ui_grafana_base_url
 lxc --force-local config set user.ui_grafana_base_url \
-  'http://127.0.0.1:13000/d/easymesh-lxd/easymesh-lxd?orgId=1&var-project={project}&var-name={instance}'
+  'https://127.0.0.1:13000/d/easymesh-lxd/easymesh-lxd?orgId=1&var-project={project}&var-name={instance}'
 ```
 
 The `{project}` and `{instance}` placeholders select the clicked LXD instance
@@ -397,7 +502,7 @@ curl --fail --silent --show-error --max-time 15 \
 grep '^lxd_cpu_effective_total' /tmp/nested-lxd-metrics.txt
 
 curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready
-curl -fsS --max-time 10 http://127.0.0.1:3000/api/health
+curl --cacert secrets/grafana.crt -fsS --max-time 10 https://127.0.0.1:3000/api/health
 curl -fsS --max-time 10 http://127.0.0.1:9090/api/v1/targets \
   | jq '.data.activeTargets[] | {labels,health,lastError}'
 curl -fsSG --max-time 10 http://127.0.0.1:9090/api/v1/query \
@@ -408,8 +513,9 @@ ss -lnt | grep -E ':(8443|8444|9090|3000)\b'
 ```
 
 For the running 20-client roster, both counts should be 25. A count mismatch
-needs investigation, not a dashboard query that hides it. Verify that all four
-listeners are on loopback. Also verify that a request **without** a metrics
+needs investigation, not a dashboard query that hides it. For local-only setup,
+all four listeners are on loopback; browser-ready setup binds 8443/3000 to the
+VM management IP (use that IP for the Grafana health request). Verify that a request **without** a metrics
 client certificate does not return metric samples; a TLS rejection or HTTP
 authorization error is expected:
 
@@ -500,8 +606,8 @@ expired or mismatched credentials rather than silently accepting them.
 
 Enable this stack **after import**, once per deployed VM. Do not distribute an
 enabled builder's metrics keys, browser identities, initial Grafana password,
-TSDB or Grafana database in a thin tar. The standard thin-package cleanup does
-not know about this optional directory/Compose project: disable it, remove its
+TSDB or Grafana database in a thin tar. Both stacks' exporters reject a VM with
+`/opt/easymesh-observability`: disable it, remove its
 volumes/local credentials and any test UI trust/link configuration before
 exporting. Retain only the source templates in the checkout. An offline
 monitoring-image archive can be supplied separately without embedding secrets.

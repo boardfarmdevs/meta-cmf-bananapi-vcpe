@@ -22,6 +22,7 @@ from optimizer.verifier import OutcomeVerifier
 from wmdcfg.observers import mesh_health
 
 from .events import EventStore
+from .client_wifi import read_client_link
 
 
 DEVICE_ROLES = {
@@ -125,19 +126,28 @@ def _ranked_action_batch(decisions, limit: int):
     return actionable[:limit]
 
 
-def _fleet_status(snapshot, selected_sta_macs: set[str]) -> dict[str, Any]:
+def _fleet_status(snapshot, selected_sta_macs: set[str], max_age_seconds=60) -> dict[str, Any]:
     """Summarize measured best-AP convergence independently of policy phase."""
     better: list[dict[str, Any]] = []
+    fresh_clients = set()
+    now = parse_time(snapshot.observed_at)
+
+    def fresh(timestamp):
+        return timestamp is not None and 0 <= (now - parse_time(timestamp)).total_seconds() <= max_age_seconds
+
     for client in snapshot.clients:
-        if client.rcpi is None:
+        if client.rcpi is None or not fresh(client.metric_observed_at):
             continue
-        candidates = [
+        eligible = [
             item for item in snapshot.candidates_for(client.sta_mac)
-            if item.eligible and item.rcpi is not None
+            if item.eligible and item.band == client.band
             and item.bssid != client.connected_bssid
         ]
+        candidates = [item for item in eligible if item.rcpi is not None and fresh(item.metric_observed_at)]
         if not candidates:
             continue
+        if len(candidates) == len(eligible):
+            fresh_clients.add(client.sta_mac)
         best = max(candidates, key=lambda item: (int(item.rcpi), item.bssid))
         if int(best.rcpi) > int(client.rcpi):
             better.append({
@@ -148,13 +158,13 @@ def _fleet_status(snapshot, selected_sta_macs: set[str]) -> dict[str, Any]:
                 "target_rcpi": best.rcpi,
                 "gain_rcpi": int(best.rcpi) - int(client.rcpi),
             })
-    checked = len(selected_sta_macs)
+    checked = len(selected_sta_macs & fresh_clients)
     total = len(snapshot.clients)
     return {
         "clients_evaluated": total,
         "clients_checked": checked,
         "candidate_measurements": sum(
-            item.rcpi is not None for item in snapshot.candidates
+            item.rcpi is not None and fresh(item.metric_observed_at) for item in snapshot.candidates
         ),
         "clients_with_stronger_ap": len(better),
         "stronger_candidates": sorted(
@@ -163,6 +173,36 @@ def _fleet_status(snapshot, selected_sta_macs: set[str]) -> dict[str, Any]:
         "measurement_complete": checked == total,
         "converged": checked == total and not better,
     }
+
+
+def _client_optimizer_status(snapshot, evaluation, config, selected_sta_macs):
+    clients = {client.sta_mac: client for client in snapshot.clients}
+    now = parse_time(snapshot.observed_at)
+    result = []
+    for decision in evaluation.decisions:
+        client = clients.get(decision.sta_mac)
+        if client is None:
+            continue
+        state = evaluation.state.for_sta(client.sta_mac)
+        remaining = 0.0
+        if decision.reason == "minimum_dwell_not_met":
+            remaining = max(0, config.minimum_dwell_seconds - client.association_uptime_seconds)
+        elif decision.reason == "condition_hold_not_met":
+            remaining = max(0, config.condition_hold_seconds - decision.hold_seconds)
+        elif decision.reason == "post_steer_cooldown" and state.cooldown_until:
+            remaining = max(0, (parse_time(state.cooldown_until) - now).total_seconds())
+        elif decision.reason == "steer_failure_backoff" and state.backoff_until:
+            remaining = max(0, (parse_time(state.backoff_until) - now).total_seconds())
+        result.append({
+            **decision.to_dict(),
+            "phase": state.phase,
+            "association_uptime_seconds": client.association_uptime_seconds,
+            "metric_observed_at": client.metric_observed_at,
+            "measurement_source": client.measurement_source,
+            "candidate_query_selected": client.sta_mac in selected_sta_macs,
+            "wait_remaining_seconds": round(remaining, 1),
+        })
+    return result
 
 
 def _rssi(rcpi: int | None) -> int | None:
@@ -218,6 +258,7 @@ class LiveConductor:
         steering_transaction: Callable[
             [str, str, str, str, Callable[[], Any]], Any
         ] | None = None,
+        backhaul_manager: Any = None,
     ) -> None:
         if mode not in {"stimulus", "recommend", "act"}:
             raise ValueError(f"unsupported demo mode {mode!r}")
@@ -231,6 +272,7 @@ class LiveConductor:
         self.interactive = interactive
         self.maximum_actions = maximum_actions
         self.steering_transaction = steering_transaction
+        self.backhaul_manager = backhaul_manager
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
         self.errors: list[str] = []
@@ -241,6 +283,8 @@ class LiveConductor:
         self._error_lock = threading.Lock()
         self._controller_lock = threading.Lock()
         self._candidate_active = threading.Event()
+        self._link_sample_lock = threading.Lock()
+        self._link_samples: dict[tuple[Any, ...], tuple[float, dict[str, Any] | None]] = {}
         self._role_by_mac = {
             value["radio_permanent_mac"].lower(): role
             for role, value in plan["bindings"].items()
@@ -287,6 +331,23 @@ class LiveConductor:
         if mac is None or role_state.get("present") is not True:
             return None
         return str(role), mac, self._container_by_mac[mac]
+
+    def _client_link_fallback(self, client, room):
+        role = self._role_by_mac.get(client.sta_mac)
+        if room is None or not room.get("roles", {}).get(role, {}).get("present"):
+            return client
+        key = (client.sta_mac, client.connected_bssid, client.band,
+               room.get("environment_epoch"), room.get("measurement_epoch"))
+        with self._link_sample_lock:
+            checked_at, sample = self._link_samples.get(key, (float("-inf"), None))
+            if time.monotonic() - checked_at >= 10:
+                sample = read_client_link(self._container_by_mac[client.sta_mac],
+                                          client.connected_bssid, client.band,
+                                          self.manifest["traffic"]["target"])
+                self._link_samples = {cached_key: value for cached_key, value in self._link_samples.items()
+                                      if cached_key[0] != client.sta_mac}
+                self._link_samples[key] = (time.monotonic(), sample)
+        return replace(client, **sample) if sample else client
 
     def _action_window(self, now_ms: int, configured: list[int]) -> tuple[bool, str]:
         if self.interactive:
@@ -336,11 +397,12 @@ class LiveConductor:
             "connected_bssid": client.connected_bssid,
             "connected_device_name": client.connected_device_name,
             "connected_role": connected_role,
-            "connected_world_name": _world_device_name(connected_role),
+            "connected_world_name": client.connected_device_name or _world_device_name(connected_role),
             "rcpi": client.rcpi,
             "rssi_dbm": _rssi(client.rcpi),
             "association_uptime_seconds": client.association_uptime_seconds,
             "metric_observed_at": client.metric_observed_at,
+            "measurement_source": client.measurement_source,
         }
 
     def _topology_payload(self, topology: dict[str, Any] | None) -> dict[str, Any]:
@@ -435,11 +497,41 @@ class LiveConductor:
             "unresolved_edges": unresolved,
         }
 
+    def _traffic_probe(self, room: dict[str, Any] | None = None) -> dict[str, Any]:
+        if room is None:
+            room = self.room_state() if self.room_state else None
+        selection = (room or {}).get("traffic_probe") or {}
+        role = selection.get("role") or self.manifest["hero"]["role"]
+        mac = self._mac_by_role[role]
+        return {
+            "role": role, "selection": int(selection.get("selection", 0)),
+            "sta_mac": mac, "container": self._container_by_mac[mac],
+            "present": (room or {}).get("roles", {}).get(role, {}).get("present", True),
+        }
+
     def _network_payload(
-        self, snapshot, topology: dict[str, Any] | None = None
+        self, snapshot, topology: dict[str, Any] | None = None,
+        *, room: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         clients = [self._client_payload(item) for item in snapshot.clients]
-        hero = next((item for item in clients if item["sta_mac"] == self.hero_mac), None)
+        probe = self._traffic_probe(room)
+        hero = next((item for item in clients if item["sta_mac"] == probe["sta_mac"]), None)
+        mesh = self._topology_payload(topology)
+        applied = {(link["source_role"], link["destination_role"], link["band"]): link
+                   for link in (room or {}).get("backhaul_links", [])}
+        for edge in mesh.get("backhaul_edges", []):
+            link = applied.get((edge["parent_role"], edge["child_role"], str(edge.get("band"))))
+            channel = edge.get("channel")
+            frequency = None
+            if channel is not None and str(channel).isdigit():
+                channel = int(channel)
+                frequency = (5000 + channel * 5 if str(edge.get("band")) == "5" else
+                             5950 + channel * 5 if str(edge.get("band")) == "6" else
+                             2484 if channel == 14 else 2407 + channel * 5)
+            if link is not None and frequency == link["frequency_mhz"]:
+                edge["applied_rf"] = dict(link)
+        if self.backhaul_manager is not None:
+            mesh["backhaul_control"] = self.backhaul_manager.snapshot(room)
         return {
             "observed_at": snapshot.observed_at,
             "health": {
@@ -454,7 +546,8 @@ class LiveConductor:
             },
             "clients": clients,
             "hero": hero,
-            "mesh": self._topology_payload(topology),
+            "traffic_probe": probe,
+            "mesh": mesh,
         }
 
     def _ping(self, container: str) -> dict[str, Any]:
@@ -565,22 +658,20 @@ class LiveConductor:
     def _network_worker(self) -> None:
         if not self._wait_for_run():
             return
-        observer = ControllerObserver(self.base_url)
+        room = None
+        observer = ControllerObserver(
+            self.base_url,
+            current_link_fallback=(lambda client: self._client_link_fallback(client, room))
+            if self.interactive and self.room_state else None,
+            max_current_metric_age_seconds=10,
+        )
         while not self.stop_event.is_set() and self._active():
-            if self._candidate_active.is_set():
-                if self._sleep(0.2):
-                    break
-                continue
             try:
-                if not self._controller_lock.acquire(timeout=0.5):
-                    continue
-                try:
-                    snapshot = observer.observe()
-                finally:
-                    self._controller_lock.release()
+                room = self.room_state() if self.room_state else None
+                snapshot = observer.observe()
                 self.store.emit(
                     "network.snapshot", self._time(), self._network_payload(
-                        snapshot, observer.last_raw["topology"]
+                        snapshot, observer.last_raw["topology"], room=room
                     ),
                     producer="network",
                 )
@@ -598,10 +689,16 @@ class LiveConductor:
             return
         interval = float(self.manifest["traffic"]["interval_seconds"])
         while not self.stop_event.is_set() and self._active():
-            self.store.emit(
-                "traffic.sample", self._time(), self._ping(self.hero_container),
-                producer="traffic",
-            )
+            probe = self._traffic_probe()
+            sample = self._ping(probe["container"]) if probe["present"] else {
+                "container": probe["container"], "target": self.manifest["traffic"]["target"],
+                "success": None, "rtt_ms": None, "status": "offline",
+            }
+            if self._traffic_probe() == probe:
+                self.store.emit(
+                    "traffic.sample", self._time(), {**sample, "traffic_probe": probe},
+                    producer="traffic",
+                )
             if self._sleep(interval):
                 break
 
@@ -614,7 +711,12 @@ class LiveConductor:
         expected_clients = int(health["expected_clients"])
         while not self.stop_event.is_set() and self._active():
             try:
+                room = self.room_state() if self.room_state else None
+                if room is not None:
+                    expected_clients = int(room.get("expected_online_clients", expected_clients))
                 payload = mesh_health(expected_devices, expected_clients)
+                payload["pool_clients"] = int(health["expected_clients"])
+                payload["expected_online_clients"] = expected_clients
                 payload["healthy"] = (
                     payload.get("api_active") == expected_clients
                     and payload.get("model_devices") == expected_devices
@@ -681,8 +783,16 @@ class LiveConductor:
                 and policy.requires_candidate_measurement(client, observed_at)
             ),
             simulated_bss_channels=_simulated_bss_channels(self.plan),
+            progress=lambda progress: self.store.emit(
+                "optimizer.progress", self._time(), progress, producer="optimizer"
+            ),
         )
-        observer = ControllerObserver(self.base_url, candidate_provider=provider)
+        observer = ControllerObserver(
+            self.base_url, candidate_provider=provider,
+            current_link_fallback=(lambda client: self._client_link_fallback(client, room_before))
+            if self.interactive and self.room_state else None,
+            max_current_metric_age_seconds=10,
+        )
         verify_observer = ControllerObserver(self.base_url)
         verifier = OutcomeVerifier(
             verify_observer,
@@ -740,6 +850,20 @@ class LiveConductor:
                         if self._sleep(0.5):
                             break
                         continue
+                if self.backhaul_manager is not None and room_before is not None:
+                    if self.backhaul_manager.reconcile(room_before, self._time()):
+                        if self._sleep(2):
+                            break
+                        continue
+                    if self.backhaul_manager.blocks_client_measurement(room_before):
+                        self.store.emit(
+                            "optimizer.measurement.waiting", self._time(),
+                            {"reason": "backhaul_reconciling", "environment_epoch": observed_epoch,
+                             "backhaul": self.backhaul_manager.snapshot(room_before)}, producer="optimizer",
+                        )
+                        if self._sleep(2):
+                            break
+                        continue
                 preferred_subject = self._optimization_subject(room_before)
                 if preferred_subject is None:
                     hero_role = self.manifest["hero"]["role"]
@@ -747,6 +871,11 @@ class LiveConductor:
                         hero_role, self.hero_mac, self.hero_container
                     )
                 self._candidate_active.set()
+                self.store.emit(
+                    "optimizer.progress", self._time(),
+                    {"status": "measuring", "phase": "serving_metrics",
+                     **({"environment_epoch": observed_epoch} if observed_epoch is not None else {})}, producer="optimizer",
+                )
                 with self._controller_lock:
                     snapshot = observer.observe()
                 consecutive_measurement_failures = 0
@@ -776,6 +905,16 @@ class LiveConductor:
                             producer="optimizer",
                         )
                         continue
+                    online_macs = {
+                        self._mac_by_role[role] for role, value in room_after.get("roles", {}).items()
+                        if value.get("present") and role in self._mac_by_role
+                    }
+                    snapshot = replace(snapshot,
+                        clients=tuple(item for item in snapshot.clients if item.sta_mac in online_macs),
+                        candidates=tuple(item for item in snapshot.candidates if item.sta_mac in online_macs))
+                    policy.config = replace(
+                        policy_config, expected_clients=int(room_after["expected_online_clients"])
+                    )
                     applied_at = room_after.get("last_rf_applied_at")
                     if applied_at:
                         applied_time = parse_time(applied_at)
@@ -807,7 +946,12 @@ class LiveConductor:
                                 },
                                 producer="optimizer",
                             )
-                            continue
+                            waiting_macs = {item.sta_mac for item in not_fresh}
+                            snapshot = replace(snapshot, clients=tuple(
+                                replace(item, rcpi=None, metric_observed_at=None)
+                                if item.sta_mac in waiting_macs else item
+                                for item in snapshot.clients
+                            ))
                 prior = state
                 evaluation = policy.evaluate(snapshot, prior)
                 if not evaluation.decisions:
@@ -820,7 +964,9 @@ class LiveConductor:
                 steer_decisions = [
                     item for item in evaluation.decisions if item.action == "steer"
                 ]
-                fleet = _fleet_status(snapshot, provider.last_selected_sta_macs)
+                fleet = _fleet_status(snapshot, provider.last_selected_sta_macs & {
+                    item.sta_mac for item in snapshot.clients if item.rcpi is not None
+                }, policy.config.reject_stale_metrics_after_seconds)
                 ranked_steer_decisions = _ranked_action_batch(
                     steer_decisions, len(steer_decisions)
                 )
@@ -882,7 +1028,7 @@ class LiveConductor:
                         continue
                     candidate = asdict(item)
                     candidate["role"] = self._ap_role_by_bssid.get(item.bssid)
-                    candidate["world_name"] = _world_device_name(candidate["role"])
+                    candidate["world_name"] = item.device_name or _world_device_name(candidate["role"])
                     candidates.append(candidate)
                 self.store.emit(
                     "optimizer.evaluation", now,
@@ -892,6 +1038,16 @@ class LiveConductor:
                         "subject_mac": subject_mac,
                         "subject_container": subject_container,
                         "decision": decision.to_dict(),
+                        "evaluated_at": snapshot.observed_at,
+                        "minimum_dwell_seconds": policy.config.minimum_dwell_seconds,
+                        "client_decisions": [
+                            {**item, "role": self._role_by_mac.get(item["sta_mac"]),
+                             "source_role": self._ap_role_by_bssid.get(item["source_bssid"]),
+                             "target_role": self._ap_role_by_bssid.get(item["target_bssid"])}
+                            for item in _client_optimizer_status(
+                                snapshot, evaluation, policy.config, provider.last_selected_sta_macs
+                            )
+                        ],
                         "policy_state": asdict(subject_state),
                         "candidates": candidates,
                         "candidate_transactions": len(provider.last_raw),
@@ -909,6 +1065,15 @@ class LiveConductor:
                         ),
                         "optimization_goal": "best_eligible_same_network_band_ap",
                         "minimum_target_gain_rcpi": policy.config.minimum_target_gain_rcpi,
+                        "expected_online_clients": policy.config.expected_clients,
+                        "kernel_current_link_measurements": [
+                            {"sta_mac": item.sta_mac, "bssid": item.connected_bssid,
+                             "rssi_dbm": _rssi(item.rcpi), "observed_at": item.metric_observed_at,
+                             "source": item.measurement_source}
+                            for item in snapshot.clients
+                            if item.measurement_source == "client_kernel_iw_link_after_wlan_traffic_probe"
+                        ],
+                        **({"environment_epoch": room_after["environment_epoch"]} if room_after else {}),
                         "fleet": {
                             **fleet,
                             "actionable_clients": len(steer_decisions),
@@ -936,7 +1101,7 @@ class LiveConductor:
                             room_after["daemon"]["instance_id"],
                         )
                     for batch_index, decision in enumerate(action_batch, 1):
-                        if batch_index > 1 and self.room_state is not None:
+                        if self.room_state is not None:
                             current_room = self.room_state()
                             current_guard = (
                                 current_room["revision"],
@@ -1003,6 +1168,7 @@ class LiveConductor:
                                 target_ap_role,
                                 decision.target_band or decision.current_band or "",
                                 execute_action,
+                                expected_epoch=room_after["environment_epoch"] if room_after else None,
                             )
                         else:
                             result = execute_action()

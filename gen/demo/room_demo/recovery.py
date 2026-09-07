@@ -10,6 +10,7 @@ import threading
 from typing import Any
 
 from wmdcfg.actuator import ActuatorError, ControlClient
+from .client_wifi import reconnect_client
 
 
 SCHEMA = "easymesh.room-demo.recovery.v1"
@@ -84,7 +85,7 @@ class RecoveryJournal:
         with self._lock:
             if self.path.exists():
                 prior = load_recovery(self.path)
-                if prior.get("state") in INCOMPLETE_STATES:
+                if prior.get("state") in INCOMPLETE_STATES or prior.get("paused_clients"):
                     raise ActuatorError(
                         f"{self.path}: incomplete room run {prior.get('run_id')} "
                         f"is {prior.get('state')}; run room-demo recover first"
@@ -116,6 +117,35 @@ class RecoveryJournal:
                 "error": None,
             }
             self._write()
+
+    def pause_client(self, container: str) -> None:
+        with self._lock:
+            if self._document is None:
+                raise ActuatorError("client pause requires a prepared RF recovery journal")
+            clients = self._document.setdefault("paused_clients", [])
+            if container not in clients:
+                clients.append(container)
+            self._write()
+
+    def resume_client(self, container: str) -> None:
+        with self._lock:
+            if self._document is None:
+                return
+            clients = self._document.get("paused_clients", [])
+            if container in clients:
+                clients.remove(container)
+            self._write()
+
+    def resume_clients(self) -> None:
+        with self._lock:
+            clients = list((self._document or {}).get("paused_clients", []))
+        for container in clients:
+            reconnect_client(container)
+            self.resume_client(container)
+
+    def paused_clients(self) -> list[str]:
+        with self._lock:
+            return list((self._document or {}).get("paused_clients", []))
 
     def before_apply(self, current_generation: int, pending_generation: int) -> None:
         with self._lock:
@@ -180,6 +210,7 @@ def recover_medium(
     """Restore an interrupted session only against its exact medium instance."""
     document = load_recovery(path)
     if document.get("state") == "restored":
+        _resume_recovered_clients(path, document)
         return {
             "status": "already-restored",
             "run_id": document["run_id"],
@@ -250,6 +281,17 @@ def recover_medium(
         "error": None,
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     })
+    _save_recovered(path, document)
+    _resume_recovered_clients(path, document)
+    return {
+        "status": "restored",
+        "run_id": document["run_id"],
+        "generation": generation,
+        "restored_links": len(updates),
+    }
+
+
+def _save_recovered(path: Path, document: dict[str, Any]) -> None:
     document["checksum_sha256"] = _digest(document)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(
@@ -257,9 +299,10 @@ def recover_medium(
     )
     temporary.chmod(0o600)
     os.replace(temporary, path)
-    return {
-        "status": "restored",
-        "run_id": document["run_id"],
-        "generation": generation,
-        "restored_links": len(updates),
-    }
+
+
+def _resume_recovered_clients(path: Path, document: dict[str, Any]) -> None:
+    for container in list(document.get("paused_clients", [])):
+        reconnect_client(container)
+        document["paused_clients"].remove(container)
+        _save_recovered(path, document)

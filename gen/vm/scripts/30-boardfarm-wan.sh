@@ -24,7 +24,7 @@ systemctl start easymesh-lxd-docker-forward.service
 test "$(docker network inspect wan-cpe1 -f '{{index .Options "com.docker.network.bridge.name"}}')" = \
     br-wan101
 ip link show br-wan101 >/dev/null
-test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+test "$(docker ps --filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$' --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
 
 printf '%s\n' 'boardfarm-wan-ready' \

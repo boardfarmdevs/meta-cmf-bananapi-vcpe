@@ -83,6 +83,12 @@ grep -Fx \
 grep -F 'profile:           20 clients (small)' "$stage/import.out" >/dev/null
 grep -Fx 'config set rdkeasymesh-20-storage-test limits.memory 8GiB ' \
     "$log" >/dev/null
+grep -Fx 'config set rdkeasymesh-20-storage-test boot.autostart false ' \
+    "$log" >/dev/null
+if grep -q 'boot.autostart true' "$log"; then
+    echo 'import unexpectedly enabled VM autostart' >&2
+    exit 1
+fi
 grep -Fx 'config device unset rdkeasymesh-20-storage-test eth0 ipv4.address ' \
     "$log" >/dev/null
 grep -Fx 'site address:      enp5s0 10.20.30.250/24 via 10.20.30.1' \
@@ -158,6 +164,8 @@ EASYMESH_ROOM_DEMO_PORT=29891 \
     bash "$bundle/import.sh" --profile 20 "$backup" \
         > "$stage/nested-delayed.out"
 test "$(cat "$ready_count")" = 2
+grep -Fx 'config set rdkeasymesh-20-0905 boot.autostart false ' \
+    "$log" >/dev/null
 ready_line=$(grep -nF \
     'exec rdkeasymesh-20-0905 -- lxc query /1.0 ' "$log" \
     | tail -1 | cut -d: -f1)
@@ -200,4 +208,20 @@ if grep -q '^config device add .* easymesh-webui proxy ' "$log"; then
     exit 1
 fi
 
-echo 'PASS: LXD import storage selection'
+mkdir -p "$bundle/observability"
+cat > "$bundle/observability/enable.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'monitoring-enabled %s\n' "$*" >> "${EASYMESH_MONITORING_TEST_LOG:?}"
+EOF
+: > "$log"
+printf '0\n' > "$ready_count"
+EASYMESH_MONITORING_TEST_LOG="$log" \
+EASYMESH_TEST_NESTED_READY_AFTER=1 \
+EASYMESH_LXD_STORAGE=large-pool \
+EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
+    bash "$bundle/import.sh" --profile 20 --monitoring "$backup" > "$stage/monitoring.out"
+monitoring_line=$(grep -nF 'monitoring-enabled rdkeasymesh-20-0905 127.0.0.1' "$log" | cut -d: -f1)
+start_line=$(grep -nF 'exec rdkeasymesh-20-0905 -- systemctl --no-block start easymesh-lab.service ' "$log" | cut -d: -f1)
+test "$monitoring_line" -lt "$start_line"
+
+echo 'PASS: LXD import storage selection and optional monitoring before lab startup'

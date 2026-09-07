@@ -15,7 +15,7 @@ BF_LAB_CONFIG=ca-desk6.json \
     timeout 180 /home/easymesh/boardfarm-open-0406/.venv/bin/bf-lab status
 test "$(docker network inspect wan-cpe1 \
     -f '{{index .Options "com.docker.network.bridge.name"}}')" = br-wan101
-test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+test "$(docker ps --filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$' --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
 
 echo TOPOLOGY

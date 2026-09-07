@@ -9,8 +9,8 @@ tooling, deployment automation, and tests remain separate host infrastructure.
 
 ## Scope
 
-The current source series contains EasyMesh patches through `0148`, IEEE1905
-patches through `0006`, libwebconfig patches through `0012`, OneWifi patches
+The current source series contains EasyMesh patches through `0161`, IEEE1905
+patches through `0006`, libwebconfig patches through `0013`, OneWifi patches
 through `0025`, Wi-Fi HAL patches through `0034`, host hwsim patches through
 `0008`, and wmediumd patches through `0019`, plus the log4c category-factory
 serialization fix. Never infer image content from the host checkout; record
@@ -345,10 +345,27 @@ authority. Its dependency order is:
     controller radio-timer command access with a recursive lifetime guard
     (`0155`). Preprocessing that stops/deletes radio threads stays outside the
     guard. The compiled concurrency regression is
-    `gen/tests/orchestrator-completion-race-test.py SOURCE_TREE`.
+    `gen/tests/orchestrator-completion-race-test.py SOURCE_TREE`;
+90. use one shared ten-segment red/yellow/green signal palette in the room and
+    Network Topology (`0156`), with opaque grey unlit segments and the same
+    measured RSSI thresholds. Missing/stale readings remain grey. The recipe
+    stages and installs the viewer's canonical `signal-meter.js` asset; the
+    shared Node regression is `gen/tests/signal-meter-test.js`;
+91. remove the topology's redundant signal explanation and legend (`0157`);
+92. preserve station ownership and association clocks on metric updates (`0158`);
+93. periodically reconcile authoritative OneWifi association snapshots and
+    retain the clock during station assignment (`0159`). The public-header
+    recipe also aligns the decoder ABI, and libwebconfig `0013` initializes
+    complete station records rather than pointer-sized prefixes;
+94. release the radio's pending state after backhaul capability-query
+    cancellation, and prevent delayed capability reports from completing an
+    unrelated candidate/configuration command (`0160`);
+95. render the mesh SSID as a quoted dark-red backhaul label and automatically
+    maximize the topology with six-pixel margins, without rearranging nodes
+    or interrupting an active pointer gesture (`0161`).
 
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0155`; the
+component or image build. The current source series ends at `0161`; the
 role-specific artifact boundary is recorded under **Build and acceptance**.
 
 ## IEEE 1905 ordering
@@ -455,9 +472,9 @@ The controller's checked-in `em-cli.tar.gz` Go helper is a versioned recipe
 input, not Yocto sstate. Its SHA-256 is
 `fc0f610e61392a045215e4d04076468b759fd9f97ab7dcbb83c7b5173d96506b`
 (last refreshed in `bc2fcd8`). The 0905 changes do not alter its Go handlers.
-The recipe always overlays `index.html`, `script.js`, and `style.css` from
+The recipe always overlays `index.html`, `script.js`, `signal-meter.js`, and `style.css` from
 the patched source, so the old static files inside the helper archive cannot
-mask the `0150`–`0153` WebUI changes. Changes to production Go sources require
+mask the `0150`–`0156` WebUI changes. Changes to production Go sources require
 the separate rebuild procedure in the [build guide](../../build/README.md).
 
 ## Remaining engineering debt

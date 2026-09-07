@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,7 +31,7 @@ def compose():
     if version.returncode:
         pytest.skip("Docker Compose v2 is not installed")
     environment = os.environ.copy()
-    for variable in ("PROMETHEUS_IMAGE", "GRAFANA_IMAGE", "GRAFANA_PUBLIC_URL"):
+    for variable in ("PROMETHEUS_IMAGE", "GRAFANA_IMAGE", "GRAFANA_PUBLIC_URL", "GRAFANA_BIND_ADDRESS"):
         environment.pop(variable, None)
     result = subprocess.run(
         ["docker", "compose", "-f", str(BUNDLE / "compose.yaml"), "config", "--format", "json"],
@@ -43,7 +44,7 @@ def compose():
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("script", ("setup.sh", "disable.sh"))
+@pytest.mark.parametrize("script", ("setup.sh", "disable.sh", "enable.sh", "reload-lxd.sh"))
 def test_shell_syntax(script):
     subprocess.run(["bash", "-n", str(BUNDLE / script)], check=True)
 
@@ -68,11 +69,31 @@ def test_monitoring_is_unprivileged_and_loopback_only(compose):
                 assert volume["read_only"] is True
     assert "--web.listen-address=127.0.0.1:9090" in compose["services"]["prometheus"]["command"]
     environment = compose["services"]["grafana"]["environment"]
+    assert environment["GOMEMLIMIT"] == "256MiB"
     assert environment["GF_SERVER_HTTP_ADDR"] == "127.0.0.1"
     assert environment["GF_AUTH_ANONYMOUS_ENABLED"] == "false"
     assert environment["GF_USERS_ALLOW_SIGN_UP"] == "false"
     assert "GF_SECURITY_ADMIN_PASSWORD" not in environment
     assert environment["GF_SECURITY_ADMIN_PASSWORD__FILE"] == "/run/secrets/grafana-admin-password"
+    assert environment["GF_SERVER_PROTOCOL"] == "https"
+    assert environment["GF_SECURITY_COOKIE_SECURE"] == "true"
+    assert environment["GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH"].endswith("/lxd-containers.json")
+
+
+def test_both_backends_and_explicit_browser_ports_are_supported():
+    setup = (BUNDLE / "setup.sh").read_text()
+    assert "/etc/default/easymesh-lab" in setup and "/etc/default/prplmesh-lab" in setup
+    enable = (BUNDLE / "enable.sh").read_text()
+    assert 'LAB_LXD_UI_PORT:-18892' in enable and 'LAB_GRAFANA_PORT:-18893' in enable
+    assert 'lab-lxd-ui proxy nat=true' in enable and 'lab-grafana proxy nat=true' in enable
+    assert 'boot.autostart' not in enable
+    assert 'reload-lxd.sh' in setup and 'server-identity-reviewed' in setup
+    reload_script = (BUNDLE / "reload-lxd.sh").read_text()
+    assert 'LAB_MONITORING_ALLOW_RESTART:-0' in reload_script
+    assert 'timeout 3 lxc' in reload_script
+    assert 'trap restore_lab EXIT' in reload_script
+    assert reload_script.index('systemctl stop') < reload_script.index('systemctl restart snap.lxd.daemon')
+    assert 'systemctl reload snap.lxd.daemon' not in reload_script
 
 
 def test_dashboard_filters_and_datasource_are_consistent(dashboard):
@@ -131,6 +152,105 @@ def test_memory_panel_uses_available_cgroup_v2_metrics(dashboard):
     assert " - lxd_memory_MemFree_bytes{" in expression
     assert "RSS_bytes" not in expression
     assert "including cache" in panel["title"]
+
+
+def test_host_enable_consumes_long_lxd_output_and_keeps_services_private(tmp_path):
+    executable = tmp_path / "lxc"
+    actions = tmp_path / "actions"
+    executable.write_text('''#!/usr/bin/env python3
+import json
+import os
+import sys
+with open(os.environ["MONITORING_ACTIONS"], "a") as stream:
+    stream.write(json.dumps(sys.argv[1:]) + "\\n")
+arguments = sys.argv[1:]
+if arguments[0] == "info":
+    print("Type: virtual-machine\\n" + "Details: " + "x" * 300000)
+elif arguments[:3] == ["config", "device", "show"]:
+    print("eth0:\\n  type: nic")
+elif arguments[0] == "exec":
+    command = arguments[3:]
+    if command[:2] == ["ip", "-4"]:
+        print("1.1.1.1 via 10.20.30.1 dev enp5s0 src 10.20.30.250 uid 0")
+    elif command[0] in ("tar", "python3"):
+        sys.stdin.buffer.read()
+''')
+    executable.chmod(0o755)
+    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "MONITORING_ACTIONS": str(actions)}
+    for variable in ("LAB_LXD_UI_PORT", "LAB_GRAFANA_PORT"):
+        environment.pop(variable, None)
+    subprocess.run(["bash", str(BUNDLE / "enable.sh"), "lab-vm", "192.0.2.10"], env=environment, check=True, capture_output=True, timeout=20)
+    commands = [json.loads(line) for line in actions.read_text().splitlines()]
+    proxies = [command for command in commands if command[:3] == ["config", "device", "add"]]
+    assert len(proxies) == 2
+    assert "listen=tcp:192.0.2.10:18892" in proxies[0]
+    assert "connect=tcp:10.20.30.250:8443" in proxies[0]
+    assert "listen=tcp:192.0.2.10:18893" in proxies[1]
+    assert "connect=tcp:10.20.30.250:3000" in proxies[1]
+    assert not any("boot.autostart" in command for command in commands)
+
+
+@pytest.mark.parametrize("host,port", (("0.0.0.0", "18893"), ("not-an-ip", "18893"), ("192.0.2.10", "18892")))
+def test_host_enable_rejects_unsafe_or_colliding_addresses(host, port):
+    result = subprocess.run(["bash", str(BUNDLE / "enable.sh"), "unused", host],
+                            env={**os.environ, "LAB_LXD_UI_PORT": "18892", "LAB_GRAFANA_PORT": port}, capture_output=True, timeout=10)
+    assert result.returncode != 0
+
+
+def test_import_monitoring_is_explicit_and_export_templates_are_checksums():
+    importer = (BUNDLE.parent / "import.sh").read_text()
+    assert "monitoring=false" in importer.lower()
+    assert "--monitoring)" in importer
+    assert 'observability/enable.sh' in importer
+    assert '"$monitoring" = true' in importer.lower()
+    exporters = [BUNDLE.parent / "build.sh"] if (BUNDLE.parent / "test-build-storage.sh").exists() else [BUNDLE.parent / "package.sh", BUNDLE.parent / "package-thin.sh"]
+    for exporter in exporters:
+        source = exporter.read_text()
+        assert 'test ! -d /opt/easymesh-observability' in source
+        assert 'find observability -type f' in source
+        assert '"$bundle/observability"' in source or '"$BUNDLE/observability"' in source
+
+
+@pytest.mark.parametrize("allowed", (False, True))
+def test_identity_restart_requires_maintenance_and_stops_lab_before_lxd(tmp_path, allowed):
+    actions = tmp_path / "actions"
+    systemctl = tmp_path / "systemctl"
+    systemctl.write_text('''#!/usr/bin/env python3
+import os
+import sys
+with open(os.environ["MONITORING_ACTIONS"], "a") as stream:
+    stream.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1] == "is-active":
+    print("active" if sys.argv[2] in ("easymesh-lab.service", "easymesh-room-demo.service") else "inactive")
+''')
+    systemctl.chmod(0o755)
+    client = tmp_path / "lxc"
+    client.write_text('#!/bin/sh\nexit 0\n')
+    client.chmod(0o755)
+    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "MONITORING_ACTIONS": str(actions), "LAB_MONITORING_ALLOW_RESTART": "1" if allowed else "0"}
+    result = subprocess.run(["bash", str(BUNDLE / "reload-lxd.sh")], env=environment, capture_output=True, timeout=15)
+    commands = actions.read_text().splitlines()
+    if allowed:
+        assert result.returncode == 0, result.stderr
+        assert commands[-3:] == ['stop easymesh-room-demo.service easymesh-lab.service', 'restart snap.lxd.daemon', 'start easymesh-room-demo.service easymesh-lab.service']
+    else:
+        assert result.returncode != 0
+        assert all(command.startswith('is-active ') for command in commands)
+
+
+def test_older_rdk_inventory_checks_ignore_monitoring_without_rebuilding_wan(tmp_path):
+    path = tmp_path / 'usr/local/sbin/boardfarm-lab-rebuild'
+    path.parent.mkdir(parents=True)
+    original = "test \"$(docker ps --format '{{.Names}}' | sort | paste -sd, -)\" = dhcp-cpe1,wan-cpe1\n"
+    path.write_text(original)
+    path.chmod(0o755)
+    backup = tmp_path / 'backup'
+    repair = runpy.run_path(str(BUNDLE / 'prepare-rdk.py'))['repair']
+    assert repair(tmp_path, backup) == ['usr/local/sbin/boardfarm-lab-rebuild']
+    assert "--filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$'" in path.read_text()
+    assert path.stat().st_mode & 0o777 == 0o755
+    assert (backup / 'usr/local/sbin/boardfarm-lab-rebuild').read_text() == original
+    assert repair(tmp_path, backup) == []
 
 
 @pytest.mark.parametrize("document", (GUIDE, BUNDLE / "README.md"))

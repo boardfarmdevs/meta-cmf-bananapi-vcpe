@@ -3,7 +3,10 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Status: **0905 is delivered and accepted for the 20-client profile** on
+Latest portable package: **`rdkeasymesh-0906-thin.tar`**, a runtime/static-asset
+refresh of 0905 with VM autostart disabled. See the 0906 record below.
+
+The original **0905 delivery is accepted for the 20-client profile** on
 rev140 and rev150 as of 2026-09-05 19:05 UTC. `codex/0905-clean` is canonical.
 Both complete role images were rebuilt, and the final thin tar was freshly
 imported on each host from zero nested instances. Rev140 passes the complete
@@ -12,6 +15,17 @@ post-cutover convergence and full health audits with zero native service
 restarts and zero packet loss for all 20 clients. The old VMs are retained,
 stopped and excluded from autostart. Earlier rejected candidates and the fixes
 they exposed are documented below; they are not the delivered archive.
+The later rev140-only signal UI and fixed-pool world-switching overlays are
+recorded separately below. They leave rev150's running lab and the accepted
+0905 archive unchanged, and are now included in the separate 0906 package.
+
+As of 2026-09-06, all outer LXD VMs on rev120, rev140 and rev150 have
+`boot.autostart=false`, including the running prplMesh/RDK labs. This changes
+host-reboot behavior only; no running VM is stopped. New RDK builds/imports
+also disable autostart. The historical 0905 cutover below enabled it at the
+time and is superseded by this operator preference. The
+[0906 runtime refresh](reference/release-0906.md) is packaged separately;
+it does not replace either current live lab.
 
 The first full-roster builder reboot failed: early client-capability queries
 incorrectly marked two extender radios configured before their WSC exchange,
@@ -24,11 +38,62 @@ its original hashes are retained in release evidence.
 The canonical build workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean`. Both role images are
 rebuilt in new build directories using the reviewed upstream source lock.
-The portable artifact is `rdkeasymesh-0905-thin.tar`; final imported
+The original delivery artifact is `rdkeasymesh-0905-thin.tar`; its imported
 20-client instances are named `rdkeasymesh-20-0905` on rev140 and rev150.
 
 This is the single current-state record. Concept and operating documents should
 link here instead of repeating versioned results.
+
+## 0906 runtime refresh
+
+| Item | Packaged value |
+| --- | --- |
+| Outer archive | `rdkeasymesh-0906-thin.tar` |
+| Bytes | `2859612160` |
+| SHA-256 | `32fa408e1180ecf27bcaae79bce64404bc5c2ea80bead9b49f2c4fd721fc5d3d` |
+| Source base commit | `c69e766056b709c76933f62cbb1e2b1d8e7b9e47` plus the explicit uncommitted snapshot |
+| Source snapshot SHA-256 | `ad2852ee033bb9c084a95791bcd370888782e97f7b9459294f60c7402031e4b3` |
+| Source inventory | 785 files, verified before export and after fresh import |
+| Inner VM archive | `rdkeasymesh-0906-c69e766-ad2852ee033b-thin-lxd.tar.zst` |
+| Export completed | 2026-09-06 20:52:41 UTC |
+| Fresh verification VM | rev140 `rdkeasymesh-20-0906-verify`, spare ports `48889`/`48890`/`48891` |
+| First-boot provisioning | 21:02:06–21:18:43 UTC; zero to 25 nested instances |
+| Default VM autostart | `false`; import starts provisioning once, later host boots do not start the VM |
+
+The identical, checksum-verified archive and adjacent `.sha256` are at:
+
+- rev140: `/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-artifacts/rdkeasymesh-0906-thin.tar`
+- rev150: `/home/rev/releases/0906/rdkeasymesh-0906-thin.tar`
+
+This includes automatic world loading, fixed-pool RF/presence updates,
+convergence fixes, Play/Pause with dragging, the shared signal palette and
+updated viewer documentation. It is **not another Yocto rebuild**: 8,428
+controller archive members retain identical contents and semantic metadata;
+only its three WebUI assets are replaced/added. The extender has no WebUI and
+its entire archive remains byte-identical. Native binaries, kernel, hwsim and
+wmediumd retain their accepted 0905 identities. The refreshed controller
+archive hash is `ec234f1078fb17f25b2c05f46af949b17a8d2a29d0cca510d22d0879da67011f`.
+
+The fresh profile-20 import passes full health and zero-loss traffic audits.
+Run `20260906T211917Z-private-client-room-walk-interactive` passes measured
+convergence and exact native client appearance for border-hover (12),
+stationary (10), home-b slow-walk (20), flash-crowd (10), default (20), and
+client disappear/reappear (19/20), without restarting containers or native
+services. Real Chromium checks pass shared rendered colours, automatic room
+selection, static/live Play+drag, pause/resume and observer safety. An
+eight-second scripted world verifies actual kernel disconnect/reconnect,
+9/10-client presence, playback completion and unchanged process identities.
+The source regression suites pass 286 Python tests (one unchanged optional
+skip, 17 subtests), eight Node suites and the VM helper/import tests.
+
+Evidence is under `release-evidence/release-0906/` in the canonical rev140
+workspace. The immutable manifest retains `status: candidate`; test results
+are recorded beside the tar rather than changing the tested artifact. Only
+profile 20 receives fresh runtime qualification. No normal-port lab cutover,
+rev150 runtime update, Git commit or push is performed. The source snapshot
+inside the tar is immutable; later acceptance-document edits in the checkout
+are deliberately not part of that snapshot. See the
+[0906 refresh reference](reference/release-0906.md) for import and provenance.
 
 ## Release contract
 
@@ -76,7 +141,7 @@ both actual patched source trees. The table lists these latest archives. Release
 provisioning recreates all nested nodes from the complete corrected archives;
 the diagnostic agent-only replacement is not a release input.
 
-The installed controller WebUI assets match the tested patched source exactly:
+The accepted image's controller WebUI assets match the tested patched source exactly:
 `script.js` SHA-256
 `75d420edbd7c63b028327e6850a4626b2df8057503438ead556e3a4861f6e11c`;
 `index.html` SHA-256
@@ -119,7 +184,9 @@ recorded here and in the host-side evidence, without changing the tested tar.
 Profile selectors for 50/100 clients remain available but are not accepted
 runtime/soak results.
 
-Both hosts now run `rdkeasymesh-20-0905` with autostart enabled:
+At the 0905 cutover, both hosts ran `rdkeasymesh-20-0905` with autostart
+enabled. Autostart has since been disabled as recorded above; these remain
+the normal-port deployment identities:
 
 | Host | EasyMesh WebUI | wmediumd Console | Interactive room |
 | --- | --- | --- | --- |
@@ -139,6 +206,194 @@ under each host's release workspace. Do not start an old VM alongside the new
 one on the same public ports; perform deliberate room restoration and VM/port
 handoff if rollback is needed. Rejected archives and builder snapshots remain
 separate from this accepted delivery.
+
+## rev140-only fixed-pool world switching
+
+The interactive viewer immediately applies an installed world selection or
+local world upload to the lab. There is no separate Apply button or confirmation;
+lease, revision and server validation remain mandatory. The rev140 room overlay
+removes the operator capability check; restrict network access to trusted users.
+rev150, rev120 and the immutable 0906 thin tars retain their prior behavior.
+Failed loads retain the current room. Compatible worlds use the existing
+20 client containers and five mesh containers (six displayed topology nodes).
+Unused clients are gracefully disconnected, held offline by their existing
+supplicant, and isolated on all serving RF links. The native topology remains
+actual controller state rather than a presentation filter. The original
+startup backhaul matrix is protected so a shifted room does not drop an
+extender from the infrastructure mesh.
+
+**Restore default 20** restores the default room and client presence. The last
+selection is not persisted as a boot profile. Neither container provisioning
+nor a new Yocto build is involved. RF updates, client pauses, rollback and crash
+recovery use the existing single-writer engine and recovery journal. Only the
+room service is restarted to install this Python/viewer overlay; native mesh
+services, containers and wmediumd do not restart during world transitions.
+
+The initial world-switching acceptance run was
+`20260905T215947Z-private-client-room-walk-interactive`. Its live tests cover
+`home-a-border-hover` (12 online), `home-a-stationary` (10),
+`home-b-slow-walk-ten` (20, different floor layout), and `home-a-flash-crowd`
+(20 roles, 10 initially online), then restore the default 20. Separate client
+Disappear/Reappear checks require exact 19/20-client controller MAC rosters.
+The checks also verify kernel disconnection for unused clients and unchanged
+container, native service and medium process identities. Counts must remain
+correct for at least ten seconds, not just match once. That acceptance run's
+client rosters converge in 19–32 seconds per transition, including the stability
+gate; it did not require best-AP convergence. Early RF-only tests
+exposed stale associations; those failed candidates were restored and replaced,
+not accepted. Controller convergence is asynchronous and some transitions can
+take around two minutes including aging and the sustained-health gate.
+
+Real-browser acceptance on that service passes selection-without-writes,
+explicit 12-client apply, observer SSE and reload, local JSON upload of the
+10-client room, malformed-upload rejection without a revision change, default
+restoration and no browser errors. Local validation
+passes 267 Python tests with one unchanged optional skip, all four native WebUI
+Node suites, the signal helper and room interaction suites, and JavaScript
+syntax checks. The working source and documentation are synchronized to the
+canonical rev140 checkout; this overlay is not included in the immutable thin
+tar, rev150, or GitHub Pages.
+
+Initial acceptance evidence is under the rev140 appliance's `/root/world-switch-0905-v8/`;
+earlier candidate evidence is retained separately in the versioned directories.
+Source-overlay bundles and final reports are retained in the host
+release-evidence directory. The source/runtime changes are intentionally
+uncommitted pending an explicit commit request. See
+[live world switching](reference/live-world-switching.md) for the operator
+workflow, protected-backhaul boundary and recovery behavior.
+
+### Online-roster steering correction
+
+A subsequent 10-client room exposed a separate steering guard that still
+expected the startup count of 20. Candidate measurements correctly found
+stronger APs, but every decision was rejected with `client_count_mismatch`.
+The room conductor now derives the policy's expected count from the accepted,
+epoch-checked room state on every evaluation, including Disappear/Reappear and
+default restoration. Actual controller counts and the five-device health guard
+remain unchanged; this is not a bypass for missing or stale associations.
+
+The online-roster correction was accepted on
+`20260905T235053Z-private-client-room-walk-interactive`. The viewer distinguishes
+**Client roster ready** from optimizer AP convergence. Local regression passes
+275 Python tests, one unchanged optional skip and thirteen parameterized subtests,
+plus the native WebUI, room-interaction and signal-meter Node suites. The
+all-catalog smoke test now requires exact client appearance/disappearance and
+fresh measured best-AP convergence in the current RF epoch, not counts alone.
+An initial full sweep then found a returning IoT client with a real Wi-Fi
+association and working traffic but permanently missing controller RSSI.
+Re-enabling reporting and a diagnostic client reconnect did not recover that
+sample; the initial sweep is retained as failed, not accepted. Missing
+post-transition metrics now hold only the affected client, rather than freezing
+all other steering. The interactive lab also has an explicit kernel-RSSI
+fallback, requiring a successful `wlan0` traffic probe and an exact match to the
+controller BSSID and band before the sample can be used. It does not substitute
+room predictions or overwrite native controller metrics. The UI and optimizer
+evidence identify this measurement source separately; unreadable or mismatched
+links still prevent a claim of complete fleet convergence.
+
+The completed sweep passes **all eleven catalog rooms**, default restoration,
+and 19/20-client Disappear/Reappear: fourteen measured-convergence checks in
+total. Catalog transitions take 67.53–290.95 seconds including the stability
+gate; returning from the shifted layout to default takes 305.01 seconds.
+Container, native-service and wmediumd process identities remain unchanged,
+and the per-run action count ends at 37/100. See the
+[per-room results](reference/live-world-switching.md#rev140-0905-acceptance).
+
+Read-only Chromium acceptance also verifies exact client appearance in both
+the native topology and live room for all eleven catalog rooms, with no
+browser errors or writes. The updated automatic-loading UI passes real-browser
+selection of flash-crowd, local upload of stationary, observer synchronization,
+default restoration, and invalid-checksum rejection without a revision change.
+Cancelling the capability prompt retains the prior room and selector value;
+no extra confirmation appears. All three world controls remain disabled during
+requests and until the authoritative startup catalog is ready. The additional
+`viewer-world-loading-test.js` regression suite passes. This final UI/manual
+update is installed on rev140 without restarting the room service; refresh an
+already-open browser tab to use it.
+
+After acceptance, the user's `home-a-band-walk-small` room and original role
+positions are restored, healthy and converged at ten clients. STA-05 retains
+position `[1.2, 13.15]` and is associated with native **Extender-2**, BSSID
+`02:00:00:51:26:61`; both native topology and the client's kernel confirm the
+association, with a measured signal of -44 dBm. The final reports, screenshots,
+regression output and uncommitted source overlay are archived on rev140 under
+`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-evidence/room-convergence-0905-final/`.
+
+Evidence for the updated sweep is retained under
+`/root/room-convergence-0905-v2/` in the rev140 appliance. The earlier
+`/root/room-convergence-0905/` directory also preserves the user's selected room
+and positions for restoration after testing. Rev150 and the accepted thin
+archives remain untouched.
+
+### Unified playback and dragging
+
+The current rev140 room service is
+`20260906T013214Z-private-client-room-walk-interactive`. Camera/Interact pointer
+buttons are removed. Drag devices to move them, empty space to orbit, Shift-drag
+anywhere to pan, and scroll to zoom. Clicks and navigation do not acquire a
+lease or write RF. A real drag remains a local preview until one authorized,
+revision-checked position command is accepted on release.
+
+Play/Pause now also works in the live interactive room, with one bounded
+server-owned worker advancing scripted positions and presence through the
+existing verified RF path. Dragging, a manual walk or presence control pins
+only that role; other scripts continue. Pause/resume preserves pins and world
+loading clears them. Live seeking/speed changes remain disabled; the player
+samples geometry at up to one update per second, retains presence transitions,
+and slows rather than bursting under load. The optimizer waits during playback
+and resumes stable-room convergence after Pause/end. Lease loss, page departure,
+world switching and shutdown pause playback. Static playback supports dragging;
+live observer and evidence-replay views remain read-only.
+
+Acceptance passes static and live Play+drag in Chromium, one final drag write,
+continued motion of another client, read-only click/pan, Pause/resume, observer
+positions/clock synchronization, and pause on controller departure. A separate
+eight-second script verifies a real kernel Wi-Fi disconnect and reconnect at
+9/10 clients and script completion. Complete timelines for all eleven installed
+rooms also pass pre-play validation without RF writes. Container, native-service and medium process
+identities are unchanged. Local regression: 286 passed, one unchanged optional
+skip, seventeen subtests, plus the gesture/world-loading, signal/interaction and
+four native WebUI Node suites. Final evidence and source are retained under
+`/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/release-evidence/room-play-drag-0905/`.
+Only rev140 is updated; Pages, rev150 and the accepted thin tar stay unchanged.
+The original ten-client band-walk room and user positions are restored with
+playback paused and the fleet converged; STA-05 is back on Extender-2 at -44 dBm.
+
+## rev140-only signal UI overlay
+
+On 2026-09-05 at 20:35:43 UTC, rev140 received a static-only update to the
+Network Topology and room viewer. Both now share `signal-meter.js`: ten
+segments fill bottom to top with three red, four yellow and three green;
+unlit upper segments are grey. Exact values remain available. Missing or
+stale measurements show all grey, and the live room ages its gauges even
+when the event stream stops. The simulator's modeled SNR uses its explicit
+−91 dBm noise floor to map to the same RSSI scale, not a physical-radio
+assumption. The ordinary traffic-probe client now uses its `sta-…` label
+instead of the legacy special alias.
+
+The static overlay does not restart the room, CLI, OneWifi, or EasyMesh
+services and does not change RF or backhaul parentage. The existing room run
+remains healthy with all 20 clients converged. Real-browser checks pass for
+the four extender meters, 20 room gauges, ordinary probe label, three topology
+viewport widths and zero API writes. Local validation passes 252 Python tests
+with the unchanged optional skip, all four WebUI Node suites, the shared
+signal-meter regression, and patch applicability against the accepted source.
+
+| rev140 served asset | SHA-256 |
+| --- | --- |
+| Topology `script.js` | `6aa65d8004d2afff5ca4e9b2bcc1f97a2426e6ecf8867cfefa5281c1cafa05de` |
+| Topology `index.html` | `d09eb3551d2b87ba7e2cf32bbd2dfedf304a8473aa7f0c9f48ebef6b578fd3a9` |
+| Shared `signal-meter.js`, both views | `cfb6f115dcc6cd98c56e5d3eaed2f34e5dabe876d60ec2bca8bce12be1bfa7ef` |
+| Room `index.html` | `915b393c41a5e1382592e5d8a52b10a92e6819373206009105c65e7d164bcbfe` |
+| Room `manual.html` | `cdc9652d5f2909f08e816166e90294cb456a3f6b767ba085e4068b71639aab0e` |
+
+Rollback copies of the previous packaged/NVRAM WebUI and room assets are in
+`/root/signal-ui-0905/backup` inside the rev140 appliance. Its room checkout
+therefore has an intentional static-file overlay on the packaged revision,
+not a newly built appliance release. Patch `0156` and the shared-asset recipe
+wiring preserve the change for future builds. No new Yocto images or thin
+tars are produced by this update. Rev150 retains the original clean source
+and WebUI hashes; GitHub Pages is also unchanged.
 
 ## Carried-forward capabilities
 

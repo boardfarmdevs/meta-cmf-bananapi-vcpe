@@ -1,0 +1,75 @@
+Subject: [PATCH] cli: remove topology signal explanations
+
+Remove the paragraph and SVG color-key panel; retain meters and hover details.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -385,7 +385,6 @@
+                         </div>
+                     </div>
+ 
+-                    <p class="signal-meter-legend">Signal bars fill bottom to top: red → yellow → green; unlit bars are grey. All grey means stale or unknown. Hover for RSSI in dBm; extender bars measure the backhaul uplink.</p>
+                     <div class="topology-container">
+                         <div class="topology-main">
+                             <div id="topology-visualization">
+@@ -2026,7 +2025,7 @@
+ 
+     <!-- Scripts -->
+     <script src="static/signal-meter.js?v=signal-meter-1"></script>
+-    <script src="static/script.js?v=signal-meter-1"></script>
++    <script src="static/script.js?v=topology-no-signal-legend-2"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3465,7 +3465,6 @@
+     svg.call(zoom);
+     svg.call(zoom.transform, this.zoomTransformCache);
+     this.topologyView = { svg, group: svgGroup, zoom, width, height };
+-    this.drawTopologySignalLegend(svg);
+ 
+     // Normalize node and edge IDs to strings
+     renderTopology.nodes.forEach(n => n.id = String(n.id));
+@@ -4262,39 +4261,6 @@
+     };
+   }
+ 
+-  drawTopologySignalLegend(svg) {
+-    const entries = [
+-      { label: 'Weak <-75', color: signalMeter.colors.red },
+-      { label: 'Fair -75..-56', color: signalMeter.colors.yellow },
+-      { label: 'Strong >=-55', color: signalMeter.colors.green },
+-      { label: 'Unlit / unknown', color: signalMeter.colors.grey }
+-    ];
+-    const legend = svg.append('g')
+-      .attr('class', 'topology-signal-legend')
+-      .attr('transform', 'translate(14,18)');
+-    legend.append('rect')
+-      .attr('x', -8).attr('y', -14)
+-      .attr('width', 452).attr('height', 34)
+-      .attr('rx', 6)
+-      .attr('fill', '#fff').attr('opacity', 0.88)
+-      .attr('stroke', '#d1d5db');
+-    legend.append('text')
+-      .attr('x', 0).attr('y', 8)
+-      .attr('font-size', '10px').attr('font-weight', '700')
+-      .attr('fill', '#374151').text('Signal');
+-    const item = legend.selectAll('g.signal-quality')
+-      .data(entries).enter().append('g')
+-      .attr('class', 'signal-quality')
+-      .attr('transform', (_entry, index) => `translate(${52 + index * 100},0)`);
+-    item.append('circle')
+-      .attr('cx', 0).attr('cy', 4).attr('r', 4)
+-      .attr('fill', entry => entry.color);
+-    item.append('text')
+-      .attr('x', 8).attr('y', 8)
+-      .attr('font-size', '9px').attr('fill', '#374151')
+-      .text(entry => entry.label);
+-  }
+-
+   /**
+    * generate the sign wave connecting to node and STA
+    */

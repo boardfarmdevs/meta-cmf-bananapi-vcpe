@@ -22,6 +22,28 @@ RADIO = "02:00:00:00:09:00"
 BSSID = "02:00:00:aa:aa:01"
 
 
+def test_progress_reports_real_completed_queries():
+    updates = []
+    provider = ControllerCandidateProvider("http://controller", allow_simulated=True,
+        requester=lambda *_args: response(), progress=updates.append)
+    measured = list(provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:00Z"))
+    assert measured
+    assert updates[0]["completed_queries"] == 0
+    assert updates[-1]["completed_queries"] == updates[-1]["total_queries"] == 1
+    assert updates[-1]["active_agent"] == AGENT
+    assert updates[-1]["selected_clients"] == 1
+
+
+def test_failed_query_does_not_report_completion():
+    updates = []
+    def fail(*_args):
+        raise CandidateMetricsUnavailable("offline")
+    provider = ControllerCandidateProvider("http://controller", requester=fail, progress=updates.append)
+    with pytest.raises(CandidateMetricsUnavailable):
+        list(provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:00Z"))
+    assert all(update["completed_queries"] == 0 for update in updates)
+
+
 def client() -> ClientObservation:
     return ClientObservation(
         sta_mac=STA,

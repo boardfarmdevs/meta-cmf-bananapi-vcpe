@@ -1,0 +1,68 @@
+Subject: [PATCH] controller: recover cancelled backhaul capability queries
+
+On rev140, candidate transactions expired before transmit with the radio
+still in em_state_ctrl_bsta_cap_pending. Cancelling a bsta_cap command freed
+the orchestration slot but never left its pending protocol state. Neither
+a new capability query nor a candidate measurement could execute afterward.
+
+Restore the stable state when cancelling that read-only capability query,
+but do not change unrelated configuration or measurement states. A delayed
+capability report may update inventory without completing a different
+command; serialize its state transition with orchestration and only finish
+the capability pending state. Keep existing candidate freshness and timeout
+checks intact.
+
+Upstream-Status: Pending
+---
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -460,6 +460,13 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+         }
+ 
++        case em_cmd_type_bsta_cap:
++            if (em->get_state() == em_state_ctrl_bsta_cap_pending) {
++                em_printfout("Backhaul capability query cancelled; releasing pending radio state");
++                em->set_state(em_state_ctrl_configured);
++            }
++            break;
++
+         case em_cmd_type_unassoc_sta_query:
+             if (em->get_unassoc_sta_query_msg_id() != 0) {
+                 em_printfout("Candidate metrics query timed out after transmit; clearing outstanding MID");
+                 em->clear_unassoc_sta_query_msg_id();
+diff --git a/src/em/capability/em_capability.cpp b/src/em/capability/em_capability.cpp
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -45,6 +45,7 @@
+ #include "em_cmd_exec.h"
+ #include "em_cmd_client_cap.h"
++#include "em_orch.h"
+ 
+ int em_capability_t::send_ap_cap_report_msg(unsigned char *dst, unsigned short msg_id)
+ {
+     unsigned char buff[MAX_EM_BUFF_SZ * EM_MAX_RADIO_PER_AGENT] = {0};
+@@ -1123,5 +1124,10 @@
+ int em_capability_t::handle_bsta_cap_report(unsigned char *pkt_buff, unsigned int pkt_len)
+ {
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr) {
++        return -1;
++    }
++    auto command_lock = orch->lock_commands();
+     int ret = 0;
+ 
+     em_printfout("Backhaul Sta Capability report message rcvd");
+@@ -1141,8 +1147,10 @@
+     if (ret < 0)
+         return ret;
+ 
+-    set_state(em_state_ctrl_configured);
+-    em_printfout("Cap: Bsta Capability report processed, ctrl configured");
++    if (get_state() == em_state_ctrl_bsta_cap_pending) {
++        set_state(em_state_ctrl_configured);
++    }
++    em_printfout("Cap: Bsta Capability report processed");
+ 
+     return ret;
+ }

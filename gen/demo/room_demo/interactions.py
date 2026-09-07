@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 import datetime as dt
 import math
 import secrets
@@ -46,6 +47,11 @@ class InteractiveMediumSession:
         lease_seconds: int = 30,
         minimum_update_interval: float = 0.15,
         recovery: RecoveryJournal | None = None,
+        worlds: Any = None,
+        disconnect_client: Callable[[str], Any] | None = None,
+        reconnect_client: Callable[[str], None] | None = None,
+        traffic_probe_role: str | None = None,
+        adaptive_backhaul: bool = False,
     ) -> None:
         self.store = store
         self.world = world
@@ -56,6 +62,12 @@ class InteractiveMediumSession:
         self.lease_seconds = max(10, min(120, int(lease_seconds)))
         self.minimum_update_interval = max(0.0, float(minimum_update_interval))
         self.recovery = recovery
+        self.worlds = worlds
+        self.adaptive_backhaul = adaptive_backhaul
+        self.disconnect_client = disconnect_client
+        self.reconnect_client = reconnect_client
+        self._selected_roles = set(world["roles"])
+        self._selected_world = world["name"]
         self._lock = threading.RLock()
         self._client: ControlClient | None = None
         self._instance_id: str | None = None
@@ -72,10 +84,18 @@ class InteractiveMediumSession:
         self._last_update_at = 0.0
         self._baseline: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._applied_values: dict[tuple[str, str, int], tuple[int, bool]] = {}
+        self._protected_backhaul: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._restored = False
         self._faulted: str | None = None
         self._closing = False
         self._movements: dict[str, dict[str, Any]] = {}
+        self._playback_world = copy.deepcopy(world)
+        self._playback_status = "paused"
+        self._playback_time_ms = 0
+        self._playback_rewind = False
+        self._playback_overrides: set[str] = set()
+        self._playback_wake = threading.Event()
+        self._playback_thread: threading.Thread | None = None
         self._movement_threads: dict[str, threading.Thread] = {}
         self._recording: dict[str, Any] | None = None
         self._recorded_mobility: dict[str, Any] | None = None
@@ -94,6 +114,10 @@ class InteractiveMediumSession:
             role for role in sorted(world["roles"])
             if world["roles"][role] == "station"
         )
+        self._traffic_probe_role = traffic_probe_role or next(iter(self._allowed_roles), None)
+        if self._traffic_probe_role is not None and self._traffic_probe_role not in self._allowed_roles:
+            raise ValueError("traffic probe must be a bound station role")
+        self._traffic_probe_selection = 0
         # Extender presence is mutable so a presenter can create a reversible
         # fronthaul-service outage without stopping the container, changing
         # its identity, or disturbing its backhaul/control-plane state. The
@@ -138,6 +162,7 @@ class InteractiveMediumSession:
             "authoritative": True,
             "position_url": "/api/demo/roles/{role}/position",
             "presence_url": "/api/demo/roles/{role}/presence",
+            "playback_url": "/api/demo/playback",
             "move_url": "/api/demo/roles/{role}/move",
             "movement_url": "/api/demo/movements/{movement}",
         }
@@ -211,7 +236,20 @@ class InteractiveMediumSession:
                         raise ActuatorError("initial interactive generation readback mismatch")
                     key = (item["source"], item["destination"], item["frequency_mhz"])
                     self._applied_values[key] = (item["value"], item["override"])
+                if self.worlds is not None and not self.adaptive_backhaul:
+                    mesh_macs = {
+                        radio["tx_mac"] for binding in self.plan["bindings"].values()
+                        if binding["role_type"] == "fronthaul_ap"
+                        for radio in binding.get("band_radios", {}).values()
+                    }
+                    mesh_macs.update(binding["radio_tx_mac"] for binding in self.plan["bindings"].values()
+                                     if binding["role_type"] == "fronthaul_ap")
+                    self._protected_backhaul = {
+                        key: value for key, value in self._applied_values.items()
+                        if key[0] in mesh_macs and key[1] in mesh_macs
+                    }
                 self._mark_rf_committed()
+                self._emit_playback("loaded")
                 self.store.emit(
                     "rf.generation.applied", 0,
                     {
@@ -258,6 +296,7 @@ class InteractiveMediumSession:
         owner = self._lease["owner"]
         token = self._lease["token"]
         self._lease = None
+        self._pause_playback("lease_expired")
         self._cancel_owned_movements(token, "lease_expired")
         self.store.emit(
             "interaction.lease.expired", self._world_time(), {"owner": owner},
@@ -284,13 +323,21 @@ class InteractiveMediumSession:
                     None if self._last_rf_apply_monotonic is None else
                     round(time.monotonic() - self._last_rf_apply_monotonic, 3)
                 ),
-                "movement_active": any(
+                "movement_active": self._playback_status == "playing" or any(
                     value["status"] in {"running", "paused"}
                     for value in self._movements.values()
                 ),
-                "allowed_roles": list(self._allowed_roles),
-                "presence_roles": list(self._presence_roles),
-                "movable_roles": list(self._movable_roles),
+                "playback": self._public_playback(),
+                "traffic_probe": self._traffic_probe(),
+                "allowed_roles": sorted(set(self._allowed_roles) & self._selected_roles),
+                "presence_roles": sorted(set(self._presence_roles) & self._selected_roles),
+                "movable_roles": sorted(set(self._movable_roles) & self._selected_roles),
+                "world_switch_enabled": self.worlds is not None,
+                "backhaul_policy": self.backhaul_policy(),
+                "backhaul_links": self.backhaul_links(),
+                "selected_world": self._selected_world,
+                "pool_clients": len(self._allowed_roles),
+                "expected_online_clients": sum(self._roles[role]["present"] for role in self._allowed_roles),
                 "roles": copy.deepcopy(self._roles),
                 "lease": lease or {"held": False},
                 "daemon": {
@@ -364,6 +411,7 @@ class InteractiveMediumSession:
             lease = self._require_lease(token)
             owner = lease["owner"]
             self._lease = None
+            self._pause_playback("lease_released")
             self._cancel_owned_movements(token, "lease_released")
             self.store.emit(
                 "interaction.lease.released", self._world_time(), {"owner": owner},
@@ -386,6 +434,7 @@ class InteractiveMediumSession:
         expected_revision: Any,
         *,
         allowed_roles: tuple[str, ...] | None = None,
+        require_selected: bool = True,
     ) -> None:
         if self._client is None:
             raise InteractionError(503, "not_started", "interactive medium is unavailable")
@@ -395,7 +444,7 @@ class InteractiveMediumSession:
                 f"interactive medium was restored after an actuator failure: {self._faulted}",
             )
         self._require_lease(token)
-        if role not in (self._allowed_roles if allowed_roles is None else allowed_roles):
+        if (require_selected and role not in self._selected_roles) or role not in (self._allowed_roles if allowed_roles is None else allowed_roles):
             raise InteractionError(400, "role_not_interactive", f"role {role!r} is not interactive")
         try:
             revision = int(expected_revision)
@@ -406,6 +455,291 @@ class InteractiveMediumSession:
                 409, "stale_revision",
                 f"expected revision {revision}, current revision is {self._revision}",
             )
+
+    def _traffic_probe(self) -> dict[str, Any]:
+        return {"role": self._traffic_probe_role, "selection": self._traffic_probe_selection}
+
+    def select_traffic_probe(
+        self, role: str, *, token: str, expected_revision: Any
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._validate_mutation(role, token, expected_revision, require_selected=False)
+            if role != self._traffic_probe_role:
+                self._traffic_probe_role = role
+                self._traffic_probe_selection += 1
+                self._revision += 1
+            result = {"revision": self._revision, "traffic_probe": self._traffic_probe()}
+            self.store.emit("traffic.probe.selected", self._world_time(), result, producer="interaction")
+            return result
+
+    def world_catalog(self) -> dict[str, Any]:
+        if self.worlds is None:
+            return {"enabled": False, "worlds": []}
+        return {"enabled": True, **self.worlds.catalog()}
+
+    def _room_updates(self) -> list[dict[str, Any]]:
+        by_key = {}
+        for role in self._movable_roles:
+            updates, _ = self._links_for_role(role)
+            for item in updates:
+                by_key[(item["source"], item["destination"], item["frequency_mhz"])] = item
+        return list(by_key.values())
+
+    def apply_world(
+        self, selection: Any, *, token: str, expected_revision: Any
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._validate_mutation(
+                "gateway", token, expected_revision, allowed_roles=self._movable_roles
+            )
+            if self.worlds is None:
+                raise InteractionError(409, "world_switch_unavailable", "world switching is not configured")
+            world, layout = self.worlds.select(selection)
+            if self._recording is not None:
+                raise InteractionError(409, "recording_active", "stop and download the recording before changing worlds")
+            self._pause_playback("world_changed")
+            previous = (self.world, self.layout, self._roles, self._nodes,
+                        self._selected_roles, self._selected_world, self._initial_roles)
+            prior_values = dict(self._applied_values)
+            first = world["generations"][0]
+            roles = {}
+            for role in self.worlds.roles:
+                roles[role] = {
+                    "position": list(first["positions"].get(role, [0, 0])),
+                    "present": bool(first["present"].get(role, False)),
+                }
+            expanded = copy.deepcopy(world)
+            expanded["roles"] = dict(self.worlds.roles)
+            expanded["generations"] = [{**copy.deepcopy(first),
+                "positions": {role: state["position"] for role, state in roles.items()},
+                "present": {role: state["present"] for role, state in roles.items()}}]
+            nodes = {item["role"]: dict(item) for item in layout.get("nodes", [])}
+            self.world, self.layout, self._roles = expanded, layout, roles
+            self._nodes = {role: {"role": role, **nodes.get(role, {})} for role in roles}
+            attempted = False
+            try:
+                updates = self._room_updates()
+                if any((item["source"], item["destination"], item["frequency_mhz"]) not in self._baseline for item in updates):
+                    raise InteractionError(422, "world_changes_radios", "world requires RF keys outside the captured lab pool")
+                changed = [item for item in updates if prior_values.get(
+                    (item["source"], item["destination"], item["frequency_mhz"])
+                ) != (item["value"], item["override"])]
+                for movement in self._movements.values():
+                    self._cancel_movement(movement, "world_changed")
+                attempted = True
+                if self.disconnect_client is not None:
+                    for role in self._allowed_roles:
+                        if roles[role]["present"] or not previous[2][role]["present"]:
+                            continue
+                        with self.disconnect_client(role):
+                            isolated, _ = self._station_links(role)
+                            self._write_verified(isolated)
+                requested = changed or updates
+                applied = self._apply_generation(requested)
+                if applied != requested:
+                    raise ActuatorError("world apply count or contents mismatch")
+                for item in applied:
+                    key = (item["source"], item["destination"], item["frequency_mhz"])
+                    _, value, overridden = self._client.get_frequency_link(*key)
+                    if (value, overridden) != (item["value"], item["override"]):
+                        raise ActuatorError("world RF readback mismatch")
+                    self._applied_values[key] = (value, overridden)
+                if self.reconnect_client is not None:
+                    for role in self._allowed_roles:
+                        if roles[role]["present"]:
+                            self.reconnect_client(role)
+            except Exception as error:
+                (self.world, self.layout, self._roles, self._nodes,
+                 self._selected_roles, self._selected_world, self._initial_roles) = previous
+                if attempted and not self._faulted:
+                    try:
+                        rollback = [{"source": key[0], "destination": key[1],
+                                     "frequency_mhz": key[2], "value": value,
+                                     "override": overridden}
+                                    for key, (value, overridden) in prior_values.items()]
+                        self._apply_generation(rollback)
+                        for key, expected in prior_values.items():
+                            _, value, overridden = self._client.get_frequency_link(*key)
+                            if (value, overridden) != expected:
+                                raise ActuatorError("world rollback readback mismatch")
+                        self._applied_values = prior_values
+                        self._mark_rf_committed()
+                        for role in self._allowed_roles:
+                            if self._roles[role]["present"] and self.reconnect_client is not None:
+                                self.reconnect_client(role)
+                            elif not self._roles[role]["present"] and self.disconnect_client is not None:
+                                with self.disconnect_client(role):
+                                    isolated, _ = self._station_links(role)
+                                    self._write_verified(isolated)
+                    except Exception as rollback_error:
+                        self._faulted = self._faulted or str(rollback_error)
+                        raise ActuatorError(f"world switch failed: {error}; rollback failed: {rollback_error}") from error
+                raise
+            self._selected_roles = set(world["roles"])
+            self._selected_world = world["name"]
+            self._initial_roles = copy.deepcopy(roles)
+            self._playback_world = copy.deepcopy(world)
+            self._playback_status = "paused"
+            self._playback_time_ms = 0
+            self._playback_rewind = False
+            self._playback_overrides.clear()
+            self._revision += 1
+            self._mark_rf_committed()
+            runtime = self.runtime_world(world, layout)
+            runtime["generations"] = [copy.deepcopy(first)]
+            runtime["interaction"]["initial_frame_only"] = True
+            runtime["interaction"]["backhaul_policy"] = self.backhaul_policy()
+            payload = {"revision": self._revision, "world": runtime,
+                       "roles": copy.deepcopy(roles), "environment_epoch": self._environment_epoch,
+                       "pool_clients": len(self._allowed_roles),
+                       "expected_online_clients": sum(roles[role]["present"] for role in self._allowed_roles),
+                       "daemon_instance_id": self._instance_id,
+                       "daemon_generation": self._generation, "changed_link_count": len(changed)}
+            self.store.emit("room.world.committed", self._world_time(), payload, producer="interaction")
+            self._emit_playback("loaded")
+            self.store.emit("rf.generation.applied", self._world_time(), {
+                key: payload[key] for key in ("revision", "environment_epoch", "daemon_instance_id",
+                                             "daemon_generation", "changed_link_count")
+            }, producer="interaction")
+            return {key: value for key, value in payload.items() if key not in {"world", "roles"}}
+
+    def _write_verified(self, updates: list[dict[str, Any]]) -> None:
+        applied = self._apply_generation(updates)
+        if applied != updates:
+            raise ActuatorError("RF update count or contents mismatch")
+        for item in applied:
+            key = (item["source"], item["destination"], item["frequency_mhz"])
+            _, value, overridden = self._client.get_frequency_link(*key)
+            if (value, overridden) != (item["value"], item["override"]):
+                raise ActuatorError("RF update readback mismatch")
+            self._applied_values[key] = (value, overridden)
+
+    def _public_playback(self) -> dict[str, Any]:
+        return {"enabled": True, "status": self._playback_status,
+                "time_ms": self._playback_time_ms,
+                "duration_ms": self._playback_world["duration_ms"],
+                "manual_roles": sorted(self._playback_overrides), "interval_ms": 1000}
+
+    def _emit_playback(self, action: str, reason: str | None = None) -> dict[str, Any]:
+        payload = {"revision": self._revision, "playback": self._public_playback()}
+        if reason is not None:
+            payload["reason"] = reason
+        self.store.emit(f"interaction.playback.{action}", self._world_time(), payload,
+                        producer="interaction")
+        return payload
+
+    def _pause_playback(self, reason: str) -> None:
+        if self._playback_status == "playing":
+            self._playback_status = "paused"
+            self._revision += 1
+            self._emit_playback("paused", reason)
+        self._playback_wake.set()
+
+    def _validate_playback(self) -> None:
+        previous_time = -1
+        roles = set(self._playback_world["roles"])
+        if not self._playback_world["generations"] or self._playback_world["generations"][0].get("time_ms") != 0:
+            raise InteractionError(422, "invalid_playback", "playback must start at time zero")
+        for frame in self._playback_world["generations"]:
+            frame_time = frame.get("time_ms")
+            if (not isinstance(frame_time, int) or isinstance(frame_time, bool)
+                    or not previous_time < frame_time <= self._playback_world["duration_ms"]
+                    or set(frame.get("positions", {})) != roles
+                    or set(frame.get("present", {})) != roles):
+                raise InteractionError(422, "invalid_playback", "playback requires ordered, complete room frames")
+            for role in roles:
+                self._clamp_position(frame["positions"][role])
+                if not isinstance(frame["present"][role], bool):
+                    raise InteractionError(422, "invalid_playback", "playback presence must be boolean")
+            if not frame["present"].get("gateway"):
+                raise InteractionError(422, "invalid_playback", "playback cannot disable the gateway")
+            previous_time = frame_time
+
+    def playback_control(self, action: str, *, token: str, expected_revision: Any) -> dict[str, Any]:
+        with self._lock:
+            self._validate_mutation("gateway", token, expected_revision, allowed_roles=self._movable_roles)
+            if action not in {"play", "pause"}:
+                raise InteractionError(400, "invalid_playback_action", "use play or pause")
+            if action == "play":
+                self._validate_playback()
+                if self._playback_status == "completed":
+                    self._playback_time_ms = 0
+                    self._playback_rewind = True
+                self._playback_status = "playing"
+            else:
+                self._playback_status = "paused"
+            self._revision += 1
+            result = self._emit_playback("started" if action == "play" else "paused")
+            if action == "play" and self._playback_thread is None:
+                self._playback_thread = threading.Thread(target=self._playback_worker,
+                                                        name="room-demo-playback", daemon=True)
+                self._playback_thread.start()
+            self._playback_wake.set()
+            return result
+
+    def _playback_tick(self) -> None:
+        with self._lock:
+            self._expire_lease()
+            if self._closing or self._playback_status != "playing" or self._lease is None:
+                return
+            frames = self._playback_world["generations"]
+            target_time = min(self._playback_world["duration_ms"], self._playback_time_ms + 1000)
+            if self._playback_rewind:
+                target_time = 0
+            else:
+                for previous, upcoming in zip(frames, frames[1:]):
+                    if (self._playback_time_ms < upcoming["time_ms"] <= target_time
+                            and previous["present"] != upcoming["present"]):
+                        target_time = upcoming["time_ms"]
+                        break
+            current = next(frame for frame in reversed(frames) if frame["time_ms"] <= target_time)
+            following = next((frame for frame in frames if frame["time_ms"] > target_time), None)
+            try:
+                for role in sorted(self._selected_roles - self._playback_overrides):
+                    point = current["positions"][role]
+                    if following and current["present"][role] and following["present"][role]:
+                        fraction = (target_time - current["time_ms"]) / (following["time_ms"] - current["time_ms"])
+                        point = [point[axis] + fraction * (following["positions"][role][axis] - point[axis])
+                                 for axis in (0, 1)]
+                    desired = {"position": self._clamp_position(point), "present": current["present"][role]}
+                    changes = ["position", "presence"] if desired["present"] else ["presence", "position"]
+                    for change in changes:
+                        field = "present" if change == "presence" else "position"
+                        if desired[field] == self._roles[role][field]:
+                            continue
+                        previous = copy.deepcopy(self._roles[role])
+                        self._roles[role][field] = desired[field]
+                        try:
+                            self._apply_role(role, change, client_sequence=None)
+                        except Exception:
+                            if not self._faulted or self._faulted.startswith("unexpected external medium change:"):
+                                self._roles[role] = previous
+                            raise
+            except Exception as error:
+                self._pause_playback(str(error))
+                return
+            self._playback_time_ms = target_time
+            self._playback_rewind = False
+            if target_time >= self._playback_world["duration_ms"]:
+                self._playback_status = "completed"
+            self._emit_playback("progress" if self._playback_status == "playing" else "completed")
+
+    def _playback_worker(self) -> None:
+        while not self._closing:
+            if self._playback_wake.wait(1.0):
+                self._playback_wake.clear()
+                continue
+            if self._closing:
+                return
+            try:
+                if self._command_executor is None:
+                    self._playback_tick()
+                else:
+                    self._command_executor(self._playback_tick)
+            except RuntimeError as error:
+                if "room engine is closing" in str(error):
+                    return
+                raise
 
     def _clamp_position(self, value: Any) -> list[float]:
         if not isinstance(value, list) or len(value) != 2:
@@ -456,6 +790,7 @@ class InteractiveMediumSession:
                     self._roles[role] = previous
                 raise
             self._last_update_at = now
+            self._playback_overrides.add(role)
             return result
 
     def presence(
@@ -478,7 +813,9 @@ class InteractiveMediumSession:
             previous = copy.deepcopy(self._roles[role])
             self._roles[role]["present"] = present
             try:
-                return self._apply_role(role, "presence", client_sequence=client_sequence)
+                result = self._apply_role(role, "presence", client_sequence=client_sequence)
+                self._playback_overrides.add(role)
+                return result
             except Exception:
                 if self._faulted is None or self._faulted.startswith(
                     "unexpected external medium change:"
@@ -592,7 +929,7 @@ class InteractiveMediumSession:
                         "position": list(self._roles[role]["position"]),
                         "present": bool(self._roles[role]["present"]),
                     }]
-                    for role in self._movable_roles
+                    for role in self._movable_roles if role in self._selected_roles
                 },
             }
             self._recorded_mobility = None
@@ -644,7 +981,7 @@ class InteractiveMediumSession:
         tick_ms = 200
         duration_ms = max(tick_ms, math.ceil((elapsed + 1) / tick_ms) * tick_ms)
         nodes = []
-        for role in self._movable_roles:
+        for role in sorted(self._recording["frames"]):
             frames = copy.deepcopy(self._recording["frames"][role])
             positions = [frames[0]]
             for frame in frames[1:]:
@@ -666,13 +1003,16 @@ class InteractiveMediumSession:
         mobility = {
             "schema": "wmdcfg.mobility.v1",
             "name": self._recording["name"],
-            "tags": ["interactive-recording", f"clients-{len(self._allowed_roles)}"],
+            "tags": ["interactive-recording", f"clients-{len(set(self._allowed_roles) & self._selected_roles)}"],
             "duration_ms": duration_ms,
             "tick_ms": tick_ms,
             "seed": 0,
             "nodes": nodes,
         }
-        world = compile_world(self.layout, mobility)
+        recording_layout = copy.deepcopy(self.layout)
+        recording_layout["nodes"] = [node for node in recording_layout["nodes"] if node["role"] in self._selected_roles]
+        mobility["nodes"] = [node for node in mobility["nodes"] if node["role"] in self._selected_roles]
+        world = compile_world(recording_layout, mobility)
         self._recorded_mobility = mobility
         self._recorded_world = world
         name = self._recording["name"]
@@ -771,6 +1111,7 @@ class InteractiveMediumSession:
                 "wake": threading.Event(),
             }
             self._movements[movement_id] = movement
+            self._playback_overrides.add(role)
             self._revision += 1
             payload = {
                 "revision": self._revision,
@@ -1025,9 +1366,8 @@ class InteractiveMediumSession:
 
         Presence changes leave mesh backhaul/control connectivity intact and
         model only loss/restoration of client-serving RF. Position changes
-        additionally update every directed mesh-peer link so a physical move
-        can affect both fronthaul selection and backhaul topology without
-        rebuilding inventory or changing the extender identity.
+        also model mesh-peer links unless the fixed-pool world selector protects
+        the startup mesh. Container identities and inventory remain unchanged.
         """
         positions = {
             name: tuple(value["position"]) for name, value in self._roles.items()
@@ -1168,6 +1508,10 @@ class InteractiveMediumSession:
                 f"role {role!r} resolved {len(updates)} RF keys; "
                 f"extender movement limit is {expected_maximum}",
             )
+        for item in updates:
+            protected = self._protected_backhaul.get((item["source"], item["destination"], item["frequency_mhz"]))
+            if protected is not None:
+                item["value"], item["override"] = protected
         return updates, summary
 
     def _links_for_role(
@@ -1235,6 +1579,52 @@ class InteractiveMediumSession:
             self.recovery.committed(generation)
         return applied
 
+    def backhaul_policy(self) -> str:
+        return "adaptive-rdk" if self.adaptive_backhaul else (
+            "fixed-startup-mesh" if self.worlds is not None else "modeled")
+
+    def backhaul_links(self) -> list[dict[str, Any]]:
+        """Expose verified applied RF, not a fresh controller SNR measurement."""
+        links = []
+        bindings = {role: binding for role, binding in self.plan["bindings"].items()
+                    if binding["role_type"] == "fronthaul_ap"}
+        if self._client is None or self._faulted or self._restored:
+            return links
+        for source_role, source in bindings.items():
+            for destination_role, destination in bindings.items():
+                if source_role == destination_role:
+                    continue
+                for band, radio in source.get("band_radios", {}).items():
+                    peer = destination.get("band_radios", {}).get(band)
+                    frequency = source.get("fronthaul_frequencies_mhz", {}).get(band)
+                    if peer is None or frequency is None:
+                        continue
+                    value = self._applied_values.get((radio["tx_mac"], peer["tx_mac"], int(frequency)))
+                    if value is not None and value[1]:
+                        links.append({"source_role": source_role, "destination_role": destination_role,
+                                      "band": band, "frequency_mhz": int(frequency), "snr_db": value[0],
+                                      "source": "wmediumd_verified_applied_rf"})
+        return links
+
+    def backhaul_action(self, action: Callable[[], Any], *, expected_epoch: int) -> Any:
+        """Serialize native parent selection with RF edits and client BTM."""
+        with self._lock:
+            if not self.adaptive_backhaul or self._client is None or self._faulted or self._closing:
+                raise InteractionError(409, "backhaul_unavailable", "adaptive backhaul is unavailable")
+            if expected_epoch != self._environment_epoch or self.snapshot()["movement_active"]:
+                raise InteractionError(409, "environment_changed", "room changed before backhaul selection")
+            started = time.monotonic()
+            try:
+                return action()
+            finally:
+                if self._lease is not None:
+                    elapsed = time.monotonic() - started
+                    self._lease["expires_monotonic"] += elapsed
+                    self._lease["expires_at"] = (
+                        dt.datetime.fromisoformat(self._lease["expires_at"]) + dt.timedelta(seconds=elapsed)
+                    ).isoformat()
+                self._mark_rf_committed()
+
     def steering_action(
         self,
         station_role: str,
@@ -1242,6 +1632,8 @@ class InteractiveMediumSession:
         target_ap_role: str,
         band: str,
         action: Callable[[], Any],
+        *,
+        expected_epoch: int | None = None,
     ) -> Any:
         """Run one BTM action under a temporary, exactly-restored RF assist.
 
@@ -1257,6 +1649,8 @@ class InteractiveMediumSession:
                 raise InteractionError(
                     503, "not_started", "interactive medium is unavailable"
                 )
+            if expected_epoch is not None and expected_epoch != self._environment_epoch:
+                raise InteractionError(409, "environment_changed", "world changed after the steering observation")
             if self._faulted is not None:
                 raise InteractionError(
                     503, "session_faulted", self._faulted
@@ -1266,6 +1660,8 @@ class InteractiveMediumSession:
                     400, "role_not_interactive",
                     f"role {station_role!r} is not an interactive station",
                 )
+            if not self._roles[station_role]["present"] or not self._roles.get(target_ap_role, {}).get("present"):
+                raise InteractionError(409, "role_offline", "cannot steer an offline client or to disabled fronthaul")
             if source_ap_role == target_ap_role:
                 raise InteractionError(
                     409, "same_steering_ap", "source and target AP are identical"
@@ -1447,8 +1843,13 @@ class InteractiveMediumSession:
         try:
             self._capture_baseline(updates)
             if changed:
-                applied = self._apply_generation(changed)
-                applied_started = True
+                disconnect = nullcontext()
+                if (self.disconnect_client is not None and change == "presence"
+                        and role in self._allowed_roles and not self._roles[role]["present"]):
+                    disconnect = self.disconnect_client(role)
+                with disconnect:
+                    applied = self._apply_generation(changed)
+                    applied_started = True
                 readback = []
                 for item in applied:
                     _, value, overridden = self._client.get_frequency_link(
@@ -1460,6 +1861,9 @@ class InteractiveMediumSession:
                 for item in applied:
                     key = (item["source"], item["destination"], item["frequency_mhz"])
                     self._applied_values[key] = (item["value"], item["override"])
+                if (self.reconnect_client is not None and change == "presence"
+                        and role in self._allowed_roles and self._roles[role]["present"]):
+                    self.reconnect_client(role)
                 self._mark_rf_committed(role)
             else:
                 applied = []
@@ -1554,6 +1958,8 @@ class InteractiveMediumSession:
             self._restored = restored
             if self.recovery is not None:
                 self.recovery.completed(self._generation, restored)
+                if restored:
+                    self.recovery.resume_clients()
             self.store.emit(
                 "rf.restore.completed", self._world_time(),
                 {
@@ -1568,11 +1974,14 @@ class InteractiveMediumSession:
     def close(self) -> bool:
         with self._lock:
             self._closing = True
+            self._pause_playback("session_stopped")
             for movement in self._movements.values():
                 self._cancel_movement(movement, "session_stopped")
             if self._recording is not None:
                 self._finish_recording("session_stopped")
             threads = list(self._movement_threads.values())
+            if self._playback_thread is not None:
+                threads.append(self._playback_thread)
         for thread in threads:
             thread.join(timeout=2)
         with self._lock:

@@ -1,0 +1,95 @@
+Subject: [PATCH] agent: preserve association ownership and clock on metrics updates
+
+Periodic link-metrics snapshots have no authoritative association clock.
+Copying them over the live station reset association age to zero, making the
+controller reject valid positive-age samples as belonging to a previous
+association. Preserve the established association state, elapsed age and
+monotonic start while updating metrics. Do not relax exact-owner or
+pre-association sample checks, and do not infer ownership from telemetry.
+
+Upstream-Status: Pending
+
+--- a/inc/em_orch_agent.h
++++ b/inc/em_orch_agent.h
+@@ -43,6 +43,8 @@
+ 	 * operation, not a radio, and therefore must not be used for this lookup.
+ 	 */
+ 	static em_interface_t *resolve_sta_snapshot_interface(em_cmd_t *cmd);
++	static void update_sta_link_metrics(em_sta_info_t &current,
++	                                   const em_sta_info_t &sample);
+     
+ 	/**!
+ 	 * @brief Builds candidate elements based on the provided command.
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -70,6 +70,18 @@
+     return radio == NULL ? NULL : radio->get_radio_interface();
+ }
+ 
++void em_orch_agent_t::update_sta_link_metrics(em_sta_info_t &current,
++                                             const em_sta_info_t &sample)
++{
++    const bool associated = current.associated;
++    const unsigned int association_age = current.last_conn_time;
++    const uint64_t association_start = current.assoc_start_boottime_sec;
++    current = sample;
++    current.associated = associated;
++    current.last_conn_time = association_age;
++    current.assoc_start_boottime_sec = association_start;
++}
++
+ unsigned int em_orch_agent_t::retain_full_sta_snapshot_deltas(
+     dm_easy_mesh_t *current, dm_easy_mesh_t *snapshot,
+     const mac_address_t reporting_radio)
+@@ -590,7 +602,7 @@
+             while(sta != NULL) {
+                 em_sta_info_t *em_sta = dm->get_sta_info(sta->get_sta_info()->id, sta->get_sta_info()->bssid, sta->get_sta_info()->radiomac, em_target_sta_map_consolidated);
+                 if (em_sta != NULL) {
+-                    memcpy(em_sta, &sta->m_sta_info, sizeof(em_sta_info_t));
++                    update_sta_link_metrics(*em_sta, sta->m_sta_info);
+                 } else {
+                     dm_bss_t *metrics_bss = dm->get_bss(
+                         sta->m_sta_info.radiomac, sta->m_sta_info.bssid);
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -81,6 +81,40 @@
+     dm.deinit();
+ }
+ 
++TEST(em_orch_agent_snapshot_delta_TEST, MetricsRetainAuthoritativeAssociationClock)
++{
++    em_sta_info_t current = make_associated_sta("02:00:00:00:0a:00",
++        "02:00:00:ff:40:84", "02:00:00:00:08:00");
++    current.last_conn_time = 42;
++    current.assoc_start_boottime_sec = 1000;
++    em_sta_info_t sample = current;
++    sample.last_conn_time = 0;
++    sample.assoc_start_boottime_sec = 0;
++    sample.associated = false;
++    sample.rcpi = 132;
++    sample.est_dl_rate = 7200;
++
++    for (unsigned int repeat = 0; repeat < 3; repeat++) {
++        em_orch_agent_t::update_sta_link_metrics(current, sample);
++        EXPECT_TRUE(current.associated);
++        EXPECT_EQ(current.last_conn_time, 42u);
++        EXPECT_EQ(current.assoc_start_boottime_sec, 1000u);
++        EXPECT_EQ(current.rcpi, 132);
++        EXPECT_EQ(current.est_dl_rate, 7200u);
++    }
++
++    current.associated = false;
++    current.last_conn_time = 0;
++    current.assoc_start_boottime_sec = 0;
++    sample.associated = true;
++    sample.last_conn_time = 42;
++    sample.assoc_start_boottime_sec = 1000;
++    em_orch_agent_t::update_sta_link_metrics(current, sample);
++    EXPECT_FALSE(current.associated);
++    EXPECT_EQ(current.last_conn_time, 0u);
++    EXPECT_EQ(current.assoc_start_boottime_sec, 0u);
++}
++
+ TEST(em_orch_agent_snapshot_delta_TEST, IdenticalFullSnapshotsEmitNoNotifications)
+ {
+     const char *sta = "02:00:00:00:01:00";

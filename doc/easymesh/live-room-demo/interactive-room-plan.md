@@ -621,8 +621,9 @@ The first Phase 0 foundation is now implemented:
 - all successful writes are idempotent by `command_id` and a repeated ID with
   different content is rejected;
 - HTTP world mutations require an `ETag`/`If-Match` revision contract;
-- same-origin checks and a random, run-scoped operator capability protect the
-  mutation API independently of the movement lease;
+- same-origin checks protect the mutation API; the later rev140 room overlay
+  removes the original run-scoped operator capability and relies on trusted
+  network/gateway access, retaining the movement lease and revision checks;
 - state schema v2 separates run/scenario clocks and reduces all role,
   movement, lease, medium, optimizer, network and health state;
 - events are hash chained and the reduced state has its own digest;

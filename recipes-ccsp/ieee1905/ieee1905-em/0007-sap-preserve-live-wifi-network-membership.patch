@@ -1,0 +1,243 @@
+Subject: [PATCH] AL-SAP: retain live Wi-Fi membership in topology responses
+
+The AL-SAP proxy replaced the HLE's Device Information with a kernel-derived
+inventory that has empty media-specific data. This erased the live backhaul
+BSSID after reparenting. Periodic topology and capability reports then exposed
+different parents although the radio stayed associated to the new AP.
+
+Keep the AL database's identity and interface roster, merging only complete
+Wi-Fi media data from a uniquely matching local HLE interface and AL MAC.
+Preserve supplied opaque Wi-Fi 6/7 media bytes when serializing instead of
+silently dropping them. Empty media information remains empty. No EasyMesh
+agent/controller code or topology-selection policy changes are required.
+
+Upstream-Status: Pending
+
+--- a/ieee1905-core/src/cmdu_proxy.rs
++++ b/ieee1905-core/src/cmdu_proxy.rs
+@@ -318,6 +318,8 @@
+         anyhow::bail!("TLV list doesn't end with EndOfMessage");
+     }
+ 
++    let reported_device =
++        DeviceInformation::find(vec).filter(|device| device.al_mac_address == db.al_mac_address);
+     let filtered_types = [
+         DeviceInformation::TYPE.to_u8(),
+         DeviceBridgingCapability::TYPE.to_u8(),
+@@ -330,10 +332,26 @@
+     // injecting DeviceInformation
+     vec.push({
+         let local_interfaces = db.local_interface_list.read().await;
+-        let local_interfaces = local_interfaces.iter().flatten().map(|e| LocalInterface {
+-            mac_address: e.mac,
+-            media_type: e.media_type,
+-            special_info: e.media_type_extra.clone(),
++        let local_interfaces = local_interfaces.iter().flatten().map(|interface| {
++            let mut local = LocalInterface {
++                mac_address: interface.mac,
++                media_type: interface.media_type,
++                special_info: interface.media_type_extra.clone(),
++            };
++            if local.media_type.0 & 0xff00 == 0x0100 {
++                let mut matches = reported_device
++                    .iter()
++                    .flat_map(|device| &device.local_interface_list)
++                    .filter(|reported| reported.mac_address == local.mac_address);
++                if let (Some(reported), None) = (matches.next(), matches.next()) {
++                    if reported.media_type.0 & 0xff00 == 0x0100
++                        && reported.special_info.serialize(reported.media_type).len() == 10
++                    {
++                        local.special_info = reported.special_info.clone();
++                    }
++                }
++            }
++            local
+         });
+ 
+         TLV::from(DeviceInformation::new(
+@@ -1078,6 +1096,143 @@
+     use crate::topology_manager::{Ieee1905DeviceData, Ieee1905LocalInterface};
+ 
+     #[tokio::test]
++    async fn topology_response_preserves_live_hle_wifi_membership() {
++        let local_al = MacAddr::new(2, 0, 0, 0, 9, 0x20);
++        let station_mac = MacAddr::new(2, 0, 0, 0x0a, 0x91, 0x73);
++        let mut interface = Ieee1905LocalInterface::default();
++        interface.data.mac = station_mac;
++        interface.data.media_type = MediaType::WIRELESS_802_11be;
++        let db = TopologyDatabase::new(local_al, "membership-test".to_string());
++        *db.local_interface_list.write().await = Some(vec![interface]);
++
++        for parent in [
++            MacAddr::new(2, 0, 0, 0xc8, 0x2c, 0x87),
++            MacAddr::new(2, 0, 0, 3, 0xae, 0x99),
++        ] {
++            let mut membership = parent.octets().to_vec();
++            membership.extend([0x40, 3, 0, 0]);
++            let reported = LocalInterface::new(
++                station_mac,
++                MediaType::WIRELESS_802_11ax,
++                MediaTypeSpecialInfo::Other(membership.clone()),
++            );
++            let mut payload = vec![
++                TLV::from(DeviceInformation::new(local_al, vec![reported])),
++                TLV::from(EndOfMessage),
++            ];
++            inject_topology_response_tlvs(&mut payload, &db)
++                .await
++                .unwrap();
++            let actual = DeviceInformation::find(&payload).unwrap();
++            assert_eq!(actual.al_mac_address, local_al);
++            assert_eq!(actual.local_interface_count, 1);
++            assert_eq!(actual.local_interface_list[0].mac_address, station_mac);
++            assert_eq!(
++                actual.local_interface_list[0].media_type,
++                MediaType::WIRELESS_802_11be
++            );
++            assert_eq!(
++                actual.local_interface_list[0]
++                    .special_info
++                    .serialize(MediaType::WIRELESS_802_11be),
++                membership
++            );
++            assert_eq!(
++                payload
++                    .iter()
++                    .filter(|tlv| tlv.tlv_type == DeviceInformation::TYPE.to_u8())
++                    .count(),
++                1
++            );
++            assert_eq!(payload.last().unwrap().tlv_type, EndOfMessage::TYPE.to_u8());
++        }
++        assert!(
++            db.local_interface_list.read().await.as_ref().unwrap()[0]
++                .media_type_extra
++                .serialize(MediaType::WIRELESS_802_11be)
++                .is_empty()
++        );
++    }
++
++    #[tokio::test]
++    async fn topology_response_rejects_unbound_or_incomplete_membership() {
++        let local_al = MacAddr::new(2, 0, 0, 0, 9, 0x20);
++        let local_mac = MacAddr::new(2, 0, 0, 0x0a, 0x91, 0x73);
++        for (reported_al, reported_mac, media, data, duplicate) in [
++            (
++                MacAddr::zero(),
++                local_mac,
++                MediaType::WIRELESS_802_11ax,
++                vec![0; 10],
++                false,
++            ),
++            (
++                local_al,
++                MacAddr::broadcast(),
++                MediaType::WIRELESS_802_11ax,
++                vec![0; 10],
++                false,
++            ),
++            (
++                local_al,
++                local_mac,
++                MediaType::ETHERNET_802_3u,
++                vec![0; 10],
++                false,
++            ),
++            (
++                local_al,
++                local_mac,
++                MediaType::WIRELESS_802_11ax,
++                vec![0; 9],
++                false,
++            ),
++            (
++                local_al,
++                local_mac,
++                MediaType::WIRELESS_802_11ax,
++                vec![],
++                false,
++            ),
++            (
++                local_al,
++                local_mac,
++                MediaType::WIRELESS_802_11ax,
++                vec![0; 10],
++                true,
++            ),
++        ] {
++            let mut interface = Ieee1905LocalInterface::default();
++            interface.data.mac = local_mac;
++            interface.data.media_type = MediaType::WIRELESS_802_11be;
++            let db = TopologyDatabase::new(local_al, "membership-validation".to_string());
++            *db.local_interface_list.write().await = Some(vec![interface]);
++            let reported = LocalInterface::new(reported_mac, media, MediaTypeSpecialInfo::Other(data));
++            let reports = if duplicate {
++                vec![reported.clone(), reported]
++            } else {
++                vec![reported]
++            };
++            let mut payload = vec![
++                TLV::from(DeviceInformation::new(reported_al, reports)),
++                TLV::from(EndOfMessage),
++            ];
++            inject_topology_response_tlvs(&mut payload, &db)
++                .await
++                .unwrap();
++            let actual = DeviceInformation::find(&payload).unwrap();
++            assert_eq!(actual.local_interface_count, 1);
++            assert_eq!(actual.local_interface_list[0].mac_address, local_mac);
++            assert!(
++                actual.local_interface_list[0]
++                    .special_info
++                    .serialize(MediaType::WIRELESS_802_11be)
++                    .is_empty()
++            );
++        }
++    }
++
++    #[tokio::test]
+     async fn test_inject_topology_response_tlvs_failure() {
+         let db = TopologyDatabase::new(MacAddr::broadcast(), "if_name".to_string());
+         let response = inject_topology_response_tlvs(&mut Vec::new(), &db).await;
+--- a/ieee1905-core/src/cmdu_codec.rs
++++ b/ieee1905-core/src/cmdu_codec.rs
+@@ -1872,11 +1872,7 @@
+         Ok((&[], Self::Other(input.to_vec())))
+     }
+ 
+-    pub fn serialize(&self, media_type: MediaType) -> Vec<u8> {
+-        if (0x0108..0x01ff).contains(&media_type.0) {
+-            // Wifi6 and Wifi7 don't have extras
+-            return Default::default();
+-        }
++    pub fn serialize(&self, _media_type: MediaType) -> Vec<u8> {
+         match self {
+             MediaTypeSpecialInfo::Wifi(e) => e.serialize(),
+             MediaTypeSpecialInfo::Other(e) => e.clone(),
+@@ -4148,6 +4144,26 @@
+     }
+ 
+     #[test]
++    fn modern_wifi_membership_round_trip_preserves_supplied_bytes() {
++        for media in [MediaType::WIRELESS_802_11ax, MediaType::WIRELESS_802_11be] {
++            for details in [vec![], vec![2, 0, 0, 3, 0xae, 0x99, 0x40, 3, 0, 0]] {
++                let interface = LocalInterface::new(
++                    MacAddr::new(2, 0, 0, 0x0a, 0x91, 0x73),
++                    media,
++                    MediaTypeSpecialInfo::Other(details.clone()),
++                );
++                let encoded = interface.serialize();
++                assert_eq!(encoded[8] as usize, details.len());
++                assert_eq!(&encoded[9..], details.as_slice());
++                let (remaining, decoded) = LocalInterface::parse(&encoded).unwrap();
++                assert!(remaining.is_empty());
++                assert_eq!(decoded, interface);
++                assert_eq!(decoded.serialize(), encoded);
++            }
++        }
++    }
++
++    #[test]
+     fn test_multi_ap_profile_serialization() {
+         assert_eq!(MultiApProfile::Profile1.to_u8(), 0x01);
+         assert_eq!(MultiApProfile::Profile2.to_u8(), 0x02);

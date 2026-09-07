@@ -353,7 +353,7 @@ build_vm() {
     appliance_ipv4=$(select_guest_ipv4)
     lxc config device override "$name" eth0 network="$network" \
         ipv4.address="$appliance_ipv4"
-    lxc config set "$name" boot.autostart true
+    lxc config set "$name" boot.autostart false
     add_proxy easymesh-webui "$webui_address" "$webui_port" 8888 "$appliance_ipv4"
     add_proxy wmediumd-console "$console_address" "$console_port" 8890 "$appliance_ipv4"
     add_proxy room-demo-viewer "$room_address" "$room_port" 8891 "$appliance_ipv4"
@@ -468,6 +468,7 @@ export_vm() {
     require_command jq
     install -d "$export_dir"
     check_vm
+    run_root test ! -d /opt/easymesh-observability || { echo 'Remove monitoring credentials/data before exporting; see observability/README.md' >&2; exit 1; }
     actual_cpus=$(lxc config get "$name" limits.cpu)
     actual_memory=$(lxc config get "$name" limits.memory)
     actual_disk=$(lxc config device get "$name" root size)
@@ -500,6 +501,7 @@ export_vm() {
     # remains firmware-neutral until import.sh selects the target-LXD key.
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" \
@@ -542,6 +544,7 @@ EOF
         sha256sum "$(basename "$output")" import.sh install-host.sh \
             package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
+        find observability -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS
     )
     ls -lh "$bundle"/*
 }
@@ -554,6 +557,7 @@ export_thin_vm() {
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
     check_vm
+    run_root test ! -d /opt/easymesh-observability || { echo 'Remove monitoring credentials/data before exporting; see observability/README.md' >&2; exit 1; }
     # One universal backup must have enough sparse logical capacity for the
     # stress roster.  Profile selection changes CPU, RAM and the active radio
     # pool at import; the common disk stays at the accepted maximum and only
@@ -639,6 +643,7 @@ export_thin_vm() {
     printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" "$root/gen/vm/lxd/README.md" \
@@ -679,6 +684,7 @@ EOF
         sha256sum "$(basename "$output")" import.sh install-host.sh \
             package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
+        find observability -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS
     )
     ls -lh "$bundle"/*
 }
