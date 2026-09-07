@@ -13,6 +13,7 @@ SRC_URI += "file://0003-topology-forward-local-change-to-al-sap.patch"
 SRC_URI += "file://0004-topology-age-only-on-received-evidence.patch"
 SRC_URI += "file://0005-topology-publish-neighbor-added-events.patch"
 SRC_URI += "file://0006-topology-forward-changed-responses-to-al-sap.patch"
+SRC_URI += "file://0007-sap-preserve-live-wifi-network-membership.patch"
 
 # ieee1905_em_ctrl.service must wait for the interface it actually uses, not the
 # nominal WAN. In the LXD/hwsim controller syscfg reports wan_physical_ifname=erouter0,

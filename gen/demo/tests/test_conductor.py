@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 import unittest
 from pathlib import Path
 import sys
@@ -17,6 +18,7 @@ from room_demo.conductor import (
     LiveConductor,
     _deferred_state,
     _fleet_status,
+    _client_optimizer_status,
     _interrupted_measurement_state,
     _ranked_action_batch,
     _simulated_bss_channels,
@@ -26,6 +28,73 @@ from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def test_network_updates_continue_during_optimizer_measurement(self):
+        conductor, store = self._conductor()
+        conductor._candidate_active.set()
+        conductor._controller_lock.acquire()
+        observer = Mock(last_raw={"topology": {"nodes": []}})
+        with patch("room_demo.conductor.ControllerObserver", return_value=observer), \
+             patch.object(conductor, "_wait_for_run", return_value=True), \
+             patch.object(conductor, "_active", return_value=True), \
+             patch.object(conductor, "_sleep", return_value=True), \
+             patch.object(conductor, "_network_payload", return_value={"clients": []}):
+            try:
+                conductor._network_worker()
+            finally:
+                conductor._controller_lock.release()
+        observer.observe.assert_called_once()
+        self.assertIn("network.snapshot", store.current()["latest"])
+
+    def test_kernel_link_fallback_is_cached_and_invalidated_by_rf_epoch(self):
+        conductor, _store = self._conductor()
+        client = Mock(sta_mac=conductor.hero_mac, connected_bssid="02:00:00:00:04:01", band="5")
+        room = {"roles": {"sta_mobile_01": {"present": True}}, "environment_epoch": 1, "measurement_epoch": 1}
+        with patch("room_demo.conductor.read_client_link", return_value=None) as read_link:
+            self.assertIs(conductor._client_link_fallback(client, room), client)
+            conductor._client_link_fallback(client, room)
+            read_link.assert_called_once()
+            room["environment_epoch"] = 2
+            conductor._client_link_fallback(client, room)
+            self.assertEqual(read_link.call_count, 2)
+            room["roles"]["sta_mobile_01"]["present"] = False
+            conductor._client_link_fallback(client, room)
+            self.assertEqual(read_link.call_count, 2)
+
+    def test_traffic_probe_switches_container_without_changing_optimizer_hero(self):
+        conductor, store = self._conductor()
+        conductor.manifest["traffic"]["interval_seconds"] = 2
+        room = {"traffic_probe": {"role": "sta_static_01", "selection": 1},
+                "roles": {"sta_static_01": {"present": True}}}
+        conductor.room_state = lambda: room
+        with patch.object(conductor, "_wait_for_run", return_value=True), \
+             patch.object(conductor, "_active", return_value=True), \
+             patch.object(conductor, "_sleep", return_value=True), \
+             patch.object(conductor, "_ping", return_value={"success": True, "rtt_ms": 1}) as ping:
+            conductor._traffic_worker()
+            ping.assert_called_once_with("wlan-client")
+            self.assertEqual(store.current()["latest"]["traffic.sample"]["payload"]["traffic_probe"]["role"], "sta_static_01")
+            self.assertEqual(conductor.hero_container, "wlan-client-007")
+            room["roles"]["sta_static_01"]["present"] = False
+            ping.reset_mock()
+            conductor._traffic_worker()
+            ping.assert_not_called()
+            self.assertEqual(store.current()["latest"]["traffic.sample"]["payload"]["status"], "offline")
+
+    def test_inflight_ping_is_not_relabelled_after_probe_selection_changes(self):
+        conductor, store = self._conductor()
+        conductor.manifest["traffic"]["interval_seconds"] = 2
+        room = {"traffic_probe": {"role": "sta_mobile_01", "selection": 0}}
+        conductor.room_state = lambda: room
+        def switched(_container):
+            room["traffic_probe"] = {"role": "sta_static_01", "selection": 1}
+            return {"success": True}
+        with patch.object(conductor, "_wait_for_run", return_value=True), \
+             patch.object(conductor, "_active", return_value=True), \
+             patch.object(conductor, "_sleep", return_value=True), \
+             patch.object(conductor, "_ping", side_effect=switched):
+            conductor._traffic_worker()
+        self.assertNotIn("traffic.sample", store.current()["latest"])
+
     def _run_optimizer(self, observations, *, interactive=True, evaluation_state=None):
         conductor, store = self._conductor()
         conductor.interactive = interactive
@@ -354,6 +423,28 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertFalse(status["converged"])
         self.assertEqual(status["clients_with_stronger_ap"], 1)
         self.assertEqual(status["stronger_candidates"][0]["gain_rcpi"], 58)
+        stale = replace(snapshot, observed_at="2026-09-03T00:02:00Z")
+        status = _fleet_status(stale, {clients[0].sta_mac})
+        self.assertFalse(status["converged"])
+        self.assertEqual(status["clients_checked"], 0)
+        self.assertEqual(status["candidate_measurements"], 0)
+        missing = replace(snapshot, candidates=())
+        self.assertFalse(_fleet_status(missing, {clients[0].sta_mac})["converged"])
+        partial = replace(snapshot, candidates=(
+            replace(snapshot.candidates[0], rcpi=70),
+            replace(snapshot.candidates[0], bssid="02:00:00:00:05:01", rcpi=None),
+        ))
+        self.assertEqual(_fleet_status(partial, {clients[0].sta_mac})["clients_checked"], 0)
+        other_band = replace(partial, candidates=(partial.candidates[0], replace(partial.candidates[1], band="6")))
+        self.assertTrue(_fleet_status(other_band, {clients[0].sta_mac})["converged"])
+        decision = Decision(sta_mac=clients[0].sta_mac, action="none", reason="minimum_dwell_not_met",
+                            source_bssid=clients[0].connected_bssid, current_rcpi=80)
+        immature = replace(snapshot, clients=(replace(clients[0], association_uptime_seconds=0),))
+        evaluation = Evaluation("test", (decision,), PolicyState())
+        rows = _client_optimizer_status(immature, evaluation, PolicyConfig(), set())
+        self.assertEqual(rows[0]["wait_remaining_seconds"], 20)
+        self.assertEqual(rows[0]["association_uptime_seconds"], 0)
+        self.assertFalse(rows[0]["candidate_query_selected"])
 
     def test_interactive_action_window_is_not_bound_to_scenario_time(self):
         conductor, _store = self._conductor()
@@ -405,7 +496,7 @@ class ConductorProjectionTests(unittest.TestCase):
         payload = conductor._network_payload(snapshot)
         self.assertEqual(payload["hero"]["role"], "sta_mobile_01")
         self.assertEqual(payload["hero"]["connected_role"], "extender_1")
-        self.assertEqual(payload["hero"]["connected_world_name"], "Extender-1")
+        self.assertEqual(payload["hero"]["connected_world_name"], "Extender-4")
         self.assertEqual(payload["hero"]["rssi_dbm"], -41)
         self.assertEqual(payload["cohorts"], {"private": 1, "iot": 0, "other": 0})
 

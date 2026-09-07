@@ -121,9 +121,9 @@ for (const ssid of ['private_ssid', 'iot_ssid']) {
     const label = controller.topologySSIDLabel(hauls[0]);
     assert.equal(label.text, ssid === 'private_ssid' ? '"private"' : '"iot"');
     assert.equal(label.color, ssid === 'private_ssid' ? '#1e3a8a' : '#374151');
-    assert.equal(label.fontSize, 20);
-    const halfWidth = ssid === 'private_ssid' ? 44 : 26;
-    const corners = [-halfWidth, halfWidth].flatMap(offsetX => [-12, 12].map(offsetY => ({
+    assert.equal(label.fontSize, 26);
+    const halfWidth = ssid === 'private_ssid' ? 55 : 34;
+    const corners = [-halfWidth, halfWidth].flatMap(offsetX => [-16, 16].map(offsetY => ({
       x: label.x + offsetX, y: label.y + offsetY
     })));
     for (const station of stations) {
@@ -146,8 +146,8 @@ for (const ssid of ['private_ssid', 'iot_ssid']) {
 }
 assert.deepEqual(controller.topologySSIDLabel({
   ssid: 'mesh_backhaul', offset: {x: 140, y: 0}, radius: 80
-}), {x: 140, y: 0, text: 'mesh_backhaul', fontSize: 16, color: '#9b9a9aff'},
-  'cohort aliases changed an infrastructure SSID label');
+}), {x: 140, y: 0, text: '"backhaul"', fontSize: 22, color: '#8b1e24'},
+  'backhaul is not rendered with the quoted dark-red display alias');
 
 const landscapeNodes = [
   { id: 'controller', name: 'Controller', haulTypes: [], STAList: [] },
@@ -204,6 +204,12 @@ assert.deepEqual(agentRootStar.get('agent'), {x: 0, y: 0},
 assert.equal(controller.topologyStarLayout(landscapeNodes, [
   ...landscapeStarEdges.slice(0, -1), {from: 'extender-3', to: 'extender-4'}
 ]), null, 'a real multihop branch was incorrectly rendered as a star');
+const branchEdges = [...landscapeStarEdges.slice(0, -1), {from: 'extender-3', to: 'extender-4'}];
+const branchBefore = deepClone(branchEdges);
+const branchPositions = controller.topologyLandscapeLayout(landscapeNodes, branchEdges, 1600, 900);
+assert.deepEqual(branchPositions, landscapeStar,
+  'a fresh branch does not use the compact, centered mesh arrangement');
+assert.deepEqual(branchEdges, branchBefore, 'branch layout changed real parent edges');
 assert.equal(new Set(landscapeNodes.slice(1).map(node => {
   const position = landscapeStar.get(node.id);
   return `${position.x.toFixed(3)},${position.y.toFixed(3)}`;
@@ -315,6 +321,13 @@ assert.equal(rcpiFallback.rssi, -60);
 assert.equal(rcpiFallback.quality, 'good');
 assert.equal(rcpiFallback.band, '6G');
 
+for (const timestamp of [undefined, 'invalid', new Date(Date.now() + 10000).toISOString()]) {
+  controller.clients[0].client_metrics.last_updated = timestamp;
+  const unavailable = controller.topologySignalForSTA({staMAC: '02:00:00:00:13:00', band: 3});
+  assert.equal(unavailable.available, false, 'missing or future telemetry was treated as fresh');
+  assert.equal(controller.topologySignalLevel(unavailable), 0);
+}
+
 controller.clients[0].client_metrics.last_updated = '2000-01-01T00:00:00Z';
 const staleSignal = controller.topologySignalForSTA({
   staMAC: '02:00:00:00:13:00',
@@ -329,8 +342,10 @@ assert.match(controller.setupEventHandlers.toString(), /observeTopologyViewport/
 assert.match(controller.observeTopologyViewport.toString(), /ResizeObserver/,
   'topology pane does not use element-level resize observation');
 assert.doesNotMatch(controller.resizeTopologyViewport.toString(),
-  /fitTopologyToView|updateTopologyVisualization|zoom\.transform/,
-  'resizing the pane would refit, redraw or replace the operator pan/zoom');
+  /updateTopologyVisualization/,
+  'resizing the pane would rebuild the graph');
+assert.match(controller.resizeTopologyViewport.toString(), /fitTopologyToView/,
+  'resizing does not maximize the topology within the new viewport');
 assert.match(visualizationSource, /sta-signal-bars/,
   'topology does not render the signal-strength glyph');
 assert.match(visualizationSource, /sta-signal-segment/,
@@ -351,8 +366,8 @@ assert.match(visualizationSource, /Upstream BSSID:.*upstreamBSSID/,
   'backhaul hover details do not identify the exact parent BSSID');
 assert.match(visualizationSource, /uplink &rarr;/,
   'backhaul hover details do not name child-to-parent direction');
-assert.match(visualizationSource, /sta-channel-label/,
-  'topology clients do not show their current band and channel');
+assert.doesNotMatch(visualizationSource, /sta-channel-label/,
+  'client band/channel details clutter the topology instead of remaining hover-only');
 assert.match(visualizationSource, /Channel:.*channelInfo/,
   'client hover details do not show the current channel');
 assert.match(visualizationSource, /BSSID:.*sta\.bssid/,
@@ -514,8 +529,23 @@ controller.optimizeTopologyLayout();
 assert.equal(controller.nodePositionCache.size, layoutNodes.length);
 assert.deepEqual([...controller.staPositionCache.entries()], beforeClientPositions,
   'Optimize Layout discarded manual client positions');
-assert.deepEqual(layoutNodes.map(node => [node.id, node.x, node.y]), beforeOptimize,
-  'Optimize Layout rearranged extenders or moved Agent-1/Controller');
+const anchor = layoutNodes.find(node => node.id === 'agent');
+assert.deepEqual([anchor.x, anchor.y], [300, 100], 'Optimize Layout moved the Agent-1 anchor');
+for (const [id, originalX, originalY] of beforeOptimize) {
+  const node = layoutNodes.find(item => item.id === id);
+  assert.ok(Math.hypot(node.x - originalX, node.y - originalY) < 200,
+    'overlap repair replaced the operator arrangement instead of making local corrections');
+  if (!id.startsWith('extender')) continue;
+  assert.equal(Math.sign(node.x - anchor.x), Math.sign(originalX - anchor.x));
+  assert.equal(Math.sign(node.y - anchor.y), Math.sign(originalY - anchor.y));
+}
+for (const [index, node] of layoutNodes.entries()) {
+  for (const other of layoutNodes.slice(index + 1)) {
+    assert.ok(Math.hypot(node.x - other.x, node.y - other.y) >=
+      controller.topologyNodeExtent(node) + controller.topologyNodeExtent(other) + 23.9,
+    'Optimize Layout kept overlapping fixed node groups');
+  }
+}
 assert.ok(layoutNodes.every(node => node.fx === node.x && node.fy === node.y),
   'optimized render positions were not fixed and cached');
 assert.equal(tickCount, 0, 'Optimize Layout still ran the non-deterministic force solver');
@@ -523,6 +553,16 @@ assert.equal(fitted, true, 'optimized graph was not fitted to the viewport');
 assert.deepEqual(layoutEvents, ['paint', 'fit'],
   'Optimize Layout did not paint and fit its final state exactly once');
 assert.deepEqual(topology, original, 'Optimize Layout changed the API model');
+const separated = layoutNodes.map(node => [node.id, node.x, node.y]);
+controller.optimizeTopologyLayout();
+assert.deepEqual(layoutNodes.map(node => [node.id, node.x, node.y]), separated,
+  'repeated Optimize Layout drifts already separated positions');
+assert.match(visualizationSource, /topologyLandscapeLayout\(renderTopology.nodes, renderTopology.edges, width, height\)/,
+  'fresh non-star graphs still use cramped native coordinates');
+assert.match(visualizationSource, /separateTopologyNodes\(renderTopology.nodes\)/,
+  'topology refresh does not repair overlap after a client cohort grows');
+assert.doesNotMatch(visualizationSource, /starSignature|arrangeStar/,
+  'a parent change discards the operator positions and reorders extenders');
 
 let redraws = 0;
 controller.topology = topology;

@@ -14,7 +14,7 @@ test -f "$lab_repo/lab/$BF_LAB_CONFIG"
 test -f "$lab_repo/inventories/$BF_INVENTORY"
 
 boardfarm_ready() {
-    test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+    test "$(docker ps --filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$' --format '{{.Names}}' | sort | paste -sd, -)" = \
         dhcp-cpe1,wan-cpe1 \
         && test "$(docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 \
             | grep -c '^true$')" -eq 2 \
@@ -127,7 +127,7 @@ ip link show br-wan101 >/dev/null
 docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 | grep -vx true && exit 1 || true
 docker exec dhcp-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.10/24'
 docker exec wan-cpe1 ip -4 address show eth1 | grep -q '10\.101\.0\.20/24'
-test "$(docker ps --format '{{.Names}}' | sort | paste -sd, -)" = \
+test "$(docker ps --filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$' --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
 boardfarm_ready
 

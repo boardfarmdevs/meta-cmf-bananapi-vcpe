@@ -21,6 +21,9 @@ for setting in core.https_address core.metrics_address core.metrics_authenticati
         core.metrics_address) managed=127.0.0.1:8444 ;;
         core.metrics_authentication) managed=true ;;
     esac
+    if [ -f "$destination/state/managed-lxd.json" ]; then
+        managed=$(jq -r --arg setting "$setting" '.[$setting]' "$destination/state/managed-lxd.json")
+    fi
     if [ "$current" = "$previous" ]; then
         continue
     elif [ "$current" != "$managed" ]; then

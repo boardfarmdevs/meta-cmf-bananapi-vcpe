@@ -1,0 +1,73 @@
+Subject: [PATCH] Align the installed public ABI with the EasyMesh runtime
+
+The OneWifi webconfig translator exchanges em_sta_info_t and device data
+directly with the agent through callbacks. Building it against the original
+header corrupts fields when the agent uses the extended runtime layout,
+including the association clock needed for client metric acceptance and
+optimizer dwell checks. Keep the header provider aligned with the runtime
+extensions, including commit profile and the WPA2-Personal auth mapping.
+
+Upstream-Status: Inappropriate [local runtime ABI alignment]
+
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -1241,11 +1241,16 @@
+     mac_address_t sta_mac;
+     bssid_t bssid;
+     em_string_t sta_client_type;
++    unsigned int association_uptime_seconds;
+     //unsigned char num_bssids;
+     //em_assoc_vendor_link_metrics_t assoc_vendor_link_metrics[0];
+ }__attribute__((__packed__)) em_assoc_sta_vendor_link_metrics_t;
+ 
+ typedef struct {
++    unsigned int uptime_seconds;
++} __attribute__((__packed__)) em_device_uptime_t;
++
++typedef struct {
+     unsigned char num_bssids;
+     unsigned char bssid[6];
+ }__attribute__((__packed__)) em_ap_metrics_query_t;
+@@ -2277,6 +2282,7 @@
+     vendor_ext_attr_id_policy_alarm,    // data of type em_link_stats_alarm_cfg_t
+     vendor_ext_attr_id_policy_cfg_client_filter,    // data of type em_client_filters_cfg_t
+     vendor_ext_attr_id_link_report,     // data of type em_link_report_t
++    vendor_ext_attr_id_device_uptime,
+ 
+     vendor_ext_attr_id_max
+ } vendor_ext_attr_id_t;
+@@ -2519,6 +2525,8 @@
+     unsigned char bstamld_maxlinks;
+     em_string_t   environment;
+ 
++    uint64_t boot_time_epoch;
++
+     em_small_string_t    primary_device_type;
+     em_small_string_t    secondary_device_type;
+     ieee_1905_security_t    sec_1905;
+@@ -2637,6 +2645,8 @@
+     unsigned char   beacon_report_elem[EM_MAX_BEACON_MEASUREMENT_LEN];
+     unsigned int    delta_ms;
+ 
++    uint64_t        assoc_start_boottime_sec;
++
+     em_long_string_t    cap;
+     em_long_string_t    ht_cap;
+     em_long_string_t    vht_cap;
+@@ -3111,6 +3121,7 @@
+     em_long_string_t	net_id;
+     int sz;
+     uint8_t is_emplus_agent;
++    em_profile_type_t profile;
+ } __attribute__((__packed__)) em_commit_info_t;
+ 
+ typedef enum {
+@@ -3734,7 +3745,7 @@
+ 
+ static const SecurityTypeMap securityTypeMap[] = {
+     { "Open",            EM_AUTH_OPEN },
+-    { "WPA2 Personal",   EM_AUTH_WPA2 },
++    { "WPA2 Personal",   EM_AUTH_WPA2PSK },
+     { "Enhanced Open",   EM_AUTH_ENHANCED_OPEN },
+     { "WPA3 Personal",   EM_AUTH_WPA3_PERSONAL },
+     { "WPA3 Transition", EM_AUTH_WPA3_TRANSITION }

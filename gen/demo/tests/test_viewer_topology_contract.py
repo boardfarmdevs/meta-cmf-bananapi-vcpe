@@ -11,6 +11,33 @@ VIEWER = (
 
 
 class ViewerTopologyContractTests(unittest.TestCase):
+    def test_world_load_applies_immediately_and_observers_rehydrate_authoritative_roles(self):
+        source = VIEWER.read_text(encoding="utf-8")
+        self.assertNotIn('id="applyWorld"', source)
+        self.assertNotIn("pendingWorld", source)
+        self.assertNotIn("window.confirm('Apply this world", source)
+        self.assertIn('id="defaultWorld"', source)
+        self.assertIn("'/api/demo/world/apply'", source)
+        self.assertIn("event.kind === 'room.world.committed'", source)
+        self.assertIn("Object.entries(state.roles || {})", source)
+        self.assertIn("value.authoritative_position.slice()", source)
+        self.assertIn("if (liveMode)", source)
+        self.assertIn("return applySelectedWorld(sel.value)", source)
+        self.assertIn("return applySelectedWorld(file)", source)
+        self.assertIn("setWorldControlsBusy(applyingWorld)", source)
+        self.assertIn("selectCurrentLiveWorld();", source)
+        self.assertIn("Startup mesh backhaul is protected", source)
+        self.assertIn("Client roster ready; see optimizer for AP convergence.", source)
+
+    def test_signal_meters_share_the_topology_palette(self):
+        source = VIEWER.read_text(encoding="utf-8")
+        self.assertIn('src="signal-meter.js?v=signal-meter-1"', source)
+        self.assertIn("signalMeter.segmentColor(index, level)", source)
+        self.assertIn("signalMeter.rssiLevel(observed.rssi_dbm)", source)
+        self.assertIn("signalMeter.snrLevel(predicted && predicted.snr)", source)
+        self.assertIn("referenceTime - measuredAt > 20000", source)
+        self.assertNotIn("Private-Laptop", source)
+
     def test_live_backhaul_uses_controller_graph_not_rf_possibilities(self):
         source = VIEWER.read_text(encoding="utf-8")
 
@@ -33,7 +60,9 @@ class ViewerTopologyContractTests(unittest.TestCase):
         self.assertIn("requestedMode === 'no-connect'", source)
         self.assertIn("EasyMesh room sandbox", source)
         self.assertIn("NO CONNECT", source)
-        self.assertIn("setInteractionMode('interact')", source)
+        self.assertNotIn('id="cameraMode"', source)
+        self.assertNotIn('id="interactMode"', source)
+        self.assertIn("commitDraggedRole(gesture, point)", source)
 
     def test_automatic_closed_loop_state_is_visible(self):
         source = VIEWER.read_text(encoding="utf-8")

@@ -1,0 +1,195 @@
+Subject: [PATCH] cli: separate branch topology groups without replacing operator positions
+
+Fresh non-star graphs pinned the server's compact coordinates, bypassing the
+existing layout and making the fixed-node collision force ineffective. Seed
+all fresh graphs with the viewport-aware layout, retain centered mesh groups
+for shallow branches without changing real parent edges, and repair cached
+overlap with a bounded deterministic spacing pass. Keep Agent-1 anchored and
+leave already separated positions unchanged. Parent changes no longer discard
+operator node arrangements. Bump the script cache key for existing browsers.
+
+Upstream-Status: Pending
+---
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2468,6 +2468,19 @@
+       JSON.stringify([endpointId(edge?.from ?? edge?.source), endpointId(edge?.to ?? edge?.target)])));
+     if (actual.size !== expected.size || [...actual].some(edge => !expected.has(edge))) return null;
+ 
++    return this.topologyMeshLayout(rendered);
++  }
++
++  topologyMeshLayout(nodes) {
++    const rendered = Array.isArray(nodes) ? nodes : [];
++    const agent = rendered.find(node => /^agent-1$/i.test(String(node?.name || '')));
++    if (!agent) return null;
++    const controller = rendered.find(node => /^controller$/i.test(String(node?.name || '')));
++    const satellites = rendered.filter(node => node !== agent && node !== controller)
++      .sort((left, right) => String(left.name || left.id)
++        .localeCompare(String(right.name || right.id), undefined, {numeric: true}));
++    if (satellites.length < 2) return null;
++
+     const extentFor = node => Math.max(80, Number(this.topologyNodeExtent(node)) || 80);
+     const gap = 32;
+     const agentExtent = extentFor(agent);
+@@ -2576,6 +2589,14 @@
+         queue.push(child);
+       }
+     }
++    const agent = rendered.find(node => /^agent-1$/i.test(String(node?.name || '')));
++    const agentDepth = agent && depth.get(String(agent.id));
++    if (Number.isFinite(agentDepth) && rendered.every(node =>
++      node === agent || /^controller$/i.test(String(node?.name || '')) ||
++      depth.get(String(node.id)) > agentDepth)) {
++      const mesh = this.topologyMeshLayout(rendered);
++      if (mesh) return mesh;
++    }
+     let orphanDepth = Math.max(0, ...depth.values()) + 1;
+     for (const node of [...rendered].sort(nodeOrder)) {
+       const id = String(node.id);
+@@ -2622,9 +2643,49 @@
+     return positions;
+   }
+ 
++  separateTopologyNodes(nodes) {
++    const ordered = [...nodes].sort((left, right) => String(left.id).localeCompare(String(right.id)));
++    const anchor = ordered.find(node => /^agent-1$/i.test(String(node?.name || ''))) || ordered[0];
++    const extents = new Map(ordered.map(node => [node.id, this.topologyNodeExtent(node)]));
++    for (const node of ordered) {
++      node.x = Number.isFinite(node.fx) ? node.fx : Number.isFinite(node.x) ? node.x : 0;
++      node.y = Number.isFinite(node.fy) ? node.fy : Number.isFinite(node.y) ? node.y : 0;
++    }
++    for (let pass = 0; pass < 80; pass += 1) {
++      let moved = false;
++      for (let index = 0; index < ordered.length; index += 1) {
++        const left = ordered[index];
++        for (const right of ordered.slice(index + 1)) {
++          const deltaX = right.x - left.x;
++          const deltaY = right.y - left.y;
++          const distance = Math.hypot(deltaX, deltaY);
++          const minimum = extents.get(left.id) + extents.get(right.id) + 24;
++          if (distance >= minimum - 0.01) continue;
++          const directionX = distance > 0.01 ? deltaX / distance : 1;
++          const directionY = distance > 0.01 ? deltaY / distance : 0;
++          const correction = minimum - distance + 0.02;
++          const leftShare = left === anchor ? 0 : right === anchor ? 1 : 0.5;
++          left.x -= directionX * correction * leftShare;
++          left.y -= directionY * correction * leftShare;
++          right.x += directionX * correction * (1 - leftShare);
++          right.y += directionY * correction * (1 - leftShare);
++          moved = true;
++        }
++      }
++      if (!moved) break;
++    }
++    for (const node of ordered) {
++      node.fx = node.x;
++      node.fy = node.y;
++      node.vx = 0;
++      node.vy = 0;
++      this.nodePositionCache.set(node.id, {x: node.x, y: node.y});
++    }
++  }
++
+   /**
+-   * Fit the on-screen graph while preserving operator positions. This never
+-   * sends an EasyMesh command or changes the actual network.
++   * Separate overlapping groups without replacing the operator arrangement,
++   * then fit the graph. No EasyMesh command or network change is involved.
+    */
+   optimizeTopologyLayout() {
+     const simulation = this.topologySimulation;
+@@ -2640,26 +2701,18 @@
+     this.topologyRenderPending = false;
+     if (button) button.disabled = true;
+ 
+-    this.showNotification('Fitting topology to the viewport without moving nodes…', 'info');
++    this.showNotification('Separating overlapping groups and fitting the topology…', 'info');
+     const paint = simulation.on('tick');
+     simulation.stop();
+-    nodes.forEach(node => {
+-      node.x = node.fx ?? node.x;
+-      node.y = node.fy ?? node.y;
+-      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+-      node.fx = node.x;
+-      node.fy = node.y;
+-      node.vx = 0;
+-      node.vy = 0;
+-      this.nodePositionCache.set(node.id, { x: node.x, y: node.y });
+-    });
++    this.separateTopologyNodes(nodes);
+     if (typeof paint === 'function') paint();
++    this.layoutTopologyLabels();
+ 
+     this.topologyLayoutInProgress = false;
+     this.topologyRenderPending = false;
+     this.fitTopologyToView();
+     if (button) button.disabled = false;
+-    this.showNotification('Topology fitted; node positions preserved', 'success');
++    this.showNotification('Topology spaced and fitted; your arrangement is retained', 'success');
+   }
+ 
+   /**
+@@ -3384,15 +3437,9 @@
+     if (!this.topology?.nodes?.length) return;
+ 
+     const renderTopology = this.topologyRenderSnapshot(this.topology);
+-    const starPositions = this.topologyStarLayout(renderTopology.nodes, renderTopology.edges);
+-    const starSignature = starPositions
+-      ? JSON.stringify(renderTopology.edges.map(edge => [String(edge.from), String(edge.to)]).sort())
+-      : null;
+-    const arrangeStar = starPositions &&
+-      (starSignature !== this.topologyStarSignature || this.nodePositionCache.size === 0);
+-    this.topologyStarSignature = starSignature;
+-    if (arrangeStar) {
+-      for (const [id, position] of starPositions) this.nodePositionCache.set(id, position);
++    const initialPositions = this.topologyLandscapeLayout(renderTopology.nodes, renderTopology.edges, width, height);
++    for (const [id, position] of initialPositions) {
++      if (!this.nodePositionCache.has(id)) this.nodePositionCache.set(id, position);
+     }
+     const currentNodeIds = new Set(renderTopology.nodes.map(n => String(n.id)));
+     for (const key of this.nodePositionCache.keys()) {
+@@ -3517,29 +3564,16 @@
+       'default': 20
+     };
+ 
+-    const minX = d3.min(renderTopology.nodes, d => d.x);
+-    const maxX = d3.max(renderTopology.nodes, d => d.x);
+-    const minY = d3.min(renderTopology.nodes, d => d.y);
+-    const maxY = d3.max(renderTopology.nodes, d => d.y);
+-    const graphWidth = maxX - minX;
+-    const graphHeight = maxY - minY;
+-    const offsetX = (width - graphWidth) / 2 - minX -250;
+-    const offsetY = (height - graphHeight) / 2 - minY;
+-
+     renderTopology.nodes.forEach(node => {
+       const saved = this.nodePositionCache.get(node.id);
+-      if (saved) {
+-        node.x = saved.x;
+-        node.y = saved.y;
+-      } else {
+-        node.x = node.x + offsetX;
+-        node.y = node.y + offsetY;
+-      }
++      node.x = saved?.x ?? 0;
++      node.y = saved?.y ?? 0;
+ 
+       // Keep nodes fixed after positioning
+       node.fx = node.x;
+       node.fy = node.y;
+     });
++    this.separateTopologyNodes(renderTopology.nodes);
+ 
+     // Create simulation
+     const simulation = d3.forceSimulation(renderTopology.nodes)
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -2025,7 +2025,7 @@
+ 
+     <!-- Scripts -->
+     <script src="static/signal-meter.js?v=signal-meter-1"></script>
+-    <script src="static/script.js?v=topology-no-signal-legend-2"></script>
++    <script src="static/script.js?v=topology-spacing-0906-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

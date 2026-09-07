@@ -23,6 +23,7 @@ class EventStore:
     ):
         self.run_id = run_id
         self.world = world
+        self.initial_world = copy.deepcopy(world)
         self.event_path = event_path
         self.persist = persist
         self._events: list[dict[str, Any]] = []
@@ -65,6 +66,7 @@ class EventStore:
             "recording": {},
             "optimizer": {},
             "network": {},
+            "traffic_probe": {},
             "health": {},
             "outcome": None,
             "restored": False,
@@ -111,7 +113,25 @@ class EventStore:
             self._state["environment_epoch"] = max(
                 self._state["environment_epoch"], int(payload["environment_epoch"])
             )
-        if kind in {"room.position.committed", "room.presence.committed"}:
+        if kind == "room.world.committed":
+            self.world = copy.deepcopy(payload["world"])
+            self._state.update({"scenario": self.world["name"],
+                                "duration_ms": self.world["duration_ms"],
+                                "tick_ms": self.world["tick_ms"],
+                                "movements": {}, "recording": {}, "optimizer": {}, "network": {}, "health": {}})
+            self._state["roles"] = {
+                role: {"kind": self.world["roles"].get(role, "station"),
+                       "base_position": copy.deepcopy(value["position"]),
+                       "authoritative_position": copy.deepcopy(value["position"]),
+                       "present": value["present"], "control_state": "manual" if value["present"] else "absent"}
+                for role, value in payload["roles"].items()
+            }
+            for stale_kind in list(self._state["latest"]):
+                if stale_kind != kind and stale_kind.startswith(("room.", "interaction.movement.", "interaction.recording.", "network.", "optimizer.", "health.", "traffic.")):
+                    del self._state["latest"][stale_kind]
+        elif kind.startswith("interaction.playback."):
+            self._state["playback"] = copy.deepcopy(payload["playback"])
+        elif kind in {"room.position.committed", "room.presence.committed"}:
             role = payload.get("role")
             if role in self._state["roles"]:
                 reduced = self._state["roles"][role]
@@ -165,10 +185,34 @@ class EventStore:
             })
         elif kind in {"optimizer.evaluation", "optimizer.measurement.unavailable"}:
             self._state["optimizer"] = copy.deepcopy(payload)
+        elif kind in {"optimizer.progress", "optimizer.measurement.waiting", "optimizer.environment.changed", "observation.inconsistent_rf_epoch"}:
+            self._state["optimizer"]["progress"] = {
+                **copy.deepcopy(payload), "kind": kind, "recorded_at": event["recorded_at"],
+            }
+            if kind != "optimizer.progress":
+                self._state["optimizer"]["automatic_actuation_ready"] = False
+                self._state["optimizer"]["fleet"] = {}
+                self._state["optimizer"]["client_decisions"] = []
+        elif kind == "traffic.probe.selected":
+            self._state["traffic_probe"] = copy.deepcopy(payload["traffic_probe"])
+            self._state["latest"].pop("traffic.sample", None)
+        elif kind == "traffic.sample":
+            probe = payload.get("traffic_probe") or {}
+            selected = self._state["traffic_probe"]
+            if selected and probe and (probe.get("role"), probe.get("selection")) != (selected.get("role"), selected.get("selection")):
+                self._state["latest"].pop("traffic.sample", None)
         elif kind == "network.snapshot":
             self._state["network"] = copy.deepcopy(payload)
+            probe = payload.get("traffic_probe") or {}
+            if probe and probe.get("selection", 0) >= self._state["traffic_probe"].get("selection", 0):
+                self._state["traffic_probe"] = copy.deepcopy(probe)
         elif kind == "health.sample":
             self._state["health"] = copy.deepcopy(payload)
+        if kind in {"traffic.probe.selected", "network.snapshot"} and self._state["traffic_probe"]:
+            network = self._state["network"]
+            network["traffic_probe"] = copy.deepcopy(self._state["traffic_probe"])
+            network["hero"] = next((client for client in network.get("clients", [])
+                                    if client.get("role") == self._state["traffic_probe"].get("role")), None)
 
     def _publish(self, event: dict[str, Any]) -> dict[str, Any]:
         if event.get("schema") != "easymesh.room-demo.event.v1":
@@ -294,6 +338,10 @@ class EventStore:
     def current(self) -> dict[str, Any]:
         with self._condition:
             return copy.deepcopy(self._state)
+
+    def current_world(self) -> dict[str, Any]:
+        with self._condition:
+            return copy.deepcopy(self.world)
 
     def all(self) -> list[dict[str, Any]]:
         with self._condition:

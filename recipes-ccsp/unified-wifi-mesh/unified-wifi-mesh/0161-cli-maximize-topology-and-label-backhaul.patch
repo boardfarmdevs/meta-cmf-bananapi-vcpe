@@ -1,0 +1,119 @@
+Subject: [PATCH] cli: maximize topology viewport and name backhaul bubble
+
+Fit at the largest uniform scale with six-pixel margins on render, resize
+and completed node/client drags. Preserve node positions and defer refits
+until active pointer interactions end. Display mesh_backhaul as a quoted
+dark-red backhaul label without changing the SSID or topology API model.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -2666,6 +2666,11 @@
+    * Fit the rendered graph into the current topology viewport.
+    */
+   fitTopologyToView() {
++    if ((this.topologyInteractionDepth || 0) > 0) {
++      this.topologyFitPending = true;
++      return;
++    }
++    this.topologyFitPending = false;
+     const view = this.topologyView;
+     const group = view?.group?.node();
+     if (!group || !view.svg || !view.zoom) return;
+@@ -2678,13 +2683,14 @@
+       return;
+     }
+ 
+-    if (!bounds.width || !bounds.height) return;
+-    const padding = 40;
++    if (![bounds.x, bounds.y, bounds.width, bounds.height, view.width, view.height].every(Number.isFinite) ||
++        bounds.width <= 0 || bounds.height <= 0 || view.width <= 0 || view.height <= 0) return;
++    const padding = 6;
+     const availableWidth = Math.max(1, view.width - padding * 2);
+     const availableHeight = Math.max(1, view.height - padding * 2);
+-    const scale = Math.max(0.1, Math.min(1.5,
++    const scale = Math.min(
+       availableWidth / bounds.width,
+-      availableHeight / bounds.height));
++      availableHeight / bounds.height);
+     const centerX = bounds.x + bounds.width / 2;
+     const centerY = bounds.y + bounds.height / 2;
+     const transform = d3.zoomIdentity
+@@ -2722,10 +2728,6 @@
+     });
+   }
+ 
+-  /**
+-   * Resize only the SVG viewport. Preserve the operator's current pan/zoom,
+-   * cached node positions and active pointer interaction.
+-   */
+   resizeTopologyViewport() {
+     const container = document.getElementById('topology-visualization');
+     const view = this.topologyView;
+@@ -2740,10 +2742,9 @@
+     view.width = width;
+     view.height = height;
+ 
+-    // A later Optimize Layout should settle around the resized viewport, but
+-    // resizing alone must not restart the simulation or move the graph.
+     const center = this.topologySimulation?.force?.('center');
+     if (center?.x && center?.y) center.x(width / 2).y(height / 2);
++    this.fitTopologyToView();
+     return true;
+   }
+ 
+@@ -3343,6 +3344,7 @@
+     if (!refreshed && renderPending && !this.topologyLayoutInProgress) {
+       this.updateTopologyVisualization();
+     }
++    if (this.topologyFitPending) this.fitTopologyToView();
+   }
+ 
+   /**
+@@ -4090,10 +4092,8 @@
+         });
+     });
+ 
+-    if (arrangeStar) {
+-      simulation.on('tick')();
+-      this.fitTopologyToView();
+-    }
++    simulation.on('tick')();
++    this.fitTopologyToView();
+ 
+     function dragstarted(event, d) {
+       self.beginTopologyInteraction();
+@@ -4145,6 +4145,7 @@
+       });
+       d3.select(this).style('cursor', 'grab');
+       self.endTopologyInteraction();
++      self.fitTopologyToView();
+     }
+ 
+     function dragged(event, d) {
+@@ -4162,7 +4163,9 @@
+       // Lock at new position
+       d.x = d.fx;
+       d.y = d.fy;
++      simulation.on('tick')();
+       self.endTopologyInteraction();
++      self.fitTopologyToView();
+     }
+   }
+ 
+@@ -4208,11 +4211,12 @@
+   topologySSIDLabel(geometry) {
+     const cohort = geometry.ssid === 'private_ssid' ? 'private'
+       : geometry.ssid === 'iot_ssid' ? 'iot' : null;
++    const backhaul = geometry.ssid === 'mesh_backhaul';
+     return {
+       x: geometry.offset.x + geometry.radius * (cohort === 'private' ? 0.55 : cohort === 'iot' ? 0.38 : 0),
+       y: geometry.offset.y,
+-      text: cohort ? `"${cohort}"` : geometry.ssid,
++      text: cohort ? `"${cohort}"` : backhaul ? '"backhaul"' : geometry.ssid,
+       fontSize: cohort ? 20 : 16,
+-      color: cohort === 'private' ? '#1e3a8a' : cohort === 'iot' ? '#374151' : '#9b9a9aff'
++      color: cohort === 'private' ? '#1e3a8a' : cohort === 'iot' ? '#374151' : backhaul ? '#8b1e24' : '#9b9a9aff'
+     };
+   }

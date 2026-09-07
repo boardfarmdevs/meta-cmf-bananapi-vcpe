@@ -24,9 +24,8 @@ The current safe boundary is deliberately narrow:
   same command ID cannot apply RF twice;
 - client motion changes five AP links on three bands in both directions, or 30
   frequency-qualified values in one atomic generation;
-- extender motion changes all 20 client links and all four mesh-peer links on
-  three bands in both directions, or at most 144 values in one atomic
-  generation;
+- in fixed-pool mode, extender motion changes up to 120 client-serving RF
+  values; the startup mesh-peer RF matrix remains protected;
 - session start captures the full baseline and applies the complete 20-client
   room as one 660-link atomic generation before accepting browser control:
   600 fronthaul values plus 60 mesh-peer values;
@@ -40,8 +39,10 @@ The room position is simulated truth. Association, RCPI, candidate metrics,
 optimizer decisions, BTM acceptance, topology, and traffic remain observed
 truth. Moving an icon never directly moves it to a different AP. The room and
 the unchanged EasyMesh Network Topology view consume the same live controller
-graph: solid client links are current BSS ownership and solid dark-blue AP
-links are current wireless-backhaul parentage. Modeled AP-to-AP reachability is
+graph: solid cyan client links are current BSS ownership, drawn only once even
+when selected. Thicker floor-level AP links are current wireless-backhaul
+parentage, colored by the upstream AP: red from Agent-1 and orange from an
+extender. Station names are always visible. Modeled AP-to-AP reachability is
 not presented as an actual live mesh edge.
 
 Controller display ordinals can follow discovery order. Room coordinates are
@@ -56,6 +57,17 @@ and ages. A fresh controller value becomes the primary network observation;
 it never replaces or relabels the room prediction.
 
 ## Start the interactive room
+
+On the updated rev140 server, selecting an installed world or opening a local
+world immediately applies it to the lab, without a separate Apply button or
+confirmation and without restarting containers. The control lease and revision
+are still required, but no operator token is needed; rejected loads retain the current room. Unused clients
+become RF-offline; the fixed pool remains 20 clients and five mesh containers
+(six displayed topology nodes including the logical Controller).
+**Restore default 20** returns the default room and all
+clients. Normal startup still uses that default, not the last browser selection.
+See [fixed-pool world switching](../reference/live-world-switching.md) for
+supported roles, initial-frame semantics, ownership and recovery.
 
 Run inside the RDK appliance VM:
 
@@ -84,33 +96,32 @@ Open:
 http://192.168.2.140:18891/viewer/?mode=interactive
 ```
 
-The printed first URL is an observer URL. It can see every accepted position,
-measurement and optimizer event but cannot mutate RF. The process also prints
-an operator URL whose `#operator=...` fragment contains the run-scoped write
-capability. That fragment is consumed locally by the browser and removed from
-the address bar; it is never sent as an HTTP request target or referrer.
+The interactive URL needs no operator token. The browser acquires a renewable
+control lease on the first mutation; a second browser must wait for release
+or expiry. The CLI no longer creates an operator token file or a separate
+capability-bearing URL. Green **LIVE RF** indicates the writable API; a static
+viewer remains **PREVIEW ONLY**. Use `?mode=live` for an observer-only interface.
 
-To construct an outer-host operator URL, read the capability inside the VM:
-
-```bash
-TOKEN=$(cat /run/easymesh-room-demo/operator.token)
-printf 'http://192.168.2.140:18891/viewer/?mode=interactive#operator=%s\n' "$TOKEN"
-```
-
-Opening the observer URL and selecting **Interact** prompts for the same
-capability. The purple badge changes to green **LIVE RF** when the writable API
-is present; possession of the API URL alone does not grant write authority. A
-static viewer remains labeled **PREVIEW ONLY**.
+Anyone who can reach the interactive server can acquire its free lease.
+Observer mode is a UI choice, not user authorization. Keep the backend on a
+trusted lab network or behind an SSH tunnel/authenticated gateway. Same-origin
+checks, lease ownership, command IDs and revision validation remain enforced;
+read-only server sessions still reject mutations.
 
 ## Move a client directly
 
-1. Select **Interact**. The browser acquires a 30-second renewable lease.
+1. Select a device. There is no Camera/Interact toggle; empty-space dragging orbits,
+   Shift-drag pans anywhere, and scrolling zooms. Navigation does not acquire control.
 2. Drag a client across the floor.
 3. Watch the spatial panel for coordinates, distance, walls, wall loss,
    predicted SNR, current AP, strongest AP, and measured RCPI. The panel is
-   pinned to the upper-right of the viewport so it never follows the selected
-   role across or obscures the room drawing.
-4. Release the pointer to submit the one authoritative final position.
+   initially in the upper-right. Grab its dark background to reposition it
+   anywhere in the viewport without moving the device or acquiring control.
+   Placement is browser-local and survives selection changes and reloads.
+   Double-click its heading or press Home while focused to reset; arrow keys
+   move it by 10 pixels (Shift+arrow: one pixel).
+4. Release the pointer to submit the one authoritative final position. The browser
+   acquires a renewable 30-second lease if needed, without an operator prompt.
 5. Watch the event list for `RF position applied`, then watch measured RCPI,
    optimizer state, and the cyan observed-association line.
 
@@ -127,8 +138,15 @@ advance the medium generation.
 
 Client bodies keep a stable cohort identity: blue is `private_ssid` and green
 is hidden `iot_ssid`. Signal quality is shown independently by the ten-segment
-red/amber/green vertical gauge spanning the client icon. The gauge uses fresh
-controller RSSI when available and otherwise the modeled serving-link SNR. It
+red/yellow/green vertical gauge spanning the client icon. Both views use the
+same ten levels: three red segments at the bottom, four yellow, then three
+green; all unlit upper segments are opaque grey. A full meter includes all
+three colors, not ten green bars. Live gauges use fresh controller RSSI;
+missing or stale readings leave all segments grey instead of substituting
+a prediction. Offline gauges use modeled SNR with this simulator's fixed
+−91 dBm noise floor, so 24 dB SNR and −67 dBm RSSI both light five bars.
+Exact dB/dBm values remain separate; this is not a physical-radio noise-floor
+assumption. A 5 dB step adds a segment, with ten lit at −45 dBm or stronger. It
 is placed on the side opposite the serving RF line so the two cues do not
 obscure one another.
 
@@ -157,13 +175,11 @@ Extender-1 through Extender-4. Moving Agent-1 moves the co-located agent's
 three radio roles through the RF room; it does not relocate or interrupt the
 controller process, WAN, or management path. The red gateway or purple
 extender ghost and AP-to-peer paths preview the new position; pointer-up
-commits one atomic RF generation. In the 20-client profile that generation
-updates:
-
-- 120 directed client-serving values: 20 clients, three bands, both
-  directions; and
-- 24 directed mesh-peer values: four other mesh nodes, three bands, both
-  directions.
+commits one atomic RF generation. With fixed-pool world switching, this updates
+up to 120 directed client-serving values: 20 clients, three bands, both
+directions. The 24 mesh-peer values retain their startup settings. Standalone
+sessions without the fixed-pool world selector retain the older modeled-peer
+behavior.
 
 The mesh-node container, permanent radio identity, NVRAM, controller record,
 and all processes remain intact. Moving the icon does not assign a backhaul
@@ -184,14 +200,15 @@ fails; a new measurement cycle then begins. This removes the former full-fleet
 remeasurement between every individual client while preserving measured input,
 normal Wi-Fi/EasyMesh actuation, and bounded failure behavior.
 
-Moving an extender whose fronthaul is disabled still updates its mesh geometry
+Moving an extender whose fronthaul is disabled still updates its displayed geometry
 while keeping all client-serving links at minimum SNR. Restoring the
 fronthaul afterward recomputes the client links at the extender's current
 position. **Reset role** returns both position and fronthaul presence to the
 session-start state. Stopping the room restores the exact captured medium
 baseline, including all extender movement and outage keys.
 
-The accepted 20-client live test on 2026-09-05 UTC moved Extender-4 from
+Before fixed-pool world switching, the accepted 20-client live test on
+2026-09-05 UTC moved Extender-4 from
 `(18,12)` to `(15,10)` with exactly 144 changed keys and one verified medium
 generation. Fresh controller telemetry retained its actual gateway parent and
 reported RCPI 86 (`-67 dBm`). Returning it to `(18,12)` used another 144-key
@@ -251,11 +268,30 @@ containers or identities. The accepted interface will separate **Undo**,
 **Clear overrides**, and **Stop and restore**, because those operations have
 different meanings in hybrid mode.
 
-Only one browser can enter Interact mode. A second browser receives a clear
+Only one browser can own live control. A second browser receives a clear
 lease-owner conflict and remains an observer. The lease renews while the
 controller page is open. Closing it or losing connectivity releases or
 expires the lease and freezes the last accepted room state; it does not
 silently undo a presentation.
+
+## Play while dragging
+
+Play/Pause (or Space) also works alongside dragging. In the live interactive
+viewer it starts/pauses the server-owned world script, including initial-frame
+successors and client/extender presence changes. Dragging, a manual walk or a
+presence change pins that role under manual control while other scripts continue.
+Pause/resume preserves pins; reloading a world clears them. Navigation, clicks
+and playback never silently undo a manual drag. Observer/evidence-replay views
+cannot edit live roles.
+
+The lightweight live player uses one worker and the existing serialized,
+read-back-verified RF path, at no more than one frame per second. It does not
+resize/restart containers or alter protected mesh backhaul. Live speed controls
+and seeking remain disabled; static/replay playback retains them. Pausing stops
+scripted motion, not measurements or the lab. The optimizer waits for stable RF
+while playback runs, then resumes convergence after Pause/end. Lease loss,
+release, world switching and shutdown pause playback. Invalid future frames are
+rejected before Play makes any RF change.
 
 ## Record and replay an improvised room walk
 
@@ -402,7 +438,9 @@ The same viewer is available without a lab connection:
 
 <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/viewer/?mode=no-connect&world=home-a-private-client-room-walk>
 
-This browser-only mode starts in Interact mode. Anyone can drag clients,
+On the updated rev140 viewer there is no pointer-mode toggle. The published
+Pages build may still show the older Camera/Interact controls until separately
+deployed. In the browser-only sandbox, anyone can drag clients,
 right-click to move them at a selected speed, disappear/reappear them, inspect
 distance and wall crossings, and preview the calculated links. Its prominent
 `NO CONNECT` badge means that it does not contact a controller, optimizer,
@@ -451,7 +489,6 @@ The browser is the normal client. For diagnosis, acquire a lease:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8891/api/demo/interactions/lease \
-  -H "Authorization: Bearer $(cat /run/easymesh-room-demo/operator.token)" \
   -H 'Content-Type: application/json' \
   -d '{"owner":"terminal-demo","command_id":"terminal-lease-0001"}' | jq
 ```

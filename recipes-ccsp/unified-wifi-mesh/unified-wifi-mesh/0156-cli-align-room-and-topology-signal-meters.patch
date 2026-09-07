@@ -1,0 +1,140 @@
+Subject: [PATCH] cli: align room and topology signal meters
+
+Use the shared lab signal scale and red/yellow/green fixed-segment palette.
+Unlit and unavailable segments stay grey; measured values and freshness remain
+independent of the color ramp. Source the shared asset through the recipe.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
+index 172a808..baf5226 100644
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -24,6 +24,9 @@
+  * Supports Wi-Fi 7, Multi-AP R6, real-time monitoring
+  */
+ 
++const signalMeter = typeof module !== 'undefined' && module.exports
++  ? require('./signal-meter.js') : window.EasyMeshSignalMeter;
++
+ class EasyMeshController {
+   constructor() {
+     this.apiBase = '/api/v1';
+@@ -3056,8 +3059,7 @@ async handleWebSocketMessage(data) {
+ 
+   updateTopologyBackhaulMeter(selection, edge) {
+     const signal = this.topologyBackhaulSignal(edge);
+-    signal.color = !signal.available ? '#64748b' : signal.rssi >= -55 ? '#15803d'
+-      : signal.rssi >= -67 ? '#2563eb' : signal.rssi >= -75 ? '#d97706' : '#dc2626';
++    signal.color = signal.available ? signalMeter.rssiColor(signal.rssi) : signalMeter.colors.grey;
+     const parentX = Number(edge?.source?.x);
+     const nodeX = Number(edge?.target?.x);
+     const direction = Number.isFinite(parentX) && Number.isFinite(nodeX) ? parentX - nodeX : -1;
+@@ -3190,22 +3192,18 @@ async handleWebSocketMessage(data) {
+     const updatedAt = Date.parse(metrics.last_updated || '');
+     const ageMs = Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : null;
+     const stale = rssi !== null && ageMs !== null && ageMs > 20000;
+-    const available = rssi !== null && !stale;
++    const available = rssi !== null && ageMs !== null && !stale && updatedAt - Date.now() <= 5000;
+ 
+     let quality = 'unknown';
+-    let color = '#6b7280';
++    const color = available ? signalMeter.rssiColor(rssi) : signalMeter.colors.grey;
+     if (available && rssi >= -55) {
+       quality = 'strong';
+-      color = '#15803d';
+     } else if (available && rssi >= -67) {
+       quality = 'good';
+-      color = '#2563eb';
+     } else if (available && rssi >= -75) {
+       quality = 'fair';
+-      color = '#d97706';
+     } else if (available) {
+       quality = 'weak';
+-      color = '#dc2626';
+     }
+ 
+     return {
+@@ -3223,17 +3221,7 @@ async handleWebSocketMessage(data) {
+ 
+   /** Convert a live signal snapshot into the ten-level topology meter. */
+   topologySignalLevel(signal) {
+-    if (!signal?.available || !Number.isFinite(signal.rssi)) return 0;
+-    if (signal.rssi >= -45) return 10;
+-    if (signal.rssi >= -50) return 9;
+-    if (signal.rssi >= -55) return 8;
+-    if (signal.rssi >= -60) return 7;
+-    if (signal.rssi >= -65) return 6;
+-    if (signal.rssi >= -70) return 5;
+-    if (signal.rssi >= -75) return 4;
+-    if (signal.rssi >= -80) return 3;
+-    if (signal.rssi >= -85) return 2;
+-    return 1;
++    return signal?.available ? signalMeter.rssiLevel(signal.rssi) : 0;
+   }
+ 
+   /** Place a full-height meter on the client side away from its RF link. */
+@@ -3258,10 +3246,10 @@ async handleWebSocketMessage(data) {
+       .attr('width', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).width)
+       .attr('height', segmentIndex => this.topologySignalMeterGeometry(staData, segmentIndex).height)
+       .attr('rx', 1)
+-      .attr('fill', segmentIndex => segmentIndex < level ? staData.signal.color : '#e2e8f0')
++      .attr('fill', segmentIndex => signalMeter.segmentColor(segmentIndex, level))
+       .attr('stroke', segmentIndex => segmentIndex < level ? '#ffffff' : '#94a3b8')
+       .attr('stroke-width', 0.55)
+-      .attr('opacity', segmentIndex => segmentIndex < level ? 1 : 0.42);
++      .attr('opacity', 1);
+   }
+ 
+   /**
+@@ -3296,11 +3284,9 @@ async handleWebSocketMessage(data) {
+       return null;
+     });
+     const [topology, clientsResponse] = await Promise.all([topologyRequest, clientsRequest]);
+-    const metricsChanged = clientsResponse
+-      ? this.updateTopologyClients(clientsResponse.clients)
+-      : false;
++    if (clientsResponse) this.updateTopologyClients(clientsResponse.clients);
+     const topologyChanged = this.applyTopologyRefresh(topology);
+-    if (metricsChanged && !topologyChanged) this.refreshTopologySignalVisuals();
++    if (!topologyChanged) this.refreshTopologySignalVisuals();
+   }
+ 
+   /**
+@@ -4278,10 +4264,10 @@ async handleWebSocketMessage(data) {
+ 
+   drawTopologySignalLegend(svg) {
+     const entries = [
+-      { label: 'Strong >=-55', color: '#15803d' },
+-      { label: 'Good -56..-67', color: '#2563eb' },
+-      { label: 'Fair -68..-75', color: '#d97706' },
+-      { label: 'Weak <-75', color: '#dc2626' }
++      { label: 'Weak <-75', color: signalMeter.colors.red },
++      { label: 'Fair -75..-56', color: signalMeter.colors.yellow },
++      { label: 'Strong >=-55', color: signalMeter.colors.green },
++      { label: 'Unlit / unknown', color: signalMeter.colors.grey }
+     ];
+     const legend = svg.append('g')
+       .attr('class', 'topology-signal-legend')
+diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
+index 44d5fd3..90e2ba4 100644
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -385,6 +385,7 @@
+                         </div>
+                     </div>
+ 
++                    <p class="signal-meter-legend">Signal bars fill bottom to top: red → yellow → green; unlit bars are grey. All grey means stale or unknown. Hover for RSSI in dBm; extender bars measure the backhaul uplink.</p>
+                     <div class="topology-container">
+                         <div class="topology-main">
+                             <div id="topology-visualization">
+@@ -2024,7 +2025,8 @@
+     <div id="toast-container" class="toast-container"></div>
+ 
+     <!-- Scripts -->
+-    <script src="static/script.js?v=topology-preserve-arrangement-1"></script>
++    <script src="static/signal-meter.js?v=signal-meter-1"></script>
++    <script src="static/script.js?v=signal-meter-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

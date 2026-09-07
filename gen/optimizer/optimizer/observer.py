@@ -13,6 +13,7 @@ from .model import (
     format_time,
     normalize_band,
     normalize_mac,
+    parse_time,
     sorted_candidates,
     sorted_clients,
 )
@@ -80,13 +81,17 @@ class ControllerObserver:
         *,
         fetcher: JsonFetcher | None = None,
         candidate_provider: CandidateProvider | None = None,
+        current_link_fallback: Callable[[ClientObservation], ClientObservation] | None = None,
         trust_api_metric_timestamp: bool = True,
+        max_current_metric_age_seconds: float | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.fetcher = fetcher or _default_fetch
         self.candidate_provider = candidate_provider
+        self.current_link_fallback = current_link_fallback
         self.trust_api_metric_timestamp = trust_api_metric_timestamp
+        self.max_current_metric_age_seconds = max_current_metric_age_seconds
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sequence = 0
         self.last_raw: dict[str, Any] | None = None
@@ -178,7 +183,15 @@ class ControllerObserver:
                     ),
                 )
             )
-        normalized_clients = sorted_clients(clients)
+        normalized_clients = sorted_clients(
+            self.current_link_fallback(client)
+            if self.current_link_fallback is not None
+            and (client.rcpi is None or client.metric_observed_at is None
+                 or self.max_current_metric_age_seconds is not None and not
+                 -5 <= (self.clock() - parse_time(client.metric_observed_at)).total_seconds()
+                 <= self.max_current_metric_age_seconds) else client
+            for client in clients
+        )
 
         candidates: list[CandidateObservation] = []
         for client in normalized_clients:
@@ -207,7 +220,7 @@ class ControllerObserver:
                     normalized_clients,
                     inventory,
                     bsses_payload.get("bsses", []),
-                    sample_started_at,
+                    format_time(self.clock()) if self.current_link_fallback else sample_started_at,
                 )
             )
             measured_keys = {(item.sta_mac, item.bssid) for item in measured}

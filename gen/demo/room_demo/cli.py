@@ -5,7 +5,6 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
-import secrets
 import signal
 import shutil
 import sys
@@ -28,6 +27,9 @@ from .events import EventStore
 from .interactions import InteractiveMediumSession
 from .recovery import RecoveryJournal, recover_medium
 from .server import RoomDemoServer
+from .worlds import BoundWorlds
+from .client_wifi import disconnected_client, resume_bound_client
+from .backhaul import BackhaulManager, RdkBackhaulAdapter
 
 
 DEMO_ROOT = Path(__file__).resolve().parents[1]
@@ -276,14 +278,20 @@ def _interactive(args) -> int:
     run_id = f"{timestamp}-{manifest['name']}-interactive"
     runner = Runner(plan, args.socket, args.output_root, run_id=run_id)
     store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl")
-    operator_token = secrets.token_urlsafe(32)
+    recovery = RecoveryJournal(args.recovery_file, run_id, _hash(inventory))
+    backhaul_adapter = RdkBackhaulAdapter(plan) if args.adaptive_backhaul and args.mode == "act" else None
+    if args.adaptive_backhaul and backhaul_adapter is None:
+        raise ActuatorError("--adaptive-backhaul requires interactive --mode act --yes-act")
     interactions = RoomEngine(
         InteractiveMediumSession(
             store, world, layout, plan, args.socket,
             lease_seconds=args.lease_seconds,
-            recovery=RecoveryJournal(
-                args.recovery_file, run_id, _hash(inventory)
-            ),
+            traffic_probe_role=manifest["hero"]["role"],
+            worlds=BoundWorlds(world, layout, CONFIGURATOR / "worlds"),
+            disconnect_client=lambda role: disconnected_client(plan, role, recovery),
+            reconnect_client=lambda role: resume_bound_client(plan, role, recovery),
+            recovery=recovery,
+            adaptive_backhaul=backhaul_adapter is not None,
         )
     )
     # Interactive act mode is a continuously running reconciler. Keep a
@@ -297,13 +305,14 @@ def _interactive(args) -> int:
         base_url=args.base_url, room_state=interactions.snapshot,
         interactive=True, maximum_actions=maximum_actions,
         steering_transaction=interactions.steering_action,
+        backhaul_manager=BackhaulManager(backhaul_adapter, interactions.backhaul_action, store)
+        if backhaul_adapter is not None else None,
     )
     server = RoomDemoServer(
         args.listen,
         store,
         DEFAULT_VIEWER,
         interactions,
-        operator_token=operator_token,
     )
     stop_event = threading.Event()
     clock_thread: threading.Thread | None = None
@@ -330,9 +339,6 @@ def _interactive(args) -> int:
         lock_stream.truncate()
         lock_stream.write(run_id + "\n")
         lock_stream.flush()
-        args.operator_token_file.parent.mkdir(parents=True, exist_ok=True)
-        args.operator_token_file.write_text(operator_token + "\n", encoding="utf-8")
-        args.operator_token_file.chmod(0o600)
         for signum in (signal.SIGINT, signal.SIGTERM):
             old_handlers[signum] = signal.signal(signum, stop_requested)
 
@@ -381,12 +387,7 @@ def _interactive(args) -> int:
             f"room-demo: interactive viewer "
             f"http://{display_host}:{port}/viewer/?mode=interactive"
         )
-        print(
-            f"room-demo: operator viewer "
-            f"http://{display_host}:{port}/viewer/?mode=interactive"
-            f"#operator={operator_token}"
-        )
-        print(f"room-demo: operator capability {args.operator_token_file}")
+        print("room-demo: interactive control has no authentication; restrict access to a trusted lab or authenticated gateway")
         print(
             f"room-demo: run {run_id}; authority={args.mode}; "
             "RF writer=interactive wmdcfg session; Ctrl-C restores the exact baseline"
@@ -427,11 +428,19 @@ def _interactive(args) -> int:
         try:
             if session_started:
                 expected = plan.get("expected_lab") or {}
-                final_health = mesh_health(
-                    int(expected.get("mesh_devices", 5)),
-                    int(expected.get("clients", 20)),
-                )
-                Runner._require_healthy(final_health, "interactive postflight")
+                health_deadline = time.monotonic() + 60
+                while True:
+                    final_health = mesh_health(
+                        int(expected.get("mesh_devices", 5)),
+                        int(expected.get("clients", 20)),
+                    )
+                    try:
+                        Runner._require_healthy(final_health, "interactive postflight")
+                        break
+                    except ActuatorError:
+                        if time.monotonic() >= health_deadline:
+                            raise
+                        time.sleep(2)
                 (runner.run_dir / "health-postflight.json").write_text(
                     json.dumps(final_health, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8",
@@ -478,15 +487,6 @@ def _interactive(args) -> int:
         if lock_stream is not None:
             fcntl.flock(lock_stream, fcntl.LOCK_UN)
             lock_stream.close()
-        try:
-            if (
-                args.operator_token_file.exists()
-                and args.operator_token_file.read_text(encoding="utf-8").strip()
-                == operator_token
-            ):
-                args.operator_token_file.unlink()
-        except OSError:
-            pass
     print(f"room-demo: outcome={outcome} restored={str(restored).lower()}")
     print(f"room-demo: evidence {runner.run_dir}")
     return 0 if outcome == "passed" else 1
@@ -565,6 +565,8 @@ def parser() -> argparse.ArgumentParser:
         help="optimizer authority (default: recommend)",
     )
     interactive.add_argument("--yes-act", action="store_true")
+    interactive.add_argument("--adaptive-backhaul", action="store_true",
+                             help="model mesh RF and select loop-free RDK OneWifi parents (act only)")
     interactive.add_argument(
         "--max-actions", type=int,
         help="automatic BTM circuit breaker in act mode (default: 100)",
@@ -589,12 +591,6 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("/run/easymesh-room-demo/recovery.json"),
         help="checksummed crash-recovery record",
-    )
-    interactive.add_argument(
-        "--operator-token-file",
-        type=Path,
-        default=Path("/run/easymesh-room-demo/operator.token"),
-        help="run-scoped browser write capability (mode 0600)",
     )
     recover = commands.add_parser(
         "recover", help="restore the RF baseline retained by an interrupted session"

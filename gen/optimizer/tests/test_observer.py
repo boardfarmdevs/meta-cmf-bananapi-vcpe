@@ -1,8 +1,78 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
+from unittest.mock import Mock
 
 from optimizer.observer import ControllerObserver
+
+
+def test_opt_in_stale_metric_fallback_keeps_fresh_controller_values_and_raw_evidence():
+    observed_at = datetime(2026, 9, 7, 0, 0, 30, tzinfo=timezone.utc)
+    clients = [{"mac": f"02:00:00:00:{index:02x}:00", "connected_bssid": "02:00:00:aa:aa:01",
+                "client_metrics": {"rcpi": 100, "last_updated": timestamp}}
+               for index, timestamp in enumerate(("2026-09-07T00:00:00Z", "2026-09-07T00:00:29Z"), 1)]
+    payloads = {"topology": {"nodes": []}, "clients": {"clients": clients},
+                "devices": {"devices": []}, "bsses": {"bsses": []}}
+    fallback = Mock(side_effect=lambda client: replace(client, rcpi=130,
+        metric_observed_at=observed_at.isoformat(), measurement_source="client_kernel_iw_link_after_wlan_traffic_probe"))
+    observer = ControllerObserver("http://controller", fetcher=lambda url: payloads[url.rsplit("/", 1)[-1]],
+        current_link_fallback=fallback, max_current_metric_age_seconds=15, clock=lambda: observed_at)
+    snapshot = observer.observe()
+    fallback.assert_called_once()
+    assert snapshot.clients[0].rcpi == 130
+    assert snapshot.clients[1].rcpi == 100
+    assert clients[0]["client_metrics"]["rcpi"] == 100
+    assert clients[0]["client_metrics"]["last_updated"] == "2026-09-07T00:00:00Z"
+
+
+def test_stale_fallback_accounts_for_time_spent_fetching_controller_apis():
+    timestamp = "2026-09-07T00:00:00Z"
+    payloads = {"topology": {"nodes": []}, "devices": {"devices": []}, "bsses": {"bsses": []},
+                "clients": {"clients": [{"mac": "02:00:00:00:03:00",
+                    "connected_bssid": "02:00:00:aa:aa:01",
+                    "client_metrics": {"rcpi": 100, "last_updated": timestamp}}]}}
+    times = iter(datetime(2026, 9, 7, 0, 0, second, tzinfo=timezone.utc)
+                 for second in (5, 18, 19))
+    fallback = Mock(side_effect=lambda client: replace(client, rcpi=130,
+        metric_observed_at="2026-09-07T00:00:18Z",
+        measurement_source="client_kernel_iw_link_after_wlan_traffic_probe"))
+    observer = ControllerObserver("http://controller",
+        fetcher=lambda url: payloads[url.rsplit("/", 1)[-1]],
+        current_link_fallback=fallback, max_current_metric_age_seconds=10,
+        clock=lambda: next(times))
+    snapshot = observer.observe()
+    fallback.assert_called_once()
+    assert snapshot.clients[0].rcpi == 130
+    assert snapshot.clients[0].metric_observed_at == "2026-09-07T00:00:18Z"
+    assert payloads["clients"]["clients"][0]["client_metrics"]["last_updated"] == timestamp
+
+
+def test_optional_kernel_fallback_precedes_candidates_without_rewriting_controller_data():
+    timestamp = "2026-08-20T20:00:00Z"
+    clients = [{"mac": f"02:00:00:00:0{index}:00", "connected_bssid": "02:00:00:aa:aa:01",
+                "client_metrics": {"rcpi": 0 if index == 3 else 100,
+                                   "association_uptime_seconds": 90,
+                                   "last_updated": timestamp}}
+               for index in (3, 4)]
+    payloads = {"topology": {"nodes": []}, "clients": {"clients": clients},
+                "devices": {"devices": []}, "bsses": {"bsses": []}}
+    fallback = Mock(side_effect=lambda client: replace(client, rcpi=110,
+                    metric_observed_at="2026-08-20T20:00:01Z", measurement_source="client_kernel_iw_link_after_wlan_traffic_probe"))
+    candidates = Mock(return_value=[], last_rejected_candidate_keys=set(), last_raw=[])
+    times = iter(datetime(2026, 8, 20, 20, 0, second, tzinfo=timezone.utc) for second in (0, 2, 9))
+    observer = ControllerObserver("http://controller",
+        fetcher=lambda url: payloads[url.rsplit("/", 1)[-1]],
+        current_link_fallback=fallback, candidate_provider=candidates,
+        clock=lambda: next(times))
+    snapshot = observer.observe()
+    fallback.assert_called_once()
+    assert snapshot.clients[0].rcpi == 110
+    assert snapshot.clients[0].connected_bssid == clients[0]["connected_bssid"]
+    assert candidates.call_args.args[0][0].rcpi == 110
+    assert candidates.call_args.args[3] == "2026-08-20T20:00:02.000Z"
+    assert clients[0]["client_metrics"]["rcpi"] == 0
+    assert snapshot.clients[1].measurement_source == "associated_sta_link_metrics"
 
 
 def test_controller_observer_consumes_controller_report_receipt_time():

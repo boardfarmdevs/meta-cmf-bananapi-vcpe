@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
+import threading
 import time
 from typing import Any, Callable, Iterable
 import urllib.error
@@ -128,6 +129,7 @@ class ControllerCandidateProvider:
         client_selector: ClientSelector | None = None,
         simulated_control_channels: dict[str, int] | None = None,
         simulated_bss_channels: dict[str, int] | None = None,
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if max_parallel_agents < 1:
             raise ValueError("max_parallel_agents must be positive")
@@ -142,6 +144,7 @@ class ControllerCandidateProvider:
         self.request_attempts = request_attempts
         self.retry_delay_seconds = retry_delay_seconds
         self.client_selector = client_selector
+        self.progress = progress
         self.override_simulated_control_channels = (
             simulated_control_channels is not None
         )
@@ -261,6 +264,25 @@ class ControllerCandidateProvider:
         transactions_by_agent: dict[str, list[dict[str, Any]]] = {
             agent: [] for agent in jobs_by_agent
         }
+        completed_queries = 0
+        total_queries = sum(len(jobs) for jobs in jobs_by_agent.values())
+        progress_lock = threading.Lock()
+
+        def report_progress(agent=None, completed=False):
+            nonlocal completed_queries
+            with progress_lock:
+                if completed:
+                    completed_queries += 1
+                if self.progress is not None:
+                    self.progress({
+                        "status": "measuring", "phase": "candidate_queries",
+                        "completed_queries": completed_queries,
+                        "total_queries": total_queries, "active_agent": agent,
+                        "selected_clients": len(clients_by_mac),
+                        "total_clients": len(clients),
+                    })
+
+        report_progress()
 
         def query_agent(
             agent: str,
@@ -269,6 +291,7 @@ class ControllerCandidateProvider:
             agent_measured: list[CandidateObservation] = []
             agent_rejected: set[tuple[str, str]] = set()
             for query_radio, batch in jobs:
+                report_progress(agent)
                 by_opclass: dict[int, dict[int, list[str]]] = {}
                 for opclass, channel, station in batch:
                     by_opclass.setdefault(opclass, {}).setdefault(channel, []).append(
@@ -420,6 +443,7 @@ class ControllerCandidateProvider:
                         f"candidate response for agent {agent} radio {query_radio} "
                         f"omitted {missing_text}"
                     )
+                report_progress(agent, completed=True)
             return agent_measured, agent_rejected
 
         measured_by_agent: dict[str, list[CandidateObservation]] = {}

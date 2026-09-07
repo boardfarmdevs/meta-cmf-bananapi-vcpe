@@ -454,8 +454,10 @@ The common event envelope includes `run_id`, global `sequence`, wall-clock
 `world_time_ms`, `producer`, `kind`, `payload`, and event-chain hashes.
 Runner-local sequence numbers are retained as `payload.producer_sequence`.
 Scripted/replay servers reject writes. The interactive service exposes only
-its bounded control routes, protected by a run-scoped operator capability,
-renewable lease, idempotent command ID and `ETag`/`If-Match` world revision.
+its bounded control routes with same-origin checks, a renewable lease,
+idempotent command ID and `ETag`/`If-Match` world revision. The updated rev140
+room has no operator-token authentication; restrict access at the network or
+authenticated-gateway layer. A lease prevents conflicts, not unauthorized users.
 All accepted mutations are serialized by one `RoomEngine`.
 
 ## 11. Evidence and offline replay

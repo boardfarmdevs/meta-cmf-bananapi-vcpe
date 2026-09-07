@@ -9,19 +9,24 @@ fi
 usage() {
     if [ "${LAB_PROFILE_SELECTABLE:-false}" = true ]; then
         cat >&2 <<EOF
-usage: $0 --profile 20|50|100 [EASYMESH-LXD-BACKUP.tar.zst]
+usage: $0 --profile 20|50|100 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]
 
 The universal thin release requires one profile selection before first boot.
 EOF
     else
-        echo "usage: $0 [EASYMESH-LXD-BACKUP.tar.zst]" >&2
+        echo "usage: $0 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]" >&2
     fi
 }
 
+monitoring=false
 selected_clients=
 backup=
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --monitoring)
+            monitoring=true
+            shift
+            ;;
         --profile)
             [ "$#" -ge 2 ] || { usage; exit 2; }
             selected_clients=$2
@@ -107,6 +112,9 @@ if [ -z "$backup" ]; then
     backup=${candidates[0]}
 fi
 name=${EASYMESH_LXD_NAME:-$default_name}
+if [ "$monitoring" = true ]; then
+    test -f "$script_dir/observability/enable.sh" || { echo 'Monitoring bundle is missing' >&2; exit 1; }
+fi
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
 storage=${EASYMESH_LXD_STORAGE:-}
 cpus=${EASYMESH_LXD_CPUS:-$selected_cpus}
@@ -209,7 +217,7 @@ if lxc config set "$name" boot.mode uefi-nosecureboot 2>/dev/null; then
 else
     lxc config set "$name" security.secureboot false
 fi
-lxc config set "$name" boot.autostart true
+lxc config set "$name" boot.autostart false
 for device in easymesh-webui wmediumd-console room-demo-viewer; do
     if lxc config device show "$name" | grep -q "^${device}:"; then
         lxc config device remove "$name" "$device"
@@ -340,6 +348,10 @@ lxc config device add "$name" wmediumd-console proxy nat=true \
 lxc config device add "$name" room-demo-viewer proxy nat=true \
     listen="tcp:${room_address}:${room_port}" \
     connect="tcp:${guest_address}:8891"
+
+if [ "$monitoring" = true ]; then
+    bash "$script_dir/observability/enable.sh" "$name" "$host_address"
+fi
 
 if [ "$profile_selectable" = true ]; then
     # Return after starting the potentially long offline provisioning job.

@@ -1,13 +1,13 @@
 # Portable LXD VM releases
 
 Each EasyMesh implementation has one universal thin appliance. RDK EasyMesh
-0905 is the new release under qualification; prplMesh remains at its separate
-0904 checkpoint. See the RDK [current state](../current-state.md) for acceptance
+0906 refreshes the accepted 0905 runtime and static assets; prplMesh remains
+at its separate 0904 checkpoint. See the RDK [current state](../current-state.md) for acceptance
 evidence rather than treating the release name as proof of qualification.
 
 | Artifact | Selectable clients | Default host ports |
 | --- | --- | --- |
-| `rdkeasymesh-0905-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890`, live room `18891` |
+| `rdkeasymesh-0906-thin.tar` | 20, 50, or 100 | EasyMesh WebUI `18889`, wmediumd Console `18890`, live room `18891` |
 | `prplmesh-0904-thin.tar` | 20, 50, or 100 | wmediumd Console `8090`, Controller UI `8091`, live room `18891` |
 
 There are no profile-specific downloads. Import selects exactly one immutable
@@ -19,16 +19,17 @@ kernel-medium implementation remains optional research work.
 The adjacent `.tar.sha256` is the download identity. After extraction,
 `release.json` records the source commit, release ID, supported profiles, VM
 backup name and resource contract. Do not infer identity from the filename
-alone.
+alone. RDK 0906 also records the exact uncommitted source snapshot and its
+file manifest; the base commit alone does not identify the delivered source.
 
 ## Install from an empty directory
 
 Place one archive and its adjacent checksum in an empty directory:
 
 ```sh
-sha256sum -c rdkeasymesh-0905-thin.tar.sha256
-tar -xf rdkeasymesh-0905-thin.tar
-cd rdkeasymesh-0905-thin
+sha256sum -c rdkeasymesh-0906-thin.tar.sha256
+tar -xf rdkeasymesh-0906-thin.tar
+cd rdkeasymesh-0906-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
@@ -77,7 +78,7 @@ PRPLMESH_UI_HOST_IP=192.168.2.140 \
   ./import.sh --profile 50
 ```
 
-Default instance names are `rdkeasymesh-PROFILE-0905` and
+Default instance names are `rdkeasymesh-PROFILE-0906` and
 `prplmesh-PROFILE-0904`. The bundled README documents name and port overrides
 for multiple labs on one host.
 
@@ -93,9 +94,9 @@ overwrites an existing instance or chooses which old VM to retire.
 RDK EasyMesh:
 
 ```sh
-lxc exec rdkeasymesh-20-0905 -- \
+lxc exec rdkeasymesh-20-0906 -- \
   /usr/local/sbin/easymesh-labctl check
-lxc exec rdkeasymesh-20-0905 -- \
+lxc exec rdkeasymesh-20-0906 -- \
   journalctl -fu easymesh-lab.service
 ```
 
@@ -107,8 +108,12 @@ lxc exec prplmesh-20-0904 -- \
   journalctl -fu prplmesh-lab.service
 ```
 
-Both imported VMs default to `boot.autostart=true`. `lxc stop INSTANCE` and
-`lxc start INSTANCE` provide normal warm lifecycle control.
+RDK 0906 builds/imports default to `boot.autostart=false`. Earlier RDK 0905
+and prplMesh 0904 importers enabled it; use `lxc config set INSTANCE
+boot.autostart false` on an existing import. The current VMs on rev120,
+rev140 and rev150 have autostart explicitly disabled. `lxc stop INSTANCE`
+and `lxc start INSTANCE` provide normal warm lifecycle control. Starting an
+import for first-boot provisioning does not enable later host-boot autostart.
 
 ## Archive layout
 
@@ -127,12 +132,12 @@ STACK-RELEASE-thin/
 `-- SHA256SUMS                           inner integrity manifest
 ```
 
-For the RDK 0905 release, distribute these two files together:
+For the RDK 0906 release, distribute these two files together:
 
 ```text
-EasyMesh-LXD-0905/
-|-- rdkeasymesh-0905-thin.tar
-`-- rdkeasymesh-0905-thin.tar.sha256
+EasyMesh-LXD-0906/
+|-- rdkeasymesh-0906-thin.tar
+`-- rdkeasymesh-0906-thin.tar.sha256
 ```
 
 Google Drive is transport only. Never replace an archive without also

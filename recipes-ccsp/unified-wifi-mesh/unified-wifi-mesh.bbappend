@@ -1,4 +1,4 @@
-FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
+FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:${THISDIR}/../../gen/wmediumd/configurator/worlds/viewer:"
 
 # Keep source patches in dependency order in one place. Comments below retain
 # the evidence for each patch without silently changing application order.
@@ -153,8 +153,23 @@ EASYMESH_CORE_PATCHES = " \
     file://0153-cli-fit-topology-without-rearranging-nodes.patch \
     file://0154-agent-preserve-state-on-client-capability-query.patch \
     file://0155-orchestrator-serialize-candidate-command-lifetime.patch \
+    file://0156-cli-align-room-and-topology-signal-meters.patch \
+    file://0157-cli-remove-topology-signal-explanations.patch \
+    file://0158-agent-preserve-association-clock-on-metrics.patch \
+    file://0159-agent-refresh-authoritative-association-snapshots.patch \
+    file://0160-controller-recover-capability-query-timeouts.patch \
+    file://0161-cli-maximize-topology-and-label-backhaul.patch \
+    file://0162-cli-enlarge-topology-labels-without-client-radio-clutter.patch \
+    file://0163-cli-space-branch-topologies-without-reordering-nodes.patch \
 "
-SRC_URI += "${EASYMESH_CORE_PATCHES}"
+SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js"
+
+python do_patch_append() {
+    import os
+    import shutil
+    shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "signal-meter.js"),
+                    os.path.join(d.getVar("S"), "src/rdkb-cli/static/signal-meter.js"))
+}
 
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t
 # (unsigned int) and WIFI_MTU_SIZE's unsigned long are distinct types - see patch
@@ -689,6 +704,7 @@ do_install_append_qemux86bpibroadband() {
     # replacements.
     install -m 0644 ${S}/src/rdkb-cli/static/index.html \
         ${S}/src/rdkb-cli/static/script.js \
+        ${S}/src/rdkb-cli/static/signal-meter.js \
         ${S}/src/rdkb-cli/static/style.css \
         ${D}/usr/ccsp/EasyMesh/static/
     install -m 0644 ${WORKDIR}/iot-device.svg \

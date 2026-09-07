@@ -4,6 +4,7 @@
 
 const assert = require('assert').strict;
 const path = require('path');
+const fs = require('fs');
 
 if (process.argv.length !== 3) {
   console.error(`Usage: ${path.basename(process.argv[1])} SCRIPT_JS`);
@@ -14,8 +15,12 @@ global.document = { addEventListener() {}, getElementById() { return null; } };
 global.window = { addEventListener() {} };
 
 const Controller = require(path.resolve(process.argv[2]));
+const signalMeter = require(path.join(path.dirname(path.resolve(process.argv[2])), 'signal-meter.js'));
 const controller = new Controller();
 const visualizationSource = controller.updateTopologyVisualization.toString();
+assert.doesNotMatch(visualizationSource, /drawTopologySignalLegend/);
+assert.doesNotMatch(fs.readFileSync(path.join(path.dirname(path.resolve(process.argv[2])), 'index.html'), 'utf8'),
+  /signal-meter-legend|Signal bars fill bottom to top/);
 const now = Date.now();
 const observed = secondsAgo => new Date(now - secondsAgo * 1000).toISOString();
 
@@ -111,7 +116,8 @@ function renderMeter(edge) {
 const meterEdge = {...freshEdge, source: {name: 'Agent-1', x: 0}, target: {x: 300}};
 const originalMeterEdge = structuredClone(meterEdge);
 const strongMeter = renderMeter(meterEdge);
-assert.ok(strongMeter.segments.every(segment => segment.fill === '#15803d'));
+assert.deepEqual(strongMeter.segments.map(segment => segment.fill),
+  Array.from({length: 10}, (_value, index) => signalMeter.segmentColor(index, 10)));
 assert.ok(strongMeter.segments.every(segment => segment.x > 15),
   'extender meter was placed on the side facing its parent link');
 assert.match(strongMeter.attributes['aria-label'], /Uplink to Agent-1: -41 dBm/);
@@ -120,14 +126,22 @@ assert.deepEqual(meterEdge, originalMeterEdge, 'meter rendering mutated the cont
 assert.ok(renderMeter({...meterEdge, target: {x: -300}}).segments.every(segment => segment.x < -20));
 assert.equal(renderMeter({...freshEdge, signal: {
   status: 'fresh', rcpi: 60, rssi_dbm: -80, observed_at: observed(1)
-}}).segments.filter(segment => segment.opacity === 1).length, 3,
+}}).segments.filter(segment => segment.fill !== signalMeter.colors.grey).length, 3,
   'weak uplink did not use the shared ten-level signal scale');
 for (const edge of [staleEdge, unknownEdge]) {
   const meter = renderMeter(edge);
-  assert.ok(meter.segments.every(segment => segment.fill === '#e2e8f0'),
+  assert.ok(meter.segments.every(segment => segment.fill === signalMeter.colors.grey),
     'stale or unknown uplink was presented as a current strong signal');
   assert.match(meter.attributes['aria-label'], /stale|unknown/);
 }
+
+const restoredMeter = renderMeter({...meterEdge, signal: {
+  status: 'fresh', rcpi: 86, rssi_dbm: -67, observed_at: observed(1)
+}});
+assert.deepEqual(restoredMeter.segments.map(segment => segment.fill), [
+  ...Array(3).fill(signalMeter.colors.red), ...Array(2).fill(signalMeter.colors.yellow),
+  ...Array(5).fill(signalMeter.colors.grey),
+]);
 
 const topology = {
   nodes: [{ id: 'agent-1' }, { id: 'extender-1' }],

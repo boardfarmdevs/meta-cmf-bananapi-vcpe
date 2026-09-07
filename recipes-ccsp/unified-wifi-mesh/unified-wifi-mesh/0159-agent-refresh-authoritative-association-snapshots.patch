@@ -1,0 +1,46 @@
+Subject: [PATCH] Refresh authoritative association snapshots after onboarding
+
+Recover associations that predate agent startup or whose notifications were
+missed. Periodic full snapshots reuse ownership-delta reconciliation and
+preserve an unchanged association's monotonic clock. Metrics alone never
+create authoritative fronthaul ownership. Also retain ownership and clock
+when assigning station records.
+
+Upstream-Status: Inappropriate [local reporting recovery]
+
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1553,6 +1553,22 @@
+     if (!m_initial_op_channel_report_sent) {
+         m_initial_op_channel_report_sent = publish_initial_operating_channels();
+     }
++    static unsigned int association_refresh_ticks = 14;
++    if (m_initial_op_channel_report_sent && ++association_refresh_ticks >= 15) {
++        association_refresh_ticks = 0;
++        wifi_bus_desc_t *descriptor = get_bus_descriptor();
++        raw_data_t snapshot = {};
++        if (descriptor != NULL && descriptor->bus_data_get_fn(
++                &m_bus_hdl, WIFI_WEBCONFIG_GET_ASSOC, &snapshot) == bus_error_success &&
++                snapshot.raw_data.bytes != NULL && snapshot.raw_data_len > 0) {
++            io_process(em_bus_event_type_sta_list,
++                reinterpret_cast<unsigned char *>(snapshot.raw_data.bytes),
++                snapshot.raw_data_len);
++        } else {
++            em_printfout("Authoritative association snapshot refresh unavailable");
++        }
++        free(snapshot.raw_data.bytes);
++    }
+ }
+ 
+ void em_agent_t::handle_1s_tick()
+--- a/src/dm/dm_sta.cpp
++++ b/src/dm/dm_sta.cpp
+@@ -335,6 +335,8 @@
+     this->m_sta_info.est_ul_rate = obj.m_sta_info.est_ul_rate;
+     this->m_sta_info.est_dl_rate = obj.m_sta_info.est_dl_rate;
+     this->m_sta_info.last_conn_time = obj.m_sta_info.last_conn_time;
++    this->m_sta_info.assoc_start_boottime_sec = obj.m_sta_info.assoc_start_boottime_sec;
++    this->m_sta_info.associated = obj.m_sta_info.associated;
+     this->m_sta_info.retrans_count = obj.m_sta_info.retrans_count;
+     this->m_sta_info.signal_strength = obj.m_sta_info.signal_strength;
+     this->m_sta_info.rcpi = obj.m_sta_info.rcpi;

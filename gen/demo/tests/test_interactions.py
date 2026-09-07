@@ -171,6 +171,34 @@ class InteractiveMediumSessionTests(unittest.TestCase):
                 position=[7, 2], final=True,
             )
 
+    def test_probe_selection_is_client_only_and_does_not_write_rf(self):
+        self.session._traffic_probe_role = None
+        before = self.session.snapshot()
+        writes = len(self.client.applied)
+        engine = RoomEngine(self.session)
+        self.addCleanup(engine.close)
+        result = engine.select_traffic_probe("sta_01", token=self.lease["token"],
+            expected_revision=0, command_id="select-probe")
+        duplicate = engine.select_traffic_probe("sta_01", token=self.lease["token"],
+            expected_revision=0, command_id="select-probe")
+        self.assertEqual(result, duplicate)
+        self.assertEqual(result["traffic_probe"], {"role": "sta_01", "selection": 1})
+        after = self.session.snapshot()
+        for field in ("roles", "daemon", "environment_epoch", "measurement_epoch", "last_rf_role", "playback"):
+            self.assertEqual(before[field], after[field], field)
+        self.assertEqual(len(self.client.applied), writes)
+        with self.assertRaisesRegex(InteractionError, "current revision"):
+            self.session.select_traffic_probe("sta_01", token=self.lease["token"], expected_revision=0)
+        for role in ("gateway", "extender_1", "not-a-client"):
+            with self.assertRaisesRegex(InteractionError, "not interactive"):
+                self.session.select_traffic_probe(role, token=self.lease["token"], expected_revision=1)
+        with self.assertRaisesRegex(InteractionError, "lease does not match"):
+            self.session.select_traffic_probe("sta_01", token="wrong", expected_revision=1)
+        self.session.presence("sta_01", token=self.lease["token"], expected_revision=1, present=False)
+        self.session._selected_roles.discard("sta_01")
+        self.session.select_traffic_probe("sta_01", token=self.lease["token"], expected_revision=2)
+        self.assertFalse(self.session.snapshot()["roles"]["sta_01"]["present"])
+
     def test_same_quantized_position_commits_without_an_rf_generation(self):
         generation = self.client.generation
         apply_count = len(self.client.applied)
