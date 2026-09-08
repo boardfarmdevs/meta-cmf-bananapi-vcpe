@@ -4,6 +4,27 @@ This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
 
+`node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
+offline fallback and explicit mode overrides without probing a backend. The
+HTTP counterpart in `gen/demo/tests/test_server.py` checks clean root redirects,
+query preservation and HTML mode injection for interactive, observation and
+replay servers without modifying files or other assets.
+
+`viewer-sidebar-layout-test.js` uses Playwright's Chromium to cycle real viewer
+render functions through measuring, waiting, errors, convergence and changing
+client lists. It checks fixed sidebar geometry, scrollable full messages,
+keyboard access and immediate updates at desktop, short and narrow viewports.
+It uses an isolated page fixture and does not connect to or change a live lab:
+
+```sh
+NODE_PATH=/path/to/browser-tools/node_modules \
+CHROMIUM_PATH=/path/to/chromium \
+node gen/tests/viewer-sidebar-layout-test.js
+```
+
+The Node module path must provide `playwright-core`; `CHROMIUM_PATH` is optional
+when its matching browser is already installed at Playwright's default location.
+
 `test_lxd_observability.py` checks the optional nested-LXD monitoring bundle's
 dashboard filters, verified scrape configuration, shell syntax and reference
 links. Its Compose checks require the v2 plugin but no running Docker daemon:

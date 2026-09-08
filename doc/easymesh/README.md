@@ -23,6 +23,7 @@ a large physical Wi-Fi installation.
 | Start, stop, recover, or redeploy it | [Operations](guide/operations.md) |
 | Give a live demonstration | [Demonstrations](guide/demonstrations.md) |
 | Run the closed-loop 3D room presentation | [Live room demo](live-room-demo/README.md) |
+| Know what each room should show during Play | [Room playback and topology inspection](reference/room-playback-inspection-guide.md) |
 | Understand RF simulation | [RF simulation](concepts/rf-simulation.md) |
 | Understand steering and policy boundaries | [Steering policy](concepts/steering-policy.md) |
 | Develop an optimizer | [Optimizer](concepts/optimizer.md) |
@@ -89,6 +90,13 @@ boundary:
 - [Nested LXD UI and Prometheus/Grafana monitoring](reference/lxd-ui-and-monitoring.md)
 - [Room viewer local and internet access](reference/room-viewer-remote-access.md)
 - [Live world switching with a fixed client pool](reference/live-world-switching.md)
+- [Per-room playback and network-topology inspection](reference/room-playback-inspection-guide.md)
+- [Measured room steering latency improvements](reference/room-steering-latency-0907.md)
+- [Fast interactive steering and two-room measurements](reference/room-fast-steering-0907.md)
+- [Room observation, metric collection and rendering latency](reference/room-observation-latency-0907.md)
+- [Coordination audit and unassisted RDK profiling](reference/room-coordination-profiling-0907.md)
+- [Streaming decisions and same-frame display audit](reference/room-streaming-coordination-0907.md)
+- [Bounded coordination, protocol tracing and 0908 qualification](reference/room-coordination-completion-0908.md)
 - [Commanded EasyMesh steering](reference/commanded-steering.md)
 - [wmediumd client carousel](reference/client-carousel.md)
 - [Optimizer architecture and contracts](reference/optimizer-architecture.md)

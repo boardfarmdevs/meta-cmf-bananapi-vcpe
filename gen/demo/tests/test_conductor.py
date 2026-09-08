@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import tempfile
 from dataclasses import replace
+from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import unittest
 from pathlib import Path
 import sys
@@ -10,16 +13,22 @@ from unittest.mock import Mock, patch
 if sys.version_info < (3, 9):
     raise unittest.SkipTest("optimizer runtime requires Python 3.9 or newer")
 
-from optimizer.model import ClientObservation, MeshHealth, Snapshot
-from optimizer.candidates import CandidateMetricsError, CandidateMetricsUnavailable
+from optimizer.model import CandidateObservation, ClientObservation, MeshHealth, Snapshot
+from optimizer.candidates import CandidateMetricsError, CandidateMetricsUnavailable, CandidateSnapshotSuperseded
 from optimizer.policy import Decision, Evaluation, PolicyConfig
 from optimizer.state import ClientPolicyState, PolicyState
 from room_demo.conductor import (
+    CANDIDATE_PRIORITY_WINDOW_SECONDS,
     LiveConductor,
+    _action_measurements_fresh,
+    _candidate_measurement_needed,
+    _priority_client,
     _deferred_state,
     _fleet_status,
     _client_optimizer_status,
     _interrupted_measurement_state,
+    _interactive_policy,
+    _completed_action_state,
     _ranked_action_batch,
     _simulated_bss_channels,
     _single_action_state,
@@ -28,6 +37,172 @@ from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def test_cooldown_and_failure_backoff_start_at_actual_verification(self):
+        now = datetime.now(timezone.utc)
+        config = _interactive_policy(PolicyConfig())
+        decision = Decision(sta_mac="02:00:00:00:03:00", action="steer", reason="ready",
+                            source_bssid="02:00:00:00:01:01", target_bssid="02:00:00:00:02:01")
+        for success in (True, False):
+            result = _completed_action_state(PolicyState(), decision, config, success, "failed", now).for_sta(decision.sta_mac)
+            self.assertEqual(result.phase, "cooldown" if success else "backoff")
+            self.assertIsNone(result.pending_since)
+            self.assertEqual(result.cooldown_until if success else result.backoff_until, (now + timedelta(seconds=5)).isoformat())
+
+    def test_fast_policy_removes_pre_action_timers_but_keeps_hysteresis_and_bounds(self):
+        original = PolicyConfig()
+        fast = _interactive_policy(original)
+        self.assertEqual((fast.condition_hold_seconds, fast.minimum_dwell_seconds), (0, 0))
+        self.assertEqual(fast.minimum_target_gain_rcpi, 4)
+        self.assertEqual(fast.post_steer_cooldown_seconds, 5)
+        self.assertEqual(fast.steer_timeout_seconds, 40)
+        self.assertEqual((fast.failure_backoff_seconds, fast.maximum_failure_backoff_seconds), (5, 30))
+        self.assertEqual(fast.reject_stale_metrics_after_seconds, original.reject_stale_metrics_after_seconds)
+        self.assertEqual(original.minimum_dwell_seconds, 20)
+
+    def test_both_simultaneously_moved_clients_get_collection_priority(self):
+        roles = {"first": "02:00:00:00:03:00", "second": "02:00:00:00:04:00"}
+        for mac in roles.values():
+            client = Mock(sta_mac=mac, connected_bssid="02:00:00:00:01:01")
+            self.assertTrue(_priority_client(client, list(roles), roles, {}, 120, 30))
+            self.assertFalse(_priority_client(client, list(roles), roles, {}, 120, 120))
+
+    def test_rf_change_interrupts_optimizer_retry_wait(self):
+        conductor, store = self._conductor()
+        conductor.interactive = True
+        import threading
+        import time
+        timer = threading.Timer(0.02, lambda: store.emit(
+            "optimizer.environment.changed", 0, {"environment_epoch": 1}))
+        timer.start()
+        started = time.monotonic()
+        self.assertFalse(conductor._optimizer_wait(1, 0))
+        timer.join()
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_superseded_collection_is_not_a_native_outage_or_fatal_error(self):
+        conductor, store, policy, actuator, sleeper = self._run_optimizer([CandidateSnapshotSuperseded("RF changed"), None])
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(conductor.warnings, [])
+        self.assertNotIn("optimizer.measurement.unavailable", store.current()["latest"])
+        actuator.execute.assert_not_called()
+        self.assertEqual(policy.evaluate.call_count, 1)
+        self.assertEqual(sleeper.call_args_list[0].args[0], 0.1)
+
+    def test_collection_skips_only_unusable_pending_cooldown_and_backoff_clients(self):
+        client = Mock(sta_mac="02:00:00:00:03:00")
+        policy = Mock()
+        policy.requires_candidate_measurement.return_value = True
+        now = "2026-09-08T00:00:00Z"
+        future = "2026-09-08T00:00:30Z"
+        for phase, until in (("pending", {}), ("cooldown", {"cooldown_until": future}),
+                             ("backoff", {"backoff_until": future})):
+            state = PolicyState((ClientPolicyState(sta_mac=client.sta_mac, phase=phase, **until),))
+            self.assertFalse(_candidate_measurement_needed(policy, state, client, now))
+            if until:
+                self.assertTrue(_candidate_measurement_needed(policy, state, client, future))
+        for phase in ("holding", "stable"):
+            state = PolicyState((ClientPolicyState(sta_mac=client.sta_mac, phase=phase),))
+            self.assertTrue(_candidate_measurement_needed(policy, state, client, now))
+        policy.requires_candidate_measurement.return_value = False
+        self.assertFalse(_candidate_measurement_needed(policy, PolicyState(), client, now))
+
+    def test_collection_priority_uses_actual_source_and_expires(self):
+        client = Mock(sta_mac="02:00:00:00:03:00", connected_bssid="02:00:00:00:01:01")
+        clients = {"station": client.sta_mac}
+        owners = {client.connected_bssid: "extender_1"}
+        self.assertTrue(_priority_client(client, "extender_1", clients, owners, 60, 0))
+        self.assertTrue(_priority_client(client, "station", clients, owners, 60, 0))
+        self.assertFalse(_priority_client(client, "extender_1", clients, owners, 60, 60))
+        self.assertFalse(_priority_client(client, None, clients, owners, 60, 0))
+        self.assertFalse(_priority_client(client, "gateway", clients, owners, 60, 0))
+        self.assertTrue(_priority_client(client, "extender_1", clients, owners,
+                                         CANDIDATE_PRIORITY_WINDOW_SECONDS, 119))
+        self.assertFalse(_priority_client(client, "extender_1", clients, owners,
+                                          CANDIDATE_PRIORITY_WINDOW_SECONDS, 120))
+        client.connected_bssid = "02:00:00:00:02:01"
+        self.assertFalse(_priority_client(client, "extender_1", clients, owners, 60, 0))
+
+    def test_eight_client_batch_still_verifies_each_action_and_stops_on_failure(self):
+        for failed_verification in (False, True):
+            with self.subTest(failed_verification=failed_verification):
+                conductor, store = self._conductor()
+                conductor.interactive = True
+                conductor.mode = "act"
+                conductor.manifest.update({"policy": "policy.yaml", "optimizer": {
+                    "allow_simulated_candidates": True, "request_only": True, "interval_seconds": 5,
+                    "action_window_ms": [0, 1000], "max_actions": 8, "interactive_action_batch_size": 8,
+                }})
+                store.emit("demo.state", 0, {"state": "running"})
+                now = datetime.now(timezone.utc).isoformat()
+                clients = tuple(ClientObservation(
+                    sta_mac=f"02:00:00:00:{number:02x}:00", connected_device_id="02:00:00:00:01:20",
+                    connected_device_name="Source", connected_bssid="02:00:00:00:01:01",
+                    rcpi=70, association_uptime_seconds=90, metric_observed_at=now,
+                    measurement_source="associated_sta_link_metrics", band="5", ssid="private_ssid", cohort="private",
+                ) for number in range(3, 12))
+                candidates = tuple(CandidateObservation(
+                    sta_mac=client.sta_mac, bssid="02:00:00:00:04:01", device_id="02:00:00:00:02:20",
+                    device_name="Target", rcpi=100, metric_observed_at=now, measurement_source="candidate", band="5",
+                ) for client in clients)
+                snapshot = Snapshot(schema_version=1, sequence=0, controller_url="http://controller", observed_at=now,
+                                    health=MeshHealth(5, 9), clients=clients, candidates=candidates)
+                for number, client in enumerate(clients):
+                    conductor._role_by_mac[client.sta_mac] = f"sta_static_{number:02}"
+                    conductor._container_by_mac[client.sta_mac] = f"client-{number}"
+                decisions = tuple(Decision(sta_mac=client.sta_mac, action="steer", reason="ready",
+                                          source_bssid=client.connected_bssid, target_bssid=candidates[0].bssid,
+                                          current_rcpi=70, target_rcpi=100) for client in clients)
+                policy = Mock(config=PolicyConfig())
+                policy.evaluate.return_value = Evaluation("hash", decisions, PolicyState())
+                provider = Mock(last_raw=[], last_selected_sta_macs={client.sta_mac for client in clients}, last_selection={})
+                observer = Mock()
+                observer.observe.return_value = snapshot
+                actuator = Mock()
+                actuator.execute.return_value.success = True
+                actuator.execute.return_value.to_dict.return_value = {"success": True}
+                verifier = Mock()
+                verifier.verify.return_value.success = not failed_verification
+                verifier.verify.return_value.reason = "association_timeout" if failed_verification else "association_and_traffic_converged"
+                verifier.verify.return_value.to_dict.return_value = {"success": not failed_verification}
+                with patch("room_demo.conductor.load_policy", return_value=PolicyConfig()), \
+                     patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
+                     patch("room_demo.conductor.ThresholdPolicy", return_value=policy), \
+                     patch("room_demo.conductor.ControllerCandidateProvider", return_value=provider), \
+                     patch("room_demo.conductor.ControllerObserver", side_effect=[observer, Mock()]), \
+                     patch("room_demo.conductor.SteerActuator", return_value=actuator), \
+                     patch("room_demo.conductor.OutcomeVerifier", return_value=verifier), \
+                     patch.object(conductor, "_sleep", return_value=True):
+                    conductor._run_worker("optimizer", conductor._optimizer_worker)
+                self.assertEqual(conductor.errors, [])
+                self.assertEqual(actuator.execute.call_count, 1 if failed_verification else 8)
+                self.assertEqual(verifier.verify.call_count, actuator.execute.call_count)
+                if failed_verification:
+                    self.assertEqual(store.current()["latest"]["optimizer.batch.aborted"]["payload"]["reason"], "verification_failed")
+
+    def test_long_batch_rechecks_original_serving_and_target_timestamps(self):
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        client = ClientObservation(
+            sta_mac="02:00:00:00:03:00", connected_device_id="02:00:00:00:01:20",
+            connected_device_name="Source", connected_bssid="02:00:00:00:01:01",
+            rcpi=70, association_uptime_seconds=90, metric_observed_at=timestamp,
+            measurement_source="associated_sta_link_metrics", band="5", ssid="private_ssid", cohort="private",
+        )
+        candidate = CandidateObservation(
+            sta_mac=client.sta_mac, bssid="02:00:00:00:02:01", device_id="02:00:00:00:02:20",
+            device_name="Target", rcpi=100, metric_observed_at=timestamp,
+            measurement_source="candidate", band="5",
+        )
+        snapshot = Snapshot(schema_version=1, sequence=0, controller_url="http://controller",
+                            observed_at=timestamp, health=MeshHealth(5, 1), clients=(client,), candidates=(candidate,))
+        decision = Decision(sta_mac=client.sta_mac, action="steer", reason="ready",
+                            source_bssid=client.connected_bssid, target_bssid=candidate.bssid)
+        self.assertTrue(_action_measurements_fresh(decision, snapshot, 60, now + timedelta(seconds=59)))
+        self.assertFalse(_action_measurements_fresh(decision, snapshot, 60, now + timedelta(seconds=61)))
+        self.assertFalse(_action_measurements_fresh(decision, replace(snapshot, candidates=()), 60, now))
+        self.assertFalse(_action_measurements_fresh(decision, replace(snapshot, clients=(replace(client, metric_observed_at=None),)), 60, now))
+        self.assertFalse(_action_measurements_fresh(decision, snapshot, 60, now - timedelta(seconds=1)))
+
     def test_network_updates_continue_during_optimizer_measurement(self):
         conductor, store = self._conductor()
         conductor._candidate_active.set()
@@ -44,6 +219,91 @@ class ConductorProjectionTests(unittest.TestCase):
                 conductor._controller_lock.release()
         observer.observe.assert_called_once()
         self.assertIn("network.snapshot", store.current()["latest"])
+
+    def test_passive_network_observer_does_not_capture_optimizer_local_variables(self):
+        conductor, store = self._conductor()
+        conductor.interactive = True
+        conductor.room_state = lambda: {"environment_epoch": 1}
+        observer = Mock(last_raw={"topology": {"nodes": []}})
+        observer.observe_topology.return_value = Snapshot(
+            schema_version=1, sequence=0, observed_at="2026-09-08T00:00:00Z",
+            controller_url="http://controller", health=MeshHealth(0, 0), clients=(), candidates=())
+        def construct(*arguments, **options):
+            self.assertNotIn('current_metric_floor', options)
+            return observer
+        with patch('room_demo.conductor.ControllerObserver', side_effect=construct), \
+             patch.object(conductor, '_wait_for_run', return_value=True), \
+             patch.object(conductor, '_active', return_value=True), \
+             patch.object(conductor, '_sleep', return_value=True), \
+             patch.object(conductor, '_network_payload', return_value={'clients': []}):
+            conductor._network_worker()
+        self.assertIn('network.snapshot', store.current()['latest'])
+        observer.observe.assert_not_called()
+        observer.observe_topology.assert_called_once()
+
+    def test_slow_client_probe_does_not_block_a_different_client(self):
+        conductor, _store = self._conductor()
+        started = threading.Event()
+        release = threading.Event()
+        room = {"roles": {role: {"present": True} for role in conductor._mac_by_role}}
+        clients = [Mock(sta_mac=mac, connected_bssid="02:00:00:00:04:01", band="5")
+                   for mac in conductor._mac_by_role.values()]
+        def probe(container, *_arguments):
+            if container == conductor.hero_container:
+                started.set()
+                self.assertTrue(release.wait(3))
+            return None
+        with ThreadPoolExecutor(max_workers=2) as executor, patch("room_demo.conductor.read_client_link", side_effect=probe):
+            first = executor.submit(conductor._client_link_fallback, clients[0], room)
+            try:
+                self.assertTrue(started.wait(1))
+                second = executor.submit(conductor._client_link_fallback, clients[1], room)
+                self.assertIs(second.result(timeout=1), clients[1])
+            finally:
+                release.set()
+            self.assertIs(first.result(timeout=1), clients[0])
+
+    def test_display_metrics_never_replace_native_roster_or_association(self):
+        conductor, _store = self._conductor()
+        client = ClientObservation(sta_mac=conductor.hero_mac, connected_device_id="02:00:00:00:01:20",
+            connected_device_name="Extender", connected_bssid="02:00:00:00:04:01", band="5",
+            rcpi=None, metric_observed_at=None, association_uptime_seconds=0, measurement_source="topology")
+        snapshot = Snapshot(schema_version=1, sequence=0, observed_at="2026-09-08T00:00:10Z",
+            controller_url="http://controller", health=MeshHealth(1, 1), clients=(client,), candidates=())
+        sample = replace(client, rcpi=120, metric_observed_at="2026-09-08T00:00:09Z")
+        conductor._network_metrics = {client.sta_mac: sample}
+        room = {"last_rf_applied_at": "2026-09-08T00:00:08Z"}
+        self.assertEqual(conductor._merge_network_metrics(snapshot, room).clients[0].rcpi, 120)
+        room["last_rf_applied_at"] = "2026-09-08T00:00:10Z"
+        self.assertIsNone(conductor._merge_network_metrics(snapshot, room).clients[0].rcpi)
+        conductor._network_metrics = {client.sta_mac: replace(sample, connected_bssid="02:00:00:00:01:01")}
+        self.assertEqual(conductor._merge_network_metrics(snapshot, None).clients, (client,))
+        conductor._network_metrics = {}
+        self.assertEqual(conductor._merge_network_metrics(snapshot, None).clients, (client,))
+
+    def test_busy_rf_transaction_does_not_block_display_projection(self):
+        conductor, _store = self._conductor()
+        conductor.room_projection = lambda: None
+        conductor.room_state = Mock(side_effect=AssertionError("blocking RF read"))
+        self.assertTrue(conductor._projected_room()["projection_busy"])
+        conductor.room_state.assert_not_called()
+
+    def test_metric_worker_publishes_each_client_without_a_batch_barrier(self):
+        conductor, _store = self._conductor()
+        client = Mock(sta_mac=conductor.hero_mac)
+        conductor._network_clients = (client,)
+        conductor.room_state = lambda: {"environment_epoch": 1}
+        def construct(*arguments, **options):
+            def measure(clients):
+                options["current_link_progress"](clients[0])
+                self.assertIs(conductor._network_metrics[client.sta_mac], client)
+            self.assertEqual(options["max_current_metric_age_seconds"], 5)
+            return Mock(metrics_for=measure)
+        with patch("room_demo.conductor.ControllerObserver", side_effect=construct), \
+             patch.object(conductor, "_wait_for_run", return_value=True), \
+             patch.object(conductor, "_active", return_value=True), \
+             patch.object(conductor, "_sleep", return_value=True):
+            conductor._network_metrics_worker()
 
     def test_kernel_link_fallback_is_cached_and_invalidated_by_rf_epoch(self):
         conductor, _store = self._conductor()
@@ -95,9 +355,10 @@ class ConductorProjectionTests(unittest.TestCase):
             conductor._traffic_worker()
         self.assertNotIn("traffic.sample", store.current()["latest"])
 
-    def _run_optimizer(self, observations, *, interactive=True, evaluation_state=None):
+    def _run_optimizer(self, observations, *, interactive=True, evaluation_state=None, profiling=False):
         conductor, store = self._conductor()
         conductor.interactive = interactive
+        conductor.profiling = profiling
         conductor.mode = "act"
         conductor.manifest.update({"policy": "policy.yaml", "optimizer": {
             "allow_simulated_candidates": True, "request_only": True,
@@ -116,7 +377,7 @@ class ConductorProjectionTests(unittest.TestCase):
             sta_mac=conductor.hero_mac, action="none", reason="test_observed",
             source_bssid="02:00:00:00:01:01",
         ),), evaluation_state or PolicyState())
-        provider = Mock(last_raw=[{"request": {}, "error": "HTTP 504"}], last_selected_sta_macs=set())
+        provider = Mock(last_raw=[{"request": {}, "error": "HTTP 504"}], last_selected_sta_macs=set(), last_selection={})
         actuator = Mock()
         with patch("room_demo.conductor.load_policy", return_value=PolicyConfig()), \
              patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
@@ -124,11 +385,25 @@ class ConductorProjectionTests(unittest.TestCase):
              patch("room_demo.conductor.ControllerCandidateProvider", return_value=provider), \
              patch("room_demo.conductor.ControllerObserver", side_effect=[observer, Mock()]), \
              patch("room_demo.conductor.SteerActuator", return_value=actuator), \
-             patch.object(conductor, "_sleep", side_effect=[False] * (len(observations) - 1) + [True]) as sleeper:
+             patch.object(conductor, "_optimizer_wait" if profiling else "_sleep",
+                          side_effect=[False] * (len(observations) - 1) + [True]) as sleeper:
             conductor._run_worker("optimizer", conductor._optimizer_worker)
         self.assertFalse(conductor._candidate_active.is_set())
         self.assertFalse(conductor._controller_lock.locked())
         return conductor, store, policy, actuator, sleeper
+
+    def test_profile_preserves_policy_until_world_identity_changes(self):
+        holding = PolicyState((ClientPolicyState(
+            sta_mac="02:00:00:00:0c:00", phase="holding",
+            condition_since="2026-09-03T00:00:00Z",
+        ),))
+        with patch.object(EventStore, "world_epoch", side_effect=[1, 1, 1, 2, 2]):
+            conductor, _store, policy, _actuator, _sleeper = self._run_optimizer(
+                [None, None, None], evaluation_state=holding, profiling=True,
+            )
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual([call.args[1] for call in policy.evaluate.call_args_list],
+                         [PolicyState(), holding, PolicyState()])
 
     def test_interactive_measurement_outage_retries_without_steering(self):
         conductor, store, policy, actuator, sleeper = self._run_optimizer([
@@ -140,7 +415,7 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertEqual(policy.evaluate.call_count, 1)
         self.assertEqual(conductor.action_attempts, 0)
         actuator.execute.assert_not_called()
-        self.assertEqual([call.args[0] for call in sleeper.call_args_list[:2]], [5, 10])
+        self.assertEqual([call.args[0] for call in sleeper.call_args_list[:2]], [1, 2])
         unavailable = store.current()["latest"]["optimizer.measurement.unavailable"]["payload"]
         self.assertEqual(unavailable["consecutive_failures"], 2)
         self.assertFalse(unavailable["automatic_actuation_ready"])
@@ -155,8 +430,8 @@ class ConductorProjectionTests(unittest.TestCase):
             failures + [None, CandidateMetricsUnavailable("HTTP 504")]
         )
         waits = [call.args[0] for call in sleeper.call_args_list]
-        self.assertEqual(waits[:5], [5, 10, 20, 30, 30])
-        self.assertEqual(waits[-1], 5)
+        self.assertEqual(waits[:5], [1, 2, 4, 8, 8])
+        self.assertEqual(waits[-1], 1)
         self.assertEqual(conductor.errors, [])
         self.assertEqual(store.current()["optimizer"]["status"], "unavailable")
         actuator.execute.assert_not_called()
@@ -423,6 +698,24 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertFalse(status["converged"])
         self.assertEqual(status["clients_with_stronger_ap"], 1)
         self.assertEqual(status["stronger_candidates"][0]["gain_rcpi"], 58)
+        marginal = replace(snapshot, candidates=(replace(snapshot.candidates[0], rcpi=82),))
+        fleet = _fleet_status(marginal, {clients[0].sta_mac}, minimum_gain_rcpi=4)
+        self.assertTrue(fleet["converged"])
+        partial_roster = _fleet_status(marginal, {clients[0].sta_mac}, minimum_gain_rcpi=4,
+                                      expected_sta_macs={clients[0].sta_mac, "02:00:00:00:99:00"})
+        self.assertFalse(partial_roster["converged"])
+        self.assertFalse(partial_roster["measurement_complete"])
+        self.assertEqual(partial_roster["missing_clients"], ["02:00:00:00:99:00"])
+        offline_native_client = _fleet_status(marginal, {clients[0].sta_mac}, minimum_gain_rcpi=4,
+            expected_sta_macs={clients[0].sta_mac},
+            native_sta_macs={clients[0].sta_mac, "02:00:00:00:99:00"})
+        self.assertEqual(offline_native_client["unexpected_clients"], ["02:00:00:00:99:00"])
+        self.assertFalse(offline_native_client["roster_complete"])
+        self.assertFalse(offline_native_client["measurement_complete"])
+        self.assertFalse(offline_native_client["converged"])
+        self.assertFalse(fleet["absolute_best_converged"])
+        self.assertEqual(fleet["clients_outside_policy_margin"], 0)
+        self.assertFalse(_fleet_status(replace(snapshot, clients=(), candidates=()), set())["converged"])
         stale = replace(snapshot, observed_at="2026-09-03T00:02:00Z")
         status = _fleet_status(stale, {clients[0].sta_mac})
         self.assertFalse(status["converged"])

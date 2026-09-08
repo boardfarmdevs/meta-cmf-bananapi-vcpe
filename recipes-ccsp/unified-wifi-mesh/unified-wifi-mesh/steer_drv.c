@@ -11,10 +11,18 @@
 extern int   set_remote_addr(unsigned int ip, unsigned int port, bool valid);
 extern void *get_network_tree_by_file(const char *file);
 extern void *exec(char *in, size_t in_len, void *node);
+extern void *get_network_tree_by_key(void *node, const char *key);
+extern char *get_node_scalar_value(void *node);
+extern void free_node_value(char *value);
+extern void free_network_tree(void *node);
 
 int main(int argc, char **argv)
 {
     void *node;
+    void *result;
+    void *status_node;
+    char *result_text;
+    int success;
 
     if (argc < 3) {
         fprintf(stderr, "usage: %s \"<command> OneWifiMesh\" <payload.json>\n", argv[0]);
@@ -29,6 +37,21 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    exec(argv[1], strlen(argv[1]), node);
-    return 0;
+    result = exec(argv[1], strlen(argv[1]), node);
+    free_network_tree(node);
+    if (result == NULL) {
+        fprintf(stderr, "steer_drv: native command returned no result\n");
+        return 1;
+    }
+    status_node = get_network_tree_by_key(result, "Status");
+    result_text = status_node == NULL ? NULL : get_node_scalar_value(status_node);
+    if (result_text == NULL) {
+        free_network_tree(result);
+        return 1;
+    }
+    success = strcmp(result_text, "Success") == 0;
+    printf("steer_drv_status=%s\n", result_text);
+    free_node_value(result_text);
+    free_network_tree(result);
+    return success ? 0 : 1;
 }

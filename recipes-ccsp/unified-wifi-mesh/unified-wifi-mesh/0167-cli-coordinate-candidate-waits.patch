@@ -1,0 +1,203 @@
+Subject: [PATCH] cli: isolate candidate admission from passive API access
+
+Retain the native controller single-command limit without holding native tree
+ownership throughout protocol waiting. Report rejected native submissions
+immediately instead of waiting for a response to a command never accepted.
+Publish the native limit, capability negotiation and queue/service timings.
+
+Upstream-Status: Inappropriate [lab profiling adapter]
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -802,7 +802,6 @@
+         metricsHistory     []TimeSeriesMetric
+         maxHistoryPoints   = 100    
+         emExecMutex        sync.Mutex
+-        apiRequestMutex    sync.Mutex
+         liveInventoryMutex sync.RWMutex
+         liveDevices        []Device
+         liveClients        []Client
+@@ -816,7 +815,6 @@
+         topologyResponseUpdatedAt time.Time
+ )
+ 
+-const liveQueryCacheTTL = 1500 * time.Millisecond
+ 
+ // ===== INITIALIZATION =====
+ 
+@@ -3047,6 +3045,7 @@
+ 	// API Routes
+ 	api := router.PathPrefix("/api/v1").Subrouter()
+ 	api.Use(serializeAPIRequests)
++	api.HandleFunc("/coordination", coordinationHandler).Methods("GET")
+ 
+ 	//system setting Wifi Reset
+ 	api.HandleFunc("/controllerIPConfig", controllerIPHandler).Methods("GET", "POST")
+@@ -3185,18 +3184,18 @@
+ 
+ // ===== MIDDLEWARE =====
+ 
+-// serializeAPIRequests keeps each native command's returned tree private until
+-// the handler has finished traversing and freeing it. The WebSocket is excluded
+-// because its handler remains open for the life of the connection.
+ func serializeAPIRequests(next http.Handler) http.Handler {
+ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		if r.URL.Path == "/api/v1/ws" || r.Method == http.MethodOptions {
++		if r.URL.Path == "/api/v1/ws" || r.URL.Path == "/api/v1/coordination" ||
++			r.URL.Path == "/api/v1/unassoc_sta_query" || r.Method == http.MethodOptions {
+ 			next.ServeHTTP(w, r)
+ 			return
+ 		}
+ 
++		queued := time.Now()
+ 		apiRequestMutex.Lock()
+ 		defer apiRequestMutex.Unlock()
++		w.Header().Set("X-Lab-Native-Queue-Ms", fmt.Sprintf("%.3f", float64(time.Since(queued).Nanoseconds()) / 1e6))
+ 		next.ServeHTTP(w, r)
+ 	})
+ }
+@@ -4471,7 +4470,30 @@
+     })
+ }
+ 
++func submitCandidateQuery(jsonBytes []byte) error {
++    cJsonStr := C.CString(string(jsonBytes))
++    defer C.free(unsafe.Pointer(cJsonStr))
++    node := C.get_network_tree(cJsonStr)
++    if node == nil {
++        return fmt.Errorf("failed to create candidate request tree")
++    }
++    defer C.free_network_tree(node)
++    cmd := C.CString("unassoc_sta_query OneWifiMesh")
++    defer C.free(unsafe.Pointer(cmd))
++    result := execEMCommand(cmd, node)
++    if result == nil {
++        return fmt.Errorf("candidate command execution failed")
++    }
++    defer C.free_network_tree(result)
++    status := getTreeValue(result, "Status")
++    if status != "Success" {
++        return fmt.Errorf("native candidate command not accepted: %s", status)
++    }
++    return nil
++}
++
+ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
++    started := time.Now()
+     if r.Method != http.MethodPost {
+         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+         return
+@@ -4490,8 +4512,9 @@
+         return
+     }
+ 
+-    if req.AlMac == "" {
+-        http.Error(w, "AlMac required", http.StatusBadRequest)
++    address, addressError := net.ParseMAC(req.AlMac)
++    if addressError != nil || len(address) != 6 {
++        http.Error(w, "Valid AlMac required", http.StatusBadRequest)
+         return
+     }
+ 
+@@ -4516,9 +4539,23 @@
+         }
+     }
+ 
++    release, admissionError := candidateRequests.acquire(r.Context(), req.AlMac)
++    if admissionError != nil {
++        http.Error(w, admissionError.Error(), http.StatusServiceUnavailable)
++        return
++    }
++    defer release()
++    timing := &candidateTiming{}
++    readState := func() ([]candidateLinkMetric, []candidateLinkError, error) {
++        var metrics []candidateLinkMetric
++        var rejected []candidateLinkError
++        var err error
++        timing.nativeStep(func() { metrics, rejected, err = loadCandidateLinkState() })
++        return metrics, rejected, err
++    }
+     baseline := make(map[string]uint64)
+     errorBaseline := make(map[string]uint64)
+-    if current, currentErrors, err := loadCandidateLinkState(); err == nil {
++    if current, currentErrors, err := readState(); err == nil {
+         for _, metric := range current {
+             if strings.EqualFold(metric.AgentAL, req.AlMac) {
+                 baseline[candidateMetricKey(metric.STA, metric.OpClass,
+@@ -4561,31 +4598,23 @@
+         return
+     }
+ 
+-    cJsonStr := C.CString(string(jsonBytes))
+-    defer C.free(unsafe.Pointer(cJsonStr))
+-
+-    node := C.get_network_tree(cJsonStr)
+-    if node == nil {
+-        http.Error(w, "Failed to create network tree", http.StatusInternalServerError)
++    timing.nativeStep(func() { err = submitCandidateQuery(jsonBytes) })
++    if err != nil {
++        timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
++        w.Header().Set("Content-Type", "application/json")
++        w.WriteHeader(http.StatusServiceUnavailable)
++        _ = json.NewEncoder(w).Encode(map[string]interface{}{
++            "success": false, "message": err.Error(), "coordination": timing,
++        })
+         return
+     }
+-    defer C.free_network_tree(node)
+-
+-    cmd := C.CString("unassoc_sta_query OneWifiMesh")
+-    defer C.free(unsafe.Pointer(cmd))
+-    result := execEMCommand(cmd, node)
+-
+-    if result == nil {
+-        http.Error(w, "Command execution failed", http.StatusInternalServerError)
+-        return
+-    }
+-    defer C.free_network_tree(result)
+ 
+     deadline := time.Now().Add(8 * time.Second)
+     var observed []candidateLinkMetric
+     var observedErrors []candidateLinkError
+     for time.Now().Before(deadline) {
+-        all, allErrors, err := loadCandidateLinkState()
++        if r.Context().Err() != nil { return }
++        all, allErrors, err := readState()
+         if err == nil {
+             observed = observed[:0]
+             observedErrors = observedErrors[:0]
+@@ -4617,10 +4646,12 @@
+                 observedErrors = append(observedErrors, candidateError)
+             }
+             if len(fresh) == len(expected) {
++                timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
+                 w.Header().Set("Content-Type", "application/json")
+                 _ = json.NewEncoder(w).Encode(map[string]interface{}{
+                     "success": true,
+                     "message": "Unassociated STA metrics response received",
++                    "coordination": timing,
+                     "metrics": candidateMetricsForJSON(observed),
+                     "rejected": candidateErrorsForJSON(observedErrors),
+                     "provider": "hwsim-wmediumd-read-only",
+@@ -4629,13 +4660,18 @@
+                 return
+             }
+         }
+-        time.Sleep(100 * time.Millisecond)
+-    }
+-
++        select {
++        case <-r.Context().Done(): return
++        case <-time.After(100 * time.Millisecond):
++        }
++    }
++
++    timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
+     w.Header().Set("Content-Type", "application/json")
+     w.WriteHeader(http.StatusGatewayTimeout)
+     _ = json.NewEncoder(w).Encode(map[string]interface{}{
+         "success": false,
++        "coordination": timing,
+         "message": "Timed out waiting for a fresh unassociated STA metrics response",
+         "metrics": candidateMetricsForJSON(observed),
+         "rejected": candidateErrorsForJSON(observedErrors),

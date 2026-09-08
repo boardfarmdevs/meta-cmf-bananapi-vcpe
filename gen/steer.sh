@@ -110,18 +110,8 @@ lxc_exec_bounded() {
 }
 
 scan_target_candidate() {
-    local refresh_bssids refresh_bssid
+    local refresh_bssids
     refresh_bssids=$source_bssid
-    while IFS= read -r refresh_bssid; do
-        [[ -n $refresh_bssid ]] || continue
-        [[ ${refresh_bssid,,} == "${source_bssid,,}" ]] && continue
-        [[ ${refresh_bssid,,} == "${target_bssid,,}" ]] && continue
-        refresh_bssids+=" $refresh_bssid"
-    done < <(jq -r --argjson band "$target_band" --arg ssid "$target_ssid" '
-        [.nodes[]?.haulTypes[]?.BSSList[]?
-          | select(.Band == $band and (.ssid // "") == $ssid)
-          | (.BSSID // "" | ascii_downcase)]
-        | unique[]' <<<"$topology")
     status_action "Refreshing the eligible BSS cache and resolving candidate $target_bssid on '$target_ssid' at ${target_frequency} MHz."
     set +e
     lxc_exec_bounded 20 "$client" -- sh -c '
@@ -137,14 +127,12 @@ scan_target_candidate() {
         wpa_cli -i wlan0 bss_flush 0 >/dev/null 2>&1 || exit 3
         # The associated BSS cannot be flushed, and other populated VAP
         # records can also retain signal from an earlier steering assist.
-        # Refresh every eligible non-target BSS under this generation before
-        # resolving the nominated target last.
         scan_one() {
             bssid=$1
             tries=0
             while [ "$tries" -lt 20 ]; do
                 request=$(wpa_cli -i wlan0 scan "freq=$frequency" \
-                    "bssid=$bssid" "ssid $ssid_hex" 2>/dev/null || true)
+                    "ssid $ssid_hex" 2>/dev/null || true)
                 if [ "$request" = OK ]; then
                     sleep 0.5
                     return 0
@@ -210,12 +198,12 @@ wait_target_association() {
     local seconds=$1
     lxc_exec_bounded "$((seconds + 2))" "$client" -- sh -c '
         target=$1
-        count=$2
+        count=$(($2 * 5))
         while [ "$count" -gt 0 ]; do
             current=$(iw dev wlan0 link 2>/dev/null |
                 awk '\''/Connected to/{value=tolower($3)} END{print value}'\'')
             [ "$current" = "$target" ] && exit 0
-            sleep 1
+            sleep 0.2
             count=$((count - 1))
         done
         exit 1
@@ -505,8 +493,8 @@ if ((request_only)); then
     status_action "Sending the BTM steering request for $sta to $target_bssid (opclass $target_opclass, channel $target_channel)."
     lxc_exec_bounded "$controller_steer_timeout" "$controller" -- \
         /usr/bin/steer.sh "$sta" "$target_bssid" "$target_opclass" "$target_channel" gentle
-    status_wait_seconds 4 "allowing the client to accept the graceful BTM request"
-    if wait_target_association 1; then
+    status_wait "Allowing up to 4s for the client to accept the graceful BTM request."
+    if wait_target_association 4; then
         status_pass "The station accepted the graceful BTM request."
         exit 0
     fi

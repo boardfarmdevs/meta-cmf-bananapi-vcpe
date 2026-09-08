@@ -1,0 +1,76 @@
+Subject: [PATCH] cli: add accessible topology full-screen controls
+
+Keep topology updates and fit-to-view active in full screen. Esc and the
+exit button restore the normal view without changing node positions.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -27,7 +27,7 @@
+     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+     <meta http-equiv="Pragma" content="no-cache">
+     <meta http-equiv="Expires" content="0">
+-    <link rel="stylesheet" href="static/style.css?v=topology-shape-roam-3">
++    <link rel="stylesheet" href="static/style.css?v=topology-fullscreen-1">
+     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+     <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+     <!-- Added Chart.js library -->
+@@ -382,9 +382,11 @@
+                             <button class="btn btn-primary" id="optimize-topology" title="Fit to available space without moving devices or clients">
+                                 <i class="fas fa-magic"></i> Optimize Layout
+                             </button>
++                            <button class="btn btn-secondary" type="button" id="topologyFullscreen" aria-pressed="false">Full screen</button>
+                         </div>
+                     </div>
+ 
++                    <div id="topologyFullscreenStatus" role="status" aria-live="polite"></div>
+                     <div class="topology-container">
+                         <div class="topology-main">
+                             <div id="topology-visualization">
+@@ -2025,6 +2027,8 @@
+ 
+     <!-- Scripts -->
+     <script src="static/signal-meter.js?v=signal-meter-1"></script>
++    <script src="static/fullscreen-control.js?v=fullscreen-1"></script>
++    <script src="static/topology-fullscreen.js?v=fullscreen-1"></script>
+     <script src="static/script.js?v=topology-spacing-0906-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+--- a/src/rdkb-cli/static/style.css
++++ b/src/rdkb-cli/static/style.css
+@@ -937,6 +937,25 @@
+     outline: none;
+ }
+ 
++#topology:fullscreen {
++    display: flex;
++    flex-direction: column;
++    width: 100vw;
++    height: 100dvh;
++    padding: 6px;
++    overflow: hidden;
++    background: var(--bg-primary, #f8fafc);
++}
++
++#topology:fullscreen > .page-header {
++    flex-shrink: 0;
++    margin-bottom: 6px;
++    padding-bottom: 6px;
++}
++
++#topologyFullscreenStatus:empty { display: none; }
++#topologyFullscreenStatus { flex-shrink: 0; padding: 4px; color: #b91c1c; }
++
+ .topology-container {
+     display: flex;
+     flex: 1;
+--- /dev/null
++++ b/src/rdkb-cli/static/topology-fullscreen.js
+@@ -0,0 +1,6 @@
++EasyMeshFullscreen.attach({
++  target: document.getElementById('topology'),
++  button: document.getElementById('topologyFullscreen'),
++  status: document.getElementById('topologyFullscreenStatus'),
++  onChange: () => window.dispatchEvent(new Event('resize')),
++});

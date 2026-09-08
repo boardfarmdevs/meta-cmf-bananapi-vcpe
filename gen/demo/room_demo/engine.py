@@ -27,8 +27,8 @@ class RoomEngine:
 
     HTTP handlers, controller workers and server-owned movement clocks call
     this facade. Only its worker thread enters mutable session methods. Reads
-    also pass through the actor so lease expiry and state snapshots cannot race
-    a medium transaction.
+    that expire leases also pass through the actor. Display projections use a
+    nonblocking read and never queue behind a medium transaction.
     """
 
     def __init__(self, session: InteractiveMediumSession) -> None:
@@ -167,6 +167,11 @@ class RoomEngine:
             assert self._final_snapshot is not None
             return copy.deepcopy(self._final_snapshot)
         return self._call("snapshot")
+
+    def projection_snapshot(self) -> dict[str, Any] | None:
+        if self._closed:
+            return copy.deepcopy(self._final_snapshot)
+        return self._session.projection_snapshot()
 
     def acquire(self, owner: str, *, command_id: str) -> dict[str, Any]:
         return self._mutation("lease.acquire", command_id, "acquire", owner)

@@ -10,7 +10,7 @@
 #
 # Example: steer.sh 02:00:00:00:03:00 02:00:00:51:38:4f
 
-STA="$1"; TGT="$2"; OPCLASS="$3"; CHAN="$4"; MODE="$5"
+STA="$1"; TGT="$2"; OPCLASS="$3"; CHAN="$4"; MODE="$5"; EXPECTED_SOURCE="$6"
 if [ -z "$STA" ] || [ -z "$TGT" ]; then
     echo "usage: steer.sh <STA_MAC> <TARGET_BSSID> [op_class] [channel] [gentle]" >&2
     exit 2
@@ -38,25 +38,42 @@ esac
 
 MYSQL="mysql -N -ubpi -proot OneWifiMesh"
 
+for ADDRESS in "$STA" "$TGT"; do
+    case "$ADDRESS" in
+        *[!0-9a-fA-F:]*|"") echo "steer.sh: invalid MAC address" >&2; exit 2 ;;
+    esac
+    [ "${#ADDRESS}" -eq 17 ] || exit 2
+done
+
 # Source: where the controller currently believes the STA is associated.
-SRC_BSSID=$($MYSQL -e "select BSSID from STAList where MACAddress=\"$STA\" and Associated=1 limit 1;" 2>/dev/null)
+LOOKUP=$($MYSQL -e "select s.BSSID,b.ID,r.Band from STAList s join BSSList b on b.BSSID=s.BSSID join BSSList t on t.BSSID=\"$TGT\" join RadioList r on t.RUID=r.RadioID where s.MACAddress=\"$STA\" and s.Associated=1;" 2>/dev/null) || exit 1
+set -- $LOOKUP
+if [ "$#" -ne 3 ]; then
+    echo "steer.sh: source/target inventory absent or ambiguous" >&2
+    exit 1
+fi
+SRC_BSSID="$1"; SRC_ID="$2"; TGT_BAND="$3"
+if [ -n "$EXPECTED_SOURCE" ] && [ "$SRC_BSSID" != "$EXPECTED_SOURCE" ]; then
+    echo "steer.sh: observed source changed before native submission" >&2
+    exit 1
+fi
 if [ -z "$SRC_BSSID" ]; then
     echo "steer.sh: STA $STA is not associated in STAList (nothing to steer)" >&2
     exit 1
 fi
 
 # BSSList.ID = OneWifiMesh@<AL_MAC>@<RUID>@<BSSID>@<idx> -- carries the device+radio.
-SRC_ID=$($MYSQL -e "select ID from BSSList where BSSID=\"$SRC_BSSID\" limit 1;" 2>/dev/null)
 if [ -z "$SRC_ID" ]; then
     echo "steer.sh: source BSS $SRC_BSSID not found in BSSList" >&2
     exit 1
 fi
-AL_MAC=$(echo "$SRC_ID" | cut -d@ -f2)
-RUID=$(echo "$SRC_ID" | cut -d@ -f3)
+SOURCE_PARTS=${SRC_ID#*@}
+AL_MAC=${SOURCE_PARTS%%@*}
+SOURCE_PARTS=${SOURCE_PARTS#*@}
+RUID=${SOURCE_PARTS%%@*}
 
 # Target must be a BSS the controller knows; its band picks sane op-class/channel
 # defaults (0=2.4GHz, 1=5GHz, 3=6GHz) unless overridden on the command line.
-TGT_BAND=$($MYSQL -e "select r.Band from BSSList b join RadioList r on b.RUID=r.RadioID where b.BSSID=\"$TGT\" limit 1;" 2>/dev/null)
 if [ -z "$TGT_BAND" ]; then
     echo "steer.sh: target BSS $TGT is not known to the controller (BSSList)" >&2
     exit 1

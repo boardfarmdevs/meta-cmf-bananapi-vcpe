@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
 import json
+import time
 from typing import Any, Callable, Iterable
 from urllib.request import urlopen
 
@@ -84,6 +86,9 @@ class ControllerObserver:
         current_link_fallback: Callable[[ClientObservation], ClientObservation] | None = None,
         trust_api_metric_timestamp: bool = True,
         max_current_metric_age_seconds: float | None = None,
+        current_metric_floor: Callable[[ClientObservation], str | None] | None = None,
+        current_link_progress: Callable[[ClientObservation], None] | None = None,
+        fallback_executor=None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -92,6 +97,9 @@ class ControllerObserver:
         self.current_link_fallback = current_link_fallback
         self.trust_api_metric_timestamp = trust_api_metric_timestamp
         self.max_current_metric_age_seconds = max_current_metric_age_seconds
+        self.current_metric_floor = current_metric_floor
+        self.current_link_progress = current_link_progress
+        self.fallback_executor = fallback_executor
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sequence = 0
         self.last_raw: dict[str, Any] | None = None
@@ -99,7 +107,96 @@ class ControllerObserver:
     def _get(self, path: str) -> dict[str, Any]:
         return self.fetcher(f"{self.base_url}{path}")
 
+    def coordination_capabilities(self) -> dict[str, Any]:
+        try:
+            payload = self._get("/api/v1/coordination")
+            if (payload.get("schema") == "easymesh.cli.coordination.v1"
+                    and payload.get("candidate_wait_holds_native_lock") is False
+                    and payload.get("native_command_and_tree_ownership_serialized") is True
+                    and type(payload.get("candidate_parallel_agents")) is int
+                    and 1 <= payload["candidate_parallel_agents"] <= 5):
+                return payload
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        return {"candidate_parallel_agents": 1, "negotiated": False}
+
+    def association(self, sta_mac: str) -> str | None:
+        sta_mac = normalize_mac(sta_mac)
+        topology = self._get("/api/v1/topology")
+        matches = [station for node in topology.get("nodes", [])
+                   for station in node.get("STAList", []) or []
+                   if str(station.get("staMAC", "")).lower() == sta_mac]
+        if len(matches) != 1 or not matches[0].get("bssid"):
+            return None
+        return normalize_mac(matches[0]["bssid"])
+
+    def observe_topology(self) -> Snapshot:
+        topology = self._get("/api/v1/topology")
+        if not topology.get("nodes"):
+            raise ValueError("controller topology is unavailable")
+        clients = []
+        for node in topology.get("nodes", []):
+            for station in node.get("STAList", []) or []:
+                ssid = station.get("ssid") or ""
+                clients.append(ClientObservation(
+                    sta_mac=normalize_mac(station["staMAC"]),
+                    connected_device_id=normalize_mac(node["id"]),
+                    connected_device_name=node.get("name") or "",
+                    connected_bssid=normalize_mac(station["bssid"]),
+                    rcpi=None, metric_observed_at=None, association_uptime_seconds=0,
+                    measurement_source="controller_topology_without_metrics",
+                    band=normalize_band(station.get("band")), ssid=ssid,
+                    cohort="iot" if ssid == "iot_ssid" else "private" if ssid == "private_ssid" else "other",
+                ))
+        observed_at = format_time(self.clock())
+        snapshot = Snapshot(
+            schema_version=1, sequence=self.sequence, observed_at=observed_at,
+            controller_url=self.base_url, clients=sorted_clients(clients), candidates=(),
+            health=MeshHealth(devices=sum(bool(node.get("haulTypes")) for node in topology.get("nodes", [])),
+                              clients=len(clients)),
+        )
+        self.sequence += 1
+        self.last_raw = {"topology": topology, "sampled_at": observed_at}
+        return snapshot
+
+    def metrics_for(self, clients) -> tuple[ClientObservation, ...]:
+        payload = self._get("/api/v1/clients")
+        by_mac = {}
+        for item in payload.get("clients", []):
+            mac = normalize_mac(item["mac"])
+            if mac in by_mac:
+                raise ValueError("duplicate client metric ownership")
+            by_mac[mac] = item
+        measured = []
+        for client in clients:
+            item = by_mac.get(client.sta_mac, {})
+            metric = item.get("client_metrics") or {}
+            timestamp = metric.get("last_updated")
+            if (item.get("connected_bssid", "").lower() == client.connected_bssid
+                    and metric.get("rcpi") not in (None, 0) and timestamp and not timestamp.startswith("0001-")):
+                client = replace(client, rcpi=int(metric["rcpi"]), metric_observed_at=timestamp,
+                                 association_uptime_seconds=int(metric.get("association_uptime_seconds") or 0),
+                                 measurement_source="associated_sta_link_metrics")
+            measured.append(client)
+        return self._refresh_current(measured)
+
+    def _refresh_current(self, clients):
+        def refresh(client):
+            floor = self.current_metric_floor(client) if self.current_metric_floor else None
+            stale = client.rcpi is None or client.metric_observed_at is None or (
+                self.max_current_metric_age_seconds is not None and not
+                -5 <= (self.clock() - parse_time(client.metric_observed_at)).total_seconds()
+                <= self.max_current_metric_age_seconds
+            ) or (floor is not None and parse_time(client.metric_observed_at) <= parse_time(floor))
+            measured = self.current_link_fallback(client) if stale and self.current_link_fallback else client
+            if self.current_link_progress:
+                self.current_link_progress(measured)
+            return measured
+        refreshed = self.fallback_executor.map(refresh, clients) if self.fallback_executor else map(refresh, clients)
+        return sorted_clients(refreshed)
+
     def observe(self) -> Snapshot:
+        started = time.monotonic()
         sample_started_at = format_time(self.clock())
         topology = self._get("/api/v1/topology")
         clients_payload = self._get("/api/v1/clients")
@@ -183,15 +280,15 @@ class ControllerObserver:
                     ),
                 )
             )
-        normalized_clients = sorted_clients(
-            self.current_link_fallback(client)
-            if self.current_link_fallback is not None
-            and (client.rcpi is None or client.metric_observed_at is None
-                 or self.max_current_metric_age_seconds is not None and not
-                 -5 <= (self.clock() - parse_time(client.metric_observed_at)).total_seconds()
-                 <= self.max_current_metric_age_seconds) else client
-            for client in clients
-        )
+        normalized_clients = self._refresh_current(clients)
+
+        if self.current_metric_floor is not None:
+            normalized_clients = sorted_clients(
+                replace(client, rcpi=None, metric_observed_at=None)
+                if (floor := self.current_metric_floor(client)) is not None and (
+                    client.metric_observed_at is None or parse_time(client.metric_observed_at) <= parse_time(floor)
+                ) else client for client in normalized_clients
+            )
 
         candidates: list[CandidateObservation] = []
         for client in normalized_clients:
@@ -246,6 +343,7 @@ class ControllerObserver:
         # gate.
         observed_at = format_time(self.clock())
         self.last_raw["sampled_at"] = observed_at
+        self.last_raw["observation_elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
 
         mesh_devices = sum(
             1 for item in devices if (item.get("role") or "").lower() != "controller"

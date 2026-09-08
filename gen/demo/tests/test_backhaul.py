@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -63,7 +64,7 @@ def test_real_default_layout_star_beats_requested_branches_and_every_rooted_tree
 
 
 @pytest.mark.parametrize("layout_name,positions,expected", [
-    ("home-five-agent-shifted", None, {"extender_1": "gateway", "extender_2": "gateway",
+    ("home-five-agent-shifted", None, {"extender_1": "gateway", "extender_2": "extender_1",
                                        "extender_3": "gateway", "extender_4": "extender_3"}),
     ("home-five-agent", {"gateway": [1, 1], "extender_1": [5, 1], "extender_2": [8, 1],
                          "extender_3": [12, 1], "extender_4": [18, 1]},
@@ -103,13 +104,27 @@ def test_corridor_converges_to_chain_without_loops():
 
 def test_hysteresis_and_missing_reverse_link():
     parents = {"first": "gateway", "second": "gateway"}
-    strengths = symmetric({("gateway", "first"): 35, ("gateway", "second"): 29, ("first", "second"): 34})
+    strengths = symmetric({("gateway", "first"): 35, ("gateway", "second"): 30, ("first", "second"): 34})
     assert select_parent(parents, links_for(strengths)) is None
     strengths[("gateway", "second")] = strengths[("second", "gateway")] = 20
     assert select_parent(parents, links_for(strengths))["parent"] == "first"
     del strengths[("second", "first")]
     assert select_parent(parents, links_for(strengths)) is None
     assert path_quality("first", {"first": "second", "second": "first"}, strengths) is None
+
+
+def test_two_db_relay_improvement_converges_without_switching_back():
+    parents = {"near": "gateway", "far": "gateway"}
+    strengths = symmetric({("gateway", "near"): 25, ("gateway", "far"): 20, ("near", "far"): 31})
+    choice = select_parent(parents, links_for(strengths))
+    assert choice["child"] == "far" and choice["parent"] == "near"
+    assert choice["path_score_before"] == 20 and choice["path_score_after"] == 22
+    assert choice["gain_db"] == 2
+    parents[choice["child"]] = choice["parent"]
+    for repeat in range(10):
+        assert select_parent(parents, links_for(strengths)) is None
+    strengths[("gateway", "far")] = strengths[("far", "gateway")] = 23
+    assert select_parent(parents, links_for(strengths)) is None
 
 
 def manager_fixture():
@@ -125,12 +140,13 @@ def manager_fixture():
 
 def test_manager_settle_cooldown_and_epoch_guard():
     manager, adapter, transaction, room = manager_fixture()
-    assert not manager.reconcile({**room, "movement_active": True}, 0)
+    assert not manager.reconcile({**room, "movement_active": True, "stable_for_seconds": 1}, 0)
     adapter.observe.assert_not_called()
     assert manager.reconcile(room, 0)
     assert transaction.call_args.kwargs == {"expected_epoch": 7}
     assert manager.snapshot()["status"] == "verified"
-    assert not manager.reconcile(room, 0)
+    assert manager.snapshot()["minimum_tree_gain_db_per_change"] == 2
+    assert not manager.blocks_client_measurement(room)
     assert adapter.switch.call_count == 1
 
 
@@ -144,6 +160,34 @@ def test_manager_failures_back_off_and_pause():
     manager.clock.return_value = 900
     assert not manager.reconcile(room, 0)
     assert adapter.switch.call_count == 3
+
+
+def test_client_measurement_refresh_does_not_block_backhaul_or_clients():
+    manager, adapter, transaction, room = manager_fixture()
+    room.update(backhaul_epoch=3, backhaul_stable_for_seconds=50)
+    with patch("room_demo.backhaul.select_parent", return_value=None):
+        assert not manager.reconcile(room, 0)
+        room.update(environment_epoch=8, stable_for_seconds=0)
+        assert not manager.blocks_client_measurement(room)
+        manager.clock.return_value += 31
+        assert not manager.reconcile(room, 0)
+        assert not manager.blocks_client_measurement(room)
+    assert adapter.observe.call_count == 2
+    transaction.assert_not_called()
+
+
+def test_new_backhaul_epoch_does_not_wait_for_old_periodic_poll():
+    manager, adapter, transaction, room = manager_fixture()
+    with patch("room_demo.backhaul.select_parent", return_value=None):
+        assert not manager.reconcile(room, 0)
+        room.update(environment_epoch=8, stable_for_seconds=1)
+        assert not manager.blocks_client_measurement(room)
+        assert not manager.reconcile(room, 0)
+        room["stable_for_seconds"] = 2
+        assert not manager.reconcile(room, 0)
+    assert adapter.observe.call_count == 2
+    assert not manager.blocks_client_measurement(room)
+    transaction.assert_not_called()
 
 
 def adapter_fixture():
@@ -209,11 +253,26 @@ def test_status_invalidates_old_stable_decision_on_room_change():
     assert manager.snapshot(room)["status"] == "stable"
     assert manager.snapshot({**room, "environment_epoch": 8})["status"] == "waiting"
     assert not manager.blocks_client_measurement(room)
-    assert manager.blocks_client_measurement({**room, "environment_epoch": 8})
+    assert not manager.blocks_client_measurement({**room, "environment_epoch": 8})
     manager.status = {"status": "verified"}
+    assert not manager.blocks_client_measurement(room)
+    manager.status = {"status": "switching"}
     assert manager.blocks_client_measurement(room)
     manager.status = {"status": "retry"}
     assert not manager.blocks_client_measurement(room)
+
+
+def test_verification_retries_transient_link_query_timeout_within_its_deadline():
+    adapter = adapter_fixture()
+    adapter.command.side_effect = [
+        subprocess.TimeoutExpired(['lxc', 'exec', 'second', '--', 'iw'], 4),
+        RuntimeError('temporary container exec failure'),
+        f"Connected to {adapter.bssids['first']}", '0% packet loss',
+        f"Connected to {adapter.bssids['first']}", '0% packet loss',
+    ]
+    with patch('room_demo.backhaul.time.sleep'), patch('room_demo.backhaul.time.monotonic', side_effect=range(100)):
+        RdkBackhaulAdapter.verify(adapter, 'second', 'first')
+    assert adapter.command.call_count == 6
 
 
 def test_applied_snr_matches_actual_parent_band_and_channel_only():

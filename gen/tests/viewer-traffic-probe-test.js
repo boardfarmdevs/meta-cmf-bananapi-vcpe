@@ -12,6 +12,7 @@ const events = source.slice(source.indexOf('  function applyDemoEvent('), source
 async function main() {
   const requests = [];
   const context = vm.createContext({
+    frameTimings: null,
     world: {duration_ms: 1000, roles: {private: 'station', iot: 'station', gateway: 'fronthaul_ap'}},
     networkState: {hero: {role: 'private'}}, trafficProbeState: null, trafficState: {success: true},
     interactiveLiveMode: true, liveMode: true, liveClock: null, livePlayback: null,

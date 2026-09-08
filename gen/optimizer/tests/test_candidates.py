@@ -8,6 +8,7 @@ import urllib.error
 from optimizer.candidates import (
     CandidateMetricsError,
     CandidateMetricsUnavailable,
+    CandidateSnapshotSuperseded,
     ControllerCandidateProvider,
     _default_request,
     operating_class,
@@ -20,6 +21,21 @@ STA = "02:00:00:00:03:00"
 AGENT = "02:00:00:00:09:20"
 RADIO = "02:00:00:00:09:00"
 BSSID = "02:00:00:aa:aa:01"
+
+
+@pytest.mark.parametrize('changed_during_query', [False, True])
+def test_rf_generation_guard_discards_old_snapshot_without_retry(changed_during_query):
+    valid = [changed_during_query]
+    calls = []
+    def requester(*arguments):
+        calls.append(arguments)
+        valid[0] = False
+        return response()
+    provider = ControllerCandidateProvider('http://controller', allow_simulated=True,
+        requester=requester, request_attempts=2, generation_guard=lambda: valid[0])
+    with pytest.raises(CandidateSnapshotSuperseded):
+        list(provider((client(),), (inventory(),), bsses(), '2026-08-21T20:00:00Z'))
+    assert len(calls) == int(changed_during_query)
 
 
 def test_progress_reports_real_completed_queries():
@@ -42,6 +58,33 @@ def test_failed_query_does_not_report_completion():
     with pytest.raises(CandidateMetricsUnavailable):
         list(provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:00Z"))
     assert all(update["completed_queries"] == 0 for update in updates)
+
+
+def test_publication_requires_entire_response_validation():
+    published = []
+    provider = ControllerCandidateProvider("http://controller", allow_simulated=True,
+        requester=lambda *_args: {**response(), "rejected": [{"agent_al": AGENT,
+            "ruid": RADIO, "sta": STA, "error_code": 1, "received_at_ms": 1787342400123}]},
+        result_ready=lambda *values: published.append(values))
+    with pytest.raises(CandidateMetricsError, match="both measured and rejected"):
+        provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:00Z")
+    assert published == []
+    provider.requester = lambda *_args: response()
+    measured = provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:00Z")
+    assert published[0][0] == tuple(measured)
+
+
+def test_interactive_outage_stops_queued_unusable_queries():
+    second = replace(inventory(), bssid='02:00:00:aa:aa:02', device_id='02:00:00:00:0a:20')
+    raw_bsses = [*bsses(), {**bsses()[0], 'bssid': second.bssid, 'device_id': second.device_id}]
+    calls = []
+    def fail(*arguments):
+        calls.append(arguments)
+        raise CandidateMetricsUnavailable('native timeout')
+    provider = ControllerCandidateProvider('http://controller', requester=fail, stop_on_unavailable=True)
+    with pytest.raises(CandidateMetricsUnavailable, match='native timeout'):
+        list(provider((client(),), (inventory(), second), raw_bsses, '2026-08-21T20:00:00Z'))
+    assert len(calls) == 1
 
 
 def client() -> ClientObservation:
@@ -99,6 +142,45 @@ def response(simulated=True):
             "message_id": 42,
         }],
     }
+
+
+def test_priority_collection_is_fresh_complete_for_selected_clients_and_falls_back():
+    other_sta = "02:00:00:00:04:00"
+    clients = (client(), replace(client(), sta_mac=other_sta))
+    candidates = (inventory(), replace(inventory(), sta_mac=other_sta))
+    calls = []
+    progress = []
+
+    def request(_url, payload):
+        calls.append(payload)
+        stations = payload["UnassocStaQueryList"][0]["channels"][0]["sta_macs"]
+        return {**response(), "metrics": [{**response()["metrics"][0], "sta": station} for station in stations]}
+
+    provider = ControllerCandidateProvider("http://controller", requester=request, allow_simulated=True,
+        client_prioritizer=lambda selected, _time: selected.sta_mac == STA, progress=progress.append)
+    for repeat in range(2):
+        measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:01Z"))
+        assert {item.sta_mac for item in measured} == {STA}
+    assert len(calls) == 2
+    assert provider.last_selected_sta_macs == {STA}
+    assert provider.last_selection == {"eligible_clients": 2, "selected_clients": 1, "priority_clients": 1, "deferred_clients": 1}
+    assert progress[-1]["deferred_clients"] == 1
+    provider.client_prioritizer = lambda *_args: False
+    measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:02Z"))
+    assert {item.sta_mac for item in measured} == {STA, other_sta}
+    assert provider.last_selection["deferred_clients"] == 0
+    provider.client_prioritizer = lambda selected, _time: selected.sta_mac == STA
+    provider.client_selector = lambda selected, _time: selected.sta_mac != STA
+    measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:03Z"))
+    assert {item.sta_mac for item in measured} == {other_sta}
+    assert provider.last_selection["priority_clients"] == 0
+
+
+def test_priority_selection_still_requires_every_candidate_response():
+    provider = ControllerCandidateProvider("http://controller", allow_simulated=True,
+        requester=lambda *_args: {**response(), "metrics": []}, client_prioritizer=lambda *_args: True)
+    with pytest.raises(CandidateMetricsError, match="omitted"):
+        list(provider((client(),), (inventory(),), bsses(), "2026-08-21T20:00:01Z"))
 
 
 def test_lab_operating_class_mapping_is_frequency_qualified():
@@ -655,7 +737,11 @@ def test_failed_query_records_agent_radio_and_failed_transaction():
         list(provider(
             (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
         ))
-    assert provider.last_raw == [{
+    assert len(provider.last_raw) == 1
+    transaction = dict(provider.last_raw[0])
+    assert transaction.pop("elapsed_ms") >= 0
+    assert transaction.pop("finished_at") >= transaction.pop("requested_at")
+    assert transaction == {
         "request": {
             "AlMac": AGENT,
             "UnassocStaQueryList": [{
@@ -665,7 +751,7 @@ def test_failed_query_records_agent_radio_and_failed_transaction():
         },
         "query_radio": RADIO,
         "error": "HTTP 504",
-    }]
+    }
 
 
 def test_idempotent_candidate_query_can_retry_one_transport_timeout():
