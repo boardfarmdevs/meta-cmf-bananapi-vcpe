@@ -1,5 +1,7 @@
 FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
 
+PREMIRRORS:prepend = "https://crates.io/api/v1/crates/([^/]+)/.* https://static.crates.io/crates/\1/ \n"
+
 # rbus-sys's build.rs uses cargo's HOST env var (build-machine triple) instead of
 # TARGET (the triple actually being compiled for) when telling bindgen what
 # architecture to parse the rbus C headers for. On our i686 container target this

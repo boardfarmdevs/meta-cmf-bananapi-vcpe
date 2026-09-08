@@ -107,6 +107,12 @@ as a fetch fallback. The recipe's pinned commit, branch and unpack destination
 are unchanged. This avoids depending on an older machine's cached hostap clone
 when the upstream endpoint times out; it does not substitute a newer release.
 
+The ieee1905 Rust recipe also maps the old crate API download URL to the
+registry's official `static.crates.io` CDN (the `dl` endpoint published in
+`https://index.crates.io/config.json`). The old API returned HTTP 403 during
+the download-from-empty build. Crate versions, filenames and Cargo lock-file
+checksum validation remain unchanged; no old download directory is required.
+
 Evidence is written to the workspace's `release-evidence/`: each attempt has
 the source commit, timestamps, setup/build logs, full BitBake environment,
 configuration, exit status and complete role-image checksums. See the

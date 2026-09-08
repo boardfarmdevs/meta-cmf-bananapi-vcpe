@@ -39,6 +39,13 @@ def test_hostap_fetch_uses_current_upstream_without_changing_revision():
     assert "SRCREV" not in source
 
 
+def test_ieee1905_crates_use_the_registry_download_cdn():
+    source = (ROOT / "recipes-ccsp/ieee1905/ieee1905-em.bbappend").read_text()
+    assert 'PREMIRRORS:prepend = "https://crates.io/api/v1/crates/([^/]+)/.* ' in source
+    assert r"https://static.crates.io/crates/\1/" in source
+    assert "BB_STRICT_CHECKSUM" not in source
+
+
 def test_room_is_installed_from_source_with_current_profiling_defaults():
     unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-demo.service").read_text()
     assert "Requires=easymesh-lab.service" in unit
