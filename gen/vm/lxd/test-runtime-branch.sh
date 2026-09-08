@@ -6,7 +6,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT
 meta_workspace="$temporary/workspace"
 meta_bundle="$temporary/source.bundle"
-runtime_branch=codex/0905-clean
+runtime_branch=codex/0908-clean
 mkdir -p "$meta_workspace"
 git init -q "$temporary/source"
 git -C "$temporary/source" symbolic-ref HEAD refs/heads/lxd-appliance-export

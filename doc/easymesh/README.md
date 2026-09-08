@@ -3,7 +3,7 @@
 Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
 engineers.
 
-Status: current documentation for `codex/0905-clean` and the 0905 appliance;
+Status: current documentation for `codex/0908-clean` and the 0908 rebuild;
 see [current state](current-state.md) for completed qualification evidence.
 
 This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each

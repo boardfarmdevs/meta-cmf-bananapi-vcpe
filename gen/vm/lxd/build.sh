@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
-release_id=${EASYMESH_RELEASE_ID:-0905}
+release_id=${EASYMESH_RELEASE_ID:-0908}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -250,6 +250,7 @@ push_inputs() {
         [boardfarm-lab.service]=gen/vm/scripts/guest/boardfarm-lab.service
         [easymesh-lab-runtime]=gen/vm/scripts/guest/easymesh-lab-runtime
         [easymesh-lab.service]=gen/vm/scripts/guest/easymesh-lab.service
+        [easymesh-room-demo.service]=gen/vm/scripts/guest/easymesh-room-demo.service
         [easymesh-hwsim-pool]=gen/vm/scripts/guest/easymesh-hwsim-pool
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
@@ -408,6 +409,9 @@ build_vm() {
         "http://$proxy_check_address:$webui_port/api/v1/topology"
     wait_http_ready "wmediumd Console proxy" \
         "http://$proxy_check_address:$console_port/api/v1/health"
+    if [ "$profile_clients" = 20 ]; then
+        wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
+    fi
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded

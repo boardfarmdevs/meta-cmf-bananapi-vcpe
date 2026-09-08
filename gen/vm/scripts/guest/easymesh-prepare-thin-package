@@ -30,6 +30,7 @@ test -f "$EXTENDER_IMAGE"
 test "$(git -c safe.directory="$EASYMESH_REPO" -C "$EASYMESH_REPO" rev-parse HEAD)" = \
     "$EXPECTED_REPO_HEAD"
 
+systemctl stop easymesh-room-demo.service 2>/dev/null || true
 systemctl stop easymesh-lab.service 2>/dev/null || true
 systemctl stop wmediumd-console.service 2>/dev/null || true
 

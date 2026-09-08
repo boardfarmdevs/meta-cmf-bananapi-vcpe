@@ -13,7 +13,7 @@ From the physical LXD host, for an existing running VM:
 
 ```sh
 LAB_LXD_UI_PORT=48892 LAB_GRAFANA_PORT=48893 LAB_MONITORING_ALLOW_RESTART=1 \
-  bash observability/enable.sh rdkeasymesh-20-0907 192.168.2.140 rev140-rdk-0907
+  bash observability/enable.sh rdkeasymesh-20-0908 192.168.2.140 rev140-rdk-0908
 ```
 
 For a future thin release, `bash import.sh --profile 20 --monitoring` invokes
@@ -32,8 +32,8 @@ existing VM, then start `easymesh-lab.service` / `easymesh-room-demo.service`
 - Grafana: `https://HOST_IP:18893/` (the LXD dashboard is the home page).
 - Override ports with `LAB_LXD_UI_PORT` and `LAB_GRAFANA_PORT` when labs share
   a physical host. Use explicit host IPv4, never wildcard public exposure.
-  The current rev140 0907 lab uses `48892`/`48893`; `18892`/`18893` are the
-  helper defaults and old 0906 examples, not the active 0907 endpoints.
+  The current rev140 0908 lab uses `48892`/`48893`; `18892`/`18893` are the
+  helper defaults and old 0906 examples, not the active 0908 endpoints.
 - Prometheus and the authenticated LXD metrics endpoint remain VM-loopback
   only; no host-facing Prometheus port is created.
 
@@ -102,8 +102,8 @@ For the active rev140 lab, use the LAN endpoints without an SSH tunnel:
 importing the browser certificate and selecting it in Chrome:
 
 ```powershell
-ssh -t rev@rev140 "lxc exec local:rdkeasymesh-20-0907 --mode=interactive -- lxc auth identity create local:tls/windows-chrome-ui --group admins"
-ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- cat /opt/easymesh-observability/secrets/grafana-admin-password"
+ssh -t rev@rev140 "lxc exec local:rdkeasymesh-20-0908 --mode=interactive -- lxc auth identity create local:tls/windows-chrome-ui --group admins"
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0908 -- cat /opt/easymesh-observability/secrets/grafana-admin-password"
 ```
 
 Both terminal options are necessary for interactive enrollment: without them
@@ -140,8 +140,8 @@ Run on the physical host after nested monitoring is running:
 bash observability/enable-outer-metrics.sh VM HOST_IPV4 HOST_CERT_DNS_NAME LAB_LABEL
 ```
 
-For current rev140 RDK 0907, `enable-rev140-outer-lxd-metrics.sh` supplies
-`rdkeasymesh-20-0907 192.168.2.140 rev140 rev140-rdk-0907` and refuses another
+For current rev140 RDK 0908, `enable-rev140-outer-lxd-metrics.sh` supplies
+`rdkeasymesh-20-0908 192.168.2.140 rev140 rev140-rdk-0908` and refuses another
 hostname. It never targets the stopped 0906 VM. For prplMesh use the generic
 command with its actual VM and host certificate DNS SAN. The default outer
 project is `default` (`LAB_OUTER_PROJECT` overrides it); the metrics port is

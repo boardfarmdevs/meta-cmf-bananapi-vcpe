@@ -3,8 +3,16 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Latest portable package: **`rdkeasymesh-0906-thin.tar`**, a runtime/static-asset
-refresh of 0905 with VM autostart disabled. See the 0906 record below.
+Current canonical branch: **`codex/0908-clean`**. The new canonical workspace is
+`rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean/meta-cmf-bananapi-vcpe`.
+The [0908 clean rebuild](reference/release-0908.md) starts from synchronized,
+pinned sources with fresh role build directories and workspace-local caches.
+It is in progress; this paragraph does not claim a published or accepted tar.
+The running rev140 lab remains 0907 until the new tar has been imported and
+passed the small-profile smoke checks. No full room soak is required for 0908.
+
+The sections below retain historical 0905/0906 acceptance records; their
+canonical-directory and old-VM retention statements apply to those deliveries.
 
 The original **0905 delivery is accepted for the 20-client profile** on
 rev140 and rev150 as of 2026-09-05 19:05 UTC. `codex/0905-clean` is canonical.
