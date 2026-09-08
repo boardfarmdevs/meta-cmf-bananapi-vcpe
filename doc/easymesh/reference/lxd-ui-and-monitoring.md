@@ -1,7 +1,9 @@
-# Nested LXD web UI and container monitoring
+# LXD web UI, container and outer-VM monitoring
 
 Audience: operators who want to inspect the containers **inside** an EasyMesh
 LXD VM, then graph their CPU, memory, interface traffic, disk I/O and processes.
+An optional second scrape adds the appliance VM's guest resource metrics from
+the physical host's LXD to the same Prometheus/Grafana installation.
 
 This is an opt-in management-plane addition. Import with `--monitoring` to enable
 it; otherwise it stays disabled. It does not change RF conditions, install agents in the
@@ -9,32 +11,36 @@ Yocto/Alpine containers, or change the immutable client profile. Consult
 [current state](../current-state.md) for release acceptance; enabling monitoring
 does not turn a failed lab audit into a pass.
 
-## Browser-ready setup (RDK and prplMesh, 0906)
+## Browser-ready setup (RDK and prplMesh, current rev140: 0907)
 
 For an existing running RDK VM, execute on its physical LXD host:
 
 ```sh
 SOURCE=/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/meta-cmf-bananapi-vcpe
-LAB_MONITORING_ALLOW_RESTART=1 bash "$SOURCE/gen/vm/lxd/observability/enable.sh" \
-  rdkeasymesh-20-0906 192.168.2.140 rev140-rdk-0906
+LAB_LXD_UI_PORT=48892 LAB_GRAFANA_PORT=48893 LAB_MONITORING_ALLOW_RESTART=1 \
+  bash "$SOURCE/gen/vm/lxd/observability/enable.sh" \
+  rdkeasymesh-20-0907 192.168.2.140 rev140-rdk-0907
 ```
 
 The equivalent prplMesh source command is
 `bash deploy/lxd-vm/observability/enable.sh VM HOST_IPV4 LABEL`. Both importers
 accept `bash import.sh --profile 20 --monitoring` in newly packaged releases.
 Older immutable 0906 archives remain unchanged; use the source helper for them.
-Only RDK on rev140 is deployed/tested for this change; prplMesh support is source-only.
+The historical runtime acceptance below is RDK/rev140 only. The Windows-access
+corrections and optional outer-metrics integration are source additions; they
+do not by themselves enable a host listener or update existing immutable tars.
 
 | Browser service on rev140 | URL | Authentication |
 | --- | --- | --- |
-| Inner LXD full bundled UI | `https://192.168.2.140:18892/` | Browser certificate and trust enrollment |
-| Grafana container dashboard | `https://192.168.2.140:18893/` | Generated per-VM admin password |
+| Inner LXD full bundled UI | `https://192.168.2.140:48892/` | Browser certificate and identity enrollment |
+| Grafana container dashboard | `https://192.168.2.140:48893/` | Generated per-VM admin password |
 
 From a trusted shell on rev140, obtain first-login credentials privately:
 
 ```sh
-lxc exec rdkeasymesh-20-0906 -- lxc --force-local config trust add --name=lab-browser
-lxc exec rdkeasymesh-20-0906 -- cat /opt/easymesh-observability/secrets/grafana-admin-password
+lxc exec local:rdkeasymesh-20-0907 -- lxc auth group show local:admins
+lxc exec local:rdkeasymesh-20-0907 --mode=interactive -- lxc auth identity create local:tls/lab-browser --group admins
+lxc exec local:rdkeasymesh-20-0907 -- cat /opt/easymesh-observability/secrets/grafana-admin-password
 ```
 
 Follow LXD UI's certificate creation/import flow, then supply the enrollment
@@ -47,8 +53,8 @@ Both browser endpoints use generated self-signed TLS certificates. Verify their
 SHA-256 fingerprints through the host shell before accepting the browser warning:
 
 ```sh
-lxc exec rdkeasymesh-20-0906 -- openssl x509 -in /var/snap/lxd/common/lxd/server.crt -noout -fingerprint -sha256
-lxc exec rdkeasymesh-20-0906 -- openssl x509 -in /opt/easymesh-observability/secrets/grafana.crt -noout -fingerprint -sha256
+lxc exec rdkeasymesh-20-0907 -- openssl x509 -in /var/snap/lxd/common/lxd/server.crt -noout -fingerprint -sha256
+lxc exec rdkeasymesh-20-0907 -- openssl x509 -in /opt/easymesh-observability/secrets/grafana.crt -noout -fingerprint -sha256
 ```
 
 The helper binds UI/API 8443 and Grafana 3000 to the VM management IPv4 and
@@ -148,6 +154,10 @@ The source files live at `gen/vm/lxd/observability/`:
 | --- | --- |
 | `enable.sh` | Host-side browser-ready setup, start monitoring, add authenticated browser ports |
 | `setup.sh` | VM-side configuration and credentials; loopback by default |
+| `enable-outer-metrics.sh` | Opt-in host-side VM scrape using existing Prometheus/Grafana |
+| `enable-rev140-outer-lxd-metrics.sh` | Current rev140 RDK 0907 preset, not the stopped 0906 VM |
+| `disable-outer-metrics.sh` | Remove the outer job/dashboard and revoke its host-side trust |
+| `outer-metrics.py` | Verified installation, rollback, persistent job rendering and removal |
 | `reload-lxd.sh` | Explicit first-identity maintenance: ordered lab stop, daemon restart, lab restore |
 | `prepare-rdk.py` | Backed-up compatibility repair for older RDK Boardfarm inventory checks |
 | `disable.sh` | Stop this Compose project, revoke its metrics certificate, restore owned LXD settings |
@@ -157,6 +167,7 @@ The source files live at `gen/vm/lxd/observability/`:
 | `grafana/provisioning/datasources/prometheus.yml` | Provisioned data source, UID `lxd-prometheus` |
 | `grafana/provisioning/dashboards/lxd.yml` | File-backed dashboard provisioning |
 | `grafana/dashboards/lxd-containers.json` | Container dashboard, UID `easymesh-lxd` |
+| `grafana/dashboards/lxd-outer-vms.json` | Optional outer VM dashboard, UID `easymesh-lxd-outer` |
 
 Installation copies these files to `/opt/easymesh-observability`. Runtime
 credentials are generated there, not committed into Git. The dashboard is
@@ -411,10 +422,12 @@ operator token does not grant LXD access.
 
 2. Follow the UI's browser-certificate creation/import instructions. Keep its
    private key private and select that certificate when the browser requests it.
-3. In a private terminal inside the VM, run
-   `lxc --force-local config trust add`. Give the browser a distinct name and
-   supply its generated one-use trust token to the UI. This grants substantial
-   management privilege; do not use it for Prometheus or share it in logs.
+3. In a private terminal inside the VM, verify `lxc auth group show local:admins`,
+   then run `lxc auth identity create local:tls/lab-browser --group admins`.
+   Supply its short-lived identity token to the modern UI. When entering from
+   the host, use `lxc exec VM --mode=interactive -- ...`; when using SSH, also
+   allocate its terminal with `ssh -t`. See the Windows instructions below for
+   group provisioning and the distinction from legacy certificate tokens.
 4. Select project `default` and the Instances page. Confirm the expected
    `bpibroadband`, `bpiap` through `bpiap-003`, and `wlan-client` through
    `wlan-client-019` roster. Compare with `lxc --force-local list` in the VM.
@@ -422,7 +435,8 @@ operator token does not grant LXD access.
 For read-only observers, use your LXD version's fine-grained authorization
 groups and viewer entitlements instead of distributing administrator browser
 certificates. Older restricted TLS certificates constrain projects but are
-not equivalent to a read-only account. Audit `lxc config trust list` and revoke
+not equivalent to a read-only account. Audit `lxc auth identity list local:`
+and `lxc config trust list`, and revoke
 unneeded identities after the demonstration. Stopping/restarting containers
 from the UI changes the lab: use the existing lab lifecycle/acceptance runbook,
 not arbitrary UI actions during room or release tests.
@@ -538,7 +552,7 @@ Do not store private keys, Grafana passwords or browser trust tokens there.
 | Browser cannot connect | Check the SSH final destination, VM management IP, listener and local-port collision |
 | UI certificate prompt loops | Verify the server fingerprint, import/select the browser certificate, then complete its trust-token flow |
 | Setup refuses existing listener | Inspect the current LXD configuration; do not blindly replace another operator's listener |
-| Metrics certificate denied | Verify its fingerprint and `metrics` type in nested LXD, not outer LXD; check expiry |
+| Metrics certificate denied | Check the daemon for that job: nested LXD for `lxd`, outer host LXD for `lxd-outer`; verify fingerprint, type, project restriction and expiry |
 | Prometheus reports `x509` error | Inspect the server SAN and trust anchor; refresh the copied server certificate after intentional rotation, not `insecure_skip_verify` |
 | Metrics key permission denied | Keep `tls/` mode 0750 and files 0640, group 65534, matching the Prometheus UID/GID |
 | Grafana password file denied | Keep its file group 472 and mode 0640; use the supplied UID/GID settings |
@@ -556,7 +570,12 @@ not an arbitrary LXD cluster or an unrelated pre-existing monitoring stack.
 
 ## 11. Lifecycle, backup and removal
 
-All lifecycle commands run **inside the VM**:
+If outer monitoring is enabled, first run `bash observability/disable-outer-metrics.sh VM`
+on the **physical host**. The inner `disable.sh` refuses while the outer state
+exists, to avoid leaving its certificate trusted on the host. See the outer
+monitoring section for listener cleanup and certificate renewal.
+
+The following Compose lifecycle commands run **inside the VM**:
 
 ```sh
 cd /opt/easymesh-observability
@@ -612,6 +631,289 @@ volumes/local credentials and any test UI trust/link configuration before
 exporting. Retain only the source templates in the checkout. An offline
 monitoring-image archive can be supplied separately without embedding secrets.
 
+## 12. Windows Chrome access to the current rev140 lab
+
+This incorporates the supplied `lxd-ui-and-monitoring-windows-access.md`
+addendum. Its successful browser enrollment and Grafana login were recorded
+against **0906**, nested LXD 6.9 (`6.9-ab8fad2`, snap revision 40424, held),
+VM `10.142.138.243`, ports `18892`/`18893`. Those are historical observations,
+not instructions to restart that VM. The active **0907** examples here use
+`rdkeasymesh-20-0907`, VM `10.142.138.250`, ports `48892`/`48893`.
+Read-only inspection on 2026-09-08 found 0907 running, 0906 stopped, nested
+LXD 6.9 with an existing `admins` group, and both monitoring services running.
+The addendum confirmed login, not an independent dashboard-data audit.
+
+### Grafana login from PowerShell
+
+```powershell
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- cat /opt/easymesh-observability/secrets/grafana-admin-password"
+```
+
+Open `https://192.168.2.140:48893/login`; use **admin** and that generated
+per-VM password, **not admin/admin**. If it was changed previously, use the
+changed password: the file initializes the account only on first run. Do not
+recreate services, delete volumes or change configuration to fix a forgotten
+password; use Grafana's account recovery procedure. Keep the password out of
+chat/logs and create separate Viewer-role accounts for observers.
+
+The home dashboard is **EasyMesh nested LXD containers**, with lab/project/
+Container filters. A fully running 20-client lab normally has **25 nested
+containers**: one colocated controller/Agent-1, four extenders and 20 clients.
+Six mesh roles do not mean six mesh containers. Allow two or more 30-second
+scrapes for rate graphs; these graphs are resource usage, not SNR/steering.
+
+### Modern LXD identity enrollment
+
+First check the group through your trusted SSH connection:
+
+```powershell
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- lxc auth group show local:admins"
+```
+
+The expected administrator permission is `entity_type: server`, `url: /1.0`,
+`entitlement: admin`. If the group is absent on a fresh installation, a trusted
+operator can deliberately provision it inside the VM:
+
+```sh
+lxc auth group create local:admins
+lxc auth group permission add local:admins server admin
+```
+
+Do not blindly elevate an existing group. Use separately designed viewer
+permissions for observers; the following token grants full inner-LXD management.
+In Chrome, follow the UI's client-certificate generation/import instructions
+and select that certificate when requested. At the enrollment page, run:
+
+```powershell
+ssh -t rev@rev140 "lxc exec local:rdkeasymesh-20-0907 --mode=interactive -- lxc auth identity create local:tls/windows-chrome-ui --group admins"
+```
+
+Paste the complete token into
+`https://192.168.2.140:48892/ui/login/certificate-add`, click **Connect**, then
+open **Instances**, project `default`. An enrolled browser needs no new token
+on each visit. For another browser, use a fresh descriptive identity name;
+an existing-name error is not a reason to delete a working browser identity.
+
+Both terminal options matter: `ssh -t` allocates the SSH terminal and
+`--mode=interactive` carries it into the VM. With nonterminal stdin LXD 6.9
+can wait for certificate input until EOF, appearing to hang. The two `local:`
+prefixes select different local daemons: the outer host for the VM and the
+nested daemon for its browser identity. An expired outer HTTPS CLI client
+certificate does not prevent this trusted SSH/local Unix-socket path.
+
+| Token command | Redemption endpoint |
+| --- | --- |
+| `lxc config trust add` | `/1.0/certificates` (legacy certificate flow) |
+| `lxc auth identity create tls/NAME` | `/1.0/auth/identities/tls` (modern identity flow) |
+
+Do not submit the legacy token to the modern identity endpoint. This mismatch
+does not demonstrate an LXD version bug; the supplied successful enrollment
+did not require a snap update. An identity without group permissions cannot
+administer the server. The separate Prometheus command
+`lxc config trust add CERT --type=metrics` remains correct: do not replace it
+with an administrative browser identity.
+
+### TLS checks and read-only troubleshooting
+
+Compare Chrome's displayed SHA-256 server fingerprint with the corresponding
+certificate over trusted SSH before using **Advanced → Proceed**, if offered:
+
+```powershell
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- openssl x509 -in /var/snap/lxd/common/lxd/server.crt -noout -fingerprint -sha256"
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- openssl x509 -in /opt/easymesh-observability/secrets/grafana.crt -noout -fingerprint -sha256"
+```
+
+Server trust and the browser's client certificate are separate. These LAN
+endpoints need no SSH tunnel; do not overwrite them with the local-only setup.
+Access troubleshooting does not require restarting LXD, Grafana or lab nodes.
+
+```powershell
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- lxc --force-local list"
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- lxc auth identity list local:"
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- lxc auth group show local:admins"
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- docker compose --project-directory /opt/easymesh-observability ps"
+ssh rev@rev140 "lxc config device show local:rdkeasymesh-20-0907"
+```
+
+For pending-identity errors, check token type, issuing VM, expiry and reuse.
+For repeated enrollment prompts, check which client certificate Chrome chose.
+If only the appliance VM is listed, you opened outer rather than nested LXD.
+For empty Grafana panels, check filters, recent time range and Prometheus
+targets before changing services. A wrong redirect calls for checking
+`GRAFANA_PUBLIC_URL` in `.env` (0907 expects `https://192.168.2.140:48893/`).
+
+## 13. Add outer LXD VM metrics without another monitoring stack
+
+This integrates the monitoring portion of `lxd-grafana.txt` and replaces its
+one-off 0906 helper with a reusable, persistent setup. It is **opt-in** and
+works with either lab backend. No Node Exporter, extra container, Prometheus
+or Grafana instance is added. The nested dashboard stays the home page.
+
+The layers remain distinct:
+
+| Source | Prometheus job | Dashboard / scope |
+| --- | --- | --- |
+| Inner LXD `127.0.0.1:8444` inside VM | `lxd`, `layer=nested` | `easymesh-lxd`: container CPU/memory/network/disk |
+| Physical host's authenticated metrics listener | `lxd-outer`, `layer=outer` | `easymesh-lxd-outer`: the selected appliance VM's guest resources |
+
+Outer VM metrics are **not** physical-host totals, hardware health or the QEMU
+process's RSS/CPU. Physical-host monitoring would require a separate exporter
+and is outside this setup. When this VM stops, its Prometheus and Grafana also
+stop: continuous observation of that outage needs an independent collector.
+There is still a modest resource/scrape cost; this is 30-second infrastructure
+monitoring, not instrumentation for subsecond optimizer profiling. LXD caches
+metric collection for approximately eight seconds.
+
+### Enable on the physical host
+
+Prerequisites: an already running managed monitoring installation in the VM;
+local LXD access on the outer host; host `python3`, `lxc`, `openssl`, `ss` and
+read access to `/var/snap/lxd/common/lxd/server.crt`; guest `curl`, `openssl`,
+Docker Compose and its running Prometheus. Use a standalone snap-based LXD
+host, not an arbitrary cluster. Run from a private writable directory for
+backups. Do not run monitoring setup/removal concurrently.
+
+The 2026-09-08 read-only check found rev140 outer LXD 5.21.7 LTS with no metrics
+listener. Its existing certificate has DNS SAN **rev140**, not the LAN IP.
+Do not regenerate that host identity or disable TLS verification. The target
+can be an IP while Prometheus verifies `server_name: rev140`.
+
+A read-only scrape through that host's existing Unix socket also confirmed
+the active 0907 VM exports **six per-vCPU idle series** while
+`lxd_cpu_effective_total` is **zero**. Guest total/available memory, CPU,
+network, disk, process and filesystem families were present. This validates
+the dashboard's metric choices without opening any host port; it is not an
+end-to-end acceptance of the optional HTTPS scrape or new Grafana dashboard.
+
+```sh
+SOURCE=/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0905-clean/meta-cmf-bananapi-vcpe
+bash "$SOURCE/gen/vm/lxd/observability/enable-rev140-outer-lxd-metrics.sh"
+```
+
+Equivalent generic command, also suitable for prplMesh with its actual VM,
+host IP, certificate DNS SAN and label:
+
+```sh
+bash observability/enable-outer-metrics.sh \
+  rdkeasymesh-20-0907 192.168.2.140 rev140 rev140-rdk-0907
+```
+
+Optional environment: `LAB_OUTER_METRICS_PORT` (default `8444`) and
+`LAB_OUTER_PROJECT` (default `default`, the outer VM's project). Prefer a host
+bridge/VPN address reachable only by the appliance where possible. The rev140
+preset uses its explicit LAN IP; restrict inbound TCP 8444 to the VM/management
+network with your host firewall. No wildcard bind, unauthenticated metrics or
+outer `core.https_address` change is made. Existing conflicting listeners,
+occupied ports, insecure authentication and mismatched trust are refused.
+
+For future imports, the existing `--monitoring` path can opt in to both layers:
+
+```sh
+LAB_OUTER_METRICS_ADDRESS=192.168.2.140 LAB_OUTER_TLS_NAME=rev140 \
+  LAB_LXD_UI_PORT=48892 LAB_GRAFANA_PORT=48893 \
+  bash import.sh --profile 20 --monitoring
+```
+
+Without `LAB_OUTER_METRICS_ADDRESS`, new deployments remain nested-only.
+Use actual deployment ports and VM names; this command is for a **new import**,
+not a reason to reimport the existing 0907 lab. The same variables work with
+`enable.sh VM HOST_IPV4 LABEL`. Outer-only setup does not invoke the inner
+identity-rotation/restart path and downloads no images.
+
+### Authentication, persistence and failure handling
+
+The existing per-VM metrics certificate is reused, but trusted **separately**
+on outer LXD with `--type=metrics --restricted --projects=PROJECT`. Only its
+public certificate leaves the VM; the host's public server certificate is
+copied in. Neither private key is copied. The certificate cannot administer
+outer instances. Its authorization permits metrics for the whole selected
+project; the job requests that project and keeps only samples matching the
+exact project, VM name and `type="virtual-machine"`. This retention filter is
+**not** an instance-level authorization boundary. LXD may still collect other
+instances' metrics internally.
+
+`state/outer-metrics.json` records the target and certificate fingerprints.
+`setup.sh` renders the managed job again from that state on repeat installation;
+it no longer disappears as with the supplied one-off script. Credentials and
+the nested dashboard remain unchanged. A changed target/identity requires
+disabling the previous integration before enabling the replacement. An older
+unmanaged `lxd-outer` job is refused: back it up and deliberately remove its
+old marked block/trust before migrating; do not install two outer jobs.
+
+The helper stages configuration and checks it with the running image's
+`promtool`, verifies mTLS from the VM and requires actual VM CPU metric series,
+then signals **SIGHUP** to Prometheus and waits for the outer target to be UP.
+It preserves the live config file's inode for Docker's individual bind mount.
+Grafana discovers the atomically installed dashboard at its 30-second poll.
+No LXD, Grafana, lab-node or VM restart and no autostart change is needed.
+
+Enable failures attempt to restore the previous config/CA/dashboard/state,
+reload Prometheus, revert only unchanged settings modified by that attempt,
+and remove only newly added outer trust. Inspect any explicit rollback error
+and the private `lxd-outer-metrics-*` backup directory if host/VM communication
+fails; remote rollback cannot be guaranteed during an outage. Do not restart
+the lab to solve a scrape error. Backups include configuration and public
+certificates, never the metrics private key or Grafana password.
+
+### Open, interpret and validate
+
+After enabling, open `https://192.168.2.140:48893/d/easymesh-lxd-outer` with the
+existing Grafana login, or **Dashboards → EasyMesh → EasyMesh outer LXD VM**.
+Select Host/Lab/Project/VM. Wait 60–90 seconds for rate panels. Expect the selected
+running VM, not the 25 nested containers; those remain on the original dashboard.
+
+- CPU execution sums user/nice/system/IRQ/softIRQ time; 100% means one vCPU.
+- The normalized CPU panel divides by the count of exported per-vCPU idle
+  series, **not `lxd_cpu_effective_total`**, which was zero in the supplied VM
+  sample. Idle, I/O wait and steal are not counted as execution.
+- VM used memory is `MemTotal - MemAvailable`, unlike the nested cgroup
+  dashboard's `MemTotal - MemFree`. Neither is QEMU RSS.
+- Network and disk counters are guest-device counters, not RF measurements.
+  Process/filesystem families vary with exporter/agent version: **No data**
+  means unsupported/missing, not zero resource use.
+
+Read-only target check from PowerShell:
+
+```powershell
+ssh rev@rev140 "lxc exec local:rdkeasymesh-20-0907 -- curl --noproxy '*' -fsS http://127.0.0.1:9090/api/v1/targets"
+```
+
+Confirm `lxd`, `prometheus` and `lxd-outer` are UP, the outer target is
+`192.168.2.140:8444`, its label is `layer=outer`, and `lastError` is empty.
+In Grafana Explore verify `up{job="lxd-outer"}` and
+`count by (name,project,type) (lxd_cpu_seconds_total{job="lxd-outer",mode="idle"})`.
+The latter should contain only the chosen VM/project/type, with its reported
+vCPU count. Compare against the outer `lxc config show VM --expanded` CPU
+limit and guest CPU roster; inspect mismatches instead of substituting zeros.
+Repeat enablement should preserve listener identity, credentials and both
+running monitoring containers. Guest CPU families missing despite valid TLS
+call for checking the LXD VM agent, not changing the nested EasyMesh stack.
+
+### Removal and renewal
+
+Run on the same outer host/project before removing monitoring or rotating the
+shared metrics client certificate:
+
+```sh
+bash observability/disable-outer-metrics.sh rdkeasymesh-20-0907
+```
+
+This removes the managed scrape/dashboard/state and revokes the recorded
+outer metrics trust; nested monitoring and its trust remain. The authenticated
+host listener is intentionally retained because other consumers may use it.
+Only after checking `lxc --force-local config trust list`, other scrapers and
+the saved `host-before.json` should you unset `core.metrics_address` if this
+setup originally created it and nobody else needs it. Do not disable metrics
+authentication or alter a pre-existing shared listener.
+
+For renewal, disable outer first, then follow the nested certificate-renewal
+procedure, and enable outer again with the new public certificate. For a host
+server identity rotation, disable outer before planned rotation, review the
+new SAN/fingerprint, then re-enable. Do not bypass verification to recover.
+If the appliance is lost, use the recorded fingerprint to revoke only that
+metrics trust on outer LXD manually. Installed credentials/state/data must
+never enter a thin tar; existing export guards continue to reject them.
+
 ## Sources and relationship to the example
 
 The [VCPE metrics example](https://www.vcpe.dev/docs/metrics.html) demonstrates
@@ -620,6 +922,10 @@ targets the nested daemon and replaces unauthenticated scraping/TLS bypasses
 with a metrics-only certificate and verified TLS.
 
 - [LXD UI access](https://canonical.com/lxd/docs/latest/howto/access_ui/) describes browser authentication.
+- [LXD 6.9 authentication flows](https://github.com/canonical/lxd/blob/ab8fad2/doc/howto/server_expose.md) distinguishes certificate and identity tokens.
+- [LXD 6.9 identity CLI](https://github.com/canonical/lxd/blob/ab8fad2/lxc/auth.go) covers nonterminal certificate input.
+- [Grafana initial administrator password](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password) explains first-run initialization.
+- [Prometheus management API](https://prometheus.io/docs/prometheus/latest/management_api/) documents SIGHUP configuration reload without enabling the HTTP lifecycle API.
 - [LXD metrics setup](https://canonical.com/lxd/docs/latest/metrics/) documents the endpoint and metrics certificate.
 - [Provided LXD metrics](https://canonical.com/lxd/docs/latest/reference/provided_metrics/) defines the metric families.
 - [LXD Grafana integration](https://canonical.com/lxd/docs/latest/howto/grafana/) covers the upstream dashboard and UI link.
