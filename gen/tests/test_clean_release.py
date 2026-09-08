@@ -24,6 +24,11 @@ def test_clean_build_uses_workspace_local_caches_and_complete_images():
     assert "rdk-generic-broadband-image" in source
     assert "rdk-generic-ap-extender-image" in source
     assert 'git -C "$source_root" status --porcelain' in source
+    bootstrap = source.index('MACHINE="$machine" BPI_IMG_TYPE=nand source')
+    assert source.index('set +o pipefail') < bootstrap
+    assert source.index('set -eo pipefail', bootstrap) > bootstrap
+    assert '"$record/incomplete-conf"' in source
+    assert 'grep -Fq \'meta-cmf-bananapi-vcpe\' conf/bblayers.conf' in source
 
 
 def test_room_is_installed_from_source_with_current_profiling_defaults():

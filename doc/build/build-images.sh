@@ -47,16 +47,27 @@ for role in controller extender; do
         attempt=$(date -u +%Y%m%dT%H%M%SZ)
         record=$evidence/$role-$attempt
         mkdir -p "$record"
+        trap 'result=$?; printf "%s\n" "$result" > "$record/exit-code"; date -u +%FT%TZ > "$record/finished"' EXIT
         git -C "$source_root" rev-parse HEAD > "$record/source-commit"
         cp "$workspace/clean-build.conf" "$record/clean-build.conf"
         date -u +%FT%TZ > "$record/started"
+        printf '%s\n' "$record" > "$evidence/latest-$role"
+        if [ -f "build-$machine/conf/local.conf" ] && grep -q '##RDK_FLAVOR##' "build-$machine/conf/local.conf"; then
+            mv "build-$machine/conf" "$record/incomplete-conf"
+        fi
+        set +e
+        set +o pipefail
         MACHINE="$machine" BPI_IMG_TYPE=nand source meta-cmf-bananapi/setup-environment-refboard-rdkb "build-$machine" > "$record/setup.log" 2>&1
+        setup_result=$?
+        set -eo pipefail
+        if [ "$setup_result" -ne 0 ]; then tail -60 "$record/setup.log"; exit "$setup_result"; fi
+        ! grep -q '##RDK_FLAVOR##' conf/local.conf
+        grep -Fq 'meta-cmf-bananapi-vcpe' conf/bblayers.conf
         bitbake -R "$workspace/clean-build.conf" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
         grep -Fx "SSTATE_DIR=\"$workspace/sstate-cache\"" "$record/environment.txt"
         grep -Fx "DL_DIR=\"$downloads\"" "$record/environment.txt"
         grep -Fx 'SSTATE_MIRRORS=""' "$record/environment.txt"
         cp conf/local.conf conf/bblayers.conf "$record/"
-        printf '%s\n' "$record" > "$evidence/latest-$role"
         printf 'Building %s; log: %s/build.log\n' "$target" "$record"
         set +e
         bitbake -R "$workspace/clean-build.conf" "$target" > "$record/build.log" 2>&1

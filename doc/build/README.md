@@ -92,6 +92,13 @@ record that choice rather than claiming a download-from-empty validation.
 An interrupted role can be resumed with the `controller` or `extender` argument.
 The setup script's expected upstream-file edits are distinct from changes to
 the pinned upstream commits. Keep the layer checkout committed and clean.
+The vendor environment bootstrap is not compatible with shell `errexit`/
+`pipefail` on its first run: its optional machine-discovery globs can return
+nonzero even when the requested machine exists. The helper temporarily uses
+the bootstrap's normal shell semantics, then reinstates strict checking and
+verifies that the RDK-flavor placeholder is resolved and this layer is included.
+It preserves an earlier incomplete generated config in the attempt's evidence
+directory before regenerating it; no compiled build tree is discarded.
 
 Evidence is written to the workspace's `release-evidence/`: each attempt has
 the source commit, timestamps, setup/build logs, full BitBake environment,
