@@ -113,6 +113,11 @@ registry's official `static.crates.io` CDN (the `dl` endpoint published in
 the download-from-empty build. Crate versions, filenames and Cargo lock-file
 checksum validation remain unchanged; no old download directory is required.
 
+The virglrenderer build-tool dependency uses its current freedesktop GitLab
+repository over HTTPS rather than the legacy `git://anongit.freedesktop.org`
+transport, which stalled before receiving a pack during this cold build.
+Its `branch-0.9.1` and pinned commit are retained, not upgraded.
+
 Evidence is written to the workspace's `release-evidence/`: each attempt has
 the source commit, timestamps, setup/build logs, full BitBake environment,
 configuration, exit status and complete role-image checksums. See the

@@ -46,6 +46,13 @@ def test_ieee1905_crates_use_the_registry_download_cdn():
     assert "BB_STRICT_CHECKSUM" not in source
 
 
+def test_virglrenderer_uses_upstream_https_without_changing_revision():
+    source = (ROOT / "recipes-graphics/virglrenderer/virglrenderer_0.9.1.bbappend").read_text()
+    assert 'SRC_URI:remove = "git://anongit.freedesktop.org/git/virglrenderer;branch=branch-0.9.1"' in source
+    assert "git://gitlab.freedesktop.org/virgl/virglrenderer.git;protocol=https;branch=branch-0.9.1" in source
+    assert "SRCREV" not in source
+
+
 def test_room_is_installed_from_source_with_current_profiling_defaults():
     unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-demo.service").read_text()
     assert "Requires=easymesh-lab.service" in unit
