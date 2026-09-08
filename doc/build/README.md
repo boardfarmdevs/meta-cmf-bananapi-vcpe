@@ -100,6 +100,13 @@ verifies that the RDK-flavor placeholder is resolved and this layer is included.
 It preserves an earlier incomplete generated config in the attempt's evidence
 directory before regenerating it; no compiled build tree is discarded.
 
+The layer redirects the vendor recipe's retired hostap Git hostname to the
+[current upstream endpoint](https://w1.fi/cvs.html), with the
+[Chromium-maintained upstream mirror](https://chromium.googlesource.com/external/w1.fi/cgit/hostap/)
+as a fetch fallback. The recipe's pinned commit, branch and unpack destination
+are unchanged. This avoids depending on an older machine's cached hostap clone
+when the upstream endpoint times out; it does not substitute a newer release.
+
 Evidence is written to the workspace's `release-evidence/`: each attempt has
 the source commit, timestamps, setup/build logs, full BitBake environment,
 configuration, exit status and complete role-image checksums. See the

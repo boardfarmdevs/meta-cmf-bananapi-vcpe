@@ -31,6 +31,14 @@ def test_clean_build_uses_workspace_local_caches_and_complete_images():
     assert 'grep -Fq \'meta-cmf-bananapi-vcpe\' conf/bblayers.conf' in source
 
 
+def test_hostap_fetch_uses_current_upstream_without_changing_revision():
+    source = (ROOT / "recipes-ccsp/rdk-wifi-libhostap/rdk-wifi-libhostap_2.11.bbappend").read_text()
+    assert 'SRC_URI:remove = "git://w1.fi/hostap.git;' in source
+    assert 'SRC_URI:prepend = "git://git.w1.fi/hostap.git;protocol=https;branch=main;destsuffix=${S}/source/hostap-${PV};name=${PV} "' in source
+    assert "git://chromium.googlesource.com/external/w1.fi/cgit/hostap;protocol=https" in source
+    assert "SRCREV" not in source
+
+
 def test_room_is_installed_from_source_with_current_profiling_defaults():
     unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-demo.service").read_text()
     assert "Requires=easymesh-lab.service" in unit

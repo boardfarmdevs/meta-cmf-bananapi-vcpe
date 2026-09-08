@@ -1,5 +1,9 @@
 FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:"
 
+SRC_URI:remove = "git://w1.fi/hostap.git;protocol=https;branch=main;destsuffix=${S}/source/hostap-${PV};name=${PV}"
+SRC_URI:prepend = "git://git.w1.fi/hostap.git;protocol=https;branch=main;destsuffix=${S}/source/hostap-${PV};name=${PV} "
+MIRRORS:prepend = "git://git.w1.fi/hostap.git git://chromium.googlesource.com/external/w1.fi/cgit/hostap;protocol=https \n"
+
 # See the patch header: ccsp-one-wifi's EasyMesh/em_extender build (the only consumer
 # that defines IEEE80211_HDRLEN itself, in source/apps/em/wifi_em.h) can include this
 # header either before or after wifi_em.h depending on the translation unit, so both
