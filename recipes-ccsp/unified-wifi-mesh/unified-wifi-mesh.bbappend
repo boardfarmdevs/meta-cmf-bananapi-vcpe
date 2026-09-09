@@ -171,6 +171,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0171-cli-show-current-associations-immediately.patch \
     file://0172-agent-remember-controller-before-first-wsc.patch \
     file://0173-controller-decode-compact-cac-capability.patch \
+    file://0174-agent-isolate-periodic-ap-metrics-command.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

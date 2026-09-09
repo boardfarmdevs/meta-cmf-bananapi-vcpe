@@ -60,6 +60,16 @@ checks and network-order duration conversion. Its compiled regression covers
 multiple radios, every byte truncation and a guard-page boundary. Neither a
 service restart nor a relaxed acceptance gate substitutes for this fix.
 
+Live metrics exposed another native race: the radio protocol thread temporarily
+put its private AP-metrics event into the orchestrator's current-command slot.
+Concurrent command retirement cleared it mid-response, causing an agent crash;
+restoring the old pointer could also overwrite a newer candidate command.
+Patch 0174 passes the event-owned parameters directly through the response/TLV
+builders, without borrowing that shared slot or serializing metric collection.
+The compiled dispatch regression interleaves command retirement/replacement and
+checks null events and exactly-once event cleanup. Both role images must include
+this fix; the earlier reboot evidence alone does not qualify live operation.
+
 ## Recreate on another machine
 
 Follow [the source-build instructions](../../build/README.md) to clone this

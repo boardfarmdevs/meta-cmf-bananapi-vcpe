@@ -1,0 +1,229 @@
+Subject: [PATCH] agent: keep periodic AP metrics out of orchestrator command ownership
+
+The protocol thread temporarily replaced m_cmd with its private metrics event.
+The orchestrator could clear that pointer while TLVs were being constructed,
+crashing the agent, or have its newer command overwritten by the saved pointer.
+Pass event-owned parameters explicitly through the response and TLV builders;
+never borrow or restore the orchestrator's current-command slot.
+
+Upstream-Status: Pending
+
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -475,7 +475,7 @@
+ 	 *
+ 	 * @note Ensure that the network connection is established before calling this function.
+ 	 */
+-	int send_ap_metrics_response();
++	int send_ap_metrics_response(const em_cmd_ap_metrics_rprt_params_t &params);
+ 
+ 	int send_link_quality_report();
+ 
+@@ -506,7 +506,7 @@
+ 	 *
+ 	 * @note Ensure the buffer is large enough to hold the TLV.
+ 	 */
+-	short create_ap_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss);
++	short create_ap_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss, const em_cmd_ap_metrics_rprt_params_t &params);
+     
+ 	/**!
+ 	 * @brief Creates an AP extension metrics TLV.
+@@ -522,7 +522,7 @@
+ 	 *
+ 	 * @note Ensure the buffer is allocated with sufficient space before calling this function.
+ 	 */
+-	short create_ap_ext_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss);
++	short create_ap_ext_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss, const em_cmd_ap_metrics_rprt_params_t &params);
+     
+ 	/**!
+ 	 * @brief Creates a radio metrics TLV.
+@@ -535,7 +535,7 @@
+ 	 *
+ 	 * @note Ensure that the buffer is large enough to hold the TLV.
+ 	 */
+-	short create_radio_metrics_tlv(unsigned char *buff, int index);
++	short create_radio_metrics_tlv(unsigned char *buff, int index, const em_cmd_ap_metrics_rprt_params_t &params);
+ 
+ 	/**!
+ 	 * @brief Creates an association report TLV for a WiFi 6 station.
+@@ -801,7 +801,6 @@
+ 	 * @note This function does not take any parameters and does not return any value.
+ 	 */
+ 	void process_agent_state();
+-	void process_agent_state(em_cmd_event_type_t type);
+ 
+     
+ 	/**!
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -420,15 +420,13 @@
+     switch (cevt->type) {
+         case em_cmd_event_type_ap_metrics_report:
+         {
+-            em_cmd_t *saved_cmd = m_cmd;
+             em_cmd_t *ap_cmd = static_cast<em_cmd_t*>(cevt->cmd_ptr);
+-            m_cmd = ap_cmd;
+-            em_metrics_t::process_agent_state(em_cmd_event_type_ap_metrics_report);
+             if (ap_cmd != NULL) {
++                em_metrics_t::send_ap_metrics_response(ap_cmd->get_param()->u.ap_metrics_params);
+                 ap_cmd->deinit();
+             }
+             delete ap_cmd;
+-            m_cmd = saved_cmd;
++            cevt->cmd_ptr = nullptr;
+             break;
+         }
+         case em_cmd_event_type_failed_connection:
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -1418,8 +1418,11 @@
+ }
+ 
+ 
+-int em_metrics_t::send_ap_metrics_response()
++int em_metrics_t::send_ap_metrics_response(const em_cmd_ap_metrics_rprt_params_t &params)
+ {
++    if (params.num_radios < 0 || params.num_radios > EM_MAX_RADIO_PER_AGENT) {
++        return -1;
++    }
+     dm_easy_mesh_t *dm = get_data_model();
+     const size_t num_bss_tlvs = static_cast<size_t>(dm->m_num_bss) *
+         ((get_profile_type() > em_profile_type_1) ? 2U : 1U);
+@@ -1429,7 +1432,7 @@
+     const size_t num_sta_tlvs = static_cast<size_t>(hash_map_count(dm->m_sta_map)) *
+         sta_tlvs_per_sta;
+     const size_t num_radio_tlvs = (get_profile_type() > em_profile_type_1) ?
+-        static_cast<size_t>(get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) : 0U;
++        static_cast<size_t>(params.num_radios) : 0U;
+     const size_t max_tlv_value_size = MAX_EM_BUFF_SZ;
+     /* Reserve one vendor TLV for the reporting CPE uptime in addition to EOM. */
+     const size_t max_tlv_count = num_bss_tlvs + num_sta_tlvs + num_radio_tlvs + 1U;
+@@ -1494,7 +1497,7 @@
+ 
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_ap_metrics;
+-        sz = create_ap_metrics_tlv(tlv->value, dm->m_bss[bss_index]);
++        sz = create_ap_metrics_tlv(tlv->value, dm->m_bss[bss_index], params);
+         if (!valid_tlv_size(sz, "AP Metrics")) return -1;
+         tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+@@ -1505,7 +1508,7 @@
+         if (get_profile_type() > em_profile_type_1) {
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_ap_ext_metric;
+-            sz = create_ap_ext_metrics_tlv(tlv->value, dm->m_bss[bss_index]);
++            sz = create_ap_ext_metrics_tlv(tlv->value, dm->m_bss[bss_index], params);
+             if (!valid_tlv_size(sz, "AP Extended Metrics")) return -1;
+             tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+@@ -1579,12 +1582,12 @@
+         }
+     }
+ 
+-    for (int i = 0; i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios; i++) {
++    for (int radio_index = 0; radio_index < params.num_radios; radio_index++) {
+         //Radio Metrics TLV (17.2.60)
+         if (get_profile_type() > em_profile_type_1) {
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+             tlv->type = em_tlv_type_radio_metric;
+-            sz = create_radio_metrics_tlv(tlv->value, i);
++            sz = create_radio_metrics_tlv(tlv->value, radio_index, params);
+             if (sz == 0) {
+                 em_printfout("create_radio_metrics_tlv size equals to zero\n");
+                 continue;
+@@ -1625,7 +1628,7 @@
+         return -1;
+     }
+ 
+-    em_printfout("AP Metrics Response sent for %u BSSs, %d Radios", dm->m_num_bss, get_current_cmd()->get_param()->u.ap_metrics_params.num_radios);
++    em_printfout("AP Metrics Response sent for %u BSSs, %d Radios", dm->m_num_bss, params.num_radios);
+ 
+     return static_cast<int> (len);
+ }
+@@ -1966,20 +1969,20 @@
+     return static_cast<short> (len);
+ }
+ 
+-short em_metrics_t::create_ap_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss)
++short em_metrics_t::create_ap_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss, const em_cmd_ap_metrics_rprt_params_t &params)
+ {
+     size_t len = 0;
+     em_ap_metric_t *ap_metrics = reinterpret_cast<em_ap_metric_t *> (buff);
+     int i = 0;
+ 
+  
+-    for(i = 0; i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios; i++) {
++    for(i = 0; i < params.num_radios; i++) {
+         if (memcmp(dm_bss.m_bss_info.ruid.mac,
+-            get_current_cmd()->get_param()->u.ap_metrics_params.ruid[i], sizeof(mac_addr_t)) == 0) {
++            params.ruid[i], sizeof(mac_addr_t)) == 0) {
+             break;
+         }
+     }
+-    if (i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) {
++    if (i < params.num_radios) {
+ 
+         memcpy(ap_metrics->bssid, dm_bss.m_bss_info.bssid.mac, sizeof(mac_address_t));
+         len += static_cast<size_t> (sizeof(mac_address_t));
+@@ -2026,21 +2029,21 @@
+     return static_cast<short> (len);
+ }
+ 
+-short em_metrics_t::create_ap_ext_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss)
++short em_metrics_t::create_ap_ext_metrics_tlv(unsigned char *buff, dm_bss_t &dm_bss, const em_cmd_ap_metrics_rprt_params_t &params)
+ {
+     size_t len = 0;
+     em_ap_ext_metric_t *ap_ext_metrics = reinterpret_cast<em_ap_ext_metric_t *> (buff);
+     int i = 0;
+     uint32_t bytes;
+ 
+-    for(i = 0; i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios; i++) {
++    for(i = 0; i < params.num_radios; i++) {
+         if (memcmp(dm_bss.m_bss_info.ruid.mac,
+-            get_current_cmd()->get_param()->u.ap_metrics_params.ruid[i], sizeof(mac_addr_t)) == 0) {
++            params.ruid[i], sizeof(mac_addr_t)) == 0) {
+             break;
+         }
+     }
+ 
+-    if (i < get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) {
++    if (i < params.num_radios) {
+         memcpy(ap_ext_metrics->bssid, dm_bss.m_bss_info.bssid.mac, sizeof(mac_address_t));
+ 
+         bytes = htonl(dm_bss.m_bss_info.unicast_bytes_sent);
+@@ -2067,14 +2070,14 @@
+     return static_cast<short> (len);
+ }
+ 
+-short em_metrics_t::create_radio_metrics_tlv(unsigned char *buff, int index)
++short em_metrics_t::create_radio_metrics_tlv(unsigned char *buff, int index, const em_cmd_ap_metrics_rprt_params_t &params)
+ {
+     size_t len = 0;
+     dm_easy_mesh_t *dm = get_data_model();
+     em_radio_metric_t *radio_metric = reinterpret_cast<em_radio_metric_t *> (buff);
+     dm_radio_t *radio = NULL;
+     em_radio_info_t *em_radio_info = NULL;
+-    radio = dm->get_radio(get_current_cmd()->get_param()->u.ap_metrics_params.ruid[index]);
++    radio = dm->get_radio(params.ruid[index]);
+ 
+     if (radio != NULL) {
+         em_radio_info = radio->get_radio_info();
+@@ -3137,18 +3140,6 @@
+             break;
+ 
+         default:
+-            break;
+-    }
+-}
+-
+-void em_metrics_t::process_agent_state(em_cmd_event_type_t type)
+-{
+-    switch (type) {
+-        case em_cmd_event_type_ap_metrics_report:
+-            send_ap_metrics_response();
+-            break;
+-
+-        default:
+             break;
+     }
+ }
