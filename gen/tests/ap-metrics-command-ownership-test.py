@@ -42,6 +42,9 @@ struct em_metrics_t {
     void process_agent_state(int) {
         send_ap_metrics_response(m_cmd->get_param()->u.ap_metrics_params);
     }
+    void process_agent_state(int, const em_cmd_ap_metrics_rprt_params_t &params) {
+        send_ap_metrics_response(params);
+    }
 };
 struct em_t : em_metrics_t { void proto_process(em_cmd_event_t *cevt); };
 void em_t::proto_process(em_cmd_event_t *cevt) {

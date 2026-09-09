@@ -46,11 +46,12 @@ Upstream-Status: Pending
  
  	/**!
  	 * @brief Creates an association report TLV for a WiFi 6 station.
-@@ -801,7 +801,6 @@
+@@ -801,7 +801,7 @@
  	 * @note This function does not take any parameters and does not return any value.
  	 */
  	void process_agent_state();
 -	void process_agent_state(em_cmd_event_type_t type);
++	void process_agent_state(em_cmd_event_type_t type, const em_cmd_ap_metrics_rprt_params_t &params);
  
      
  	/**!
@@ -65,7 +66,7 @@ Upstream-Status: Pending
 -            m_cmd = ap_cmd;
 -            em_metrics_t::process_agent_state(em_cmd_event_type_ap_metrics_report);
              if (ap_cmd != NULL) {
-+                em_metrics_t::send_ap_metrics_response(ap_cmd->get_param()->u.ap_metrics_params);
++                em_metrics_t::process_agent_state(em_cmd_event_type_ap_metrics_report, ap_cmd->get_param()->u.ap_metrics_params);
                  ap_cmd->deinit();
              }
              delete ap_cmd;
@@ -208,22 +209,21 @@ Upstream-Status: Pending
  
      if (radio != NULL) {
          em_radio_info = radio->get_radio_info();
-@@ -3137,18 +3140,6 @@
-             break;
+@@ -3141,15 +3144,10 @@
+     }
+ }
  
-         default:
--            break;
--    }
--}
--
 -void em_metrics_t::process_agent_state(em_cmd_event_type_t type)
--{
++void em_metrics_t::process_agent_state(em_cmd_event_type_t type, const em_cmd_ap_metrics_rprt_params_t &params)
+ {
 -    switch (type) {
 -        case em_cmd_event_type_ap_metrics_report:
 -            send_ap_metrics_response();
 -            break;
 -
 -        default:
-             break;
+-            break;
++    if (type == em_cmd_event_type_ap_metrics_report) {
++        send_ap_metrics_response(params);
      }
  }
