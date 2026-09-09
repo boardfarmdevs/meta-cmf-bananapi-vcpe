@@ -7,9 +7,13 @@ Current canonical branch: **`codex/0908-clean`**. The new canonical workspace is
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean/meta-cmf-bananapi-vcpe`.
 The [0908 clean rebuild](reference/release-0908.md) starts from synchronized,
 pinned sources with fresh role build directories and workspace-local caches.
-It is in progress; this paragraph does not claim a published or accepted tar.
-The running rev140 lab remains 0907 until the new tar has been imported and
-passed the small-profile smoke checks. No full room soak is required for 0908.
+Both full role images are rebuilt. The corrected fresh appliance passes cold
+reconstruction with 20 clients, 5 physical mesh devices, 15 radios, 50 BSS
+records and zero native service restarts. Thin-tar qualification is recorded
+beside the archive in release evidence; a builder pass alone is not an import
+pass. No full room soak is required for 0908. The deployment split is RDK on
+rev140 and the separate prplMesh repository/live room on rev150; prplMesh's
+active rev140 checkout, build container, packaging VM and UI service are retired.
 
 The sections below retain historical 0905/0906 acceptance records; their
 canonical-directory and old-VM retention statements apply to those deliveries.

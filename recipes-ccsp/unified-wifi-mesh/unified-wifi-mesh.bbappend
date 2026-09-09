@@ -712,6 +712,13 @@ SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_st
 # The pre-start helper normally belongs to the redundant stock CLI package, so
 # install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {
+    (
+        cd ${S}/src/rdkb-cli
+        find . -maxdepth 1 -type f \( -name '*.go' -o -name go.mod -o -name go.sum \) \
+            ! -name '*_test.go' | LC_ALL=C sort | xargs sha256sum
+    ) > ${WORKDIR}/em-cli-sources.expected
+    cmp ${WORKDIR}/em-cli-sources.sha256 ${WORKDIR}/em-cli-sources.expected || \
+        bbfatal "EM CLI helper is stale: run gen/rebuild-em-cli-artifact.sh against this compiled workdir, commit em-cli.tar.gz and rebuild"
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
     install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static

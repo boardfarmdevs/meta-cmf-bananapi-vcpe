@@ -1545,7 +1545,7 @@ class LiveConductor:
                 self.store.emit("optimizer.measurement.waiting", self._time(),
                                 {"reason": "rf_snapshot_superseded", "message": str(error)},
                                 producer="optimizer")
-            except CandidateMetricsUnavailable as error:
+            except (CandidateMetricsUnavailable, OSError) as error:
                 if not self.interactive:
                     self._record_error("optimizer", error, fatal=True)
                     return
@@ -1562,7 +1562,7 @@ class LiveConductor:
                         "status": "unavailable",
                         "profiling": self.profiling,
                         "mode": self.mode,
-                        "reason": "candidate_metrics_unavailable",
+                        "reason": "controller_transport_unavailable" if isinstance(error, OSError) else "candidate_metrics_unavailable",
                         "message": str(error),
                         "consecutive_failures": consecutive_measurement_failures,
                         "retry_delay_seconds": retry_delay,
@@ -1579,7 +1579,7 @@ class LiveConductor:
                     },
                     producer="optimizer",
                 )
-            except (CandidateMetricsError, OSError, ValueError, KeyError) as error:
+            except (CandidateMetricsError, ValueError, KeyError) as error:
                 self._record_error("optimizer", error, fatal=True)
                 return
             finally:

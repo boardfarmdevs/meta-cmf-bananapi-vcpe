@@ -436,6 +436,19 @@ class ConductorProjectionTests(unittest.TestCase):
         self.assertEqual(store.current()["optimizer"]["status"], "unavailable")
         actuator.execute.assert_not_called()
 
+    def test_controller_timeout_pauses_interactive_steering_without_resetting_room(self):
+        conductor, store, policy, actuator, sleeper = self._run_optimizer([
+            TimeoutError("controller read timed out"), None,
+        ])
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(len(conductor.warnings), 1)
+        self.assertEqual(policy.evaluate.call_count, 1)
+        actuator.execute.assert_not_called()
+        self.assertEqual(sleeper.call_args_list[0].args[0], 1)
+        unavailable = store.current()["latest"]["optimizer.measurement.unavailable"]["payload"]
+        self.assertEqual(unavailable["reason"], "controller_transport_unavailable")
+        self.assertFalse(unavailable["automatic_actuation_ready"])
+
     def test_outage_restarts_an_unacted_hold_before_the_next_evaluation(self):
         holding = PolicyState((ClientPolicyState(
             sta_mac="02:00:00:00:0c:00", phase="holding",

@@ -286,6 +286,16 @@ run_root() {
         EASYMESH_RUNTIME_BRANCH="$runtime_branch" "$@"
 }
 
+check_baseline() (
+    restore_room=false
+    trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-demo.service || result=$?; fi; exit "$result"' EXIT
+    if run_root systemctl is-active --quiet easymesh-room-demo.service; then
+        run_root systemctl stop easymesh-room-demo.service || return
+        restore_room=true
+    fi
+    run_root "$@" /usr/local/sbin/easymesh-labctl check
+)
+
 configure_no_secure_boot() {
     # LXD 6.9 exports boot.mode and rejects the retired
     # security.secureboot key during import.  Prefer the current spelling so
@@ -401,8 +411,7 @@ build_vm() {
     lxc restart "$name" --timeout 300
     wait_agent
     run_root systemctl start easymesh-lab.service
-    run_root env HEALTH_EXPECT_CLIENTS="$profile_clients" \
-        /usr/local/sbin/easymesh-labctl check
+    check_baseline env HEALTH_EXPECT_CLIENTS="$profile_clients"
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
     wait_http_ready "EasyMesh WebUI proxy" \
@@ -453,7 +462,7 @@ check_vm() {
     # Do not inject the expected scale here. A portable appliance must retain
     # its own profile in /etc/default/easymesh-lab so that a new operator can
     # run the exact same self-check without knowing a hidden environment flag.
-    run_root /usr/local/sbin/easymesh-labctl check
+    check_baseline
 }
 
 snapshot_vm() {

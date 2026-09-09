@@ -11,9 +11,32 @@ and deployed from its own repository on rev150; no active prplMesh checkout,
 build container, packaging VM or UI service remains on rev140. rev120 is unchanged.
 Qualification is limited to profile 20 and short smoke tests, not a full soak.
 
-Status: preparation/build in progress. Record the actual image hashes, tar
-hash, final source commit, import results and cleanup below after completion.
-The existing 0907 lab remains the fallback until the replacement is verified.
+Both full images build and the corrected fresh appliance passes native cold
+reconstruction. Subsequent live-room testing exposed the helper/health-check
+gaps described below. The actual thin-tar import, browser smoke results, archive hash and
+cleanup are recorded beside the release archive in acceptance evidence. A
+builder pass is not an import pass; retain 0907 until that qualification passes.
+
+## Rebuilt inputs and appliance check
+
+The native cold-reconstruction evidence below uses source commit `9175e74`
+on `codex/0908-clean`. These are diagnostic inputs: the release controller is
+rebuilt afterward to include the refreshed EM CLI helper. Use the exact final
+image names and hashes in the thin bundle's release metadata/acceptance evidence,
+not the diagnostic controller image below.
+
+| Role | Image | SHA-256 |
+| --- | --- | --- |
+| Controller | `X86EMLTRBPIBB_rdk-next_20260909022038.rootfs.lxc.tar.bz2` | `62c55c0e0404a14457b14747eec93a9288442dcbc93579131c1bf727acb68a16` |
+| Extender | `X86EMLTRBPIAP_rdk-next_20260909022625.rootfs.lxc.tar.bz2` | `035d3a77fea1ea51ee07537cc30e4f43072b3618c70417707cec6263d78b149d` |
+
+At 2026-09-09 03:07 UTC, fresh-appliance reboot reconstruction passed with
+five physical mesh devices, fifteen radios, fifty BSS records, twenty clients
+and twenty reporting client metrics, twenty-four associations including the
+four backhaul STAs, and zero EasyMesh/OneWifi service restarts. All twenty
+clients reached the controller. Reconstruction took 466.49 seconds including
+the bounded stability and traffic checks. The displayed topology has six
+roles because Controller and Agent-1 share the physical root container.
 
 ## Fresh-build findings
 
@@ -57,6 +80,21 @@ runtime tools, image/appliance builders and checked-in WebUI/Console helpers;
 it does not require the old rev140 build scripts or an old VM disk.
 Rebuilding the checked-in Go helper is documented in the build guide; record
 any resulting artifact update before creating the appliance Git bundle.
+The image recipe checks the helper's archived Go-source hashes against the
+patched workdir and rejects an outdated binary. This caught an important
+release gap: the prior archive lacked the coordination and native-steering
+APIs even though the current Go patches and static assets were present.
+Refresh it with `gen/rebuild-em-cli-artifact.sh WORKDIR` after native compilation,
+commit the archive, then rebuild the controller image. Never hot-copy a helper
+into a VM and call that a qualified thin release.
+
+Appliance build/export checks temporarily stop an already-running room, which
+restores its RF baseline, before testing zero-loss traffic. They restart the
+room afterward, including on audit failure; an initially stopped room stays
+stopped. These baseline checks must not race the room's RF changes or steering.
+Use a separate live-room smoke test for interactive behavior. Transient
+controller transport failures now pause steering and report unavailability
+instead of terminating and resetting the interactive room.
 
 ## Build a fresh appliance and thin tar
 
@@ -85,6 +123,13 @@ kernel, patched hwsim, pinned Boardfarm code and runtime services from source.
 The room service is now tracked and enabled for the 20-client profile; it
 waits for native lab startup and does not run before thin profile selection.
 Its defaults match the live profiling room, without a manual systemd drop-in.
+
+The hwsim build uses the installed kernel's headers. Its source helper first
+requests the installed Ubuntu version, then falls back to the available HWE
+source package when that source version is no longer indexed. Preserve the
+appliance build log and module checksum: for this rebuild, kernel headers
+are `7.0.0-30-generic` and the fetched HWE source is `7.0.0-31.31~24.04.1`.
+This is not a claim of a byte-identical Ubuntu source lock.
 
 Thin export removes all provisioned nested instances, retaining the exact role
 archives and reusable client image. It stops the room before the lab, does not
