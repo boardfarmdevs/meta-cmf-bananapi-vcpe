@@ -56,7 +56,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
-release_id=${LAB_RELEASE_ID:-0905}
+release_id=${LAB_RELEASE_ID:-0908}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -370,6 +370,6 @@ echo "site address:      $guest_interface $guest_address/$prefix via $gateway"
 echo "profile:           $selected_clients clients ($selected_profile), $selected_radios radios"
 echo "EasyMesh WebUI:   http://${host_address}:${webui_port}/"
 echo "wmediumd Console: http://${console_address}:${console_port}/"
-echo "room demo:        http://${room_address}:${room_port}/viewer/?mode=live"
+echo "room demo:        http://${room_address}:${room_port}/"
 echo "monitor: lxc exec $name -- journalctl -fu easymesh-lab.service"
 echo "accept:  lxc exec $name -- /usr/local/sbin/easymesh-labctl check"

@@ -1,0 +1,38 @@
+Subject: [PATCH] cli: keep slow HTTP peers outside native tree ownership
+
+Bound request and response buffering, preserve serialized native traversal,
+and release every native/admission lock before writing to a slow peer.
+
+Upstream-Status: Inappropriate [lab profiling adapter]
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3180,26 +3180,13 @@
+ 	fmt.Printf("📊 Dashboard: http://0.0.0.0:8888\n")
+ 	fmt.Printf("🔌 WebSocket: ws://0.0.0.0:8888/api/v1/ws\n")
+ 
+-	log.Fatal(http.ListenAndServe("0.0.0.0:8888", router))
++	log.Fatal(labHTTPServer(router).ListenAndServe())
+ }
+ 
+ // ===== MIDDLEWARE =====
+ 
+ func serializeAPIRequests(next http.Handler) http.Handler {
+-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		if r.URL.Path == "/api/v1/ws" || r.URL.Path == "/api/v1/coordination" ||
+-			r.URL.Path == "/api/v1/steer-native" ||
+-			r.URL.Path == "/api/v1/unassoc_sta_query" || r.Method == http.MethodOptions {
+-			next.ServeHTTP(w, r)
+-			return
+-		}
+-
+-		queued := time.Now()
+-		apiRequestMutex.Lock()
+-		defer apiRequestMutex.Unlock()
+-		w.Header().Set("X-Lab-Native-Queue-Ms", fmt.Sprintf("%.3f", float64(time.Since(queued).Nanoseconds()) / 1e6))
+-		next.ServeHTTP(w, r)
+-	})
++	return withNativeAPIOwnership(next)
+ }
+ 
+ func corsMiddleware(next http.Handler) http.Handler {

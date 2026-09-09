@@ -59,6 +59,17 @@ class EventStoreTests(unittest.TestCase):
         self.store.publish(event(2, "scenario.clock"))
         self.assertEqual([item["sequence"] for item in self.store.after(1)], [2])
 
+    def test_incremental_replay_uses_an_index_instead_of_scanning_the_journal(self):
+        for sequence in (1, 3, 9):
+            self.store.publish(event(sequence, "scenario.clock"))
+        class IndexedOnly(list):
+            def __iter__(self):
+                raise AssertionError("the entire event history was scanned")
+        self.store._events = IndexedOnly(self.store._events)
+        self.assertEqual([item["sequence"] for item in self.store.after(3)], [9])
+        self.assertEqual([item["sequence"] for item in self.store.wait_after(2, 0)], [3, 9])
+        self.assertEqual(self.store.wait_after(9, 0), [])
+
     def test_measurement_outage_replaces_old_convergence_until_recovered(self):
         self.store.emit("optimizer.evaluation", 0, {"fleet": {"converged": True}})
         unavailable = {"status": "unavailable", "automatic_actuation_ready": False}
@@ -78,6 +89,16 @@ class EventStoreTests(unittest.TestCase):
         self.assertNotIn("progress", self.store.current()["optimizer"])
         self.store.emit("optimizer.evaluation", 200, {"fleet": {"converged": False}})
         self.assertNotIn("status", self.store.current()["optimizer"])
+
+    def test_verified_subject_leaves_pending_without_another_candidate_round(self):
+        self.store.emit('optimizer.evaluation', 0, {'subject_role': 'station', 'policy_state': {'phase': 'pending'},
+                                                   'fleet': {'converged': False}, 'decision': {'action': 'steer'}})
+        self.store.emit('optimizer.verification', 0, {'subject_role': 'station', 'success': True,
+                                                     'policy_state': {'phase': 'cooldown'}})
+        optimizer = self.store.current()['optimizer']
+        self.assertEqual(optimizer['policy_state']['phase'], 'cooldown')
+        self.assertEqual(optimizer['decision']['action'], 'none')
+        self.assertFalse(optimizer['fleet']['converged'])
 
     def test_rejects_out_of_order_event(self):
         self.store.publish(event(1, "scenario.started"))

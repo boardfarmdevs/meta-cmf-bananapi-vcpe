@@ -124,7 +124,7 @@ used by the outer host's IPv4 default route and exposes:
 ```text
 http://HOST:18889/  EasyMesh WebUI
 http://HOST:18890/  wmediumd Console
-http://HOST:18891/viewer/?mode=live  room demo while run/replay is active
+http://HOST:18891/  interactive room (20-client profile)
 ```
 
 Override site-local settings without changing image identity:

@@ -161,14 +161,33 @@ EASYMESH_CORE_PATCHES = " \
     file://0161-cli-maximize-topology-and-label-backhaul.patch \
     file://0162-cli-enlarge-topology-labels-without-client-radio-clutter.patch \
     file://0163-cli-space-branch-topologies-without-reordering-nodes.patch \
+    file://0164-cli-add-topology-fullscreen.patch \
+    file://0165-cli-decouple-topology-from-client-metrics.patch \
+    file://0166-cli-bind-signal-to-serving-bssid.patch \
+    file://0167-cli-coordinate-candidate-waits.patch \
+    file://0168-cli-profile-topology-refresh.patch \
+    file://0169-cli-submit-steering-without-container-launch.patch \
+    file://0170-cli-bound-http-native-ownership.patch \
+    file://0171-cli-show-current-associations-immediately.patch \
+    file://0172-agent-remember-controller-before-first-wsc.patch \
+    file://0173-controller-decode-compact-cac-capability.patch \
+    file://0174-agent-isolate-periodic-ap-metrics-command.patch \
 "
-SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js"
+SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
+SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
+SRC_URI += "file://native_steering.go file://native_steering_test.go"
+SRC_URI += "file://native_http.go file://native_http_test.go"
 
 python do_patch_append() {
     import os
     import shutil
     shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "signal-meter.js"),
                     os.path.join(d.getVar("S"), "src/rdkb-cli/static/signal-meter.js"))
+    shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "fullscreen-control.js"),
+                    os.path.join(d.getVar("S"), "src/rdkb-cli/static/fullscreen-control.js"))
+    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go"):
+        shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
+                        os.path.join(d.getVar("S"), "src/rdkb-cli", name))
 }
 
 # std::min(WIFI_MTU_SIZE, len - offset) type mismatch on 32-bit x86, where size_t
@@ -694,6 +713,13 @@ SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_st
 # The pre-start helper normally belongs to the redundant stock CLI package, so
 # install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {
+    (
+        cd ${S}/src/rdkb-cli
+        find . -maxdepth 1 -type f \( -name '*.go' -o -name go.mod -o -name go.sum \) \
+            ! -name '*_test.go' | LC_ALL=C sort | xargs sha256sum
+    ) > ${WORKDIR}/em-cli-sources.expected
+    cmp ${WORKDIR}/em-cli-sources.sha256 ${WORKDIR}/em-cli-sources.expected || \
+        bbfatal "EM CLI helper is stale: run gen/rebuild-em-cli-artifact.sh against this compiled workdir, commit em-cli.tar.gz and rebuild"
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
     install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
@@ -705,6 +731,8 @@ do_install_append_qemux86bpibroadband() {
     install -m 0644 ${S}/src/rdkb-cli/static/index.html \
         ${S}/src/rdkb-cli/static/script.js \
         ${S}/src/rdkb-cli/static/signal-meter.js \
+        ${S}/src/rdkb-cli/static/fullscreen-control.js \
+        ${S}/src/rdkb-cli/static/topology-fullscreen.js \
         ${S}/src/rdkb-cli/static/style.css \
         ${D}/usr/ccsp/EasyMesh/static/
     install -m 0644 ${WORKDIR}/iot-device.svg \

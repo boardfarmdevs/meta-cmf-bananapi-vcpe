@@ -1,0 +1,28 @@
+Subject: [PATCH] cli: refresh independent visible streams at bounded low latency
+
+Poll the visible association graph and its independent metric stream every
+250 ms. Keep both streams single-flight and only redraw changed graphs.
+
+Upstream-Status: Inappropriate [lab profiling adapter]
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3342,7 +3342,8 @@
+         this.topologySnapshotRequest = null;
+       });
+     }
+-    if (!this.topologyMetricsRequest) {
++    if (!this.topologyMetricsRequest && Date.now() >= (this.topologyMetricsNextAt || 0)) {
++      this.topologyMetricsNextAt = Date.now() + 250;
+       this.topologyMetricsRequest = this.apiCall('/clients').then(response => {
+         this.updateTopologyClients(response.clients);
+         this.refreshTopologySignalVisuals();
+@@ -5045,7 +5046,7 @@
+           this.topologyRefreshInFlight = false;
+         }
+       }
+-    }, 2000);
++    }, 250);
+   }
+ 
+   cleanup() {

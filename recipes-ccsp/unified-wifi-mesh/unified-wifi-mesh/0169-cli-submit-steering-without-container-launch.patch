@@ -1,0 +1,25 @@
+Subject: [PATCH] cli: submit guarded native steering without container launch
+
+Use the existing local gentle helper with bounded HTTP admission and validated
+arguments. This does not change native controller or agent steering behavior.
+
+Upstream-Status: Inappropriate [lab profiling adapter]
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3048,6 +3048,7 @@
+ 	api := router.PathPrefix("/api/v1").Subrouter()
+ 	api.Use(serializeAPIRequests)
+ 	api.HandleFunc("/coordination", coordinationHandler).Methods("GET")
++	api.HandleFunc("/steer-native", nativeSteeringHandler).Methods("POST")
+ 
+ 	//system setting Wifi Reset
+ 	api.HandleFunc("/controllerIPConfig", controllerIPHandler).Methods("GET", "POST")
+@@ -3188,6 +3189,7 @@
+ func serializeAPIRequests(next http.Handler) http.Handler {
+ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		if r.URL.Path == "/api/v1/ws" || r.URL.Path == "/api/v1/coordination" ||
++			r.URL.Path == "/api/v1/steer-native" ||
+ 			r.URL.Path == "/api/v1/unassoc_sta_query" || r.Method == http.MethodOptions {
+ 			next.ServeHTTP(w, r)
+ 			return

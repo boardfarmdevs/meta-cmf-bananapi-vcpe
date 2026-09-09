@@ -1,0 +1,137 @@
+Subject: [PATCH] capability: decode compact CAC reports with bounds checks
+
+A fresh appliance reboot faulted in handle_ap_cap_report while copying a
+fixed-size em_cac_cap_radio_t from the compact CAC wire payload. Decode the
+variable radio/method/op-class/channel lists and network-order duration
+before publishing the model. Reject truncated counts and payloads, and
+bound the enclosing TLV walk before accessing its value.
+
+Upstream-Status: Pending
+
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -1361,8 +1361,64 @@
+     return variant;
+ }
+ 
++static bool decode_cac_capability(const unsigned char *value, size_t length, em_cac_cap_t &decoded)
++{
++    if (length < 3) {
++        return false;
++    }
++    memcpy(&decoded.country_code, value, 2);
++    decoded.radios_num = value[2];
++    if (decoded.radios_num > EM_MAX_RADIO_PER_AGENT) {
++        return false;
++    }
++    size_t offset = 3;
++    for (unsigned int radio_index = 0; radio_index < decoded.radios_num; radio_index++) {
++        em_cac_cap_radio_t &radio = decoded.radios[radio_index];
++        if (length - offset < sizeof(mac_address_t) + 1) {
++            return false;
++        }
++        memcpy(radio.ruid, value + offset, sizeof(mac_address_t));
++        offset += sizeof(mac_address_t);
++        radio.cac_methods_num = value[offset++];
++        if (radio.cac_methods_num > EM_MAX_CAC_METHODS) {
++            return false;
++        }
++        for (unsigned int method_index = 0; method_index < radio.cac_methods_num; method_index++) {
++            if (length - offset < 5) {
++                return false;
++            }
++            em_cac_cap_method_t &method = radio.cac_methods[method_index];
++            method.cac_method = value[offset++];
++            method.cac_duration = (static_cast<unsigned int>(value[offset]) << 16)
++                | (static_cast<unsigned int>(value[offset + 1]) << 8) | value[offset + 2];
++            offset += 3;
++            method.op_classes_num = value[offset++];
++            if (method.op_classes_num > sizeof(method.op_classes) / sizeof(method.op_classes[0])) {
++                return false;
++            }
++            for (unsigned int class_index = 0; class_index < method.op_classes_num; class_index++) {
++                if (length - offset < 2) {
++                    return false;
++                }
++                em_cac_op_class_t &op_class = method.op_classes[class_index];
++                op_class.op_class = value[offset++];
++                op_class.num = value[offset++];
++                if (op_class.num > sizeof(op_class.channels) || length - offset < op_class.num) {
++                    return false;
++                }
++                memcpy(op_class.channels, value + offset, op_class.num);
++                offset += op_class.num;
++            }
++        }
++    }
++    return offset == length;
++}
++
+ int em_capability_t::handle_ap_cap_report(unsigned char *buff, unsigned int len)
+ {
++    if (buff == NULL || len < sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)) {
++        return -1;
++    }
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+ 
+     em_tlv_t *tlv;
+@@ -1397,7 +1453,13 @@
+         }
+     }
+ 
+-    while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
++    while (tmp_len > 0) {
++        if (tmp_len < sizeof(em_tlv_t) || ntohs(tlv->len) > tmp_len - sizeof(em_tlv_t)) {
++            return -1;
++        }
++        if (tlv->type == em_tlv_type_eom) {
++            break;
++        }
+         if (tlv->type == em_tlv_type_ap_cap) {
+             dm_radio_t *radio = dm->get_radio(get_radio_interface_mac());
+             if (radio == NULL) {
+@@ -1491,20 +1553,12 @@
+         else if (tlv->type == em_tlv_type_1905_layer_security_cap){
+         }
+         else if (tlv->type == em_tlv_type_cac_cap){
+-            em_cac_cap_t *cac = reinterpret_cast<em_cac_cap_t *>(tlv->value);
+-            if (cac == nullptr) {
+-                em_printfout("Invalid CAC TLV: null pointer");
+-                return -1;
+-            }
+-
+-            if (cac->radios_num > EM_MAX_RADIO_PER_AGENT) {
+-                em_printfout("Invalid CAC TLV: radios_num=%u exceeds max=%u", cac->radios_num, EM_MAX_RADIO_PER_AGENT);
++            em_cac_cap_t decoded = {};
++            if (!decode_cac_capability(tlv->value, ntohs(tlv->len), decoded)) {
++                em_printfout("Invalid CAC capability payload");
+                 return -1;
+             }
+-
+-            /* Country Code = first 2 ASCII octets of the CAC Capabilities TLV;
+-               persist it into the reporting device so it surfaces as Device.{i}.CountryCode. */
+-            if (ntohs(tlv->len) >= 2) {
++            {
+                 const unsigned char *cc = tlv->value;
+                 em_device_info_t *dev_info = dm->get_device_info();
+                 if ((dev_info != NULL) &&
+@@ -1516,16 +1570,16 @@
+                 }
+             }
+ 
+-            for (int idx = 0; idx < cac->radios_num; idx++)
++            for (unsigned int radio_index = 0; radio_index < decoded.radios_num; radio_index++)
+             {
+-                dm_radio_cap_t *radio_cap = dm->get_radio_cap(cac->radios[idx].ruid);
++                dm_radio_cap_t *radio_cap = dm->get_radio_cap(decoded.radios[radio_index].ruid);
+                 if (radio_cap != NULL){
+                     em_radio_cap_info_t *cap_info = radio_cap->get_radio_cap_info();
+                     if ((cap_info == NULL)){
+                         em_printfout("No data Found");
+                         return 0;
+                     }
+-                    memcpy(&cap_info->cac_cap, &cac->radios[idx], sizeof(cap_info->cac_cap));
++                    memcpy(&cap_info->cac_cap, &decoded.radios[radio_index], sizeof(cap_info->cac_cap));
+                 }
+             }
+         } else if (tlv->type == em_tlv_type_profile_2_ap_cap){

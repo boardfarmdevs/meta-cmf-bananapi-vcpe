@@ -266,6 +266,10 @@ def _run(args) -> int:
 
 
 def _interactive(args) -> int:
+    if args.model_backhaul and (not args.profiling or args.mode != "stimulus"):
+        raise ActuatorError("--model-backhaul requires --profiling --mode stimulus: no external client or parent steering")
+    if args.profiling and args.adaptive_backhaul:
+        raise ActuatorError("--profiling excludes --adaptive-backhaul: external parent selection is not native EasyMesh policy")
     if args.mode == "act" and not args.yes_act:
         raise ActuatorError("interactive act mode requires --yes-act")
     if args.max_actions is not None and args.max_actions < 1:
@@ -277,7 +281,7 @@ def _interactive(args) -> int:
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{timestamp}-{manifest['name']}-interactive"
     runner = Runner(plan, args.socket, args.output_root, run_id=run_id)
-    store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl")
+    store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl", asynchronous=True)
     recovery = RecoveryJournal(args.recovery_file, run_id, _hash(inventory))
     backhaul_adapter = RdkBackhaulAdapter(plan) if args.adaptive_backhaul and args.mode == "act" else None
     if args.adaptive_backhaul and backhaul_adapter is None:
@@ -292,6 +296,7 @@ def _interactive(args) -> int:
             reconnect_client=lambda role: resume_bound_client(plan, role, recovery),
             recovery=recovery,
             adaptive_backhaul=backhaul_adapter is not None,
+            model_backhaul=args.model_backhaul,
         )
     )
     # Interactive act mode is a continuously running reconciler. Keep a
@@ -303,7 +308,8 @@ def _interactive(args) -> int:
     conductor = LiveConductor(
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
-        interactive=True, maximum_actions=maximum_actions,
+        room_projection=interactions.projection_snapshot,
+        interactive=True, profiling=args.profiling, maximum_actions=maximum_actions,
         steering_transaction=interactions.steering_action,
         backhaul_manager=BackhaulManager(backhaul_adapter, interactions.backhaul_action, store)
         if backhaul_adapter is not None else None,
@@ -385,7 +391,7 @@ def _interactive(args) -> int:
         display_host = "127.0.0.1" if host == "0.0.0.0" else host
         print(
             f"room-demo: interactive viewer "
-            f"http://{display_host}:{port}/viewer/?mode=interactive"
+            f"http://{display_host}:{port}/viewer/"
         )
         print("room-demo: interactive control has no authentication; restrict access to a trusted lab or authenticated gateway")
         print(
@@ -480,6 +486,16 @@ def _interactive(args) -> int:
             {"outcome": outcome, "restored": restored, "error": error_text},
             producer="interaction",
         )
+        store.close()
+        summary["evidence_storage"] = store.storage_status()
+        if not summary["evidence_storage"]["journal"]["complete"]:
+            outcome = "failed"
+            error_text = summary["evidence_storage"]["journal"]["error"]
+            summary.update(outcome=outcome, error=error_text)
+        (runner.run_dir / "interactive-summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (runner.run_dir / "storage-summary.json").write_text(
+            json.dumps(store.storage_status(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         (runner.run_dir / "evidence-index.json").write_text(
             json.dumps(_file_index(runner.run_dir), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -494,11 +510,11 @@ def _interactive(args) -> int:
 
 def _replay(args) -> int:
     store = EventStore.from_evidence(args.run_directory.resolve())
-    server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER)
+    server = RoomDemoServer(args.listen, store, DEFAULT_VIEWER, replay=True)
     server.start()
     host, port = server.address
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
-    print(f"room-demo: replay http://{display_host}:{port}/viewer/?mode=replay")
+    print(f"room-demo: replay http://{display_host}:{port}/viewer/")
     print(f"room-demo: evidence {args.run_directory.resolve()}")
     try:
         if args.serve_seconds > 0:
@@ -565,8 +581,12 @@ def parser() -> argparse.ArgumentParser:
         help="optimizer authority (default: recommend)",
     )
     interactive.add_argument("--yes-act", action="store_true")
+    interactive.add_argument("--profiling", action="store_true",
+                             help="unassisted native BTM; no RF steering boost, forced scans, escalation or RF-stability gate")
     interactive.add_argument("--adaptive-backhaul", action="store_true",
                              help="model mesh RF and select loop-free RDK OneWifi parents (act only)")
+    interactive.add_argument("--model-backhaul", action="store_true",
+                             help="model backhaul RF without choosing parents (profiling stimulus only)")
     interactive.add_argument(
         "--max-actions", type=int,
         help="automatic BTM circuit breaker in act mode (default: 100)",

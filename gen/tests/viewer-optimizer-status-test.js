@@ -7,6 +7,7 @@ const html = fs.readFileSync(path.resolve(__dirname, '../wmediumd/configurator/w
 const elements = {};
 const context = {
   optimizerState: {}, networkState: {mesh: {nodes: []}}, healthState: {healthy: true}, selected: 'client',
+  profilingState: null,
   liveMode: true, liveClock: {serverMs: Date.parse('2026-09-07T03:00:00Z'), receivedMs: 0},
   performance: {now: () => 0}, displayRole: role => role,
   $: selector => elements[selector] || (elements[selector] = {}),
@@ -20,11 +21,25 @@ context.renderOptimizerStatus();
 assert.match(elements['#optimizerStatus'].innerHTML, /Converged: all clients checked/);
 context.optimizerState.progress = {kind: 'optimizer.progress', phase: 'candidate_queries', completed_queries: 2, total_queries: 5, selected_clients: 4, total_clients: 20};
 context.renderOptimizerStatus();
-assert.match(elements['#optimizerStatus'].innerHTML, /2 \/ 5 queries completed/);
-assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/);
+assert.match(elements['#optimizerActivityDetails'].textContent, /2 \/ 5 queries completed/);
+assert.match(elements['#optimizerStatus'].innerHTML, /Converged:/);
+const convergedSummary = elements['#optimizerStatus'].innerHTML;
+for (let cycle = 0; cycle < 100; cycle++) {
+  for (const phase of ['serving_snapshot', 'candidate_queries', null]) {
+    context.optimizerState.progress = phase ? {kind: 'optimizer.progress', phase,
+      completed_queries: cycle % 5, total_queries: 5, selected_clients: 20, total_clients: 20} : null;
+    context.renderOptimizerStatus();
+    assert.equal(elements['#optimizerStatus'].innerHTML, convergedSummary, 'routine collection must not replace the result');
+    assert.match(elements['#optimizerActivityDetails'].textContent, phase === 'candidate_queries' ? /Measuring AP alternatives/
+      : phase ? /Reading current connections/ : /Background monitoring/);
+  }
+}
+context.optimizerState.progress = {kind: 'optimizer.progress', phase: 'candidate_queries'};
 context.optimizerState.status = 'unavailable';
 context.renderOptimizerStatus();
-assert.match(elements['#optimizerStatus'].innerHTML, /Retrying: measuring AP alternatives/);
+assert.match(elements['#optimizerStatus'].innerHTML, /Paused: measurements unavailable/);
+assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/);
+assert.match(elements['#optimizerActivityDetails'].textContent, /Retrying: measuring AP alternatives/);
 delete context.optimizerState.status;
 context.optimizerState.progress = {kind: 'optimizer.measurement.waiting', reason: 'movement_active'};
 context.renderOptimizerStatus();
@@ -45,10 +60,38 @@ context.optimizerState = {fleet: {converged: true}, evaluated_at: '2026-09-07T02
 context.renderOptimizerStatus();
 assert.match(elements['#optimizerStatus'].innerHTML, /Last result is old/);
 assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/);
+context.optimizerState.progress = {kind: 'optimizer.progress', phase: 'candidate_queries'};
+context.renderOptimizerStatus();
+assert.match(elements['#optimizerStatus'].innerHTML, /Last result is old/);
+for (const timestamp of ['invalid', '2026-09-07T03:01:00Z', null]) {
+  context.optimizerState.evaluated_at = timestamp;
+  context.renderOptimizerStatus();
+  assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/, 'unknown/future/missing age must not imply convergence');
+}
+context.optimizerState.evaluated_at = '2026-09-07T02:59:55Z';
+context.healthState.healthy = false;
+context.renderOptimizerStatus();
+assert.match(elements['#optimizerStatus'].innerHTML, /Waiting for lab health recovery/);
+context.healthState.healthy = true;
+for (const field of ['roster_complete', 'measurement_complete', 'converged']) {
+  context.optimizerState.fleet = {converged: true, [field]: false};
+  context.renderOptimizerStatus();
+  assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/, 'new incomplete results must take effect immediately');
+}
+context.optimizerState.fleet = {converged: true};
+for (const kind of ['optimizer.environment.changed', 'observation.inconsistent_rf_epoch', 'optimizer.measurement.waiting']) {
+  context.optimizerState.progress = {kind, reason: 'rf_snapshot_superseded'};
+  context.renderOptimizerStatus();
+  assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/);
+  assert.match(elements['#optimizerStatus'].innerHTML, /Previous decisions are not valid/);
+}
 assert.match(html, /optimizerState\.client_decisions = \[\]/);
 context.optimizerState = {};
 context.liveClock = null;
 assert.doesNotThrow(() => context.renderOptimizerStatus());
+context.optimizerState = {fleet: {converged: true}, evaluated_at: '2026-09-07T02:59:55Z'};
+context.renderOptimizerStatus();
+assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Converged:/, 'missing live clock is not evidence of freshness');
 context.liveClock = {serverMs: Date.parse('2026-09-07T03:00:00Z'), receivedMs: 0};
 context.optimizerState = {evaluated_at: '2026-09-07T02:59:55Z', automatic_actuation: true,
   automatic_actuation_ready: true, actions_used: 0, maximum_actions: 100,
@@ -98,4 +141,14 @@ vm.runInContext(html.match(/  function renderLivePanels\([\s\S]*?\n  \}/)[0], co
 context.renderLivePanels();
 assert.match(elements['#optimizerMetrics'].innerHTML, /BACKHAUL SETTLING/);
 assert.doesNotMatch(elements['#optimizerMetrics'].innerHTML, /MEASUREMENTS UNAVAILABLE/);
-console.log('PASS: optimizer progress, decision reasons, green healthy badges, waiting/unknown/error states and RF invalidation');
+context.optimizerState = {fleet: {roster_complete: false, missing_clients: ['missing'], unexpected_clients: ['offline']}};
+context.renderOptimizerStatus();
+assert.match(elements['#optimizerStatus'].innerHTML, /Available clients continue/);
+assert.match(elements['#optimizerStatus'].innerHTML, /1 unexpected\/offline clients still reported/);
+context.profilingState = {mode: 'native-observation'};
+context.renderOptimizerStatus();
+assert.match(elements['#optimizerStatus'].innerHTML, /Native observation · no lab steering/);
+assert.doesNotMatch(elements['#optimizerStatus'].innerHTML, /Unassisted BTM profiling/);
+assert.match(elements['#optimizerClientRows'].textContent, /No external policy evaluations/);
+assert.match(elements['#optimizerActivityDetails'].textContent, /collection is disabled/);
+console.log('PASS: steady results across 300 background phases, detailed live progress, immediate failure/staleness/RF invalidation and badge truthfulness');

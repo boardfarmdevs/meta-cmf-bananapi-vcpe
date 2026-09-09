@@ -8,6 +8,9 @@ import time
 from typing import Any
 
 
+MINIMUM_TREE_GAIN_DB_PER_CHANGE = 2
+
+
 def path_quality(role, parents, strengths, hop_penalty=3):
     """Conservative bidirectional path SNR, with a 3 dB extra-hop penalty."""
     visited = set()
@@ -47,7 +50,7 @@ def select_parent(parents, links):
             continue
         changes = sum(proposed[role] != parents[role] for role in roles)
         total = sum(scores.values())
-        if total > best_total and total - sum(current.values()) >= 4 * changes:
+        if total > best_total and total - sum(current.values()) >= MINIMUM_TREE_GAIN_DB_PER_CHANGE * changes:
             best, best_total = proposed, total
     choices = []
     for child in roles:
@@ -125,7 +128,13 @@ class RdkBackhaulAdapter:
         last_link = "not sampled"
         last_error = "association not ready"
         while time.monotonic() < deadline:
-            output = self.command(child, "iw", "dev", "wifi1.3", "link")
+            try:
+                output = self.command(child, "iw", "dev", "wifi1.3", "link")
+            except (RuntimeError, subprocess.TimeoutExpired) as error:
+                stable = 0
+                last_error = str(error)
+                time.sleep(0.5)
+                continue
             last_link = output.splitlines()[0] if output else "no link"
             if f"Connected to {self.bssids[parent]}" in output:
                 try:
@@ -183,24 +192,30 @@ class BackhaulManager:
 
     def snapshot(self, room=None):
         status = copy.deepcopy(self.status)
-        if room and status.get("status") == "stable" and status.get("environment_epoch") != room.get("environment_epoch"):
+        if room and status.get("status") == "stable" and status.get("backhaul_epoch", status.get("environment_epoch")) != room.get("backhaul_epoch", room.get("environment_epoch")):
             status.update(status="waiting", reason="Room RF changed; waiting for a settled backhaul evaluation")
         return {"authority": "RDK OneWifi lab backhaul control", "band": "5",
+                "minimum_tree_gain_db_per_change": MINIMUM_TREE_GAIN_DB_PER_CHANGE,
                 "attempts": self.attempts, "failures": self.failures, **status}
 
     def reconcile(self, room, world_time):
-        if self.disabled or self.clock() < self.next_check:
+        epoch = room.get("backhaul_epoch", room["environment_epoch"])
+        unchanged = self.status.get("backhaul_epoch", self.status.get("environment_epoch")) == epoch
+        if self.disabled or self.clock() < self.next_check and (
+            unchanged or self.status["status"] in {"retry", "paused", "verified", "switching"}
+        ):
             return False
-        if room.get("movement_active") or (room.get("stable_for_seconds") or 0) < 10:
-            self.status = {"status": "waiting", "reason": "Waiting for 10 seconds of settled room RF"}
+        stable_for = room.get("backhaul_stable_for_seconds", room.get("stable_for_seconds"))
+        if stable_for is None or stable_for < 2:
+            self.status = {"status": "waiting", "reason": "Waiting for 2 seconds of settled backhaul RF; client measurements continue"}
             return False
         self.next_check = self.clock() + 30
         attempted = False
         try:
             parents = self.adapter.observe()
             choice = select_parent(parents, room.get("backhaul_links", []))
-            self.status = {"status": "stable", "reason": "No loop-free path improvement of at least 4 dB",
-                           "parents": parents, "environment_epoch": room["environment_epoch"]}
+            self.status = {"status": "stable", "reason": "No loop-free tree improvement of at least 2 dB per changed parent",
+                           "parents": parents, "environment_epoch": room["environment_epoch"], "backhaul_epoch": epoch}
             if choice is None:
                 return False
             if self.attempts >= 100:
@@ -214,7 +229,7 @@ class BackhaulManager:
             self.transaction(lambda: self.adapter.switch(choice, parents),
                              expected_epoch=room["environment_epoch"])
             self.failures = 0
-            self.next_check = self.clock() + 30
+            self.next_check = self.clock()
             self.status = {"status": "verified", "reason": "Actual parent and gateway traffic verified; controller topology may lag",
                            **choice}
             self.store.emit("backhaul.action.verified", world_time, self.snapshot(), producer="backhaul")
@@ -228,4 +243,4 @@ class BackhaulManager:
         return attempted
 
     def blocks_client_measurement(self, room):
-        return self.snapshot(room)["status"] in {"waiting", "switching", "verified"}
+        return self.snapshot(room)["status"] == "switching"

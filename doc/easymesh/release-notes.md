@@ -2,6 +2,25 @@
 
 Release identifiers describe tested lab delivery checkpoints, not upstream RDK-B or Wi-Fi EasyMesh versions.
 
+## 0908
+
+- Establishes `codex/0908-clean` and the new rev140 canonical workspace
+  `/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean`.
+- Rebuilds both complete Yocto role images and a fresh Ubuntu LXD appliance
+  rather than repackaging or overlaying the old 0907 VM. The source lock retains
+  the reviewed upstream revisions; downloads and compiled caches are separated.
+- Makes the interactive room service a tracked, installed and enabled part
+  of the 20-client appliance, including the current profiling defaults.
+- Includes the latest topology/room coordination work, Windows browser
+  enrollment corrections, optional nested LXD monitoring and outer-VM dashboard.
+- Keeps 20 clients, six displayed mesh nodes and `boot.autostart=false` as the
+  normal deployment. Optional monitoring credentials are generated only after
+  import, never baked into the thin tar.
+- Requires a fresh import of `rdkeasymesh-0908-thin.tar` and limited health,
+  room and browser smoke tests, not a full room soak. The
+  [0908 record](reference/release-0908.md) states the actual completion status;
+  these notes alone do not certify an untested archive.
+
 ## 0906
 
 - Refreshes the accepted 0905 thin appliance with the tested rev140 room and

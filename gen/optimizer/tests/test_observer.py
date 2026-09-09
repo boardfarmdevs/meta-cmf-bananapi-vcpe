@@ -3,8 +3,118 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from dataclasses import replace
 from unittest.mock import Mock
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+import pytest
 
 from optimizer.observer import ControllerObserver
+
+
+def test_topology_projection_does_not_wait_for_any_metric_endpoint_or_probe():
+    station = {"staMAC": "02:00:00:00:03:00", "bssid": "02:00:00:00:01:01",
+               "band": 1, "ssid": "private_ssid"}
+    topology = {"nodes": [{"id": "02:00:00:00:01:20", "name": "Agent-1", "STAList": [station]}]}
+    fetcher = Mock(return_value=topology)
+    fallback = Mock(side_effect=AssertionError("topology waited for a probe"))
+    observer = ControllerObserver("http://controller", fetcher=fetcher, current_link_fallback=fallback)
+    result = observer.observe_topology()
+    assert result.clients[0].connected_bssid == station["bssid"]
+    assert result.clients[0].rcpi is None
+    assert result.clients[0].metric_observed_at is None
+    assert result.clients[0].cohort == "private"
+    fetcher.assert_called_once_with("http://controller/api/v1/topology")
+    fallback.assert_not_called()
+    topology["nodes"][0]["STAList"].append(station)
+    with pytest.raises(ValueError, match="duplicate"):
+        observer.observe_topology()
+
+
+def test_missing_or_wrong_ap_metrics_do_not_remove_clients_or_relabel_measurements():
+    station = {"staMAC": "02:00:00:00:03:00", "bssid": "02:00:00:00:01:01", "band": 1}
+    fetcher = Mock(return_value={"nodes": [{"id": "02:00:00:00:01:20", "STAList": [station]}]})
+    observer = ControllerObserver("http://controller", fetcher=fetcher)
+    clients = observer.observe_topology().clients
+    for rows in ([], [{"mac": station["staMAC"], "connected_bssid": "02:00:00:00:02:01",
+                      "client_metrics": {"rcpi": 120, "last_updated": "2026-09-08T00:00:01Z"}}]):
+        fetcher.return_value = {"clients": rows}
+        assert observer.metrics_for(clients) == clients
+
+
+def test_fallback_collection_runs_independent_clients_concurrently():
+    stations = [{"staMAC": f"02:00:00:00:{number:02x}:00", "bssid": "02:00:00:00:01:01", "band": 1}
+                for number in range(3, 7)]
+    fetcher = Mock(return_value={"nodes": [{"id": "02:00:00:00:01:20", "STAList": stations}]})
+    observer = ControllerObserver("http://controller", fetcher=fetcher)
+    clients = observer.observe_topology().clients
+    rendezvous = threading.Barrier(4)
+    def fallback(client):
+        rendezvous.wait(timeout=2)
+        return replace(client, rcpi=120, metric_observed_at="2026-09-08T00:00:01Z")
+    observer.current_link_fallback = fallback
+    fetcher.return_value = {"clients": []}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        observer.fallback_executor = executor
+        assert all(client.rcpi == 120 for client in observer.metrics_for(clients))
+
+
+def test_association_probe_uses_one_native_read_and_rejects_ambiguous_roster():
+    station = {'staMAC': '02:00:00:00:03:00', 'bssid': '02:00:00:00:01:01'}
+    fetcher = Mock(return_value={'nodes': [{'STAList': [station]}]})
+    observer = ControllerObserver('http://controller', fetcher=fetcher)
+    assert observer.association(station['staMAC']) == station['bssid']
+    fetcher.assert_called_once_with('http://controller/api/v1/topology')
+    for stations in ([], [station, station], [{'staMAC': station['staMAC']}]):
+        fetcher.return_value = {'nodes': [{'STAList': stations}]}
+        assert observer.association(station['staMAC']) is None
+
+
+def test_ready_client_metric_is_published_before_a_slow_peer_finishes():
+    stations = [{"staMAC": f"02:00:00:00:{number:02x}:00", "bssid": "02:00:00:00:01:01", "band": 1}
+                for number in (3, 4)]
+    fetcher = Mock(return_value={"nodes": [{"id": "02:00:00:00:01:20", "STAList": stations}]})
+    observer = ControllerObserver("http://controller", fetcher=fetcher)
+    clients = observer.observe_topology().clients
+    release = threading.Event()
+    published = threading.Event()
+    def fallback(client):
+        if client == clients[0]:
+            assert release.wait(timeout=2)
+        return replace(client, rcpi=120, metric_observed_at="2026-09-08T00:00:01Z")
+    observer.current_link_fallback = fallback
+    observer.current_link_progress = lambda client: published.set() if client.sta_mac == clients[1].sta_mac else None
+    fetcher.return_value = {"clients": []}
+    with ThreadPoolExecutor(max_workers=2) as probes, ThreadPoolExecutor(max_workers=1) as rounds:
+        observer.fallback_executor = probes
+        pending = rounds.submit(observer.metrics_for, clients)
+        try:
+            assert published.wait(timeout=1)
+            assert not pending.done()
+        finally:
+            release.set()
+        assert len(pending.result(timeout=1)) == 2
+
+
+def test_recent_but_pre_movement_serving_metric_is_refreshed_before_candidates():
+    now = datetime(2026, 9, 8, 0, 0, 10, tzinfo=timezone.utc)
+    payloads = {'topology': {'nodes': []}, 'devices': {'devices': []}, 'bsses': {'bsses': []},
+                'clients': {'clients': [{'mac': '02:00:00:00:03:00', 'connected_bssid': '02:00:00:aa:aa:01',
+                    'client_metrics': {'rcpi': 100, 'last_updated': '2026-09-08T00:00:08Z'}}]}}
+    fallback = Mock(side_effect=lambda client: replace(client, rcpi=80,
+        metric_observed_at=now.isoformat(), measurement_source='fresh_kernel_probe'))
+    candidates = Mock(return_value=[])
+    candidates.last_rejected_candidate_keys = set()
+    observer = ControllerObserver('http://controller', fetcher=lambda url: payloads[url.rsplit('/', 1)[-1]],
+        clock=lambda: now, max_current_metric_age_seconds=10, current_link_fallback=fallback,
+        candidate_provider=candidates, current_metric_floor=lambda client: '2026-09-08T00:00:09Z')
+    observer.observe()
+    fallback.assert_called_once()
+    assert candidates.call_args.args[0][0].rcpi == 80
+    assert candidates.call_args.args[0][0].metric_observed_at == now.isoformat()
+    fallback.side_effect = lambda client: client
+    observer.observe()
+    assert candidates.call_args.args[0][0].rcpi is None
+    assert candidates.call_args.args[0][0].metric_observed_at is None
 
 
 def test_opt_in_stale_metric_fallback_keeps_fresh_controller_values_and_raw_evidence():

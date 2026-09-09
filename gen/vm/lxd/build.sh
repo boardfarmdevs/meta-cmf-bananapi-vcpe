@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
-release_id=${EASYMESH_RELEASE_ID:-0905}
+release_id=${EASYMESH_RELEASE_ID:-0908}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -250,6 +250,7 @@ push_inputs() {
         [boardfarm-lab.service]=gen/vm/scripts/guest/boardfarm-lab.service
         [easymesh-lab-runtime]=gen/vm/scripts/guest/easymesh-lab-runtime
         [easymesh-lab.service]=gen/vm/scripts/guest/easymesh-lab.service
+        [easymesh-room-demo.service]=gen/vm/scripts/guest/easymesh-room-demo.service
         [easymesh-hwsim-pool]=gen/vm/scripts/guest/easymesh-hwsim-pool
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
@@ -284,6 +285,16 @@ run_root() {
     lxc exec "$name" -- env EASYMESH_KERNEL="$kernel" \
         EASYMESH_RUNTIME_BRANCH="$runtime_branch" "$@"
 }
+
+check_baseline() (
+    restore_room=false
+    trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-demo.service || result=$?; fi; exit "$result"' EXIT
+    if run_root systemctl is-active --quiet easymesh-room-demo.service; then
+        run_root systemctl stop easymesh-room-demo.service || return
+        restore_room=true
+    fi
+    run_root "$@" /usr/local/sbin/easymesh-labctl check
+)
 
 configure_no_secure_boot() {
     # LXD 6.9 exports boot.mode and rejects the retired
@@ -400,14 +411,16 @@ build_vm() {
     lxc restart "$name" --timeout 300
     wait_agent
     run_root systemctl start easymesh-lab.service
-    run_root env HEALTH_EXPECT_CLIENTS="$profile_clients" \
-        /usr/local/sbin/easymesh-labctl check
+    check_baseline env HEALTH_EXPECT_CLIENTS="$profile_clients"
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
     wait_http_ready "EasyMesh WebUI proxy" \
         "http://$proxy_check_address:$webui_port/api/v1/topology"
     wait_http_ready "wmediumd Console proxy" \
         "http://$proxy_check_address:$console_port/api/v1/health"
+    if [ "$profile_clients" = 20 ]; then
+        wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
+    fi
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
@@ -449,7 +462,7 @@ check_vm() {
     # Do not inject the expected scale here. A portable appliance must retain
     # its own profile in /etc/default/easymesh-lab so that a new operator can
     # run the exact same self-check without knowing a hidden environment flag.
-    run_root /usr/local/sbin/easymesh-labctl check
+    check_baseline
 }
 
 snapshot_vm() {

@@ -14,13 +14,13 @@ check() {
     test "$(easymesh_profile_release_name "$input")" = "$release_name"
 }
 
-check 20 small 20 32 rdkeasymesh-20-0905
-check small small 20 32 rdkeasymesh-20-0905
-check 50 medium 50 64 rdkeasymesh-50-0905
-check medium medium 50 64 rdkeasymesh-50-0905
-check 100 stress 100 128 rdkeasymesh-100-0905
-check stress stress 100 128 rdkeasymesh-100-0905
-test "$(easymesh_thin_release_name)" = rdkeasymesh-0905-thin
+check 20 small 20 32 rdkeasymesh-20-0908
+check small small 20 32 rdkeasymesh-20-0908
+check 50 medium 50 64 rdkeasymesh-50-0908
+check medium medium 50 64 rdkeasymesh-50-0908
+check 100 stress 100 128 rdkeasymesh-100-0908
+check stress stress 100 128 rdkeasymesh-100-0908
+test "$(easymesh_thin_release_name)" = rdkeasymesh-0908-thin
 test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 20)" = \
     rdkeasymesh-20-0901
 test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = \

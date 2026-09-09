@@ -20,6 +20,16 @@ def decision(result):
     return result.decisions[0]
 
 
+def test_partial_client_roster_is_opt_in_and_keeps_per_client_safety_gates():
+    strict = policy(condition_hold_seconds=0)
+    assert decision(strict.evaluate(snapshot(0, clients=9))).reason == "client_count_mismatch"
+    partial = policy(condition_hold_seconds=0, require_complete_client_roster=False)
+    assert decision(partial.evaluate(snapshot(0, clients=9))).action == "steer"
+    assert decision(partial.evaluate(snapshot(0, clients=9, metric_age=30))).reason == "current_metric_stale"
+    assert decision(partial.evaluate(snapshot(0, clients=9, devices=4))).reason == "mesh_device_count_mismatch"
+    assert strict.config.digest() != partial.config.digest()
+
+
 def test_missing_metric_freshness_is_a_safe_no_action():
     result = policy().evaluate(snapshot(0, metric_age=None))
     assert decision(result).action == "none"

@@ -3,8 +3,26 @@
 Audience: anyone who needs to know what is implemented, validated, or still
 open before using the lab.
 
-Latest portable package: **`rdkeasymesh-0906-thin.tar`**, a runtime/static-asset
-refresh of 0905 with VM autostart disabled. See the 0906 record below.
+Current canonical branch: **`codex/0908-clean`**. The new canonical workspace is
+`rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean/meta-cmf-bananapi-vcpe`.
+The [0908 clean rebuild](reference/release-0908.md) starts from synchronized,
+pinned sources with fresh role build directories and workspace-local caches.
+Both full role images are rebuilt. The corrected fresh appliance passes cold
+reconstruction with 20 clients, 5 physical mesh devices, 15 radios, 50 BSS
+records and zero native service restarts. Thin-tar qualification is recorded
+beside the archive in release evidence; a builder pass alone is not an import
+pass. No full room soak is required for 0908. The deployment split is RDK on
+rev140 and the separate prplMesh repository/live room on rev150; prplMesh's
+active rev140 checkout, build container, packaging VM and UI service are retired.
+
+Both final 0908 archives are now imported on their respective hosts. See
+[deployed release acceptance](reference/release-0908-acceptance.md) for URLs,
+exact hashes, browser checks and monitoring. The RDK fresh import needed one
+metrics-policy replay for an extender before complete room convergence;
+unattended per-AP reporting activation is therefore not an unconditional pass.
+
+The sections below retain historical 0905/0906 acceptance records; their
+canonical-directory and old-VM retention statements apply to those deliveries.
 
 The original **0905 delivery is accepted for the 20-client profile** on
 rev140 and rev150 as of 2026-09-05 19:05 UTC. `codex/0905-clean` is canonical.

@@ -264,6 +264,12 @@ assert.equal(liveSignal.rssi, -41);
 assert.equal(liveSignal.rcpi, 138);
 assert.equal(liveSignal.quality, 'strong');
 assert.equal(liveSignal.band, '5G');
+controller.clients[0].connected_bssid = '02:00:00:00:01:01';
+assert.equal(controller.topologySignalForSTA({staMAC: controller.clients[0].mac,
+  bssid: '02:00:00:00:02:01', band: 1}).available, false,
+  'source-AP metrics must not be painted onto a newly observed target association');
+assert.equal(controller.topologySignalForSTA({staMAC: controller.clients[0].mac,
+  bssid: '02:00:00:00:01:01', band: 1}).available, true);
 assert.equal(controller.topologySignalLevel(liveSignal), 10);
 assert.equal(controller.topologySignalLevel({ available: true, rssi: -50 }), 9);
 assert.equal(controller.topologySignalLevel({ available: true, rssi: -56 }), 7);
@@ -386,8 +392,10 @@ assert.match(visualizationSource, /sta-steering-trail/,
   'topology does not render the fading steering trail');
 assert.match(visualizationSource, /sta-steering-intent-path/,
   'topology does not render the pre-steer intent path');
-assert.match(visualizationSource, /sta-moving-client/,
-  'topology does not animate the client between APs');
+assert.doesNotMatch(visualizationSource, /sta-moving-client|\.delay\(1250\)|moveEffect \? 0 : 1/,
+  'topology delays or duplicates the authoritative associated client');
+assert.match(visualizationSource, /alphaDecay\(0\.08\)\.stop\(\)/,
+  'fixed topology geometry keeps running an unnecessary force timer');
 assert.doesNotMatch(visualizationSource,
   /signal\.available \? null : '5 4'/,
   'unknown backhaul signal still changes a physical link to dotted');
@@ -586,8 +594,8 @@ controller.refreshTopologySignalVisuals = () => {
   return true;
 };
 controller.refreshTopologyData().then(() => {
-  assert.equal(signalVisualRefreshes, 1,
-    'changed signal metrics were not applied to the existing SVG');
+  assert.equal(signalVisualRefreshes, 2,
+    'topology and metric responses must refresh independently without rebuilding the SVG');
   assert.equal(redraws, 0,
     'the two-second client-metrics poll rebuilt the topology SVG');
   console.log('PASS: topology layout, exact backhaul parent, live signal, STA dragging and steering cues preserve the API model');

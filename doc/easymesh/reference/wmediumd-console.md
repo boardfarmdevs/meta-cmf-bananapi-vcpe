@@ -356,6 +356,11 @@ wmediumd toward hwsim, not proven received by an application.
 | `netlink_clone_einval` | tracked clone received the known command-2 `EINVAL` |
 | `netlink_other_errors` | any other tracked netlink/protocol failure |
 
+The second counter can include `EINVAL` from a non-clone command or an
+unclassified sequence; it does not mean only non-`EINVAL` errors. Health
+warnings describe this distinction without changing either counter or hiding
+failures. Compare counter deltas over a test interval, not just lifetime totals.
+
 The existing netlink sequence tracker stores only a sequence number. To
 attribute asynchronous clone rejection, retain a bounded sequence record with
 source radio, destination radio, frequency, frame class and enqueue time until

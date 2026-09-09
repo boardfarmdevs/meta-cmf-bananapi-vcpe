@@ -35,6 +35,7 @@ printf 'nested_images_before=%s\n' "$(nested_images | awk 'NF {n++} END {print n
 rm -f /etc/netplan/99-easymesh-lxd-site.yaml \
     /etc/netplan/99-easymesh-lxd-dhcp-mac.yaml
 
+systemctl stop easymesh-room-demo.service 2>/dev/null || true
 systemctl stop easymesh-lab.service 2>/dev/null || true
 systemctl stop wmediumd-console.service 2>/dev/null || true
 docker stop dhcp-cpe1 wan-cpe1 >/dev/null 2>&1 || true

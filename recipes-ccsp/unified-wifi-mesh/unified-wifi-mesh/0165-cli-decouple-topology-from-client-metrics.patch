@@ -1,0 +1,44 @@
+Subject: [PATCH] cli: publish topology independently of slow metrics
+
+Keep one request per stream in flight without delaying associations behind
+client telemetry. This is a browser-only change; native processing is untouched.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3332,15 +3332,25 @@
+   }
+ 
+   async refreshTopologyData() {
+-    const topologyRequest = this.apiCall('/topology');
+-    const clientsRequest = this.apiCall('/clients').catch(error => {
+-      console.warn('Keeping the previous topology signal snapshot:', error);
+-      return null;
+-    });
+-    const [topology, clientsResponse] = await Promise.all([topologyRequest, clientsRequest]);
+-    if (clientsResponse) this.updateTopologyClients(clientsResponse.clients);
+-    const topologyChanged = this.applyTopologyRefresh(topology);
+-    if (!topologyChanged) this.refreshTopologySignalVisuals();
++    if (!this.topologySnapshotRequest) {
++      this.topologySnapshotRequest = this.apiCall('/topology').then(topology => {
++        const changed = this.applyTopologyRefresh(topology);
++        if (!changed) this.refreshTopologySignalVisuals();
++      }).finally(() => {
++        this.topologySnapshotRequest = null;
++      });
++    }
++    if (!this.topologyMetricsRequest) {
++      this.topologyMetricsRequest = this.apiCall('/clients').then(response => {
++        this.updateTopologyClients(response.clients);
++        this.refreshTopologySignalVisuals();
++      }).catch(error => {
++        console.warn('Keeping the previous topology signal snapshot:', error);
++      }).finally(() => {
++        this.topologyMetricsRequest = null;
++      });
++    }
++    await this.topologySnapshotRequest;
+   }
+ 
+   /**

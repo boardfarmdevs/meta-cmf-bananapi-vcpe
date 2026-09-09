@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import unittest
 import urllib.error
@@ -123,6 +124,59 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self._json("/api/demo/world")["name"], "test-world")
         with urllib.request.urlopen(self.base + "/viewer/?mode=live", timeout=2) as response:
             self.assertIn(b"viewer", response.read())
+
+    def test_viewer_defaults_are_host_specific_without_changing_static_files(self):
+        viewer_root = Path(__file__).resolve().parents[3] / "gen/wmediumd/configurator/worlds/viewer"
+        original = (viewer_root / "index.html").read_bytes()
+        self.assertIn(b'<meta name="room-viewer-mode" content="no-connect">', original)
+        for interactions, replay, expected in [
+            (None, False, "live"),
+            (FakeInteractions(), False, "interactive"),
+            (None, True, "replay"),
+        ]:
+            with self.subTest(mode=expected):
+                server = RoomDemoServer(("127.0.0.1", 0), self.store, viewer_root, interactions, replay=replay)
+                server.start()
+                try:
+                    base = f"http://127.0.0.1:{server.address[1]}"
+                    for route in ["/", "/viewer", "/viewer/", "/viewer/index.html", "/?mode=live&world=example"]:
+                        with urllib.request.urlopen(base + route, timeout=2) as response:
+                            body = response.read()
+                            self.assertIn(f'<meta name="room-viewer-mode" content="{expected}">'.encode(), body)
+                            self.assertEqual(response.headers["Cache-Control"], "no-store")
+                            self.assertEqual(int(response.headers["Content-Length"]), len(body))
+                            if route == "/":
+                                self.assertEqual(response.url, base + "/viewer/")
+                            elif route.startswith("/?"):
+                                self.assertEqual(response.url, base + "/viewer/?mode=live&world=example")
+                    with urllib.request.urlopen(base + "/viewer/interaction-model.js", timeout=2) as response:
+                        self.assertEqual(response.read(), (viewer_root / "interaction-model.js").read_bytes())
+                    self.assertEqual((viewer_root / "index.html").read_bytes(), original)
+                finally:
+                    server.close()
+
+    def test_event_stream_limit_reserves_regular_api_capacity(self):
+        for _ in range(16):
+            self.assertTrue(self.server.httpd.event_streams.acquire(blocking=False))
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(self.base + "/api/demo/events", timeout=2)
+            self.assertEqual(caught.exception.code, 503)
+            self.assertEqual(self._json("/healthz")["status"], "ok")
+        finally:
+            for _ in range(16):
+                self.server.httpd.event_streams.release()
+
+    def test_connection_capacity_rejects_without_creating_a_worker(self):
+        for _ in range(64):
+            self.assertTrue(self.server.httpd.connections.acquire(blocking=False))
+        try:
+            with socket.create_connection(self.server.address, timeout=2) as connection:
+                self.assertIn(b"503", connection.recv(1024))
+        finally:
+            for _ in range(64):
+                self.server.httpd.connections.release()
+        self.assertEqual(self._json("/healthz")["status"], "ok")
         with urllib.request.urlopen(
             self.base + "/viewer/vendor/three.min.js", timeout=2
         ) as response:
@@ -137,6 +191,17 @@ class ServerTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(request, timeout=2)
         self.assertEqual(caught.exception.code, 405)
+
+    def test_expired_sse_history_requests_explicit_state_resynchronization(self):
+        self.store._history_events = 1
+        self.store.emit("scenario.clock", 0, {})
+        self.store.emit("scenario.clock", 0, {})
+        with urllib.request.urlopen(self.base + "/api/demo/events?after=0", timeout=2) as response:
+            lines = [response.readline().decode().strip() for _index in range(4)]
+        self.assertEqual(lines[0], "id: 2")
+        self.assertEqual(lines[1], "event: reset")
+        self.assertIn("history_expired", lines[2])
+        self.assertTrue(self._json("/api/demo/storage")["history"]["truncated"])
 
     def test_sse_replays_an_ordered_event(self):
         self.store.publish({

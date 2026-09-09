@@ -1,0 +1,20 @@
+Subject: [PATCH] cli: bind asynchronous signal metrics to their serving BSSID
+
+Independent association refresh must not paint a target AP with source-AP
+measurements while client telemetry catches up.
+
+Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3236,7 +3236,9 @@
+   topologySignalForSTA(sta) {
+     const mac = this.normalizeMac(sta?.staMAC);
+     const client = this.clients.find(item => this.normalizeMac(item?.mac) === mac);
+-    const metrics = client?.client_metrics || {};
++    const servingBSSID = this.normalizeMac(sta?.bssid);
++    const sameAssociation = !servingBSSID || servingBSSID === this.normalizeMac(client?.connected_bssid);
++    const metrics = sameAssociation ? client?.client_metrics || {} : {};
+     const rawRSSI = Number(metrics.rssi_dbm);
+     const rcpi = Number(metrics.rcpi);
+     const hasRSSI = Number.isFinite(rawRSSI) && rawRSSI < 0 && rawRSSI >= -110;

@@ -73,6 +73,12 @@ if ! grep -a -q 'UnassociatedSTAErrors' "$binary"; then
     echo "rebuilt helper omits the candidate-rejection API schema" >&2
     exit 1
 fi
+for capability in easymesh.cli.coordination.v1 /api/v1/steer-native; do
+    if ! grep -a -q "$capability" "$binary"; then
+        echo "rebuilt helper omits required coordination capability: $capability" >&2
+        exit 1
+    fi
+done
 
 archive_dir=$(mktemp -d /tmp/em-cli-archive.XXXXXX)
 tar -xzf "$artifact" -C "$archive_dir"
@@ -80,6 +86,11 @@ install -m 0755 "$binary" "$archive_dir/onewifi_em_cli"
 rm -rf "$archive_dir/static"
 install -d -m 0755 "$archive_dir/static"
 cp -a "$source_dir/static/." "$archive_dir/static/"
+(
+    cd "$source_dir"
+    find . -maxdepth 1 -type f \( -name '*.go' -o -name go.mod -o -name go.sum \) \
+        ! -name '*_test.go' | LC_ALL=C sort | xargs sha256sum
+) > "$archive_dir/em-cli-sources.sha256"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
     -czf "$artifact.new" -C "$archive_dir" .
 mv "$artifact.new" "$artifact"
