@@ -6,7 +6,9 @@ This release moves RDK development to `codex/0908-clean` and canonical source
 `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean/meta-cmf-bananapi-vcpe`.
 It rebuilds both full role images and a new appliance, exports a universal
 `rdkeasymesh-0908-thin.tar`, then deploys **from that tar**, not from the builder.
-Only rev140 is deployed. prplMesh, rev120 and rev150 are not rebuilt or changed.
+RDK is deployed only on rev140. The separate prplMesh 0908 release is built
+and deployed from its own repository on rev150; no active prplMesh checkout,
+build container, packaging VM or UI service remains on rev140. rev120 is unchanged.
 Qualification is limited to profile 20 and short smoke tests, not a full soak.
 
 Status: preparation/build in progress. Record the actual image hashes, tar
@@ -26,6 +28,14 @@ not remembered from the autoconfig response. Patch 0172 records that validated
 controller AL address before the first WSC exchange, retaining the native
 retry schedule instead of adding deployment-side sleeps or service restarts.
 The failing appliance and diagnostic capture are evidence, not release inputs.
+
+The next appliance passed virgin onboarding but its reboot exposed a controller
+segfault in CAC capability handling. The sender emits compact variable-length
+radio/method/channel lists; the receiver copied a much larger in-memory radio
+structure from that wire payload. Patch 0173 decodes those lists with bounds
+checks and network-order duration conversion. Its compiled regression covers
+multiple radios, every byte truncation and a guard-page boundary. Neither a
+service restart nor a relaxed acceptance gate substitutes for this fix.
 
 ## Recreate on another machine
 
@@ -129,7 +139,8 @@ UI/Grafana. Recheck those URLs. Save the old VM inventory/configuration and
 wanted evidence first; delete only confirmed obsolete RDK instances and the
 disposable 0908 builder once the thin-tar import is accepted. Do not delete
 unrelated kernel-development or prplMesh instances by a broad name pattern.
-No action is required on rev120 or rev150.
+No RDK deployment is required on rev120 or rev150. prplMesh's independent
+rev150 topology/room/console ports are `8091`/`18891`/`8090`.
 
 The archive and adjacent checksum are the portable delivery; the new canonical
 build workspace and `release-evidence/` retain build/import provenance. Old
