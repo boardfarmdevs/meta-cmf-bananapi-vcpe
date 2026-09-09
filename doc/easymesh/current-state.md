@@ -15,6 +15,12 @@ pass. No full room soak is required for 0908. The deployment split is RDK on
 rev140 and the separate prplMesh repository/live room on rev150; prplMesh's
 active rev140 checkout, build container, packaging VM and UI service are retired.
 
+Both final 0908 archives are now imported on their respective hosts. See
+[deployed release acceptance](reference/release-0908-acceptance.md) for URLs,
+exact hashes, browser checks and monitoring. The RDK fresh import needed one
+metrics-policy replay for an extender before complete room convergence;
+unattended per-AP reporting activation is therefore not an unconditional pass.
+
 The sections below retain historical 0905/0906 acceptance records; their
 canonical-directory and old-VM retention statements apply to those deliveries.
 
