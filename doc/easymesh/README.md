@@ -17,6 +17,7 @@ a large physical Wi-Fi installation.
 | I want to... | Start here |
 | --- | --- |
 | Understand what the lab is | [Architecture](concepts/architecture.md) |
+| Explore the architecture interactively | [System explorer](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/explorer/) · [Build and publication](../../gen/explorer/README.md) |
 | See exactly what works now | [Current state](current-state.md) |
 | See what each lab release delivered | [Release notes](release-notes.md) |
 | Use an already installed lab | [Quickstart](guide/quickstart.md) |
