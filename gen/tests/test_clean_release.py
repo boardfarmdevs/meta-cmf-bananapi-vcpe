@@ -53,6 +53,16 @@ def test_virglrenderer_uses_upstream_https_without_changing_revision():
     assert "SRCREV" not in source
 
 
+def test_virgin_agent_remembers_the_controller_before_first_wsc():
+    patch_name = "0172-agent-remember-controller-before-first-wsc.patch"
+    recipe = (ROOT / "recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend").read_text()
+    patch = (ROOT / "recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh" / patch_name).read_text()
+    assert "file://" + patch_name in recipe
+    remember = patch.index("+    get_data_model()->set_ctrl_al_interface_mac(hdr->src);")
+    assert patch.index('printf("Received resp and validated...creating M1 msg') < remember
+    assert remember < patch.index("int msg_len = create_autoconfig_wsc_m1_msg(msg, hdr->src);")
+
+
 def test_room_is_installed_from_source_with_current_profiling_defaults():
     unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-demo.service").read_text()
     assert "Requires=easymesh-lab.service" in unit

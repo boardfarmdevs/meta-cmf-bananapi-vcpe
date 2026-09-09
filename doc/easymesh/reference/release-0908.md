@@ -13,6 +13,20 @@ Status: preparation/build in progress. Record the actual image hashes, tar
 hash, final source commit, import results and cleanup below after completion.
 The existing 0907 lab remains the fallback until the replacement is verified.
 
+## Fresh-build findings
+
+The download-from-empty run exposed retired hostap/virglrenderer source URLs
+and a blocked crates.io API download route. Repository overrides retain the
+exact pinned revisions while using current upstream HTTPS/CDN endpoints.
+
+The first fresh appliance also exposed native onboarding recovery that an
+existing controller database can hide: the initial M1 may race the controller's
+queued agent-model creation. Without any M2, the agent's retry destination was
+not remembered from the autoconfig response. Patch 0172 records that validated
+controller AL address before the first WSC exchange, retaining the native
+retry schedule instead of adding deployment-side sleeps or service restarts.
+The failing appliance and diagnostic capture are evidence, not release inputs.
+
 ## Recreate on another machine
 
 Follow [the source-build instructions](../../build/README.md) to clone this

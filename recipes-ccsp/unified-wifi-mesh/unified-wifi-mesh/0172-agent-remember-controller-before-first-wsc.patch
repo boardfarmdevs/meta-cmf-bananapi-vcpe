@@ -1,0 +1,26 @@
+Subject: [PATCH] agent: remember the discovered controller before WSC
+
+On a virgin controller, all initial M1 frames can arrive before its queued
+agent data-model commit completes and be discarded. The bounded M1 retry
+uses get_peer_mac(), but the selected controller address has not yet been
+stored in the agent network model when no M2 has been received. Its first
+M1 uses the response Ethernet source directly, masking this on warm labs
+or when any band receives M2 on the first attempt.
+
+Persist the controller AL address from the validated, non-DPP autoconfig
+response before starting WSC. Retries then address the same controller even
+when every initial M1 is lost. No retry delays, limits or discovery policy
+are changed, and no deployment-side restart workaround is required.
+
+Upstream-Status: Pending
+
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6463,6 +6463,7 @@ int em_configuration_t::handle_autoconfig_resp(unsigned char *buff, unsigned int len)
+     }
+ 
+     printf("Received resp and validated...creating M1 msg\n");
++    get_data_model()->set_ctrl_al_interface_mac(hdr->src);
+     int msg_len = create_autoconfig_wsc_m1_msg(msg, hdr->src);
+     if (msg_len < 0) {
+         em_printfout("Error: Failed to create autoconfig wsc m1 msg");

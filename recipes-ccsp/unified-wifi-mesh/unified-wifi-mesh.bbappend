@@ -169,6 +169,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0169-cli-submit-steering-without-container-launch.patch \
     file://0170-cli-bound-http-native-ownership.patch \
     file://0171-cli-show-current-associations-immediately.patch \
+    file://0172-agent-remember-controller-before-first-wsc.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
