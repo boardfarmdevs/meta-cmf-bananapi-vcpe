@@ -919,6 +919,35 @@ If the appliance is lost, use the recorded fingerprint to revoke only that
 metrics trust on outer LXD manually. Installed credentials/state/data must
 never enter a thin tar; existing export guards continue to reject them.
 
+## 0908 verification and installer compatibility
+
+On 2026-09-09 the inner-container and outer-VM scrapes are enabled and verified
+on both active labs. `lxd`, `lxd-outer` and `prometheus` are UP with no target
+errors; Grafana's health endpoint reports a healthy database.
+
+| Lab | Inner LXD UI | Grafana, both layers |
+| --- | --- | --- |
+| RDK, rev140 | <https://192.168.2.140:48892/ui/> | <https://192.168.2.140:48893/> |
+| prplMesh, rev150 | <https://192.168.2.150:18892/ui/> | <https://192.168.2.150:18893/> |
+
+Dashboard UIDs are `easymesh-lxd` and `easymesh-lxd-outer`. Browser enrollment
+and per-VM Grafana authentication are still required. Outer-VM metrics do not
+measure the physical host's temperatures or prove cooling adequacy.
+
+Explicit monitoring enablement now checks dependencies before setup. Missing
+Docker/Compose, curl, OpenSSL, jq and Python packages are installed with apt on
+managed Ubuntu 24.04 lab VMs, requiring repository access. Other guest versions
+need operator-provided dependencies; already provisioned guests skip apt.
+Import without `--monitoring` retains its offline contract.
+
+Outer setup uses OpenSSL partial-chain validation for the pinned LXD leaf
+certificate, with hostname and expiry checks retained. Raw `lxc query` calls
+carry project scope in their URL, avoiding its unsupported `--project` flag.
+Neither correction disables TLS or metrics authentication. First enablement
+on prpl required the documented identity-rotation maintenance restart, before
+room measurements; native metric intervals were unchanged. No new thin tar
+is produced by these source and live-deployment updates.
+
 ## Sources and relationship to the example
 
 The [VCPE metrics example](https://www.vcpe.dev/docs/metrics.html) demonstrates
