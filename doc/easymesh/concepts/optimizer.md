@@ -5,9 +5,9 @@ logic.
 
 Purpose: describe the optimizer boundary and the safe path from observations to
 actions. The detailed schemas and implementation are in
-[the architecture reference](../reference/optimizer-architecture.md), while
+[the architecture reference](../reference/optimizer/architecture.md), while
 extension procedures are in
-[optimizer development](../experiments/optimizer-development.md).
+[optimizer development](../reference/optimizer/development.md).
 
 ## Ownership boundary
 
@@ -91,8 +91,8 @@ interpretable baseline and explicit failure behavior.
 
 ## Start here
 
-- [Run and extend the optimizer](../experiments/optimizer-development.md)
-- [Optimizer scenarios](../experiments/optimizer-scenarios.md)
-- [Full architecture and interface contracts](../reference/optimizer-architecture.md)
+- [Run and extend the optimizer](../reference/optimizer/development.md)
+- [Optimizer scenarios](../reference/optimizer/scenarios.md)
+- [Full architecture and interface contracts](../reference/optimizer/architecture.md)
 - [Steering policy boundary](steering-policy.md)
 - [Current implementation and limitations](../current-state.md)

@@ -13,6 +13,5 @@ clock. Accepted live changes can be downloaded as a deterministic compiled
 world. `stimulus`, `recommend`, and explicitly confirmed `act` modes separate
 optimizer authority from simulated room movement.
 
-See [the full operator manual](../../doc/easymesh/live-room-demo/manual.md).
-Interactive operation has a separate
-[control and safety manual](../../doc/easymesh/live-room-demo/interactive-room-manual.md).
+See [the room operator manual](../../doc/easymesh/live-room-demo/README.md)
+and [coordination contract](../../doc/easymesh/reference/rooms/architecture.md).

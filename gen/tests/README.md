@@ -1,5 +1,8 @@
 # EasyMesh lab tests
 
+Documentation-only check (no lab access): `python3 gen/tests/test_documentation.py`.
+This checks local files/anchors, navigation, guide sizes and packaged manual inputs.
+
 This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
@@ -34,7 +37,7 @@ python3 -m pytest -q gen/tests/test_lxd_observability.py
 ```
 
 Live installation, authentication and rollback checks are documented in
-[LXD UI and container monitoring](../../doc/easymesh/reference/lxd-ui-and-monitoring.md).
+[LXD UI and container monitoring](../../doc/easymesh/reference/observability/monitoring.md).
 
 `hwsim-monitor-ack.sh` is a live Linux 7 multichannel regression. It briefly
 enables the normally-down `hwsim0` radiotap monitor, generates acknowledged
@@ -236,7 +239,7 @@ Measure idle overhead or drive all selected WLAN clients concurrently:
 The JSON report combines process CPU/RSS, affinity, context switches, netlink
 drops, packet and queue telemetry, and per-client ping results. CPU is a
 percentage of one logical CPU. The accepted measurements and overload boundary
-are documented in `doc/easymesh/reference/wmediumd-performance.md`.
+are documented in `doc/easymesh/reference/testing/performance.md`.
 
 ### `optimizer-dynamic.sh`
 
@@ -662,7 +665,7 @@ topology, model, service, process, LXD, API-latency, wmediumd, memory, storage,
 and module evidence. The host collector separates QEMU resource use from guest
 measurements. Use the same sample length and idle/traffic phase on
 every target. The complete comparison method and result table are in
-[`deployment-models.md`](../../doc/easymesh/reference/deployment-models.md).
+[`deployment-models.md`](../../doc/easymesh/guide/operations.md).
 
 ### `p0-churn-soak.py`
 

@@ -48,5 +48,5 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 
 Every patch header carries the trace it was root-caused from — minidump stacks,
 netlink captures, or log excerpts — so start there rather than from the diff. See
-[the patch-set reference](doc/easymesh/reference/patch-set.md) for the retention and
+[the patch-set reference](doc/easymesh/reference/platform/patch-set.md) for the retention and
 ownership rationale; the bbappends remain the executable patch inventory.

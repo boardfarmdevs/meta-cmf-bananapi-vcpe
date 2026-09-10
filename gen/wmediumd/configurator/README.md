@@ -1,7 +1,7 @@
 # wmediumd configurator
 
 This directory contains the scenario-language implementation described in
-[the wmediumd configurator reference](../../../doc/easymesh/reference/wmediumd-configurator.md).
+[the wmediumd configurator reference](../../../doc/easymesh/reference/radio/configurator.md).
 
 Python 3.8 or newer is supported so the offline compiler and tests can also run
 on the rev140 build host; live inventory and execution still run inside the lab
@@ -95,5 +95,5 @@ sudo python3 -m wmdcfg.cli run /tmp/two-ap-crossover.plan.json --backend kernel
 
 The adapter retains SNR units, generation checks, readback, and restoration.
 The kernel backend implements fewer RF effects; consult
-[the capability boundary](../../../doc/easymesh/reference/hwsim-kernel-medium.md)
+[the capability boundary](../../../doc/easymesh/reference/radio/kernel-medium.md)
 before using it for optimizer conclusions.

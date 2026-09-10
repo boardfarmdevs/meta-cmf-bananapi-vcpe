@@ -1,134 +1,43 @@
-# EasyMesh evaluation lab
+# RDK EasyMesh lab
 
-Audience: lab operators, Wi-Fi researchers, optimizer developers, and platform
-engineers.
+Run real RDK-B controller, agent and client software in LXD containers, with
+hwsim radios and wmediumd providing reproducible RF conditions. Start with one
+guide; the reference is for implementation details, not required reading.
 
-Status: current documentation for `codex/0908-clean` and the 0908 rebuild;
-see [current state](current-state.md) for completed qualification evidence.
+## Start here
 
-This lab runs the Banana Pi RDK-B EasyMesh stack in LXD containers, gives each
-node a Linux 7.0 `mac80211_hwsim` radio, and uses a patched multichannel
-wmediumd as the controlled RF medium. Its purpose is repeatable onboarding,
-telemetry, steering, topology, and optimizer experimentation without requiring
-a large physical Wi-Fi installation.
-
-## Choose a path
-
-| I want to... | Start here |
+| Task / subsystem | Guide |
 | --- | --- |
-| Understand what the lab is | [Architecture](concepts/architecture.md) |
-| Explore the architecture interactively | [System explorer](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/explorer/) · [Build and publication](../../gen/explorer/README.md) |
-| See exactly what works now | [Current state](current-state.md) |
-| See what each lab release delivered | [Release notes](release-notes.md) |
-| Use an already installed lab | [Quickstart](guide/quickstart.md) |
-| Start, stop, recover, or redeploy it | [Operations](guide/operations.md) |
-| Give a live demonstration | [Demonstrations](guide/demonstrations.md) |
-| Run the closed-loop 3D room presentation | [Live room demo](live-room-demo/README.md) |
-| Know what each room should show during Play | [Room playback and topology inspection](reference/room-playback-inspection-guide.md) |
-| Understand RF simulation | [RF simulation](concepts/rf-simulation.md) |
-| Understand steering and policy boundaries | [Steering policy](concepts/steering-policy.md) |
-| Develop an optimizer | [Optimizer](concepts/optimizer.md) |
-| Select and run an experiment | [Experiment catalog](experiments/README.md) |
-| Investigate implementation details | [Technical reference](#technical-reference) |
+| Open the running lab; find releases and limitations | [Current state](current-state.md) |
+| First use | [Quickstart](guide/quickstart.md) |
+| Deploy, start, stop or recover | [Operations](guide/operations.md) |
+| Understand the processes and radio model | [Architecture](concepts/architecture.md) |
+| Use the room and network topology | [Room manual](live-room-demo/README.md) |
+| Choose a demonstration | [Room catalog](reference/rooms/catalog.md) |
+| Understand or develop steering policy | [Optimizer](concepts/optimizer.md) |
+| Diagnose RF and measurements | [RF simulation](concepts/rf-simulation.md), [radio reference](reference/radio/README.md) |
+| Open LXD UI or Grafana, including outer-VM metrics | [Monitoring](reference/observability/monitoring.md) |
+| Test changes and measure convergence | [Testing](experiments/README.md) |
+| Find detailed contracts or proposed work | [Categorized reference](reference/README.md) |
 
-A newcomer should not read every document. The shortest useful path is:
+The [system explorer](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/explorer/)
+is an illustrative, revision-pinned architecture presentation, not live lab
+telemetry. [Its source guide](../../gen/explorer/README.md) explains publication.
 
-```text
-current state -> architecture -> quickstart -> demonstrations
-```
+## Keeping this documentation small
 
-An optimizer researcher should then continue with:
-
-```text
-RF simulation -> steering policy -> optimizer -> experiment catalog
-```
-
-## Documentation sections
-
-### Guides
-
-Guides contain procedures an operator follows:
-
-- [Quickstart](guide/quickstart.md) validates a running lab and performs the
-  first steer and RF experiment.
-- [Operations](guide/operations.md) covers deployment, cold and warm starts,
-  health gates, VM parity, recovery, access, and troubleshooting.
-- [Demonstrations](guide/demonstrations.md) is the audience-facing runbook.
-- [Immersive room demo](live-room-demo/manual.md) joins a live Golden World,
-  controller telemetry, the external optimizer, bounded steering, traffic,
-  health, evidence and replay in one presentation.
-- [Live room viewer](live-room-demo/viewer.md) retains the earlier
-  stimulus-only compatibility procedure.
-
-### Concepts
-
-Concept documents explain the system without requiring implementation detail:
-
-- [Architecture](concepts/architecture.md) identifies the processes, radios,
-  control plane, data plane, and onboarding sequence.
-- [RF simulation](concepts/rf-simulation.md) shows how wmediumd, the
-  configurator, the Console, EasyMesh, and the optimizer form a closed loop.
-- [Steering policy](concepts/steering-policy.md) separates standardized
-  EasyMesh primitives from controller policy decisions.
-- [Optimizer](concepts/optimizer.md) defines the external optimizer boundary
-  and safe research progression.
-
-### Experiments
-
-The [experiment catalog](experiments/README.md) routes users to the appropriate
-mobility, outage, multihop, scale, soak, or optimizer scenario. Detailed
-optimizer extension instructions are in
-[optimizer development](experiments/optimizer-development.md).
-
-### Technical reference
-
-Reference documents are consulted when implementing or diagnosing a specific
-boundary:
-
-- [Consolidated patch set](reference/patch-set.md)
-- [MediaTek single-wiphy radio model](reference/single-wiphy-radio-model.md)
-- [Metrics reporting and APIs](reference/metrics.md)
-- [Nested LXD UI and Prometheus/Grafana monitoring](reference/lxd-ui-and-monitoring.md)
-- [Room viewer local and internet access](reference/room-viewer-remote-access.md)
-- [Live world switching with a fixed client pool](reference/live-world-switching.md)
-- [Per-room playback and network-topology inspection](reference/room-playback-inspection-guide.md)
-- [Measured room steering latency improvements](reference/room-steering-latency-0907.md)
-- [Fast interactive steering and two-room measurements](reference/room-fast-steering-0907.md)
-- [Room observation, metric collection and rendering latency](reference/room-observation-latency-0907.md)
-- [Coordination audit and unassisted RDK profiling](reference/room-coordination-profiling-0907.md)
-- [Streaming decisions and same-frame display audit](reference/room-streaming-coordination-0907.md)
-- [Bounded coordination, protocol tracing and 0908 qualification](reference/room-coordination-completion-0908.md)
-- [Commanded EasyMesh steering](reference/commanded-steering.md)
-- [wmediumd client carousel](reference/client-carousel.md)
-- [Optimizer architecture and contracts](reference/optimizer-architecture.md)
-- [wmediumd internals](reference/wmediumd-internals.md)
-- [wmediumd performance and CPU scaling](reference/wmediumd-performance.md)
-- [Optional hwsim kernel medium](reference/hwsim-kernel-medium.md)
-- [wmediumd convergence assessment](reference/wmediumd-convergence-assessment.md)
-- [wmediumd configurator](reference/wmediumd-configurator.md)
-- [wmediumd Console and telemetry protocol](reference/wmediumd-console.md)
-- [Packet capture](reference/packet-capture.md)
-- [Memory footprint](reference/memory-footprint.md)
-- [Association ownership case study](reference/association-ownership-case-study.md)
-- [Bare-metal and LXD VM deployment models](reference/deployment-models.md)
-- [Lab startup and topology formation](reference/lab-startup-and-topology-formation.md)
-- [Portable LXD VM releases](reference/portable-lab-releases.md)
-- [Release notes](release-notes.md)
-- [Live lab resilience and radio inventory design](reference/lab-resilience-design.md)
-- [Lab appliance refactor plan](reference/lab-appliance-refactor-plan.md)
-- [prplMesh virtual-radio evaluation plan](reference/prplmesh-virtual-radio-evaluation-plan.md)
-
-## Documentation rules
-
-- Put the accepted revision, topology, artifacts, and known limitations only in
-  [current-state.md](current-state.md). Other documents link to it.
-- Put commands in guides or experiment procedures, not in concept documents.
-- Put wire formats, APIs, patch ordering, and implementation detail in
-  `reference/`.
-- Keep raw measurements and completed campaign results with external evidence,
-  not in the active user documentation.
-- Do not describe a commanded steer as an autonomous policy decision.
-- A successful API response, 1905 ACK, or association alone is not an
-  end-to-end pass; use the health and acceptance gates.
-- Preserve source revision, image hashes, scenario inputs, and result artifacts
-  for every claimed experiment.
+- Update the owning subsystem guide; do not add a report for every fix or chat.
+- Keep URLs, deployed identity, artifact locations and open limitations in
+  [current state](current-state.md), not repeated throughout the manuals.
+- Put reusable contracts in the relevant reference category. Link them from
+  its index; proposals belong under `reference/proposals/` and say **Proposed**.
+- Put JSON, logs, screenshots, videos and dated acceptance reports beside
+  release/test evidence, outside this documentation tree. Retain source/world
+  hashes and failures there. Git history holds superseded narratives.
+- When a proposal ships, replace its plan with the actual contract and remove
+  completed milestones. Do not create a second “final” or “latest” document.
+- Component READMEs own installation and CLI details; operator guides link
+  instead of copying them. Keep short shared UI semantics aligned with prplMesh;
+  backend commands and limitations stay in their owning repository.
+- Run `python3 gen/tests/test_documentation.py` before submitting docs changes.
+  It checks local links, reference navigation and introductory-document budgets.

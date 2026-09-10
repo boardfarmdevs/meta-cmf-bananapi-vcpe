@@ -29,7 +29,7 @@ cd $HOME/yocto/rdkb-bpi-nosrc-vcpe-0908-clean
 
 # must precede setup-environment: MACHINE is resolved from conf/machine here
 git clone --branch codex/0908-clean \
-  git@github.com:robvogelaar/meta-cmf-bananapi-vcpe.git
+  git@github.com:boardfarmdevs/meta-cmf-bananapi-vcpe.git
 
 # Bootstrap from the exact manifest-repository revision used by 0902, then
 # select the release lock carried by this repository.
@@ -121,7 +121,7 @@ Its `branch-0.9.1` and pinned commit are retained, not upgraded.
 Evidence is written to the workspace's `release-evidence/`: each attempt has
 the source commit, timestamps, setup/build logs, full BitBake environment,
 configuration, exit status and complete role-image checksums. See the
-[0908 rebuild and deployment runbook](../easymesh/reference/release-0908.md)
+[LXD appliance guide](../../gen/vm/lxd/README.md)
 for creating the new VM, exporting the thin tar and importing that exact tar.
 
 A complete 0908 rebuild starts with new `build-qemux86bpibroadband` and
@@ -150,7 +150,8 @@ bitbake -R ../clean-build.conf rdk-generic-broadband-image
 ```
 
 Review and commit both the source patch and `em-cli.tar.gz`. Verify the helper
-hash recorded in the [patch-set reference](../easymesh/reference/patch-set.md);
+hash against the release inputs and follow the
+[helper ownership contract](../easymesh/reference/platform/patch-set.md);
 a successful image build alone
 does not prove that a changed Go handler was included.
 

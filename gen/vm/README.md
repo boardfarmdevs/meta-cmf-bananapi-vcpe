@@ -1,6 +1,8 @@
-# EasyMesh LXD VM appliance
+# EasyMesh VM appliances
 
-The portable EasyMesh lab is distributed as an LXD virtual-machine backup.
+The portable RDK EasyMesh lab is available as an LXD virtual-machine backup
+or a Vagrant/VirtualBox box. Both run the same Linux guest and nested LXD
+containers; Windows does not need to run LXD itself.
 
 The VM contains Ubuntu 24.04, Linux 7, Docker/Boardfarm, nested LXD, the BPI
 controller and extender containers, WLAN clients, hwsim, wmediumd, the WebUI,
@@ -14,6 +16,16 @@ the lab automatically merely because it rebooted.
 | --- | --- |
 | Bare metal | Development, kernel and medium debugging, maximum scale, and performance reference |
 | LXD VM | Portable, isolated, reproducible engineering and demonstration appliance |
+| Vagrant / VirtualBox | Windows x86-64 demonstrations using a local `.box` and `vagrant up --provider=virtualbox` |
+
+For Windows installation, browser URLs, lifecycle and release building, use
+[`virtualbox/README.md`](virtualbox/README.md). This provider supports RDK's
+default 20-client lab, not prplMesh. A VirtualBox `.vbox` is just a machine
+configuration; the portable download is a Vagrant `.box` containing the disk
+and OVF, accompanied by a `Vagrantfile`.
+
+Read the [0908 VirtualBox qualification](virtualbox/ACCEPTANCE-0908.md) for
+the tested scope and the known native metrics/convergence limitation.
 
 Use [`lxd/README.md`](lxd/README.md) for host installation, clean appliance
 build, import, lifecycle, acceptance, export, and removal.
