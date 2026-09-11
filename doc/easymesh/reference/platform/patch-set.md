@@ -124,6 +124,9 @@ behavior and must remain gated from a physical MediaTek image where noted:
   and avoid treating a configured but unestablished MLD as live;
 - source frequency-qualified candidate RCPI from wmediumd's read-only metrics
   endpoint only for `HWSIM_RADIO` (`Wi-Fi HAL 0024`);
+- sample fronthaul RSSI from that same virtual RF model, using confirmed
+  ownership, actual frequency and STA-to-AP direction; backhaul retains
+  kernel RSSI (`Wi-Fi HAL 0038`);
 - filter or age retained hwsim AP station rows using inactivity and
   medium-authoritative association ownership (`Wi-Fi HAL 0028`, `0030`,
   `0033`);
@@ -148,13 +151,14 @@ three-radio projection itself must not be gated away from the physical build.
 | Logical radio projection | inherited `FEATURE_SINGLE_PHY` platform code | required | One integrated MediaTek device backs three independently managed RDK/EasyMesh radios. |
 | Concurrent synthetic channels | Wi-Fi HAL `0022`; OneWifi `0008` | hwsim constraint, with shared single-phy code path | Per-VIF channel contexts work; a standalone radio-wide channel change conflicts with already active siblings. The 20 MHz clamp is not a physical capability limit. |
 | Candidate-link measurement | Wi-Fi HAL `0024` | `HWSIM_RADIO` only | Physical hardware must retain its native non-associated measurement provider; the lab reads frequency-qualified wmediumd SNR. |
+| Current-link measurement | Wi-Fi HAL `0038` | `HWSIM_RADIO` fronthaul only | Idle peers retain last-packet kernel RSSI. Sample current uplink SNR through the read-only medium instead; retain kernel counters/rates and backhaul RSSI, and fail the fronthaul poll on missing evidence. No probe traffic or reporting-period change. |
 | Stale AP peer correction | Wi-Fi HAL `0028`, `0030`, `0033`; OneWifi `0020` | `HWSIM_RADIO` only | hwsim may retain an authorized kernel station after a silent roam; the virtual lab reconciles it with live snapshots and medium ownership. |
 | AP receive-path lifecycle | Wi-Fi HAL `0029`, `0031`, `0032` | `HWSIM_RADIO` only | hwsim registration sockets must be released and restored around AP/wiphy restart. |
 | BTM transmit reliability | Wi-Fi HAL `0034`; OneWifi `0025`; EasyMesh `0148` | generic | A unicast action frame needs 802.11 ACK/retry handling; queue admission and local dispatch failures must not be reported as success. |
 | Signal attribute fallback | Wi-Fi HAL `0025` | generic | `NL80211_STA_INFO_CHAIN_SIGNAL` is optional on any driver; aggregate signal is standard. |
 | Provider count and allocation ownership | OneWifi `0021` through `0023` | generic (`0021` consumes active-row semantics) | Live station counts and freeing every radio/VAP allocation are product correctness, not wiphy representation. |
 | Complete client metric snapshots | OneWifi `0026` | generic | Replacing a complete per-VAP provider snapshot, including an empty one, removes missed-leave ghosts without changing other VAPs or RCPI-only updates. |
-| Medium delivery and telemetry | hwsim `0001` through `0009`; wmediumd `0001` through `0023` | host lab only | Frequency-qualified delivery, independent ACK loss, survey leases and modeled airtime remain distinct from physical RF capacity; visibility-based contention is opt-in. |
+| Medium delivery and telemetry | hwsim `0001` through `0009`; wmediumd `0001` through `0024` | host lab only | Frequency-qualified delivery, independent ACK loss, survey leases and modeled airtime remain distinct from physical RF capacity; visibility-based contention is opt-in. |
 
 This matrix is an ownership rule, not merely documentation. A generic memory,
 serialization, timer, model, provider or protocol bug remains generic even if
@@ -366,7 +370,7 @@ authority. Its dependency order is:
     maximize the topology with six-pixel margins, without rearranging nodes
     or interrupting an active pointer gesture (`0161`).
 
-The current series continues through `0179`:
+The current series continues through `0183`:
 
 | Patches | Boundary |
 | --- | --- |
@@ -377,22 +381,59 @@ The current series continues through `0179`:
 | `0176` | Admit independent commands per scheduler tick, retaining FIFO and radio exclusion. |
 | `0177`–`0178` | Source-AL/BSSID BTM routing, bounded report parsing, late-report state isolation and exact AL/BSSID/RUID association admission. |
 | `0179` | A policy ACK completes only its source/MID owner, preserving sibling candidate, steering and policy commands. |
+| `0180` | Capability metadata cannot resurrect a disconnected client or overwrite association age/metrics. AL-wide onboarding reports advance only the expected radio states. |
+| `0181` | Dispatch admitted candidate queries immediately under existing command ownership, rather than waiting for the radio tick; preserve single-flight MID protection and timer retries. |
+| `0182` | Admit validated one-shot candidate replies during onboarding/capability reporting; preserve the original radio state and finish once, rather than expiring a ready response behind a topology-state gate. |
+| `0183` | Admit BTM reports in completed AP-capability state, restore that state on the matching ACK and require ACK completion before releasing the radio; ready candidate results no longer wait behind an unsent BTM report. |
 
-The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. Compiled source-extraction regressions take the fully
+HAL patch `0036-hostapd-disable-association-comeback-test-override.patch`
+initializes hostapd's association-comeback test override to
+its normal disabled sentinel. Without this, a PMF association retry carries
+reserved timeout type zero instead of type three, causing clients to blacklist
+the target instead of waiting for SA Query. PMF and both SA Query timers remain
+unchanged.
+
+HAL patch `0037` makes asynchronous frame sockets nonblocking and protects
+management/spurious socket lifetime with the existing recursive hostapd lock.
+Descriptor snapshots and dispatch cannot race registration teardown; the lock
+is released before `select`. Empty nonblocking reads do not reopen healthy
+sockets. This prevents one stalled authentication receive from blocking every
+radio's management events and timers.
+
+wmediumd `0024` retains confirmed departures separately from unknown ownership.
+Its read-only response has a zero owner and `WMDC_ASSOCIATION_DEPARTED` flag;
+HAL rejects stale AP peers immediately, while the Console omits the departed
+association. Unknown and unavailable ownership still retain the conservative
+HAL fallback, and idle associated clients do not expire. Downlink PHY ACKs
+cannot create or replace ownership: successful association responses and
+station-originated ToDS data establish it. The existing `-T` self-test exercises
+departure, stale downlink rejection, reconnect and the actual socket response;
+`gen/wmediumd/tests/test-association-ownership.sh` also compiles HAL precedence.
+
+Clean component builds replay the series against pristine pinned source.
+Compiled source-extraction regressions take the fully
 patched Yocto source tree, not an unpatched upstream checkout:
 
 ```sh
 python3 gen/tests/orchestrator-completion-race-test.py "$UNIFIED_SRC"
 python3 gen/tests/btm-report-ownership-test.py "$UNIFIED_SRC"
 python3 gen/tests/client-report-state-ownership-test.py "$UNIFIED_SRC"
+python3 gen/tests/client-capability-presence-test.py "$UNIFIED_SRC"
+python3 gen/tests/onboarding-report-state-test.py "$UNIFIED_SRC"
+python3 gen/tests/unassoc-result-state-test.py "$UNIFIED_SRC"
+python3 gen/tests/btm-report-state-test.py "$UNIFIED_SRC"
+python3 gen/tests/unassoc-query-dispatch-test.py "$UNIFIED_SRC"
 python3 gen/tests/policy-ack-ownership-test.py "$UNIFIED_SRC/src/em/policy_cfg/em_policy_cfg.cpp"
 python3 gen/tests/assoc-metrics-wire-count-test.py "$UNIFIED_SRC/src/em/metrics/em_metrics.cpp"
 python3 gen/tests/onewifi-metrics-snapshot-test.py "$ONEWIFI_SRC/source/apps/em/wifi_em.c"
+python3 gen/tests/hostapd-comeback-default-test.py "$HAL_SRC/src/wifi_hal_hostapd.c" "$HOSTAPD_SRC/src/ap/ieee802_11_shared.c"
+python3 gen/tests/hal-frame-socket-lifetime-test.py "$HAL_SRC/src/wifi_hal_nl80211.c"
+python3 gen/tests/hwsim-current-link-signal-test.py "$HAL_SRC/platform/banana-pi/platform.c"
 ```
 
-Set `UNIFIED_SRC` and `ONEWIFI_SRC` to their recipe `git` directories under the
-chosen Yocto machine's `tmp/work`. Short live qualification and remaining
+Set `UNIFIED_SRC`, `ONEWIFI_SRC` and `HAL_SRC` to their recipe `git` directories
+under the chosen Yocto machine's `tmp/work`; `HOSTAPD_SRC` is the libhostap
+recipe's `git/source/hostap-2.11`. Short live qualification and remaining
 failures are in [room acceptance](../testing/room-acceptance.md#current-qualification);
 release artifact boundaries remain under **Build and acceptance**.
 

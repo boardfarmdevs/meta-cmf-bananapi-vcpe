@@ -119,6 +119,7 @@ PLATFORM_HWSIM_STA_LIVENESS_PATCH := "${THISDIR}/${BPN}/0028-hwsim-filter-inacti
 # read-only wmediumd endpoint: a known different owner is stale immediately,
 # while known-local and unknown rows preserve legitimate idle-client behavior.
 PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0033-hwsim-filter-stale-peers-by-medium-ownership.patch"
+PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH := "${THISDIR}/${BPN}/0038-hwsim-sample-current-serving-link-rf.patch"
 
 python do_patch_append() {
     import subprocess, os
@@ -144,6 +145,8 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: filtering stale hwsim peers by medium ownership")
     with open(d.getVar('PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
+    with open(d.getVar('PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH'), 'rb') as signal_patch:
+        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=signal_patch, check=True)
 }
 # The *_PATCH variables hold absolute paths, so referencing them from do_patch put
 # this layer's checkout location into its basehash and no two trees could share
@@ -152,16 +155,19 @@ python do_patch_append() {
 do_patch[vardepsexclude] += "PLATFORM_HWSIM_SURVEY_PATCH PLATFORM_CREATE_VAP_NULL_PATCH \
     PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH \
     PLATFORM_WDS_STA_METRICS_PATCH PLATFORM_HWSIM_STA_LIVENESS_PATCH \
-    PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH"
+    PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_CREATE_VAP_MLD_NULL_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_BACKHAUL_SSID_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_WDS_STA_METRICS_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_STA_LIVENESS_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH}:True"
+do_patch[file-checksums] += "${PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH}:True"
 PLATFORM_HWSIM_SURVEY_PATCH := "${THISDIR}/${BPN}/0036-hwsim-channel-survey-stats.patch"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_SURVEY_PATCH}:True"
 SRC_URI += "file://0035-nl80211-channel-survey-provider.patch"
+SRC_URI += "file://0036-hostapd-disable-association-comeback-test-override.patch"
+SRC_URI += "file://0037-nonblocking-frame-dispatch-and-socket-lifetime.patch"
 
 # InterfaceMap_em.json (BananaPi R4's EasyMesh interface map) groups every radio's
 # primary VAP (wifi0/wifi1/wifi2 -> private_ssid_*) under "MldName": "mld0", a real

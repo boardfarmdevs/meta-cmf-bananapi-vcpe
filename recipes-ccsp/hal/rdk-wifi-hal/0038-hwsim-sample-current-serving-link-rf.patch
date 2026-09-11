@@ -1,0 +1,212 @@
+Subject: [PATCH] hwsim: sample current fronthaul RF at the HAL boundary
+
+Idle hwsim peers retain the signal of their last received packet. Polling
+that value stamped it as a new measurement even after the virtual RF world
+changed, causing avoidable steering away from the strongest serving AP.
+
+Use frequency-qualified STA-to-AP SNR on the read-only medium endpoint for
+fronthaul signal only, with protocol-confirmed ownership. Backhaul
+retains its existing kernel signal provider: a four-address peer may predate
+the medium observer and cannot require newly learned client ownership. Keep station
+counters, rates and association state from nl80211. Missing or malformed
+medium evidence fails the poll instead of refreshing old signal. Neither
+probe traffic nor a native reporting interval change is required.
+
+This is simulated RF, not a hardware RSSI measurement; hardware builds are
+unchanged. The -91 dBm noise floor is the existing medium model.
+
+Upstream-Status: Inappropriate [hwsim laboratory RF provider]
+
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -61,6 +61,9 @@
+ typedef struct {
+     mac_address_t mac;
+     unsigned int ifindex;
++#ifdef HWSIM_RADIO
++    int rssi_dbm;
++#endif
+ } sta_entry_t;
+ 
+ typedef struct {
+@@ -71,15 +74,19 @@
+     int ownership_fd;
+     bool local_radio_known;
+     mac_address_t local_radio;
++    bool signal_unavailable;
++    bool sample_current_signal;
+ #endif
+ } sta_list_t;
+ 
+ #ifdef HWSIM_RADIO
+ enum {
+     WMDC_OP_HELLO = 1,
++    WMDC_OP_GET_FREQUENCY = 7,
+     WMDC_OP_GET_ASSOCIATION = 14,
+     WMDC_OK = 0,
+     WMDC_CAP_READ_ONLY = 1U << 5,
++    WMDC_CAP_FREQUENCY_QUALIFIED_SNR = 1U << 4,
+     WMDC_CAP_ASSOCIATION_OWNERSHIP = 1U << 10,
+ };
+ 
+@@ -108,6 +115,14 @@
+     uint8_t reserved[2];
+     uint32_t frequency_mhz;
+     uint32_t flags;
++} __attribute__((packed));
++
++struct wmdc_frequency_link {
++    uint8_t source[6];
++    uint8_t destination[6];
++    uint32_t frequency_mhz;
++    int16_t snr_db;
++    uint16_t flags;
+ } __attribute__((packed));
+ 
+ static bool hwsim_local_radio_identity(mac_address_t identity)
+@@ -198,9 +213,10 @@
+         return -1;
+     }
+     capabilities = ntohl(info->capabilities);
+-    if ((capabilities & (WMDC_CAP_READ_ONLY |
++    if ((capabilities & (WMDC_CAP_READ_ONLY | WMDC_CAP_FREQUENCY_QUALIFIED_SNR |
+             WMDC_CAP_ASSOCIATION_OWNERSHIP)) !=
+-            (WMDC_CAP_READ_ONLY | WMDC_CAP_ASSOCIATION_OWNERSHIP)) {
++            (WMDC_CAP_READ_ONLY | WMDC_CAP_FREQUENCY_QUALIFIED_SNR |
++             WMDC_CAP_ASSOCIATION_OWNERSHIP)) {
+         close(fd);
+         return -1;
+     }
+@@ -210,7 +226,7 @@
+ /* Return one only for a protocol-validated, known owner. Unknown state and
+  * every socket/protocol failure return zero so the caller fails open. */
+ static int hwsim_association_owner(int fd, const mac_address_t endpoint,
+-    mac_address_t owner)
++    mac_address_t owner, struct wmdc_association *evidence)
+ {
+     struct {
+         struct wmdc_header header;
+@@ -243,7 +259,51 @@
+         return 0;
+     }
+     memcpy(owner, association->owner, sizeof(mac_address_t));
++    *evidence = *association;
+     return 1;
++}
++
++static bool hwsim_current_link_rssi(int descriptor,
++    const struct wmdc_association *association, int *rssi_dbm)
++{
++    struct {
++        struct wmdc_header header;
++        struct wmdc_frequency_link link;
++    } request = {}, response = {};
++    const uint8_t zero_mac[6] = {};
++    uint32_t frequency = ntohl(association->frequency_mhz);
++    int snr_db;
++
++    if (descriptor < 0 || frequency == 0 ||
++            memcmp(association->owner, zero_mac, sizeof(zero_mac)) == 0 ||
++            memcmp(association->station, zero_mac, sizeof(zero_mac)) == 0) {
++        return false;
++    }
++    request.header.magic = htonl(0x574d4443U);
++    request.header.version = htons(1);
++    request.header.opcode = htons(WMDC_OP_GET_FREQUENCY);
++    request.header.payload_len = htonl(sizeof(request.link));
++    memcpy(request.link.source, association->station, sizeof(mac_address_t));
++    memcpy(request.link.destination, association->owner, sizeof(mac_address_t));
++    request.link.frequency_mhz = association->frequency_mhz;
++    if (send(descriptor, &request, sizeof(request), 0) != (ssize_t)sizeof(request) ||
++            recv(descriptor, &response, sizeof(response), 0) != (ssize_t)sizeof(response) ||
++            ntohl(response.header.magic) != 0x574d4443U ||
++            ntohs(response.header.version) != 1 ||
++            ntohs(response.header.opcode) != WMDC_OP_GET_FREQUENCY ||
++            ntohl(response.header.status) != WMDC_OK ||
++            ntohl(response.header.payload_len) != sizeof(response.link) ||
++            memcmp(response.link.source, request.link.source, sizeof(mac_address_t)) != 0 ||
++            memcmp(response.link.destination, request.link.destination, sizeof(mac_address_t)) != 0 ||
++            response.link.frequency_mhz != request.link.frequency_mhz) {
++        return false;
++    }
++    snr_db = (int16_t)ntohs((uint16_t)response.link.snr_db);
++    if (snr_db < -128 || snr_db > 127) {
++        return false;
++    }
++    *rssi_dbm = snr_db - 91;
++    return true;
+ }
+ 
+ static bool hwsim_should_filter_station(bool owner_known,
+@@ -926,6 +986,8 @@
+     uint32_t inactive_msec = 0;
+     bool inactive_known = false;
+     bool owner_known = false;
++    struct wmdc_association association = {};
++    int rssi_dbm = 0;
+     struct nlattr *stats[NL80211_STA_INFO_MAX + 1];
+     static struct nla_policy stats_policy[NL80211_STA_INFO_MAX + 1] = {
+         [NL80211_STA_INFO_INACTIVE_TIME] = { .type = NLA_U32 },
+@@ -949,7 +1011,7 @@
+         nla_data(tb[NL80211_ATTR_MAC]);
+     if (station_mac != NULL && sta_list->local_radio_known) {
+         owner_known = hwsim_association_owner(sta_list->ownership_fd,
+-            station_mac, owner) == 1;
++            station_mac, owner, &association) == 1;
+     }
+     if (!owner_known && tb[NL80211_ATTR_STA_INFO] != NULL &&
+         nla_parse_nested(stats, NL80211_STA_INFO_MAX,
+@@ -965,6 +1027,11 @@
+             __func__, __LINE__, owner_known ? "different" : "unknown");
+         return NL_OK;
+     }
++    if (sta_list->sample_current_signal && (!owner_known ||
++            !hwsim_current_link_rssi(sta_list->ownership_fd,
++                &association, &rssi_dbm))) {
++        sta_list->signal_unavailable = true;
++    }
+ #endif
+ 
+     if (tb[NL80211_ATTR_MAC]) {
+@@ -985,6 +1052,9 @@
+         memcpy(sta_list->entries[sta_list->num].mac, nla_data(tb[NL80211_ATTR_MAC]),
+             sizeof(mac_address_t));
+         sta_list->entries[sta_list->num].ifindex = sta_list->query_ifindex;
++#ifdef HWSIM_RADIO
++        sta_list->entries[sta_list->num].rssi_dbm = rssi_dbm;
++#endif
+         sta_list->num++;
+     }
+ 
+@@ -1016,6 +1086,9 @@
+     if (sta_list->ownership_fd >= 0) {
+         close(sta_list->ownership_fd);
+         sta_list->ownership_fd = -1;
++    }
++    if (sta_list->signal_unavailable) {
++        return -1;
+     }
+ #endif
+     if (ret < 0) {
+@@ -1188,6 +1261,9 @@
+         return -1;
+     }
+ 
++#ifdef HWSIM_RADIO
++    sta_list.sample_current_signal = !is_wifi_hal_vap_mesh_backhaul(apIndex);
++#endif
+     ret = get_sta_list(interface, &sta_list);
+     if (ret < 0) {
+         wifi_hal_stats_error_print("%s:%d Failed to get sta list\n", __func__, __LINE__);
+@@ -1233,6 +1309,11 @@
+             *output_array_size = 0;
+             goto exit;
+         }
++#ifdef HWSIM_RADIO
++        if (sta_list.sample_current_signal) {
++            (*associated_dev_array)[i].cli_RSSI = sta_list.entries[i].rssi_dbm;
++        }
++#endif
+     }
+ 
+ exit:

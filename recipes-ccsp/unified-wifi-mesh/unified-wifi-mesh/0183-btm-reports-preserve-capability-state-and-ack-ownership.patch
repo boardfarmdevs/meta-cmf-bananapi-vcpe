@@ -1,0 +1,51 @@
+Subject: [PATCH] Do not strand BTM reports behind completed AP capability state
+
+A client can roam while its agent radio remains in AP-capability-report
+state. BTM reports waited there until their ten-second command TTL, reserving
+the radio and delaying already completed candidate replies beyond the HTTP
+measurement deadline. Admit the existing report transaction in that state.
+Restore it on the matching report ACK, and require the report MID to be
+cleared before releasing the radio. Wrong ACKs and failed sends do not
+complete the transaction. Earlier onboarding states remain gated.
+
+Reporting periods, report retry behavior and timeout budgets are unchanged.
+
+Upstream-Status: Pending
+
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -288,8 +288,10 @@
+             break;
+ 
+         case em_cmd_type_btm_report:
+-            if ((em->get_state() == em_state_agent_configured) ||
+-                (em->get_state() == em_state_agent_topo_synchronized)) {
++            if (em->get_btm_report_msg_id() == 0 &&
++                ((em->get_state() == em_state_agent_configured) ||
++                 (em->get_state() == em_state_agent_topo_synchronized) ||
++                 (em->get_state() == em_state_agent_ap_cap_report))) {
+                 return true;
+             }
+             break;
+@@ -346,7 +348,8 @@
+         return true;
+     } else if (pcmd->m_type == em_cmd_type_btm_report) {
+ 		if ((em->get_state() == em_state_agent_configured) ||
+-			(em->get_state() == em_state_agent_topo_synchronized)) {
++			(em->get_state() == em_state_agent_topo_synchronized) ||
++			(em->get_state() == em_state_agent_ap_cap_report)) {
+ 			return true;
+ 		}
+     } else if (pcmd->m_type == em_cmd_type_sta_list) {
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -584,7 +584,8 @@
+         em_state_t previous = m_btm_report_prev_state;
+         m_btm_report_prev_state = em_state_agent_unconfigured;
+         if ((previous == em_state_agent_configured) ||
+-            (previous == em_state_agent_topo_synchronized)) {
++            (previous == em_state_agent_topo_synchronized) ||
++            (previous == em_state_agent_ap_cap_report)) {
+             set_state(previous);
+         } else {
+             set_state(em_state_agent_configured);

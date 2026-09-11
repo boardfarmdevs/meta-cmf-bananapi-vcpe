@@ -130,3 +130,20 @@ def test_fair_cohorts_after_round_completion(streaming):
     collect(provider, sample)
     provider._future.result(timeout=1)
     assert delegate.calls == [{sample.clients[0].sta_mac}, {other}]
+
+
+def test_roaming_low_mac_cannot_starve_an_unmeasured_band(streaming):
+    provider, delegate = streaming
+    provider.maximum_clients = 1
+    sample = snapshot(0)
+    waiting = "02:00:00:00:0e:00"
+    sample = replace(sample, clients=(*sample.clients, replace(sample.clients[0], sta_mac=waiting, band="6")),
+                     candidates=(*sample.candidates, replace(sample.candidates[0], sta_mac=waiting, band="6")))
+    collect(provider, sample)
+    assert delegate.published.wait(1)
+    delegate.release.set()
+    provider._future.result(timeout=1)
+    roamed = replace(sample, clients=(replace(sample.clients[0], connected_bssid="02:00:00:aa:aa:02"), sample.clients[1]))
+    collect(provider, roamed)
+    provider._future.result(timeout=1)
+    assert delegate.calls == [{sample.clients[0].sta_mac}, {waiting}]

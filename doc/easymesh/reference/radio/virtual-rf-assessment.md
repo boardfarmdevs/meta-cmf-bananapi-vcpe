@@ -36,15 +36,10 @@ failure and recovery. No long soak or physical-capacity qualification was run.
 
 ## 1. Conclusions
 
-The labs are useful **frame-level, signal-driven protocol test environments**.
-They run real AP, station, security, association and EasyMesh software. Their
-medium changes affect actual frame delivery and native stack behavior, not
-just the pictures in the room viewer.
-
-They are **not yet calibrated RF-capacity or congestion simulators**. In
-particular, a successful steering demonstration does not establish valid
-channel utilization, realistic airtime sharing, accurate PHY throughput or
-real-world measurement availability.
+The labs run real AP, station, security and EasyMesh software with simulated
+frame delivery. They are **not calibrated RF-capacity or congestion
+simulators**. Steering success does not qualify utilization, airtime sharing,
+PHY throughput or measurement availability.
 
 The highest-value findings are:
 
@@ -57,7 +52,9 @@ The highest-value findings are:
    data is not idle; unsupported noise/rate/capacity fields remain unqualified.
 3. Candidate RCPI is deliberately synthesized from the configured link matrix
    at the HAL boundary. That is useful for controlled experiments, but it is
-   not proof that a radio actually heard an unassociated station.
+   not proof that a radio actually heard an unassociated station. RDK HAL
+   `0038` also samples current fronthaul signal from this model; neither
+   signal source qualifies real-world measurement availability.
 4. Default contention remains global per frequency. Optional `-F` permits
    isolated unicast pairs to overlap, using bidirectional endpoint visibility.
    This is not a hidden-node collision or full DCF model.
@@ -70,10 +67,10 @@ The highest-value findings are:
 7. Current shared optimizer snapshots are RCPI/band/association oriented.
    Adding load to an AP report alone would not make that optimizer load-aware.
 
-**Recommendation:** preserve the working signal baseline and the implemented
-bounded survey/native-reporting path. Keep its declared model restrictions
-visible before adding load-aware policy. Conservative reservations and reverse ACK modeling need scoped qualification;
-calibrated PHY service time and hidden-node behavior remain future work.
+**Recommendation:** preserve survey/reporting safeguards and declare signal
+provenance before adding load-aware policy. Reservations and reverse ACKs
+need scoped qualification; calibrated PHY service and hidden nodes remain
+future work.
 
 ## 2. Evidence and deployed architecture
 
@@ -180,7 +177,7 @@ radio identity, learned transmitting VIF, BSSID, STA address and namespace.
 | Band, operating class, frequency | Native configuration and hwsim frame frequency; delivery eligibility checks | Available; validate operating class and current context, especially 6 GHz |
 | Channel width | Native advertised/configured capability | Not a qualified wide-channel interference or service-time model |
 | Directed link SNR | Radio-pair defaults plus exact-frequency overrides, atomic generations | Working scenario control; not a measurement of physical noise |
-| RSSI on received frames | Medium signal derived from SNR with fixed -91 dBm noise reference | Drives kernel/native associated signal; new samples depend on received traffic |
+| RSSI on received frames | Medium signal derived from SNR with fixed -91 dBm noise reference | Kernel signal needs received traffic; RDK HAL `0038` samples current serving RF separately |
 | RCPI | HAL/controller conversion of signal; candidate provider conversion | Useful for signal steering; retain conversion, source and observation time |
 | Candidate signal | HAL reads matrix for requested direction/frequency | Idealized synthetic availability, not reception-backed scanning |
 | Noise floor | Fixed medium reference and native placeholders; new survey deliberately omits noise | No trustworthy independently varied/measured noise floor today |
@@ -298,12 +295,21 @@ Radio noise, associated SNR, ESP and RX-rate placeholders remain separate
 unfinished work. Existing controller fields may retain their last report;
 an omitted AP metric is not a promise that every legacy UI displays freshness.
 
-### 4.4 Synthetic candidate metrics bypass physical availability
+### 4.4 Synthetic signal bypasses physical availability
 
 RDK patch `0024-hwsim-read-candidate-rcpi-from-wmediumd.patch` and prpl patch
 `0006-nl80211-read-hwsim-candidate-metrics.patch` deliberately read link
 configuration at the HAL boundary. RDK converts SNR to bounded RCPI; prpl
 supplies RSSI to its normal agent reporting path.
+
+RDK HAL `0038` uses the same read-only model for current fronthaul RSSI:
+confirmed owner, actual frequency, STA-to-AP direction and fixed -91 dBm
+noise. Kernel counters, rates and association state remain native. Invalid
+evidence fails the poll. This avoids refreshing an idle peer's old packet
+RSSI with a new timestamp, without probe traffic or faster native timers.
+It is idealized RF availability for protocol profiling, not a new received
+packet. Backhaul retains kernel RSSI; four-address peers can predate ownership
+observation. prpl's serving-link provider is unchanged.
 
 These reports still traverse native software and IEEE 1905, which is valuable.
 However, matrix access can produce a fresh answer without hearing the STA,
@@ -1171,21 +1177,15 @@ Both gateway and extender Yocto recipes rebuild with global
 `/home/rev/oe/{downloads,sstate-cache}`. RDK's ordinary cold reconstruction
 passes 20/20 clients and metrics, model 5/15/50 and zero native restarts.
 
-Two apparent RF failures were test defects. Bounded fragment reassembly
-recovers Agent-1's private AP reports; retune bounds missed/busy rescans and
-verifies recent BSSID/frequency before native ROAM. Fixed-load captures wait
-up to 24 seconds for native updates, retaining old/new evidence. Missing
-reports fail; native intervals and steering margins remain unchanged.
-
 Room qualification uses configured policy convergence, with absolute
-strongest-AP gaps separately visible. Complete room gates pass **4/14 RDK,
-14/14 prpl**; RF acceptance does not qualify all rooms. See the
+strongest-AP gaps separately visible. Complete room gates pass **14/14 RDK**;
+the unchanged prior prpl run passes **14/14**. See the
 [current room qualification](../testing/room-acceptance.md#current-qualification)
-for the complete catalog, failures and timings. Policy pass does not mean
+for the catalog, remaining native retries and timings. Policy pass does not mean
 instant movement or zero transient measurement loss.
 
 Reporting cadence, modern PHY/DCF, reception-backed candidates, physical
 calibration and load-aware policy remain separate gates. This is not a fully
 qualified congestion simulator or zero-overhead system. Evidence:
-`/home/rev/work/rf-phase3-0911/` and `/home/rev/work/rf-correctness-0911/`
+`/home/rev/work/rdk-rooms-fix-0911/` and `/home/rev/work/rf-correctness-0911/`
 on rev150. No new thin tar or box is made.

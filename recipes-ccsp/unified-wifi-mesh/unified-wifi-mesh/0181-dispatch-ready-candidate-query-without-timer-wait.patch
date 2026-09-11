@@ -1,0 +1,25 @@
+Subject: [PATCH] dispatch ready candidate queries without waiting for a radio tick
+
+The controller admitted a fully prepared Unassociated STA Link Metrics
+Query but only set its pending state. The radio's periodic timer then sent
+it, adding up to one second to each serialized native query. Multiple bands
+and eight-STA batches compounded that delay and aged other cached results.
+
+Dispatch through the existing metrics state handler while the orchestrator
+owns its recursive command lock. The normal timeout path takes the same
+lock; the existing outstanding-MID guard prevents duplicate transmission.
+Failed sends still retry on the normal timer. Reporting periods, response
+deadlines and native single-flight admission are unchanged.
+
+Upstream-Status: Pending
+
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -284,6 +284,7 @@
+ 
+         case em_cmd_type_unassoc_sta_query:
+             m_sm.set_state(em_state_ctrl_unassoc_sta_link_metrics_pending);
++            em_metrics_t::process_ctrl_state();
+             break;
+ 
+ 	default:
