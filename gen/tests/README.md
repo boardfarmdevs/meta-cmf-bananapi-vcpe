@@ -3,6 +3,9 @@
 Documentation-only check (no lab access): `python3 gen/tests/test_documentation.py`.
 This checks local files/anchors, navigation, guide sizes and packaged manual inputs.
 
+Phase 0 RF contract/provenance tests and the short read-only live audit are in
+the [RF assessment](../../doc/easymesh/reference/radio/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
+
 This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
