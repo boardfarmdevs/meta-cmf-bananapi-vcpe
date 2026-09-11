@@ -325,9 +325,12 @@ observation and that traffic after restoration refreshes the original value.
 
 ## Current limitations
 
-- Radio noise and utilization remain zero because the current hwsim OneWifi
-  HAL returns zero survey/channel values. The corresponding TLVs are sent,
-  accepted and persisted; useful survey synthesis is separate work.
+- Radio noise and utilization are not trustworthy: the current hwsim OneWifi
+  HAL survey/channel functions return success without populating measurements.
+  The corresponding TLVs are sent, accepted and persisted, but zero-initialized
+  fields do not prove an idle channel. See the
+  [virtual RF assessment](../radio/virtual-rf-assessment.md) for the driver,
+  native-reporting and congestion-model work required in both labs.
 - Backhaul edges use the dedicated structured signal/freshness path; they do
   not expose the complete periodic fronthaul client metric set. All twenty
   fronthaul clients do.

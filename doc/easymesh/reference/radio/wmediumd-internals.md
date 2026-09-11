@@ -74,6 +74,7 @@ lab feature.
 | External PER table | `-x FILE` replaces the built-in SNR-to-PER calculation | Available; not used |
 | Packet capture | `-p FILE` writes scheduled traffic as pcapng, including modeled ACKs | Available; not enabled by the launcher |
 | Runtime SNR updates | Local `-C` socket applies validated, atomic matrix generations without restart | Added, supported and used |
+| Frequency-qualified SNR | Exact-frequency directed overrides take precedence over radio-pair defaults | Added, supported and used |
 | vhost-user and time control | Alternative frame transport and externally controlled scheduler time | Upstream available; not used by the LXD lab |
 | Legacy API socket | Relays hwsim/netlink frames and TX-start notifications to API clients | Upstream available; it is not an SNR configuration API |
 
@@ -91,9 +92,10 @@ select a policy, age a topology node or declare a test successful.
 
 The current build also has these important physical-model boundaries:
 
-- SNR is keyed by source and destination **hwsim radio**, not by BSSID, SSID or
-  center frequency. A single-phy BPI node can carry 2.4, 5 and 6 GHz VAPs, but
-  one matrix cell applies to that radio pair on all three bands.
+- SNR defaults are keyed by source and destination **hwsim radio**, not by
+  SSID. Exact-frequency overrides allow different values for concurrent
+  2.4, 5 and 6 GHz VAPs. Learned VIF identities resolve to their radio owners;
+  a channel change needs corresponding override rebinding or uses the pair default.
 - The multichannel patches use exact center-frequency equality. They isolate
   different channels; they do not model spectral masks, partial overlap or
   adjacent-channel interference.
@@ -109,9 +111,11 @@ The current build also has these important physical-model boundaries:
 - wmediumd has no feedback from the EasyMesh topology. Association changes are
   effects to observe, not triggers that rewrite the RF matrix.
 
-These limits are acceptable for comparative steering-policy experiments when
-the same abstraction is used for every policy and the result is described as a
-radio-pair SNR experiment, not as a full calibrated propagation model.
+These limits permit comparative signal-driven steering experiments when the
+same abstraction is used for every policy. They do not establish calibrated
+capacity or congestion behavior. The [virtual RF assessment](virtual-rf-assessment.md)
+details missing surveys, idealized candidate measurements, fixed RX-rate
+metadata, same-frequency contention scheduling and the implementation roadmap.
 
 ## How wmediumd knows which devices exist
 

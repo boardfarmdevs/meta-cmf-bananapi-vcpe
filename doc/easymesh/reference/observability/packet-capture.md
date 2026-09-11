@@ -12,7 +12,7 @@ question rather than collecting an unnecessarily large trace.
 | `brlan0` in `bpibroadband` | Ethernet | plaintext IEEE 1905/EasyMesh CMDUs from the controller and agents | supported and preferred |
 | `brlan0` in one `bpiap*` | Ethernet | the selected agent's local EasyMesh and bridged client traffic | supported |
 | `wlan0` in one `wlan-client*` | Ethernet | that client's decrypted data-plane traffic and EAPOL | supported |
-| host `hwsim0` | radiotap/802.11 | all simulated management, control and data frames | not safe to enable dynamically with the current launcher |
+| VM-root `hwsim0` | radiotap/802.11 | transmitter-side virtual-radio frames across channels, including beacons | patched monitor-ACK path; qualify the loaded module and preserve monitor state |
 | wmediumd `-p FILE` | pcapng | frames scheduled by the simulated medium, including modeled ACKs | daemon capability; not enabled by the launcher |
 
 For onboarding, metrics, topology and steering diagnosis, start with the
@@ -155,29 +155,31 @@ CMDU timestamps in Wireshark.
 
 ## Raw 802.11 capture boundary
 
-`hwsim0` is the global mac80211_hwsim monitor and produces radiotap/802.11
-frames. It includes beacons, probe/authentication/association exchanges,
-EAPOL, data, retries and traffic on every simulated channel. Backhaul data can
-still be encrypted, whereas the `brlan0` capture shows its decapsulated
-EasyMesh payload.
+`hwsim0` is the global mac80211_hwsim monitor in the outer lab VM and produces
+radiotap/802.11 frames across its virtual channels, including beacons,
+probe/authentication/association exchanges, EAPOL and data. It is a transmitter
+view, not proof of reception or a hardware-equivalent record of every modeled
+retry. Backhaul data can remain encrypted; `brlan0` shows the decapsulated payload.
 
-Do **not** run this on an active lab:
+The current hwsim patch series includes
+`0008-mac80211_hwsim-fix-multichannel-monitor-ack.patch`, which fixes the
+channel-context ACK-monitor problem behind the older dynamic-capture warning.
+Verify that the loaded module matches the patched build before a bounded
+capture, preserve the prior monitor state, and inspect kernel/capture drops.
+Do not dynamically enable monitoring on an unqualified kernel/medium pair.
+See the [virtual RF assessment](../radio/virtual-rf-assessment.md) for current
+module evidence and the distinction between capture, delivery and occupancy.
 
-```sh
-sudo ip link set hwsim0 up
-```
-
-Changing `hwsim0` while patched wmediumd owns the hwsim netlink transport can
-terminate wmediumd and block subsequent `iw` operations in the kernel. Raw
-capture must therefore be established as part of a tested cold-start sequence,
-not added dynamically to a running lab.
+The room trace helper's management filter excludes beacons and probes. BSS
+Load verification therefore needs a dedicated beacon/probe capture filter,
+not the helper's default trace.
 
 wmediumd itself supports `-p FILE` and writes scheduled medium traffic as
 pcapng, including modeled ACKs. The current `wmediumd-up.sh` deliberately does
 not enable it. Do not start a second daemon or manually replace the managed
 daemon during a test. Adding an opt-in capture argument to the launcher,
 followed by cold-start, multichannel and restore acceptance, is the preferred
-way to make raw WLAN capture operational.
+way to add daemon-side capture; it is separate from the patched hwsim monitor.
 
 ## Read and transfer the trace
 
