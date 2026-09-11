@@ -16,7 +16,7 @@ optimizer.
 
 Metrics policy activation covers all five mesh devices and 15 radios. The
 accepted profile requires live RCPI for all 20 fronthaul clients and fresh
-signal for all four extender backhauls. See [metrics](../reference/metrics.md).
+signal for all four extender backhauls. See [metrics](../reference/observability/metrics.md).
 
 This does not change the optimizer boundary: no verified OneWifi evaluator
 consumes those thresholds and selects a target, and the passive crossover still

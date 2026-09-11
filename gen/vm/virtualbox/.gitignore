@@ -1,0 +1,12 @@
+.vagrant/
+*.box
+*.box.sha256
+release.json
+SHA256SUMS
+*.vmdk
+*.vdi
+*.ovf
+*.vbox
+*.nvram
+*.log
+build.*/

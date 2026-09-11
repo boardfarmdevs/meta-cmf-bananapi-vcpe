@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate unique SSH host keys for this VirtualBox appliance
+Before=ssh.service
+ConditionPathExists=!/var/lib/easymesh-lab/virtualbox-identity.ready
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+ExecStart=/usr/bin/touch /var/lib/easymesh-lab/virtualbox-identity.ready
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+banana-pi: expose supported hwsim channel survey counters in microseconds
+
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -880,7 +880,40 @@
+ INT wifi_getRadioChannelStats(INT radioIndex, wifi_channelStats_t *input_output_channelStats_array,
+     INT array_size)
+ {
+-    return RETURN_OK;
++#ifdef HWSIM_RADIO
++    wifi_radio_info_t *radio = get_radio_by_rdk_index(radioIndex);
++    wifi_interface_info_t *interface;
++    struct freq_survey survey;
++    bool found = false;
++    unsigned int frequency;
++
++    if (!radio || !input_output_channelStats_array || array_size <= 0) {
++        return RETURN_ERR;
++    }
++    interface = get_private_vap_interface(radio);
++    if (!interface || !interface->u.ap.hapd.iface) {
++        return RETURN_ERR;
++    }
++    frequency = interface->u.ap.hapd.iface->freq;
++    if (wifi_hal_get_channel_survey(interface, frequency, &survey) != RETURN_OK ||
++        !interface->u.ap.hapd.iface->channel_utilization_valid) {
++        return RETURN_ERR;
++    }
++    for (int index = 0; index < array_size; index++) {
++        wifi_channelStats_t *output = &input_output_channelStats_array[index];
++        if (!output->ch_in_pool || output->ch_number != radio->oper_param.channel) {
++            continue;
++        }
++        output->ch_utilization_total = survey.channel_time * 1000;
++        output->ch_utilization_busy = survey.channel_time_busy * 1000;
++        output->ch_utilization =
++            (interface->u.ap.hapd.iface->channel_utilization * 100U + 127U) / 255U;
++        found = true;
++    }
++    return found ? RETURN_OK : RETURN_ERR;
++#else
++    return RETURN_ERR;
++#endif
+ }
+ 
+ static int get_sta_list_handler(struct nl_msg *msg, void *arg)

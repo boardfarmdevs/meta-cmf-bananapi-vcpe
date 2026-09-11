@@ -124,6 +124,8 @@ python do_patch_append() {
     import subprocess, os
     s = d.getVar('S')
     git_dir = os.path.dirname(s)
+    with open(d.getVar('PLATFORM_HWSIM_SURVEY_PATCH'), 'rb') as survey_patch:
+        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=survey_patch, check=True)
     bb.note("meta-cmf-bananapi-vcpe: applying NULL-map guard to platform_create_vap")
     with open(d.getVar('PLATFORM_CREATE_VAP_NULL_PATCH'), 'rb') as f:
         subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
@@ -147,7 +149,7 @@ python do_patch_append() {
 # this layer's checkout location into its basehash and no two trees could share
 # sstate for this recipe. The file-checksums below are what makes the patches'
 # contents an input; the paths themselves are not one.
-do_patch[vardepsexclude] += "PLATFORM_CREATE_VAP_NULL_PATCH \
+do_patch[vardepsexclude] += "PLATFORM_HWSIM_SURVEY_PATCH PLATFORM_CREATE_VAP_NULL_PATCH \
     PLATFORM_CREATE_VAP_MLD_NULL_PATCH PLATFORM_BACKHAUL_SSID_PATCH \
     PLATFORM_WDS_STA_METRICS_PATCH PLATFORM_HWSIM_STA_LIVENESS_PATCH \
     PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH"
@@ -157,6 +159,9 @@ do_patch[file-checksums] += "${PLATFORM_BACKHAUL_SSID_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_WDS_STA_METRICS_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_STA_LIVENESS_PATCH}:True"
 do_patch[file-checksums] += "${PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH}:True"
+PLATFORM_HWSIM_SURVEY_PATCH := "${THISDIR}/${BPN}/0036-hwsim-channel-survey-stats.patch"
+do_patch[file-checksums] += "${PLATFORM_HWSIM_SURVEY_PATCH}:True"
+SRC_URI += "file://0035-nl80211-channel-survey-provider.patch"
 
 # InterfaceMap_em.json (BananaPi R4's EasyMesh interface map) groups every radio's
 # primary VAP (wifi0/wifi1/wifi2 -> private_ssid_*) under "MldName": "mld0", a real

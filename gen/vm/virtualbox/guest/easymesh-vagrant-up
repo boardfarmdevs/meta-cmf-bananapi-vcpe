@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo 'Run with sudo inside the RDK appliance.' >&2; exit 1; }
+test -f /var/lib/easymesh-lab/virtualbox-release.json
+state=/var/lib/easymesh-lab
+start_timeout=${EASYMESH_VAGRANT_START_TIMEOUT:-3600}
+[[ "$start_timeout" =~ ^[1-9][0-9]*$ ]] || { echo 'EASYMESH_VAGRANT_START_TIMEOUT must be positive seconds.' >&2; exit 2; }
+deadline=$((SECONDS + start_timeout))
+
+failure() {
+    echo 'The lab did not become ready. The VM is retained for diagnosis.' >&2
+    systemctl --no-pager --full status easymesh-thin-firstboot.service \
+        easymesh-lab.service easymesh-room-demo.service || true
+    journalctl -b -u easymesh-thin-firstboot.service -u easymesh-lab.service \
+        -u easymesh-room-demo.service -n 40 --no-pager || true
+    exit 1
+}
+
+echo 'Waiting for the nested LXD daemon (Windows does not need LXD).'
+until lxc query /1.0 >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || failure
+    sleep 2
+done
+/usr/local/sbin/easymesh-select-thin-profile 20
+grep -qx 'HEALTH_EXPECT_CLIENTS=20' "$state/thin-profile.lock.env"
+systemctl daemon-reload
+systemctl reset-failed easymesh-thin-firstboot.service easymesh-lab.service
+systemctl --no-block start easymesh-lab.service
+echo 'Starting the offline 20-client lab; the first boot can take 20–40 minutes.'
+next_report=$SECONDS
+until systemctl is-active --quiet easymesh-lab.service; do
+    systemctl is-failed --quiet easymesh-lab.service && failure
+    systemctl is-failed --quiet easymesh-thin-firstboot.service && failure
+    (( SECONDS < deadline )) || failure
+    if (( SECONDS >= next_report )); then
+        printf '%s: %s nested instances; lab state=%s\n' "$(date -u +%H:%M:%S)" \
+            "$(lxc list -c n --format csv | awk 'NF {total++} END {print total+0}')" \
+            "$(systemctl show easymesh-lab.service -p SubState --value)"
+        next_report=$((SECONDS + 30))
+    fi
+    sleep 5
+done
+jq -e '.result == "pass" and .clients == 20 and .final_instances == 25' \
+    "$state/thin-firstboot-report.json" >/dev/null
+systemctl start easymesh-room-demo.service
+for endpoint in http://127.0.0.1:8888/api/v1/topology \
+    http://127.0.0.1:8890/ http://127.0.0.1:8891/api/demo/current; do
+    until curl -fsS --max-time 8 "$endpoint" >/dev/null; do
+        (( SECONDS < deadline )) || failure
+        systemctl is-failed --quiet easymesh-room-demo.service && failure
+        sleep 2
+    done
+done
+echo 'RDK services are ready. The live room optimizer continues converging asynchronously.'

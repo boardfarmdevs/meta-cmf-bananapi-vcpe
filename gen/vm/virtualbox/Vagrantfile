@@ -1,0 +1,70 @@
+require "json"
+require "pathname"
+
+directory = File.expand_path(__dir__)
+manifest_path = File.join(directory, "release.json")
+raise "Extract the complete RDK VirtualBox release beside this Vagrantfile (release.json is missing)." unless File.file?(manifest_path)
+
+release = JSON.parse(File.read(manifest_path))
+raise "This Vagrantfile requires an RDK VirtualBox release." unless release["stack"] == "rdkeasymesh" && release["provider"] == "virtualbox"
+
+box_name = release.fetch("box")
+raise "Invalid box filename in release.json." unless File.basename(box_name) == box_name && box_name.end_with?(".box")
+box_path = File.join(directory, box_name)
+checksum_path = box_path + ".sha256"
+raise "The local .box and its .sha256 must be beside the Vagrantfile." unless File.file?(box_path) && File.file?(checksum_path)
+checksum = File.read(checksum_path).split.first
+raise "Invalid box SHA256." unless checksum && checksum.match?(/\A[0-9a-f]{64}\z/)
+
+def lab_integer(name, default, minimum, maximum)
+  value = Integer(ENV.fetch(name, default.to_s), 10)
+  raise "#{name} must be between #{minimum} and #{maximum}." unless value.between?(minimum, maximum)
+  value
+end
+
+ports = {
+  "easymesh-webui" => [8888, lab_integer("EASYMESH_WEBUI_PORT", 18889, 1024, 65535)],
+  "wmediumd-console" => [8890, lab_integer("WMEDIUMD_CONSOLE_PORT", 18890, 1024, 65535)],
+  "room-demo" => [8891, lab_integer("EASYMESH_ROOM_DEMO_PORT", 18891, 1024, 65535)],
+  "lxd-ui" => [8443, lab_integer("EASYMESH_LXD_UI_PORT", 18892, 1024, 65535)],
+  "grafana" => [3000, lab_integer("EASYMESH_GRAFANA_PORT", 18893, 1024, 65535)]
+}
+raise "Choose different host ports for each lab service." unless ports.values.map(&:last).uniq.length == ports.length
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "rdkeasymesh/#{release.fetch('release_id')}-virtualbox-#{checksum[0, 12]}"
+  config.vm.box_url = Pathname.new(box_path).expand_path.to_s
+  config.vm.box_download_checksum_type = "sha256"
+  config.vm.box_download_checksum = checksum
+  config.vm.box_check_update = false
+  config.vm.hostname = "rdk-easymesh"
+  config.vm.boot_timeout = 600
+  config.vm.graceful_halt_timeout = 600
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.ssh.username = "vagrant"
+  config.ssh.insert_key = true
+  ports.each do |identifier, pair|
+    config.vm.network "forwarded_port", guest: pair.first, host: pair.last,
+                      host_ip: "127.0.0.1", auto_correct: false, id: identifier
+  end
+  config.vm.provider "virtualbox" do |provider|
+    provider.gui = false
+    provider.check_guest_additions = false
+    provider.cpus = lab_integer("EASYMESH_CPUS", 6, 6, 64)
+    provider.memory = lab_integer("EASYMESH_MEMORY_MB", 8192, 8192, 262144)
+    provider.customize ["modifyvm", :id, "--firmware", "efi64"]
+    provider.customize ["modifyvm", :id, "--nic-type1", "virtio"]
+    provider.customize ["modifyvm", :id, "--nested-hw-virt", "off"]
+    provider.customize ["modifyvm", :id, "--autostart-enabled", "off"]
+  end
+  config.vm.provision "shell", run: "always", privileged: true,
+                      inline: "/usr/local/sbin/easymesh-vagrant-up"
+  config.vm.post_up_message = <<~MESSAGE
+    RDK EasyMesh: 20 clients, 5 physical mesh devices / 6 logical UI roles.
+    Topology: http://127.0.0.1:#{ports.fetch('easymesh-webui').last}/
+    Console:  http://127.0.0.1:#{ports.fetch('wmediumd-console').last}/
+    Room:     http://127.0.0.1:#{ports.fetch('room-demo').last}/
+    Monitoring ports are reserved; monitoring is opt-in. See README.md.
+    Stop with `vagrant halt`; the VM does not start with Windows.
+  MESSAGE
+end

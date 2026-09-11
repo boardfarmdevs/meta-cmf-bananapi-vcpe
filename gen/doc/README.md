@@ -5,7 +5,7 @@ architecture and operating instructions live in:
 
 - [architecture](../../doc/easymesh/concepts/architecture.md)
 - [operations](../../doc/easymesh/guide/operations.md)
-- [wmediumd configurator](../../doc/easymesh/reference/wmediumd-configurator.md)
+- [wmediumd configurator](../../doc/easymesh/reference/radio/configurator.md)
 - [steering policy](../../doc/easymesh/concepts/steering-policy.md)
 
 Do not duplicate host setup or acceptance procedures here.
@@ -58,8 +58,8 @@ SNR=40 ./wmediumd/wmediumd-up.sh up
 ./wmediumd/wmediumd-up.sh status
 ```
 
-This is not a complete acceptance sequence. Follow the per-node model gates and
-acceptance procedure in [operations](../../doc/easymesh/guide/operations.md).
+This is not a complete acceptance sequence. Follow the per-node gates in
+[direct radio-host operation](../../doc/easymesh/reference/deployment/bare-metal.md).
 
 ## Shared wmediumd state
 

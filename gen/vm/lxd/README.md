@@ -19,7 +19,7 @@ namespace.
 
 Optional nested-container management and resource graphs are provided by
 [`observability/`](observability/README.md). The detailed
-[LXD UI and monitoring guide](../../../doc/easymesh/reference/lxd-ui-and-monitoring.md)
+[LXD UI and monitoring guide](../../../doc/easymesh/reference/observability/monitoring.md)
 covers secure browser access, Prometheus, Grafana, validation and removal.
 Enable with `--monitoring` during import or separately afterward; do not export
 its generated credentials or data. First network setup on an active lab requires
@@ -330,4 +330,4 @@ preloaded copies); omit it to preserve the normal offline thin-import contract.
 Browser ports default to HTTPS 18892 (LXD) and HTTPS 18893 (Grafana), with
 certificate/password authentication. Outer VM autostart remains unchanged.
 See [setup and first login](observability/README.md) and the
-[detailed reference](../../../doc/easymesh/reference/lxd-ui-and-monitoring.md).
+[detailed reference](../../../doc/easymesh/reference/observability/monitoring.md).

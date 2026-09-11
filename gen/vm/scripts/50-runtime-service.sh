@@ -52,6 +52,8 @@ systemctl enable boardfarm-lab.service
 systemctl enable easymesh-hwsim-pool.service
 systemctl enable easymesh-lab.service
 systemctl enable easymesh-room-demo.service
+/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/install-survey-bridge.sh \
+    /run/meta-cmf-wmediumd/metrics/control.sock easymesh-lab.service
 systemctl start easymesh-hwsim-pool.service
 # Restarting this required dependency propagates a stop into an already healthy
 # EasyMesh runtime. A newly installed helper is picked up on the next appliance

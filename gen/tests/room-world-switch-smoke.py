@@ -46,10 +46,14 @@ def main():
     parser.add_argument("--controller-url", default="http://127.0.0.1:8888")
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--all-worlds", action="store_true", help="test every compatible installed room")
+    parser.add_argument("--world", action="append", help="test only these room IDs, then restore default")
+    parser.add_argument("--skip-presence", action="store_true", help="omit the additional disappear/reappear cycle")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not args.yes_act:
         parser.error("--yes-act is required: this changes live room RF")
+    if args.all_worlds and args.world:
+        parser.error("choose --all-worlds or --world, not both")
     lease = None
     lease_renewed = 0.0
     report = {"worlds": [], "restored_default": False, "passed": False}
@@ -196,7 +200,7 @@ def main():
     try:
         lease = request("/api/demo/interactions/lease", {"owner": "rev140-world-switch-acceptance"})["token"]
         lease_renewed = time.monotonic()
-        names = ([world["id"] for world in request("/api/demo/worlds")["worlds"]] if args.all_worlds else
+        names = args.world or ([world["id"] for world in request("/api/demo/worlds")["worlds"]] if args.all_worlds else
                  ["home-a-border-hover", "home-a-stationary", "home-b-slow-walk-ten", "home-a-flash-crowd"])
         for name in [*names, "default"]:
             expected = apply(name)["expected_online_clients"]
@@ -214,7 +218,7 @@ def main():
             report["worlds"].append(result)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + "\n")
-        for present, expected in ((False, 19), (True, 20)):
+        for present, expected in (() if args.skip_presence else ((False, 19), (True, 20))):
             renew()
             snapshot = request("/api/demo/interactions")
             request("/api/demo/roles/sta_mobile_01/presence", {"token": lease, "present": present},

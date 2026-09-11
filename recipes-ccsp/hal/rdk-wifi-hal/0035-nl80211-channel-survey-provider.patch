@@ -1,0 +1,106 @@
+wifi_hal: supply current-channel nl80211 survey to embedded hostapd
+
+--- a/wifi_hal_priv.h
++++ b/wifi_hal_priv.h
+@@ -1003,6 +1003,8 @@
+ INT wifi_get_radio_capability_data(wifi_radio_info_t *radio, enum nl80211_band band);
+ wifi_interface_info_t* get_private_vap_interface(wifi_radio_info_t *radio);
+ wifi_interface_info_t* get_primary_interface(wifi_radio_info_t *radio);
++int wifi_hal_get_channel_survey(wifi_interface_info_t *interface, unsigned int frequency,
++    struct freq_survey *survey);
+ int wifi_hal_get_vap_interface_type(wifi_vap_name_t vap_name, wifi_vap_type_t vap_type);
+ wifi_interface_info_t *wifi_hal_get_vap_interface_by_type(wifi_radio_info_t *radio,
+     wifi_vap_type_t vap_type);
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -13645,13 +13645,76 @@
+     return 0;
+ }
+ 
++static int wifi_hal_survey_handler(struct nl_msg *msg, void *arg)
++{
++    struct freq_survey *survey = arg;
++    struct genlmsghdr *header = nlmsg_data(nlmsg_hdr(msg));
++    struct nlattr *attrs[NL80211_ATTR_MAX + 1];
++    struct nlattr *info[NL80211_SURVEY_INFO_MAX + 1];
++    static struct nla_policy policy[NL80211_SURVEY_INFO_MAX + 1] = {
++        [NL80211_SURVEY_INFO_FREQUENCY] = { .type = NLA_U32 },
++        [NL80211_SURVEY_INFO_TIME] = { .type = NLA_U64 },
++        [NL80211_SURVEY_INFO_TIME_BUSY] = { .type = NLA_U64 },
++    };
++
++    if (nla_parse(attrs, NL80211_ATTR_MAX, genlmsg_attrdata(header, 0),
++            genlmsg_attrlen(header, 0), NULL) < 0 ||
++        !attrs[NL80211_ATTR_SURVEY_INFO] ||
++        nla_parse_nested(info, NL80211_SURVEY_INFO_MAX, attrs[NL80211_ATTR_SURVEY_INFO],
++            policy) < 0 || !info[NL80211_SURVEY_INFO_FREQUENCY] ||
++        nla_get_u32(info[NL80211_SURVEY_INFO_FREQUENCY]) != survey->freq ||
++        !info[NL80211_SURVEY_INFO_IN_USE] || !info[NL80211_SURVEY_INFO_TIME] ||
++        !info[NL80211_SURVEY_INFO_TIME_BUSY]) {
++        return NL_SKIP;
++    }
++    survey->channel_time = nla_get_u64(info[NL80211_SURVEY_INFO_TIME]);
++    survey->channel_time_busy = nla_get_u64(info[NL80211_SURVEY_INFO_TIME_BUSY]);
++    if (survey->channel_time && survey->channel_time_busy <= survey->channel_time) {
++        survey->filled = SURVEY_HAS_CHAN_TIME | SURVEY_HAS_CHAN_TIME_BUSY;
++    }
++    return NL_SKIP;
++}
++
++int wifi_hal_get_channel_survey(wifi_interface_info_t *interface, unsigned int frequency,
++    struct freq_survey *survey)
++{
++    struct nl_msg *msg;
++    int ret;
++
++    memset(survey, 0, sizeof(*survey));
++    if (!interface || !frequency) {
++        return RETURN_ERR;
++    }
++    survey->freq = frequency;
++    survey->ifidx = interface->index;
++    msg = nl80211_drv_cmd_msg(g_wifi_hal.nl80211_id, interface, NLM_F_DUMP,
++        NL80211_CMD_GET_SURVEY);
++    if (!msg) {
++        return RETURN_ERR;
++    }
++    ret = nl80211_send_and_recv(msg, wifi_hal_survey_handler, survey, NULL, NULL);
++    return ret || !survey->filled ? RETURN_ERR : RETURN_OK;
++}
++
+ #ifdef BANANA_PI_PORT
+ int wifi_drv_get_survey(void *priv, unsigned int freq, int link_id)
+ #else
+ int wifi_drv_get_survey(void *priv, unsigned int freq)
+ #endif // BANANA_PI_PORT
+ {
+-    wifi_hal_dbg_print("%s:%d: Enter\n", __func__, __LINE__);
++    wifi_interface_info_t *interface = priv;
++    struct freq_survey survey;
++    union wpa_event_data event;
++
++    if (wifi_hal_get_channel_survey(interface, freq, &survey) != RETURN_OK) {
++        return -1;
++    }
++    memset(&event, 0, sizeof(event));
++    event.survey_results.freq_filter = freq;
++    dl_list_init(&event.survey_results.survey_list);
++    dl_list_add_tail(&event.survey_results.survey_list, &survey.list);
++    wpa_supplicant_event(&interface->u.ap.hapd, EVENT_SURVEY, &event);
++    dl_list_del(&survey.list);
+     return 0;
+ }
+ 
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
+@@ -326,7 +326,9 @@
+     /* Default to strict CRL checking. */
+     conf->check_crl_strict = 1;
+ 
+-#ifdef CONFIG_BSS_LOAD
++#ifdef HWSIM_RADIO
++    conf->bss_load_update_period = 10;
++#elif defined(CONFIG_BSS_LOAD)
+     // updated by driver
+     conf->bss_load_update_period = 360000;
+ #endif
