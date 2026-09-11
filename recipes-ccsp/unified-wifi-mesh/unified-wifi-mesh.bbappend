@@ -172,6 +172,11 @@ EASYMESH_CORE_PATCHES = " \
     file://0172-agent-remember-controller-before-first-wsc.patch \
     file://0173-controller-decode-compact-cac-capability.patch \
     file://0174-agent-isolate-periodic-ap-metrics-command.patch \
+    file://0175-metrics-count-serialized-bssid-records.patch \
+    file://0176-orch-admit-independent-commands-per-tick.patch \
+    file://0177-steering-isolate-btm-report-routing-and-state.patch \
+    file://0178-client-reports-preserve-unrelated-radio-commands.patch \
+    file://0179-policy-ack-preserve-sibling-radio-commands.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

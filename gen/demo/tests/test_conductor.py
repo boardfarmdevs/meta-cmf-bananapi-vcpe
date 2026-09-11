@@ -382,12 +382,13 @@ class ConductorProjectionTests(unittest.TestCase):
         with patch("room_demo.conductor.load_policy", return_value=PolicyConfig()), \
              patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
              patch("room_demo.conductor.ThresholdPolicy", return_value=policy), \
-             patch("room_demo.conductor.ControllerCandidateProvider", return_value=provider), \
+             patch("room_demo.conductor.ControllerCandidateProvider", return_value=provider) as candidate_factory, \
              patch("room_demo.conductor.ControllerObserver", side_effect=[observer, Mock()]), \
              patch("room_demo.conductor.SteerActuator", return_value=actuator), \
              patch.object(conductor, "_optimizer_wait" if profiling else "_sleep",
                           side_effect=[False] * (len(observations) - 1) + [True]) as sleeper:
             conductor._run_worker("optimizer", conductor._optimizer_worker)
+        self.assertEqual(candidate_factory.call_args.kwargs["busy_wait_seconds"], 1 if interactive else 0)
         self.assertFalse(conductor._candidate_active.is_set())
         self.assertFalse(conductor._controller_lock.locked())
         return conductor, store, policy, actuator, sleeper

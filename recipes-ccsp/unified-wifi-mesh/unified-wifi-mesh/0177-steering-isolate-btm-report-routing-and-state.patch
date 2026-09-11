@@ -1,0 +1,173 @@
+Subject: [PATCH] Isolate BTM reports from unrelated radio commands
+
+Route reports by source AL and source BSSID, including after the client has
+left that BSS. An arbitrary first radio with an associated client is not the
+report owner. Decode bounded TLVs rather than assuming the first TLV is the
+report. ACK the report's own MID without resetting the radio command state;
+the steering request is independently retired by its correlated 1905 ACK.
+Late reports must not cancel candidate collection or newer steering/policy.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1277,6 +1277,7 @@
+         case em_msg_type_client_cap_rprt:
+         case em_msg_type_ap_metrics_rsp:
+         case em_msg_type_failed_conn:
++        case em_msg_type_client_steering_btm_rprt:
+            if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)),
+                     len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_bss_id(&bssid) == false) {
+                 printf("%s:%d: Could not find bss id in msg:0x%04x\n", __func__, __LINE__, htons(cmdu->type));
+@@ -1374,16 +1375,6 @@
+ 
+             break;
+ 
+-        case em_msg_type_client_steering_btm_rprt:
+-            em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-            while(em != NULL) {
+-                if ((em->is_al_interface_em() == false) && (em->has_at_least_one_associated_sta() == true)) {
+-                    break;
+-                }
+-                em = static_cast<em_t *> (hash_map_get_next(m_em_map, em));
+-            }
+-            break;
+-
+         case em_msg_type_ap_mld_config_resp:
+             em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+             while(em != NULL) {
+--- a/src/em/em_msg.cpp
++++ b/src/em/em_msg.cpp
+@@ -170,30 +170,42 @@
+ 
+ bool em_msg_t::get_bss_id(mac_address_t *mac)
+ {
+-    em_tlv_t    *tlv;
+-    unsigned int len;
+-
+-    tlv = reinterpret_cast<em_tlv_t *> (m_buff); len = m_len;
+-    while ((tlv->type != em_tlv_type_eom) && (len > 0)) {
+-        if (tlv->type == em_tlv_type_client_info) {
+-            memcpy(mac, tlv->value, sizeof(mac_address_t));
+-            return true;
+-        } else if (tlv->type == em_tlv_type_client_assoc_event) {
+-            memcpy(mac, tlv->value + sizeof(mac_address_t), sizeof(mac_address_t));
+-            return true;
+-        } else if (tlv->type == em_tlv_type_client_info) {
+-            memcpy(mac, tlv->value + sizeof(mac_address_t), sizeof(mac_address_t));
+-            return true;
+-        } else if (tlv->type == em_tlv_type_ap_metrics) {
+-            memcpy(mac, tlv->value, sizeof(mac_address_t));
+-            return true;
+-        } else if (tlv->type == em_tlv_type_bssid) {
+-            memcpy(mac, tlv->value, sizeof(mac_address_t));
+-            return true;
++    if ((mac == nullptr) || (m_buff == nullptr)) {
++        return false;
++    }
++    unsigned char *cursor = m_buff;
++    unsigned int remaining = m_len;
++    while (remaining >= sizeof(em_tlv_t)) {
++        auto *tlv = reinterpret_cast<em_tlv_t *>(cursor);
++        unsigned int value_length = ntohs(tlv->len);
++        if ((value_length > remaining - sizeof(em_tlv_t)) ||
++            (tlv->type == em_tlv_type_eom)) {
++            return false;
+         }
+-
+-        len -= static_cast<unsigned int> (sizeof(em_tlv_t) + htons(tlv->len));
+-        tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
++        unsigned int bssid_offset = 0;
++        unsigned int minimum_length = sizeof(mac_address_t);
++        switch (tlv->type) {
++            case em_tlv_type_client_assoc_event:
++                bssid_offset = sizeof(mac_address_t);
++                minimum_length = 2 * sizeof(mac_address_t);
++                break;
++            case em_tlv_type_steering_btm_rprt:
++                minimum_length = 2 * sizeof(mac_address_t) + 1;
++                break;
++            case em_tlv_type_client_info:
++            case em_tlv_type_ap_metrics:
++            case em_tlv_type_bssid:
++                break;
++            default:
++                remaining -= sizeof(em_tlv_t) + value_length;
++                cursor += sizeof(em_tlv_t) + value_length;
++                continue;
++        }
++        if (value_length < minimum_length) {
++            return false;
++        }
++        memcpy(mac, tlv->value + bssid_offset, sizeof(mac_address_t));
++        return true;
+     }
+ 
+     return false;
+@@ -1297,4 +1309,3 @@
+ {
+ 
+ }
+-
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -521,27 +521,49 @@
+ 
+ int em_steering_t::handle_client_steering_report(unsigned char *buff, unsigned int len)
+ {
+-    em_tlv_t *tlv;
++    const unsigned int header_length = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++    if ((buff == nullptr) || (len < header_length)) {
++        return -1;
++    }
++    unsigned char *cursor = buff + header_length;
++    unsigned int remaining = len - header_length;
++    em_steering_btm_rprt_t *btm_rprt = nullptr;
++    bool end_of_message = false;
++    while (remaining >= sizeof(em_tlv_t)) {
++        auto *tlv = reinterpret_cast<em_tlv_t *>(cursor);
++        unsigned int value_length = ntohs(tlv->len);
++        if (value_length > remaining - sizeof(em_tlv_t)) {
++            return -1;
++        }
++        if (tlv->type == em_tlv_type_eom) {
++            end_of_message = value_length == 0;
++            break;
++        }
++        if (tlv->type == em_tlv_type_steering_btm_rprt) {
++            if ((btm_rprt != nullptr) || (value_length < 2 * sizeof(mac_address_t) + 1)) {
++                return -1;
++            }
++            btm_rprt = reinterpret_cast<em_steering_btm_rprt_t *>(tlv->value);
++        }
++        remaining -= sizeof(em_tlv_t) + value_length;
++        cursor += sizeof(em_tlv_t) + value_length;
++    }
++    if ((btm_rprt == nullptr) || !end_of_message) {
++        return -1;
++    }
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+-    em_steering_btm_rprt_t *btm_rprt;
+     em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *> (buff);
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+ 
+     if (em_msg_t(em_msg_type_client_steering_btm_rprt, em_profile_type_2, buff, len).validate(errors) == 0) {
+-        printf("%s:%d:Client Steering Request message validation failed\n",__func__,__LINE__);
++        printf("%s:%d:Client Steering Report message validation failed\n",__func__,__LINE__);
+         return -1;
+     }
+ 
+-    tlv = reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+-
+-    btm_rprt = reinterpret_cast<em_steering_btm_rprt_t *> (&tlv->value);
+-
+     mac_addr_str_t mac_str;
+     dm_easy_mesh_t::macbytes_to_string(btm_rprt->sta_mac_addr, mac_str);
+     printf("%s:%d Client BTM Report for sta %s, status %d\n", __func__, __LINE__, mac_str, btm_rprt->btm_status_code);
+ 
+-    set_state(em_state_ctrl_configured);
+-
+     send_1905_ack_message(btm_rprt->sta_mac_addr, ntohs(cmdu->id), 0, hdr->src, hdr->dst);
+ 
+     return 0;
+

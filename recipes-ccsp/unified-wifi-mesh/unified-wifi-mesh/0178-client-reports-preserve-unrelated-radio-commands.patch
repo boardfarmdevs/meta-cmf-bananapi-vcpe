@@ -1,0 +1,75 @@
+Subject: [PATCH] Keep client reports and association work on their radio state
+
+Late associated metrics and client capability reports must update data without
+resetting an unrelated candidate, steering or policy command. Protect the
+state transition with the existing command lock and its expected pending state.
+
+Each agent data model includes all its radios. A BSSID match alone therefore
+reserved every radio of that agent for one client association; only the
+matching source AL and BSS RUID may be admitted. Keep the existing no-link
+MLD fallback for records without a per-link BSS match.
+
+Upstream-Status: Pending
+
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -315,6 +315,11 @@
+ 
+ int em_metrics_t::handle_associated_sta_link_metrics_resp(unsigned char *buff, unsigned int len)
+ {
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr) {
++        return -1;
++    }
++    auto command_lock = orch->lock_commands();
+     em_tlv_t *tlv, *tlv_start;
+     size_t tmp_len, base_len;
+     mac_address_t 	sta_mac;
+@@ -384,7 +389,9 @@
+         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+     }
+     dm->set_db_cfg_param(db_cfg_type_sta_metrics_update, "");
+-    set_state(em_state_ctrl_configured);
++    if (get_state() == em_state_ctrl_sta_link_metrics_pending) {
++        set_state(em_state_ctrl_configured);
++    }
+ 
+     return 0;
+ }
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -740,6 +740,11 @@
+ 
+ int em_capability_t::handle_client_cap_report(unsigned char *buff, unsigned int len)
+ {
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr) {
++        return -1;
++    }
++    auto command_lock = orch->lock_commands();
+     unsigned int tmp_len;
+     em_tlv_t *tlv;
+     em_sta_info_t sta_info;
+@@ -837,7 +842,9 @@
+         return -1;
+     }
+ 
+-    set_state(em_state_ctrl_sta_cap_confirmed);
++    if (get_state() == em_state_ctrl_sta_cap_pending) {
++        set_state(em_state_ctrl_sta_cap_confirmed);
++    }
+ 
+     dm_easy_mesh_t::macbytes_to_string(sta_info.id, sta_mac_str);
+     dm_easy_mesh_t::macbytes_to_string(sta_info.bssid, bssid_str);
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -712,6 +712,8 @@
+                 //em_printfout("BSS for this STA %s is %s", pcmd->m_param.u.args.args[2], pcmd->m_param.u.args.args[1]);
+                 for (i = 0; i < dm->m_num_bss; i++) {
+                     if ((memcmp(dm->m_bss[i].m_bss_info.bssid.mac, bss_mac, sizeof(mac_address_t)) == 0) &&
++                        (memcmp(dm->get_agent_al_interface_mac(), dev_mac, sizeof(mac_address_t)) == 0) &&
++                        (memcmp(dm->m_bss[i].m_bss_info.ruid.mac, em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) &&
+                         (em->is_al_interface_em() == false)) {
+                         queue_push(pcmd->m_em_candidates, em);
+                         count++;
+

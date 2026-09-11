@@ -1018,6 +1018,7 @@ class LiveConductor:
             max_parallel_agents=self.coordination["candidate_parallel_agents"],
             allow_simulated=bool(optimizer["allow_simulated_candidates"]),
             request_attempts=1 if self.interactive else 2,
+            busy_wait_seconds=1 if self.interactive else 0,
             stop_on_unavailable=self.interactive,
             generation_guard=(lambda: self.room_state()["environment_epoch"] == room_before["environment_epoch"])
             if self.interactive and self.room_state and not self.profiling else None,

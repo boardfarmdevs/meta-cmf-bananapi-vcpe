@@ -153,7 +153,8 @@ three-radio projection itself must not be gated away from the physical build.
 | BTM transmit reliability | Wi-Fi HAL `0034`; OneWifi `0025`; EasyMesh `0148` | generic | A unicast action frame needs 802.11 ACK/retry handling; queue admission and local dispatch failures must not be reported as success. |
 | Signal attribute fallback | Wi-Fi HAL `0025` | generic | `NL80211_STA_INFO_CHAIN_SIGNAL` is optional on any driver; aggregate signal is standard. |
 | Provider count and allocation ownership | OneWifi `0021` through `0023` | generic (`0021` consumes active-row semantics) | Live station counts and freeing every radio/VAP allocation are product correctness, not wiphy representation. |
-| Medium delivery and telemetry | hwsim `0001` through `0008`; wmediumd `0001` through `0019` | host lab only | The external simulator must carry frequency, base-radio owner, learned VIF, delivery outcome and authoritative association state. |
+| Complete client metric snapshots | OneWifi `0026` | generic | Replacing a complete per-VAP provider snapshot, including an empty one, removes missed-leave ghosts without changing other VAPs or RCPI-only updates. |
+| Medium delivery and telemetry | hwsim `0001` through `0009`; wmediumd `0001` through `0023` | host lab only | Frequency-qualified delivery, independent ACK loss, survey leases and modeled airtime remain distinct from physical RF capacity; visibility-based contention is opt-in. |
 
 This matrix is an ownership rule, not merely documentation. A generic memory,
 serialization, timer, model, provider or protocol bug remains generic even if
@@ -365,9 +366,35 @@ authority. Its dependency order is:
     maximize the topology with six-pixel margins, without rearranging nodes
     or interrupting an active pointer gesture (`0161`).
 
+The current series continues through `0179`:
+
+| Patches | Boundary |
+| --- | --- |
+| `0162`–`0164` | Readable branch layouts and fullscreen topology. |
+| `0165`–`0171` | Separate topology and metrics refresh; exact serving-BSSID signal; bounded native/HTTP ownership; candidate coordination; direct steering; immediate association display. |
+| `0172`–`0174` | Early controller identity, compact CAC decoding and event-owned periodic AP metric commands. |
+| `0175` | Basic/extended client metric TLVs count the single serialized BSSID, not historical associations. |
+| `0176` | Admit independent commands per scheduler tick, retaining FIFO and radio exclusion. |
+| `0177`–`0178` | Source-AL/BSSID BTM routing, bounded report parsing, late-report state isolation and exact AL/BSSID/RUID association admission. |
+| `0179` | A policy ACK completes only its source/MID owner, preserving sibling candidate, steering and policy commands. |
+
 The ordered series is replayed against pristine pinned source before each Yocto
-component or image build. The current source series ends at `0161`; the
-role-specific artifact boundary is recorded under **Build and acceptance**.
+component or image build. Compiled source-extraction regressions take the fully
+patched Yocto source tree, not an unpatched upstream checkout:
+
+```sh
+python3 gen/tests/orchestrator-completion-race-test.py "$UNIFIED_SRC"
+python3 gen/tests/btm-report-ownership-test.py "$UNIFIED_SRC"
+python3 gen/tests/client-report-state-ownership-test.py "$UNIFIED_SRC"
+python3 gen/tests/policy-ack-ownership-test.py "$UNIFIED_SRC/src/em/policy_cfg/em_policy_cfg.cpp"
+python3 gen/tests/assoc-metrics-wire-count-test.py "$UNIFIED_SRC/src/em/metrics/em_metrics.cpp"
+python3 gen/tests/onewifi-metrics-snapshot-test.py "$ONEWIFI_SRC/source/apps/em/wifi_em.c"
+```
+
+Set `UNIFIED_SRC` and `ONEWIFI_SRC` to their recipe `git` directories under the
+chosen Yocto machine's `tmp/work`. Short live qualification and remaining
+failures are in [room acceptance](../testing/room-acceptance.md#current-qualification);
+release artifact boundaries remain under **Build and acceptance**.
 
 ## IEEE 1905 ordering
 

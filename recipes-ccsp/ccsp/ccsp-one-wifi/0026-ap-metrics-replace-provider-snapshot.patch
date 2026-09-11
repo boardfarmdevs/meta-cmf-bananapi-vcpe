@@ -1,0 +1,47 @@
+Subject: [PATCH] metrics: replace cached stations on every complete provider snapshot
+
+AP reporting retained rows until a disassociation event arrived. A missed
+leave event therefore survived even an empty authoritative HAL snapshot,
+re-publishing old BSS ownership and stale measurements after band roams.
+Clear only the VAP represented by each periodic snapshot before storing its
+active rows. RCPI-only monitoring must not clear the reporting cache.
+
+Upstream-Status: Pending
+
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -497,6 +497,23 @@
+     return RETURN_OK;
+ }
+ 
++static int em_client_stats_clear(unsigned int radio_index, unsigned int vap_index)
++{
++    if (radio_index >= MAX_NUM_RADIOS) {
++        return RETURN_ERR;
++    }
++    for (unsigned int cache_index = 0; cache_index < MAX_NUM_VAP_PER_RADIO; cache_index++) {
++        if (em_ap_metrics_report_cache.radio_report[radio_index].ap_data[cache_index].vap_index != vap_index) {
++            continue;
++        }
++        hash_map_cleanup(em_ap_metrics_report_cache.radio_report[radio_index]
++            .ap_data[cache_index].client_stats_map);
++        em_ap_metrics_report_cache.radio_report[radio_index].ap_data[cache_index].sta_count = 0;
++        return RETURN_OK;
++    }
++    return RETURN_ERR;
++}
++
+ static int handle_ready_client_stats(wifi_app_t *app, client_assoc_data_t *stats, size_t stats_num,
+     unsigned int vap_mask, unsigned int radio_index, unsigned int vap_index, int app_etype,
+     int sta_sze)
+@@ -533,6 +550,10 @@
+                 tmp_vap_index);
+             if (tmp_vap_array_index >= 0 && tmp_vap_array_index < (int)stats_num) {
+                 size_t stat_array_size = stats[tmp_vap_array_index].stat_array_size;
++                if (app_etype == em_app_event_type_assoc_dev_stats_periodic &&
++                    em_client_stats_clear(radio_index, tmp_vap_index) != RETURN_OK) {
++                    return RETURN_ERR;
++                }
+                 stats[tmp_vap_array_index].hit_count = 0;
+                 for (size_t i = 0; i < stat_array_size; i++) {
+                     sta_data_t *sta_data = &stats[tmp_vap_array_index].assoc_stats[i];

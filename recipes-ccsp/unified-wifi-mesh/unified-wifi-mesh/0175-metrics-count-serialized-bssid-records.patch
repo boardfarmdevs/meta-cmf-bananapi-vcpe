@@ -1,0 +1,59 @@
+Subject: [PATCH] metrics: count the BSSID records actually serialized
+
+Each per-STA link or extended-link TLV serializes exactly one supplied STA
+association, not every BSS known for that MAC. Counting historic/current
+rows elsewhere in the model advertises two records while emitting one after
+an intra-agent band roam. The controller correctly rejects that length,
+leaving valid current metrics unavailable. Keep exact-owner validation and
+emit a count of one (zero for a missing STA) independent of model history.
+
+Upstream-Status: Pending
+
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -1636,14 +1636,9 @@
+ short em_metrics_t::create_assoc_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta)
+ {
+     size_t len = 0;
+-    dm_easy_mesh_t *dm;
+-    int num_bssids = 0;
+     em_assoc_sta_link_metrics_t *assoc_sta_metrics = reinterpret_cast<em_assoc_sta_link_metrics_t*> (buff);
+     em_assoc_link_metrics_t *metrics;
+ 
+-    dm = get_data_model();
+-    num_bssids = dm->get_num_bss_for_associated_sta(sta_mac);
+-
+     if (sta == NULL) {
+         memcpy(&assoc_sta_metrics->sta_mac, &sta_mac, sizeof(assoc_sta_metrics->sta_mac));
+         len += sizeof(assoc_sta_metrics->sta_mac);
+@@ -1658,7 +1653,7 @@
+             memcpy(&assoc_sta_metrics->sta_mac, &sta->m_sta_info.id, sizeof(assoc_sta_metrics->sta_mac));
+             len += sizeof(assoc_sta_metrics->sta_mac);
+ 
+-            assoc_sta_metrics->num_bssids = static_cast<unsigned char> (num_bssids);
++            assoc_sta_metrics->num_bssids = 1;
+             len += sizeof(assoc_sta_metrics->num_bssids);
+ 
+             memcpy(&metrics->bssid, &sta->m_sta_info.bssid, sizeof(metrics->bssid));
+@@ -1683,12 +1678,9 @@
+ short em_metrics_t::create_assoc_ext_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta)
+ {
+     size_t len = 0;
+-    dm_easy_mesh_t *dm;
+     em_assoc_sta_ext_link_metrics_t *assoc_sta_metrics = reinterpret_cast<em_assoc_sta_ext_link_metrics_t*> (buff);
+     em_assoc_ext_link_metrics_t *metrics;
+ 
+-    dm = get_data_model();
+-
+     if (sta == NULL) {
+         memcpy(&assoc_sta_metrics->sta_mac, &sta_mac, sizeof(assoc_sta_metrics->sta_mac));
+         len += sizeof(assoc_sta_metrics->sta_mac);
+@@ -1703,7 +1695,7 @@
+             memcpy(assoc_sta_metrics->sta_mac, sta->m_sta_info.id, sizeof(assoc_sta_metrics->sta_mac));
+             len += sizeof(assoc_sta_metrics->sta_mac);
+ 
+-            assoc_sta_metrics->num_bssids = static_cast<unsigned char> (dm->get_num_bss_for_associated_sta(sta_mac));
++            assoc_sta_metrics->num_bssids = 1;
+             len += sizeof(assoc_sta_metrics->num_bssids);
+ 
+             memcpy(metrics->bssid, sta->m_sta_info.bssid, sizeof(metrics->bssid));
