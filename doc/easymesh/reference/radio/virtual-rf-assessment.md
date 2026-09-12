@@ -6,16 +6,12 @@
 See [operation, supported profile and acceptance](#124-implemented-phases-12-survey-and-native-bss-load).
 The supported model remains legacy-rate, 20 MHz. The Phase 3 visibility profile
 is opt-in and conservative, not calibrated physical capacity or full DCF.
-This is the shared RF assessment for the RDK EasyMesh and prplMesh labs on
-`codex/0908-clean`. It is mirrored in each repository's radio reference so
-either repository remains independently useful. Maintain the common text
-together; do not create a second backlog for the same RF work.
+This shared RDK/prpl assessment targets `codex/0908-clean`. Keep both repository
+copies synchronized, not separate backlogs.
 
-The evidence baseline and short acceptance are 2026-09-10 Pacific /
-2026-09-11 UTC. The initial read-only audit identified the gaps in the evidence
-register. Subsequent Phases 1–2 rebuilt and deployed the module, daemon and
-native providers, then exercised fixed fields, real traffic, channel changes,
-failure and recovery. No long soak or physical-capacity qualification was run.
+Evidence extends through 2026-09-11 Pacific / 2026-09-12 UTC. Phases 1–2 deploy
+the module, daemon and native providers, testing fixed fields, traffic, retunes,
+failure and recovery. No soak or physical-capacity qualification was run.
 
 ## Navigation
 
@@ -1132,61 +1128,60 @@ over-budget observations still fail.
 
 #### Results and remaining work
 
-Medium builds, sanitizer fixtures and load-card checks pass.
-Configurator tests: RDK **129**, prpl **125**; room orchestration:
-**204 / 144**. Queue fixtures do not prove live hidden-node behavior.
+Medium builds/self-tests, sanitizer and load-card fixtures pass; configurator
+tests pass **136 RDK / 132 prpl**, including daemon integration. Earlier bounded
+reporting/retune/recovery checks pass **25/25 and 28/28** respectively.
+Observer A/B overhead passes <5% with clean restoration: global-profile
+estimates **-0.44%/-0.64%**, experimental **-0.14%/-0.02%** (negative means
+run variation). These precede native follow-up fixes, not a controlled
+convergence comparison. Raw latency/overhead evidence remains under
+`/home/rev/work/rf-correctness-0911/`; fixtures do not prove live collisions.
 
-| Short live measurement | RDK | prpl |
-| --- | --- | --- |
-| Fresh native contexts / cache-age p99 | 35 / 100.60 ms | 35 / 98.95 ms |
-| Bridge CPU, one core | 3.59% | 3.70% |
-| Global-profile A/B on/off medians | 7.721 / 7.688 Mbit/s | 3.861 / 3.837 Mbit/s |
-| Apparent observer overhead | -0.44% | -0.64% |
-| Verified-baseline fixture → driver / beacon / 1905 | 0.349 / 1.952 / 13.082 s | 0.345 / 1.766 / 2.375 s |
-| Follow-up native reporting/retune/recovery | 25/25 passed | 28/28 passed |
+Both catalogs pass **14/14**, with **153/153** verified actions each, after
+native RDK scheduling and common collection/presence fixes. RDK has zero
+candidate timeouts/busy rejections; prpl retains one recovered **30.289-second**
+incomplete collection. See [room qualification](../testing/room-acceptance.md#current-qualification)
+for unchanged gates, timing and host limitations. Both cold reconstructions
+pass twenty clients; RDK retains global `/home/rev/oe/{downloads,sstate-cache}`.
 
-Negative overhead is run variation. Both profiles pass the <5% gate with clean
-restoration; experimental overhead is -0.14% RDK, -0.02% prpl. Synthetic latency
-steps do not rank stack throughput.
-A/B results precede the native follow-up fixes; they are not a controlled
-convergence comparison.
+For bounded native two-flow spatial qualification, run as root inside the lab
+VM from its configurator directory, with a new evidence directory:
 
-Latency evidence: `rdk-latency-baseline-artifacts/report.json` and
-`prpl-latency-baseline-artifacts/rf-correctness-latency-baseline/report.json`
-under correctness evidence; colocated RDK versus selected remote prpl BSS.
-Both restore normally.
+```sh
+python3 -m wmdcfg.rf_spatial --stack rdk --seconds 12 \
+  --output /tmp/rf-spatial-new --yes-change-lab
+```
 
-RDK correctness fixes:
+Use `--stack prplmesh` for prpl. Requires iperf3, untouched default twenty-client
+world paused at zero, no lease/recording, global medium and no 2.4-GHz managed
+backhaul. Existing private clients (prpl 01/03; 02 is IoT) use gateway/first-extender
+APs and provisioned radio IDs, not learned aliases. No extra VM/radio is needed.
+With orchestration stopped, six 12-second TCP trials alternate global, isolated,
+hidden-receiver, then reverse order. Associations, RF readback, both receiver
+rates and per-AP survey activity must remain valid. Hidden-receiver reservations
+are conservative, not physical collisions.
 
-- OneWifi replaces complete periodic VAP client snapshots, including empty
-  snapshots, removing missed-leave ghosts without affecting other VAPs or RCPI.
-- Associated-link serializers count the single BSSID they emit, not historical
-  associations. The previous malformed count correctly failed controller
-  validation. Exact-owner and association-age guards remain intact.
-- Orchestration admits independent commands together, retaining FIFO, locking
-  and radio exclusion. Interactive collection bounds unsubmitted busy
-  readmission, not accepted-query timeouts.
-- BTM reports route by source AL/BSSID, not an arbitrary populated radio.
-  Bounded decoding ACKs their own MID without resetting unrelated commands.
-- Policy ACKs complete their source/MID owner, not every sibling radio.
-- Late client capability/metric reports cannot reset candidate or steering
-  states. Per-link association work reserves its exact AL/BSSID/RUID rather
-  than every radio sharing the agent's data model.
+Cleanup removes temporary routes, extender address and narrow RDK TCP rule;
+restores original medium/profile/matrices, associations and services. Native
+gateway addressing preserves ARP policy. Retain raw JSON and run final room
+readiness. Failed/inconclusive trials exit nonzero, also correcting the older
+A/B helper's inconclusive-success exit.
 
-Both gateway and extender Yocto recipes rebuild with global
-`/home/rev/oe/{downloads,sstate-cache}`. RDK's ordinary cold reconstruction
-passes 20/20 clients and metrics, model 5/15/50 and zero native restarts.
+| Bounded run | Global / isolated / hidden median Mbit/s | Isolated / global | Hidden / global | Maximum repeat spread | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| RDK first complete (6) | 4.434 / 7.457 / 4.577 | 1.682 | 1.032 | 2.02% | Pass |
+| RDK repeat (7) | 4.534 / 8.232 / 4.540 | 1.815 | 1.001 | 14.25% | Inconclusive |
+| prpl complete (2) | 3.656 / 6.519 / 3.837 | 1.783 | 1.050 | 27.00% | Inconclusive |
 
-Room qualification uses configured policy convergence, with absolute
-strongest-AP gaps separately visible. Complete room gates pass **14/14 RDK**;
-the unchanged prior prpl run passes **14/14**. See the
-[current room qualification](../testing/room-acceptance.md#current-qualification)
-for catalog timings and queue fixes. RDK records no candidate timeouts/busy
-rejections; host throttling limits performance claims. Policy pass does not
-mean instant movement.
+All complete runs pass association/readback/survey checks and restoration;
+both final room readiness checks pass. RF host samples are separate from catalog
+evidence. **Repeatability remains open**: reuse exceeds 1.25×, hidden/global is
+within 0.75–1.25×, but repeat spread exceeds the unchanged <5% gate. Do not
+discard inconclusive runs or retry until green. Failed setup attempts remain
+diagnostics. Next instrument rate selection, queue reservations, global
+multicast and TCP feedback; the variance's cause is unproven.
 
-Reporting cadence, modern PHY/DCF, reception-backed candidates, physical
-calibration and load-aware policy remain separate gates. This is not a fully
-qualified congestion simulator or zero-overhead system. Evidence:
-`/home/rev/work/rdk-rooms-fix-0911/` and `/home/rev/work/rf-correctness-0911/`
-on rev150. No new thin tar or box is made.
+Modern PHY/DCF, live collisions/interference, reception-backed candidates,
+calibration and Phase 4 load-aware policy remain open. Raw evidence on rev150:
+`/home/rev/work/rf-spatial-0912/`, `/home/rev/work/rdk-rooms-fix-0911/`,
+`/home/rev/work/prpl-common-0911/`. No release thin tar or box is made.
