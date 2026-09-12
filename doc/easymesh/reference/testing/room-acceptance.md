@@ -120,40 +120,41 @@ native reporting intervals and lab resources are unchanged. The temporary
 
 ### RDK results
 
-The rev140 retest, **22:24–22:55 UTC**, passes **14/14 complete room gates**:
-every initial, checkpoint and final gate, Play, scene/roster checks, physical
-presence and native/rendered owner agreement. Native/container/medium identities
-remain unchanged; there are no SSE gaps or browser errors. This is the current
-RDK qualification, superseding the earlier failed diagnostic runs.
+The rev140 retest, **September 11 23:33–September 12 00:01 UTC**, passes
+**14/14 complete room gates**: every initial, checkpoint and final gate, Play,
+scene/roster checks, physical presence and native/rendered owner agreement.
+Native/container/medium identities remain unchanged; no SSE gaps or browser
+errors occur. This supersedes earlier diagnostic results.
 
-The deployed worktree includes native patches through **0183**, Wi-Fi HAL
+The deployed worktree includes native patches through **0184**, Wi-Fi HAL
 through **0038**, wmediumd through **0024**, and the corrected room action queue.
-No native services restart during the catalog run. prpl is not changed or
-retested in this RDK-only continuation.
+Ordinary cold reconstruction also passes 20 clients, five physical mesh nodes
+and all native metrics in **527.07 s**. No native services restart during the
+catalog run. Six logical mesh roles remain visible in both views.
 
 | Room | Overall | Initial / final first policy convergence, seconds |
 | --- | --- | --- |
-| `home-a-stationary` | Pass | 2.04 / <0.02 |
-| `home-a-one-client-handover` | Pass | 20.24 / 18.28 |
-| `large-room-extender-evacuation` | Pass | 31.49 / 24.26 |
-| `large-room-perimeter-counter-roam` | Pass | 32.37 / 21.26 |
-| `home-a-asymmetric-link` | Pass | 11.16 / 8.10 |
-| `home-a-band-walk-small` | Pass | 23.26 / 17.21 |
-| `home-a-border-hover` | Pass | 35.39 / 31.38 |
-| `home-a-disappear-reappear` | Pass | 26.32 / <0.02 |
-| `home-a-extender-loss-recovery` | Pass | 11.17 / 4.06 |
-| `home-a-fast-transit` | Pass | 20.21 / 23.30 |
-| `home-a-flash-crowd` | Pass | 8.11 / 9.12 |
-| `home-a-private-client-room-walk` | Pass | 41.54 / <0.02 |
-| `home-a-slow-walk-ten` | Pass | 28.38 / 23.36 |
-| `home-b-slow-walk-ten` | Pass | 40.58 / 30.45 |
+| `home-a-stationary` | Pass | <0.02 / <0.02 |
+| `home-a-one-client-handover` | Pass | 15.15 / 15.19 |
+| `large-room-extender-evacuation` | Pass | 34.37 / 23.25 |
+| `large-room-perimeter-counter-roam` | Pass | 32.37 / 7.09 |
+| `home-a-asymmetric-link` | Pass | 18.21 / 8.09 |
+| `home-a-band-walk-small` | Pass | 24.29 / 10.15 |
+| `home-a-border-hover` | Pass | 24.29 / 21.29 |
+| `home-a-disappear-reappear` | Pass | 20.25 / 7.09 |
+| `home-a-extender-loss-recovery` | Pass | 8.08 / <0.02 |
+| `home-a-fast-transit` | Pass | 19.19 / 14.17 |
+| `home-a-flash-crowd` | Pass | 8.09 / <0.02 |
+| `home-a-private-client-room-walk` | Pass | 33.45 / <0.02 |
+| `home-a-slow-walk-ten` | Pass | 25.35 / 11.15 |
+| `home-b-slow-walk-ten` | Pass | 33.49 / 12.16 |
 
 These are first-convergence times; passing also requires the unchanged
-five-second continuous hold before the deadline. The run verifies **153/153**
-submitted actions, with **zero failed verifications**. Request-to-verification
-p50/p95/max is **2.538/6.648/7.629 s**. Submission p50/p95 is **59/76 ms**;
-candidate transaction p50/p95 is **520/1040 ms**; publication wait p50/p95
-is **85/130 ms**. RF apply p50/p95 is **9.1/26.8 ms**.
+five-second continuous hold. **153/153 submitted actions verify**, with no
+failed verifications. Request-to-verification p50/p95/max is
+**2.274/5.385/6.610 s**. Submission p50/p95 is **59/74 ms**; candidate
+transaction p50/p95 is **509/654 ms**; publication wait p50/p95 is
+**84/132 ms**. RF apply p50/p95 is **9.4/27.4 ms**.
 
 The fixes cover four boundaries:
 
@@ -162,49 +163,60 @@ The fixes cover four boundaries:
   HAL frame sockets cannot block or race teardown, and hostapd uses the normal
   disabled association-comeback test override.
 - **Current RF and candidates:** fronthaul samples the confirmed serving
-  uplink's simulated matrix RF rather than an idle peer's last-packet RSSI.
-  Backhaul retains kernel RSSI. This is modeled RF, not a newly received packet.
-  Candidate collection remains fair across roaming clients and requires each
-  client's complete fresh same-band comparison before choosing a target.
-- **Native command completion:** admitted queries dispatch without an extra
-  timer wait; ready candidate/BTM reports can complete during capability
-  reporting without corrupting radio state or another command's ACK ownership.
-- **Unsent action bookkeeping:** a full five-verification queue no longer marks
-  an unsent client pending. Previously this imposed a false 40-second timeout
-  plus backoff. Only an action passing dispatch guards enters pending state.
-  A nine-client regression reproduces the old failure and verifies immediate
-  eligibility when a slot opens. Actual timeout/cooldown/backoff limits stay
-  unchanged.
+  uplink's simulated matrix RF, not an idle peer's last-packet RSSI. Backhaul
+  retains kernel RSSI. This is modeled RF, not a newly received packet.
+  Collection remains fair across roaming clients and requires each client's
+  complete fresh same-band comparison before choosing a target.
+- **Native command scheduling:** candidate and association commands dispatch
+  at admission; confirmed commands release their radio before the next FIFO
+  admission in that scheduler turn. Validated candidate/BTM reports complete
+  during capability reporting without changing ACK ownership. Radio exclusion,
+  locking, native retries and accepted-query deadlines remain unchanged.
+- **Unsent action bookkeeping:** a full five-verification queue cannot mark an
+  unsent client pending. Only requests passing dispatch guards enter pending.
+  This removes a false 40-second timeout plus backoff without changing actual
+  timeout, cooldown or backoff limits.
 
-Regression validation passes **489 Python tests**, **133 subtests** and all
-**25 JavaScript regression scripts**; four environment-dependent Python tests
-are skipped. The compiled native/HAL fixtures and clean component builds pass.
+A packet-correlated reproduction found an accepted query waiting **8.1 s before
+transmission**, behind association commands; its actual reply took **259 ms**.
+Patch 0184 removes those avoidable timer turns, not the deadline. Both new
+source-extraction regressions fail before the fix and pass on the built source.
+Existing compiled native/HAL fixtures pass; Python validation is **489 passed**,
+**133 subtests**, with four environment-dependent skips. All 25 JavaScript
+regression scripts pass at the unchanged UI baseline; the new catalog run also
+inspects both live views throughout.
 
-The focused evacuation/perimeter/home-B run also passes **3/3**, with **66/66**
-verified actions. The full run still records **six native candidate HTTP 504
-timeouts** and **89 busy admission attempts**, including 81 successful
-readmissions. Recovery occurs within all room gates; this is **not** a claim
-of timeout-free collection, instant convergence or zero observer overhead.
-Epoch cancellations are recorded separately from native failures.
+| Observed full-catalog metric | Before 0184 | After 0184 |
+| --- | --- | --- |
+| Complete room gates | 14/14 | 14/14 |
+| Verified / failed moves | 153 / 0 | 153 / 0 |
+| Native candidate HTTP 504 | 6 | 0 |
+| Busy admission attempts / successful readmissions | 89 / 81 | 0 / 0 |
+| Candidate transaction p95 | 1.040 s | 0.654 s |
+| Request-to-verification p95 | 6.648 s | 5.385 s |
 
-Default restoration passes with twenty clients and six logical mesh roles,
-first convergence **44.44 s** plus the hold. The room is paused at time zero,
-unleased, fault-free and back at its normal 100-action cap. Diagnostic capture
-is stopped and `hwsim0` is down. No new tar or box is created.
+The targeted evacuation/perimeter/home-B check also passes **3/3**, **63/63**
+verified moves and zero candidate timeouts/busy rejections. Epoch cancellations
+remain separate from native failures. These bounded results do not guarantee
+instant convergence or that future runs can never time out.
 
-During this run, rev140 peaks at **11.44% sampled CPU**, has at least
-**51.47 GiB available RAM**, and reaches **89°C sampled temperature**, with
-**zero package throttle-counter increase** across 184 host samples.
-No Yocto build or packet capture overlaps qualification. These remain
-deployment measurements, not intrinsic hardware-stack performance.
+Restoration passes with twenty clients and six logical roles: first convergence
+**33.44 s**, then the hold. The room is paused at zero, unleased, fault-free,
+with its normal 100-action cap. Diagnostic capture is stopped and hwsim0 is down.
+No new tar or box is created.
 
-Evidence on rev150: `/home/rev/work/rdk-rooms-fix-0911/all-rooms-10/`
-contains `results/`, `audited-summary.json` and the time-filtered
-`host-monitor.jsonl`. `focused-6/` holds the targeted pass;
-`phantom-pending-negative.log` and `phantom-pending-positive.log` retain
-the regression proof. Earlier failed/interrupted runs remain separate,
-not relabeled as passes. Source fixes are mirrored to the canonical rev140
-`codex/0908-clean` worktree.
+**Host caveat:** 168 rev140 samples show peak CPU **22.71%**, at least
+**51.46 GiB available RAM**, peak sampled temperature **92°C**, and **11 package
+throttle-counter increments**. CPU/RAM are not exhausted, but thermal headroom
+is a separate profiling concern. No build or capture runs on rev140 during
+qualification; the browser driver uses isolated CPUs on rev150. Timings are
+observed deployment results, not an uncontended intrinsic-stack benchmark.
+
+Evidence on rev150: `/home/rev/work/rdk-rooms-fix-0911/all-rooms-11/` contains
+`results/`, `audited-summary.json`, restored state and time-filtered host
+samples. `focused-7/` holds the targeted pass; `candidate-timeouts-0911.tar.gz`
+contains the before-fix packet/journal trace, and the negative/positive fixture
+logs retain regression proof. Earlier results remain separate, not relabeled.
 
 ### prpl results
 

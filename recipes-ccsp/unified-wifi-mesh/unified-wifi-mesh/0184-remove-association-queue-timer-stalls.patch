@@ -1,0 +1,73 @@
+Subject: [PATCH] Dispatch client association work and release completed radios promptly
+
+An accepted candidate query can wait behind a burst of association capability
+and publication commands until its HTTP deadline has already expired. Dispatch
+those association phases at admission, using their existing protocol handlers.
+Retire confirmed commands before admitting the next FIFO owner in the same
+scheduler tick, rather than reserving a finished radio for extra ticks.
+
+Keep command locking, radio exclusion, FIFO ordering, retry periods and native
+response validation unchanged. No accepted-query timeout is extended.
+
+Upstream-Status: Pending
+
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -198,2 +198,4 @@
+             }
++            em_capability_t::process_ctrl_state();
++            em_configuration_t::process_ctrl_state();
+             break;
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -378,2 +378,3 @@
+             em->set_orch_state(em_orch_state_fini);
++            done = true;
+         } else {
+@@ -570,21 +571,2 @@
+
+-    for (int pending_index = static_cast<int>(queue_count(m_pending)) - 1;
+-         pending_index >= 0; pending_index--) {
+-        auto *pending_command = static_cast<em_cmd_t *>(queue_peek(m_pending,
+-            static_cast<unsigned int>(pending_index)));
+-        if (!eligible_for_active(pending_command)) {
+-            continue;
+-        }
+-
+-        queue_remove(m_pending, static_cast<unsigned int>(pending_index));
+-        for (unsigned int radio_index = 0;
+-             radio_index < queue_count(pending_command->m_em_candidates); radio_index++) {
+-            auto *radio = static_cast<em_t *>(queue_peek(pending_command->m_em_candidates, radio_index));
+-            radio->set_orch_state(em_orch_state_pending);
+-        }
+-        pending_command->set_start_time();
+-        queue_push(m_active, pending_command);
+-    }
+-
+-
+     // go through active queue and check command states
+@@ -617,2 +599,25 @@
+     }
++
++    for (int pending_index = static_cast<int>(queue_count(m_pending)) - 1;
++         pending_index >= 0; pending_index--) {
++        auto *pending_command = static_cast<em_cmd_t *>(queue_peek(m_pending,
++            static_cast<unsigned int>(pending_index)));
++        if (!eligible_for_active(pending_command)) {
++            continue;
++        }
++
++        queue_remove(m_pending, static_cast<unsigned int>(pending_index));
++        for (unsigned int radio_index = 0;
++             radio_index < queue_count(pending_command->m_em_candidates); radio_index++) {
++            auto *radio = static_cast<em_t *>(queue_peek(pending_command->m_em_candidates, radio_index));
++            radio->set_orch_state(em_orch_state_pending);
++        }
++        pending_command->set_start_time();
++        queue_push(m_active, pending_command);
++        for (unsigned int radio_index = 0;
++             radio_index < queue_count(pending_command->m_em_candidates); radio_index++) {
++            auto *radio = static_cast<em_t *>(queue_peek(pending_command->m_em_candidates, radio_index));
++            orchestrate(pending_command, radio);
++        }
++    }

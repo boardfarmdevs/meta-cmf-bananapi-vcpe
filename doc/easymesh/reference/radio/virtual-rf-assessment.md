@@ -1181,8 +1181,9 @@ Room qualification uses configured policy convergence, with absolute
 strongest-AP gaps separately visible. Complete room gates pass **14/14 RDK**;
 the unchanged prior prpl run passes **14/14**. See the
 [current room qualification](../testing/room-acceptance.md#current-qualification)
-for the catalog, remaining native retries and timings. Policy pass does not mean
-instant movement or zero transient measurement loss.
+for catalog timings and queue fixes. RDK records no candidate timeouts/busy
+rejections; host throttling limits performance claims. Policy pass does not
+mean instant movement.
 
 Reporting cadence, modern PHY/DCF, reception-backed candidates, physical
 calibration and load-aware policy remain separate gates. This is not a fully

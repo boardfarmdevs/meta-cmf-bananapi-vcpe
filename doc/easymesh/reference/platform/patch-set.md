@@ -370,7 +370,7 @@ authority. Its dependency order is:
     maximize the topology with six-pixel margins, without rearranging nodes
     or interrupting an active pointer gesture (`0161`).
 
-The current series continues through `0183`:
+The current series continues through `0184`:
 
 | Patches | Boundary |
 | --- | --- |
@@ -385,6 +385,7 @@ The current series continues through `0183`:
 | `0181` | Dispatch admitted candidate queries immediately under existing command ownership, rather than waiting for the radio tick; preserve single-flight MID protection and timer retries. |
 | `0182` | Admit validated one-shot candidate replies during onboarding/capability reporting; preserve the original radio state and finish once, rather than expiring a ready response behind a topology-state gate. |
 | `0183` | Admit BTM reports in completed AP-capability state, restore that state on the matching ACK and require ACK completion before releasing the radio; ready candidate results no longer wait behind an unsent BTM report. |
+| `0184` | Dispatch admitted association phases immediately and retire confirmed commands before the next FIFO admission in the same scheduler turn. Preserve radio exclusion, locking, response validation and timeouts; accepted candidate queries no longer wait for avoidable association timer turns. |
 
 HAL patch `0036-hostapd-disable-association-comeback-test-override.patch`
 initializes hostapd's association-comeback test override to
@@ -423,6 +424,7 @@ python3 gen/tests/onboarding-report-state-test.py "$UNIFIED_SRC"
 python3 gen/tests/unassoc-result-state-test.py "$UNIFIED_SRC"
 python3 gen/tests/btm-report-state-test.py "$UNIFIED_SRC"
 python3 gen/tests/unassoc-query-dispatch-test.py "$UNIFIED_SRC"
+python3 gen/tests/association-command-dispatch-test.py "$UNIFIED_SRC"
 python3 gen/tests/policy-ack-ownership-test.py "$UNIFIED_SRC/src/em/policy_cfg/em_policy_cfg.cpp"
 python3 gen/tests/assoc-metrics-wire-count-test.py "$UNIFIED_SRC/src/em/metrics/em_metrics.cpp"
 python3 gen/tests/onewifi-metrics-snapshot-test.py "$ONEWIFI_SRC/source/apps/em/wifi_em.c"

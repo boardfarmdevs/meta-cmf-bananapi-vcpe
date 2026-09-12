@@ -110,13 +110,14 @@ public:
     hash_map_t *m_cmd_map = &statistics;
     unsigned int m_pending_high_water = 0;
     std::function<void()> during_fini;
+    bool ready = false;
     unsigned int build_candidates(em_cmd_t *command) {
         return queue_count(command->m_em_candidates);
     }
     bool is_em_ready_for_orch_exec(em_cmd_t *, em_t *) { return true; }
     bool is_em_ready_for_orch_fini(em_cmd_t *, em_t *) {
         if (during_fini) during_fini();
-        return false;
+        return ready;
     }
     void orch_transient(em_cmd_t *command, em_t *) {
         assert(hash_map_get(m_cmd_map, std::to_string(command->m_type).c_str()));
@@ -178,6 +179,32 @@ void fair_independent_admission() {
     assert(first_radio.command == commands[2]);
     assert(orchestrator.complete_command(76));
     assert(orchestrator.complete_command(76));
+    assert(orchestrator.statistics.empty());
+}
+
+void ready_completion_releases_radio_in_same_tick() {
+    em_orch_t orchestrator;
+    em_t radio;
+    auto *first = new em_cmd_t;
+    auto *second = new em_cmd_t;
+    first->candidates.push_back(&radio);
+    second->candidates.push_back(&radio);
+    assert(orchestrator.submit_command(first));
+    assert(orchestrator.submit_command(second));
+    orchestrator.handle_timeout();
+    assert(radio.command == first);
+    orchestrator.ready = true;
+    orchestrator.handle_timeout();
+    assert(radio.command == second);
+    assert(radio.state == em_orch_state_progress);
+    assert(queue_count(orchestrator.m_pending) == 0);
+    assert(queue_count(orchestrator.m_active) == 1);
+    orchestrator.ready = false;
+    orchestrator.handle_timeout();
+    assert(radio.command == second);
+    orchestrator.ready = true;
+    orchestrator.handle_timeout();
+    assert(radio.command == nullptr && radio.state == em_orch_state_idle);
     assert(orchestrator.statistics.empty());
 }
 
@@ -251,6 +278,7 @@ harness += "for (unsigned int iteration = 0; iteration < 20; iteration++) race_t
 if locking:
     harness += "race_response_and_tick();\nassert(destroyed == 41);\n"
 harness += "fair_independent_admission();\nassert(destroyed == 45);\n"
+harness += "ready_completion_releases_radio_in_same_tick();\nassert(destroyed == 47);\n"
 harness += 'std::cout << "PASS: concurrent completion, command/stat lifetime, nested locking, duplicate response and immediate next query\\n";\n}\n'
 
 with tempfile.TemporaryDirectory(prefix="orchestrator-completion-race-") as temporary:
