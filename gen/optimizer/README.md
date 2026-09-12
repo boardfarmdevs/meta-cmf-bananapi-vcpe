@@ -83,6 +83,14 @@ bridge supplies only provenance/liveness, not load values or SNR inputs.
 Packets/second are activity, not offered demand or calibrated capacity;
 backhaul hops are a conservative cost guard, not a bandwidth estimate.
 
+Transport provenance is `ieee1905-ethernet` on RDK. The shared collector uses
+prpl's native broker for its colocated and remote APs, preserving native
+publication timestamps instead of re-timestamping cached data. Disconnected,
+stale or unsupported receivers fail closed. A bounded read-only check is
+`PYTHONPATH=gen/optimizer python3 gen/tests/native-load-acceptance.py --stack rdk --output /tmp/native-load-new`
+inside the VM; it checks all BSS loads, station counts, client activity,
+advancing timestamps and receiver cleanup.
+
 Strong links balance from sustained high load to a fresh quieter channel
 with viable RF and no extra wireless hop. RDK's independent five-second
 native reports use a ten-second hold, with five-second freshness/skew bounds;
