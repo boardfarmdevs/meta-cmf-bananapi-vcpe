@@ -1,0 +1,23 @@
+Subject: [PATCH] Use the normal hostapd association comeback interval type
+
+The HAL initializes hostapd BSS configuration itself. With testing options
+compiled in, leaving test_assoc_comeback_type zero silently overrides the
+normal association-comeback type with reserved type zero. Returning PMF
+stations then ignore the comeback interval and blacklist the target BSS
+instead of retrying after SA Query. Match hostapd's default sentinel without
+disabling PMF, shortening the SA Query timeout or bypassing authentication.
+
+Upstream-Status: Pending
+
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
+@@ -241,6 +241,9 @@
+     conf->assoc_sa_query_max_timeout = 1000;
+     conf->assoc_sa_query_retry_timeout = 201;
+     conf->group_mgmt_cipher = WPA_CIPHER_AES_128_CMAC;
++#ifdef CONFIG_TESTING_OPTIONS
++    conf->test_assoc_comeback_type = -1;
++#endif
+ #endif /* CONFIG_IEEE80211W */
+ #ifdef EAP_SERVER_FAST
+ //Defined

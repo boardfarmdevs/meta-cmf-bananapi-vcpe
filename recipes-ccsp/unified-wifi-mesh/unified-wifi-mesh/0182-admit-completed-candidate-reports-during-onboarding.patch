@@ -1,0 +1,31 @@
+Subject: [PATCH] Admit one-shot candidate replies without a topology-state gate
+
+OneWifi can return valid NaSta metrics within milliseconds while the agent
+radio is reporting AP capabilities. The result command was admitted to the
+radio queue but could not execute in that state, so it expired ten seconds
+later, after the controller's HTTP measurement deadline. The timeout could
+also cancel a newer sibling result of the same command type.
+
+The result sender already sends synchronously, restores the original radio
+state and marks its command finished. Admit that validated continuation in
+any topology state, as for one-shot client presence notifications. Retain
+radio exclusion, command locking, parser validation and the query MID.
+Do not change native reporting periods, timeout budgets or policy margins.
+
+Upstream-Status: Pending
+
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -374,11 +374,7 @@
+             return true;
+         }
+     } else if (pcmd->m_type == em_cmd_type_unassoc_sta_result) {
+-        if ((em->get_state() == em_state_agent_topo_synchronized) ||
+-            (em->get_state() == em_state_agent_configured) ||
+-            (em->get_state() == em_state_agent_unassoc_sta_metrics_report_pending)) {
+-            return true;
+-        }
++        return true;
+     }
+ 
+     return false;

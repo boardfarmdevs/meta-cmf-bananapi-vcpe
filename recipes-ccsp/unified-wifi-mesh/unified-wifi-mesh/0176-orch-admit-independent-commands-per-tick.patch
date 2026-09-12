@@ -1,0 +1,59 @@
+Subject: [PATCH] Admit independent commands together in FIFO order
+
+The periodic scheduler admitted only one pending command per tick even when
+other radios were idle. Reserve all eligible radios under the existing
+command lock, retaining oldest-first ordering and same-radio exclusion.
+This does not change steering policy or allow overlapping radio commands.
+
+Upstream-Status: Pending
+
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -566,36 +566,24 @@
+     em_cmd_t *pcmd;
+     em_t *em;
+     signed int i, j; 
+-    unsigned int cnt;
+-    bool eligible_to_move = false;
+     bool ret = true;
+ 
+-    // go through pending queue and check if the commands can be moved to active
+-    for (i = static_cast<int>(queue_count(m_pending)) - 1; i >= 0; i--) {
+-        pcmd = static_cast<em_cmd_t *>(queue_peek(m_pending, static_cast<unsigned int>(i)));
+-        if (eligible_for_active(pcmd) == true) {
+-            queue_remove(m_pending, static_cast<unsigned int>(i));
+-            //printf("%s:%d: Cmd: %s Orch Type: %s eligible for active\n", __func__, __LINE__, 
+-                    //pcmd->get_cmd_name(), em_cmd_t::get_orch_op_str(pcmd->get_orch_op()));
+-            eligible_to_move = true;
+-            break;			
++    for (int pending_index = static_cast<int>(queue_count(m_pending)) - 1;
++         pending_index >= 0; pending_index--) {
++        auto *pending_command = static_cast<em_cmd_t *>(queue_peek(m_pending,
++            static_cast<unsigned int>(pending_index)));
++        if (!eligible_for_active(pending_command)) {
++            continue;
+         }
+-    }	
+ 
+-    if (eligible_to_move == true) {
+-        for (i = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; i >= 0; i--) {
+-            em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, static_cast<unsigned int>(i)));
+-            em->set_orch_state(em_orch_state_pending);
+-        }
+-
+-		// as soon as command is pushed to active start timing
+-		pcmd->set_start_time();
+-        queue_push(m_active, pcmd);
+-    } else {
+-        if ((cnt = queue_count(m_pending))) {
+-            pcmd = static_cast<em_cmd_t *>(queue_peek(m_pending, cnt - 1));
+-            //printf("%s:%d:%d Command in pending but not eligible for active\n", __func__, __LINE__, cnt);
++        queue_remove(m_pending, static_cast<unsigned int>(pending_index));
++        for (unsigned int radio_index = 0;
++             radio_index < queue_count(pending_command->m_em_candidates); radio_index++) {
++            auto *radio = static_cast<em_t *>(queue_peek(pending_command->m_em_candidates, radio_index));
++            radio->set_orch_state(em_orch_state_pending);
+         }
++        pending_command->set_start_time();
++        queue_push(m_active, pending_command);
+     }

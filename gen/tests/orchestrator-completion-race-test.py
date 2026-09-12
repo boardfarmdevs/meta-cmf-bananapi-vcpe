@@ -61,7 +61,7 @@ void *queue_remove(queue_t *queue, unsigned int index) {
     queue->erase(queue->begin() + index);
     return entry;
 }
-void queue_push(queue_t *queue, void *entry) { queue->push_back(entry); }
+void queue_push(queue_t *queue, void *entry) { queue->insert(queue->begin(), entry); }
 void *hash_map_get(hash_map_t *table, const char *key) {
     auto found = table->find(key);
     return found == table->end() ? nullptr : found->second;
@@ -110,13 +110,14 @@ public:
     hash_map_t *m_cmd_map = &statistics;
     unsigned int m_pending_high_water = 0;
     std::function<void()> during_fini;
+    bool ready = false;
     unsigned int build_candidates(em_cmd_t *command) {
         return queue_count(command->m_em_candidates);
     }
     bool is_em_ready_for_orch_exec(em_cmd_t *, em_t *) { return true; }
     bool is_em_ready_for_orch_fini(em_cmd_t *, em_t *) {
         if (during_fini) during_fini();
-        return false;
+        return ready;
     }
     void orch_transient(em_cmd_t *command, em_t *) {
         assert(hash_map_get(m_cmd_map, std::to_string(command->m_type).c_str()));
@@ -146,6 +147,66 @@ for signature in (
     harness += method(source, signature)
 harness += r'''
 using namespace std::chrono_literals;
+
+void fair_independent_admission() {
+    em_orch_t orchestrator;
+    em_t first_radio, second_radio, busy_radio;
+    busy_radio.state = em_orch_state_progress;
+    std::vector<em_t *> radios{&busy_radio, &first_radio, &first_radio, &second_radio};
+    std::vector<em_cmd_t *> commands;
+    for (auto *radio : radios) {
+        auto *command = new em_cmd_t;
+        command->candidates.push_back(radio);
+        commands.push_back(command);
+        assert(orchestrator.submit_command(command));
+    }
+    orchestrator.handle_timeout();
+    assert(queue_count(orchestrator.m_active) == 2);
+    assert(queue_count(orchestrator.m_pending) == 2);
+    assert(first_radio.command == commands[1]);
+    assert(second_radio.command == commands[3]);
+    assert(queue_peek(orchestrator.m_pending, 0) == commands[2]);
+    assert(queue_peek(orchestrator.m_pending, 1) == commands[0]);
+    orchestrator.handle_timeout();
+    assert(queue_count(orchestrator.m_pending) == 2);
+    assert(first_radio.command == commands[1]);
+    assert(orchestrator.complete_command(76));
+    assert(orchestrator.complete_command(76));
+    busy_radio.state = em_orch_state_idle;
+    orchestrator.handle_timeout();
+    assert(queue_count(orchestrator.m_pending) == 0);
+    assert(busy_radio.command == commands[0]);
+    assert(first_radio.command == commands[2]);
+    assert(orchestrator.complete_command(76));
+    assert(orchestrator.complete_command(76));
+    assert(orchestrator.statistics.empty());
+}
+
+void ready_completion_releases_radio_in_same_tick() {
+    em_orch_t orchestrator;
+    em_t radio;
+    auto *first = new em_cmd_t;
+    auto *second = new em_cmd_t;
+    first->candidates.push_back(&radio);
+    second->candidates.push_back(&radio);
+    assert(orchestrator.submit_command(first));
+    assert(orchestrator.submit_command(second));
+    orchestrator.handle_timeout();
+    assert(radio.command == first);
+    orchestrator.ready = true;
+    orchestrator.handle_timeout();
+    assert(radio.command == second);
+    assert(radio.state == em_orch_state_progress);
+    assert(queue_count(orchestrator.m_pending) == 0);
+    assert(queue_count(orchestrator.m_active) == 1);
+    orchestrator.ready = false;
+    orchestrator.handle_timeout();
+    assert(radio.command == second);
+    orchestrator.ready = true;
+    orchestrator.handle_timeout();
+    assert(radio.command == nullptr && radio.state == em_orch_state_idle);
+    assert(orchestrator.statistics.empty());
+}
 
 void race_tick_and_response() {
     em_orch_t orchestrator;
@@ -216,6 +277,8 @@ harness += "int main() {\n"
 harness += "for (unsigned int iteration = 0; iteration < 20; iteration++) race_tick_and_response();\n"
 if locking:
     harness += "race_response_and_tick();\nassert(destroyed == 41);\n"
+harness += "fair_independent_admission();\nassert(destroyed == 45);\n"
+harness += "ready_completion_releases_radio_in_same_tick();\nassert(destroyed == 47);\n"
 harness += 'std::cout << "PASS: concurrent completion, command/stat lifetime, nested locking, duplicate response and immediate next query\\n";\n}\n'
 
 with tempfile.TemporaryDirectory(prefix="orchestrator-completion-race-") as temporary:

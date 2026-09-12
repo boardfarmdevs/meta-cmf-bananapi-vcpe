@@ -34,6 +34,7 @@ WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH := "${THISDIR}/${BPN}/0022-ap-metrics-count-
 WIFI_EM_AP_METRICS_CLEANUP_PATCH := "${THISDIR}/${BPN}/0023-ap-metrics-release-every-radio-vap-allocation.patch"
 WIFI_EM_ASSOC_RESTORE_PATCH := "${THISDIR}/${BPN}/0024-hwsim-reactivate-live-associated-client-cache.patch"
 WIFI_ACTION_FRAME_QUEUE_PATCH := "${THISDIR}/${BPN}/0025-prioritize-and-validate-action-frame-requests.patch"
+WIFI_EM_METRICS_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0026-ap-metrics-replace-provider-snapshot.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -229,6 +230,8 @@ python do_patch_append() {
     bb.note("meta-cmf-bananapi-vcpe: hardening action-frame queue admission")
     with open(d.getVar('WIFI_ACTION_FRAME_QUEUE_PATCH'), 'rb') as f:
         apply_layer_patch(f)
+    with open(d.getVar('WIFI_EM_METRICS_SNAPSHOT_PATCH'), 'rb') as f:
+        apply_layer_patch(f)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -287,6 +290,8 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
     WIFI_EM_ASSOC_RECONCILE_PATCH WIFI_ASSOC_ACTIVE_PROVIDER_PATCH \
     WIFI_EM_AP_METRICS_LIVE_COUNT_PATCH WIFI_EM_AP_METRICS_CLEANUP_PATCH"
 do_patch[vardepsexclude] += "WIFI_EM_ASSOC_RESTORE_PATCH"
+do_patch[vardepsexclude] += "WIFI_EM_METRICS_SNAPSHOT_PATCH"
+do_patch[file-checksums] += "${WIFI_EM_METRICS_SNAPSHOT_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

@@ -1,0 +1,47 @@
+Subject: [PATCH] Complete a policy ACK only on its source/MID owner
+
+A matched policy ACK reset every sibling radio to configured. This could
+retire unrelated steering or strand a candidate query with its MID still
+outstanding. Complete only the radio whose policy MID matched, under the
+existing command lock; duplicate, foreign and unmatched ACKs change nothing.
+
+Upstream-Status: Pending
+
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -951,6 +951,11 @@
+ 
+ int em_policy_cfg_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+ {
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr) {
++        return -1;
++    }
++    auto command_lock = orch->lock_commands();
+     em_printfout("  ############ Handling 1905 ACK for Policy Cfg, msg len=%d", len);
+     std::vector<em_t *> em_radios;
+     bool match_found = false;
+@@ -968,15 +973,12 @@
+ 	    if (em->get_state() == em_state_ctrl_set_policy_pending && response_msg_id == em->m_policy_req_msg_id) {
+ 		    match_found = true;
+ 		    em->m_policy_req_msg_id = 0;
++		    em->set_state(em_state_ctrl_configured);
+ 		    break;
+ 	    }
+     }
+     
+-    if (match_found) {
+-	    for (auto &em : em_radios) {
+-		    em->set_state(em_state_ctrl_configured);
+-	    }
+-    } else {
++    if (!match_found) {
+ 	    em_printfout("No radio waiting for policy config ack for given msg_id");
+     }
+     em_radios.clear();
+@@ -1081,4 +1083,3 @@
+ {
+ 
+ }
+-
+

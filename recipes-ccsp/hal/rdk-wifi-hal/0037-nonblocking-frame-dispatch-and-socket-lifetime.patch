@@ -1,0 +1,191 @@
+Subject: [PATCH] Keep asynchronous frame receive sockets nonblocking and alive
+
+The HAL reader can remain inside a blocking management nl_recvmsgs after
+AP reconfiguration closes that socket. The descriptor may even be reused,
+leaving authentication and timer processing stalled for every radio.
+Publish asynchronous sockets only after switching them to nonblocking mode.
+Use the existing recursive hostapd lock for descriptor snapshots, management
+and spurious dispatch, registration and teardown, but never across select.
+An empty nonblocking receive is normal, not a reason to reopen the socket.
+
+Upstream-Status: Pending
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -3509,6 +3509,7 @@
+     wifi_hal_priv_t *priv = (wifi_hal_priv_t *)arg;
+     wifi_interface_info_t *interface = NULL;
+     int eloop_timeout_ms;
++    int largest_fd;
+ #if defined (_PLATFORM_BANANAPI_R4_)
+     size_t stack_size2;
+     pthread_attr_t attr;
+@@ -3523,7 +3524,10 @@
+ 
+     while (1) {
+ 
++        pthread_mutex_lock(&g_wifi_hal.hapd_lock);
+         prepare_interface_fdset(priv);
++        largest_fd = get_biggest_in_fdset(priv);
++        pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
+ 
+         eloop_timeout_ms = eloop_get_timeout_ms();
+         if (eloop_timeout_ms >= 0) {
+@@ -3534,7 +3538,7 @@
+             tv_towait.tv_usec = 0;
+         }
+ 
+-        ret = select(get_biggest_in_fdset(priv) + 1, &priv->drv_rfds, NULL, NULL, &tv_towait);
++        ret = select(largest_fd + 1, &priv->drv_rfds, NULL, NULL, &tv_towait);
+         if (ret < 0) {
+             if ((errno == EINTR) || (errno == EBADF)) {
+                 continue;
+@@ -3550,17 +3554,18 @@
+ 
+         if (FD_ISSET(priv->nl_event_fd, &priv->drv_rfds)) {
+             res = nl_recvmsgs((struct nl_sock *)priv->nl_event, priv->nl_cb);
+-            if (res < 0) {
++            if (res < 0 && res != -NLE_AGAIN) {
+                 wifi_hal_error_print("%s:%d: sock:%d nl_recvmsgs failed:%d (%s), errno:%d (%s)\n",
+                     __func__, __LINE__, priv->nl_event_fd, res, nl_geterror(res), errno,
+                     strerror(errno));
+             }
+         }
+ 
++        pthread_mutex_lock(&g_wifi_hal.hapd_lock);
+         if (mgmt_fd_isset(priv, &interface)) {
+             //wifi_hal_dbg_print("%s:%d:Mgmt frame descriptor is set\n", __func__, __LINE__);
+             res = nl_recvmsgs((struct nl_sock *)interface->nl_event, interface->nl_cb);
+-            if (res < 0) {
++            if (res < 0 && res != -NLE_AGAIN) {
+                 wifi_hal_error_print("%s:%d: interface:%s ifindex:%d ifnametoindex:%d sock:%d "
+                                     "nl_recvmsgs failed:%d (%s), errno:%d (%s)\n",
+                     __func__, __LINE__, interface->name, interface->index,
+@@ -3576,7 +3581,7 @@
+         if (spurious_fd_isset(priv, &interface)) {
+             res = nl_recvmsgs((struct nl_sock *)interface->spurious_nl_event,
+                 interface->spurious_nl_cb);
+-            if (res < 0) {
++            if (res < 0 && res != -NLE_AGAIN) {
+                 wifi_hal_error_print("%s:%d: interface:%s ifindex:%d ifnametoindex:%d sock:%d "
+                                      "spurious nl_recvmsgs failed:%d (%s), errno:%d (%s)\n",
+                     __func__, __LINE__, interface->name, interface->index,
+@@ -3585,6 +3590,7 @@
+             }
+         }
+ 
++        pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
+ #ifdef EAPOL_OVER_NL
+         if (bss_fd_isset(priv, &interface)) {
+             res = nl_recvmsgs((struct nl_sock *)interface->bss_nl_connect_event, interface->bss_nl_cb);
+@@ -7609,6 +7615,10 @@
+     nl_cb_set(g_wifi_hal.nl_cb, NL_CB_VALID, NL_CB_CUSTOM, process_global_nl80211_event, &g_wifi_hal);
+ 
+ 
++    if (nl_socket_set_nonblocking((struct nl_sock *)g_wifi_hal.nl_event) < 0) {
++        nl_destroy_handles(&g_wifi_hal.nl_event);
++        return -1;
++    }
+     g_wifi_hal.nl_event_fd = nl_socket_get_fd((struct nl_sock *)g_wifi_hal.nl_event);
+     wifi_hal_info_print("%s:%d: hal nl sock: %d\n", __func__, __LINE__, g_wifi_hal.nl_event_fd);
+ 
+@@ -9081,7 +9091,7 @@
+     return RETURN_OK;
+ }
+ 
+-int nl80211_register_mgmt_frames(wifi_interface_info_t *interface)
++static int nl80211_register_mgmt_frames_locked(wifi_interface_info_t *interface)
+ {
+     struct nl_msg *msg;
+     unsigned int i;
+@@ -9235,6 +9245,9 @@
+          }
+     }
+ 
++    if (nl_socket_set_nonblocking((struct nl_sock *)interface->nl_event) < 0) {
++        goto error;
++    }
+     interface->mgmt_frames_registered = 1;
+     return 0;
+ 
+@@ -9257,7 +9270,15 @@
+     return -1;
+ }
+ 
+-void nl80211_unregister_mgmt_frames(wifi_interface_info_t *interface)
++int nl80211_register_mgmt_frames(wifi_interface_info_t *interface)
++{
++    pthread_mutex_lock(&g_wifi_hal.hapd_lock);
++    int result = nl80211_register_mgmt_frames_locked(interface);
++    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++    return result;
++}
++
++static void nl80211_unregister_mgmt_frames_locked(wifi_interface_info_t *interface)
+ {
+     if (interface->mgmt_frames_registered == 0) {
+         wifi_hal_dbg_print("%s:%d: interface:%s mgmt frames not registered\n", __func__, __LINE__,
+@@ -9277,6 +9298,13 @@
+     interface->mgmt_frames_registered = 0;
+ }
+ 
++void nl80211_unregister_mgmt_frames(wifi_interface_info_t *interface)
++{
++    pthread_mutex_lock(&g_wifi_hal.hapd_lock);
++    nl80211_unregister_mgmt_frames_locked(interface);
++    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++}
++
+ /* IF_OPER_* live in <linux/if.h>, which cannot be included alongside glibc's
+  * <net/if.h> without conflicts. Define the two values we need locally. */
+ 
+@@ -18061,7 +18089,7 @@
+ }
+ #endif
+ 
+-void nl80211_unregister_spurious_frames(wifi_interface_info_t *interface)
++static void nl80211_unregister_spurious_frames_locked(wifi_interface_info_t *interface)
+ {
+     if (interface->spurious_frames_registered == 0) {
+         wifi_hal_dbg_print("%s:%d: interface:%s spurious frames not registered\n", __func__,
+@@ -18081,7 +18109,14 @@
+     interface->spurious_frames_registered = 0;
+ }
+ 
+-int nl80211_register_spurious_frames(wifi_interface_info_t *interface)
++void nl80211_unregister_spurious_frames(wifi_interface_info_t *interface)
++{
++    pthread_mutex_lock(&g_wifi_hal.hapd_lock);
++    nl80211_unregister_spurious_frames_locked(interface);
++    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++}
++
++static int nl80211_register_spurious_frames_locked(wifi_interface_info_t *interface)
+ {
+     struct nl_msg *msg = NULL;
+     int ret = 0;
+@@ -18168,6 +18203,9 @@
+     wifi_hal_dbg_print("%s:%d: nl80211 spurious socket descriptor: %d\n", __func__, __LINE__,
+         interface->spurious_nl_event_fd);
+ 
++    if (nl_socket_set_nonblocking((struct nl_sock *)interface->spurious_nl_event) < 0) {
++        goto error;
++    }
+     interface->spurious_frames_registered = 1;
+ 
+     return 0;
+@@ -18184,6 +18222,14 @@
+     return -1;
+ }
+ 
++int nl80211_register_spurious_frames(wifi_interface_info_t *interface)
++{
++    pthread_mutex_lock(&g_wifi_hal.hapd_lock);
++    int result = nl80211_register_spurious_frames_locked(interface);
++    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++    return result;
++}
++
+ #ifndef WIFI_EMULATOR_CHANGE
+ /**
+  * Check if the given interface is a member of the given bridge.

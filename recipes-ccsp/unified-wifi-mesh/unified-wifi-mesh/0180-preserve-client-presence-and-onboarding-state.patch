@@ -1,0 +1,289 @@
+Subject: [PATCH] Preserve active association ownership and unrelated radio states
+
+Late capability reports are metadata, not association notifications. Merge
+only into the exact active STA/BSSID/RUID while preserving metrics and age.
+AL-wide topology, AP capability and channel preference reports must advance
+only radios in their expected onboarding state under the command lock;
+periodic reports must not reset in-flight candidate or steering commands.
+Expose the agent orchestrator through the manager interface, as the
+controller already does, so agent-side state transitions use a valid lock.
+
+Upstream-Status: Pending
+
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -180,7 +180,6 @@
+         tmp += (sizeof(em_tlv_t) + static_cast<short unsigned int>(sz));
+         len += (sizeof(em_tlv_t) + static_cast<short unsigned int>(sz));
+ 
+-        em->set_state(em_state_agent_ap_cap_report);
+     }
+     em_radios.clear();
+ 
+@@ -258,7 +257,15 @@
+         em_printfout("Error: AP Capability Report msg send failed, error: %d", errno);
+         return -1;
+     }
+-    set_state(em_state_agent_ap_cap_report);
++    {
++        auto command_lock = get_mgr()->get_orch()->lock_commands();
++        get_mgr()->get_all_em_for_al_mac(hdr->dst, em_radios);
++        for (auto &em : em_radios) {
++            if (em->get_state() == em_state_agent_topo_synchronized) {
++                em->set_state(em_state_agent_ap_cap_report);
++            }
++        }
++    }
+     em_printfout("AP Capability Report msg sent successfully, len[%d]", len);
+     return static_cast<int> (len);
+ }
+@@ -738,6 +745,34 @@
+     return static_cast<int> (len);
+ }
+ 
++static bool merge_associated_client_capabilities(dm_easy_mesh_t *dm, em_sta_info_t& reported)
++{
++    if (reported.frame_body_len > sizeof(reported.frame_body)) {
++        return false;
++    }
++    mac_addr_str_t station_mac, bssid, radio_mac;
++    em_long_string_t key;
++    dm_easy_mesh_t::macbytes_to_string(reported.id, station_mac);
++    dm_easy_mesh_t::macbytes_to_string(reported.bssid, bssid);
++    dm_easy_mesh_t::macbytes_to_string(reported.radiomac, radio_mac);
++    snprintf(key, sizeof(key), "%s@%s@%s", station_mac, bssid, radio_mac);
++    auto *pending = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_assoc_map, key));
++    auto *current = pending != nullptr ? pending :
++        static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_map, key));
++    if (current == nullptr || !current->m_sta_info.associated) {
++        return false;
++    }
++    em_sta_info_t updated = current->m_sta_info;
++    updated.frame_body_len = reported.frame_body_len;
++    memcpy(updated.frame_body, reported.frame_body, reported.frame_body_len);
++    if (pending == nullptr) {
++        hash_map_put(dm->m_sta_assoc_map, strdup(key), new dm_sta_t(&updated));
++    } else {
++        pending->m_sta_info = updated;
++    }
++    return true;
++}
++
+ int em_capability_t::handle_client_cap_report(unsigned char *buff, unsigned int len)
+ {
+     em_orch_t *orch = get_mgr()->get_orch();
+@@ -748,16 +783,10 @@
+     unsigned int tmp_len;
+     em_tlv_t *tlv;
+     em_sta_info_t sta_info;
+-    mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
+-    mac_addr_str_t link_bssid_str, link_radio_str;
+-    em_long_string_t	key;
+     dm_easy_mesh_t  *dm;
+     em_assoc_sta_mld_info_t *assoc_info = NULL;
+     dm_bss_t *aff_bss = NULL;
+-    dm_sta_t *existing_link_sta = NULL;
+-    dm_sta_t *existing_sta = NULL;
+     em_sta_info_t link_sta_info;
+-    em_long_string_t link_key;
+     bool found_client_info = false;
+     bool found_cap_report = false;
+     bool updated_any = false;
+@@ -821,12 +850,15 @@
+     tmp_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
+         if (tlv->type == em_tlv_type_client_cap_report) {
++            unsigned int report_len = ntohs(tlv->len);
++            if (report_len < 1 || report_len - 1 > sizeof(sta_info.frame_body)) {
++                return -1;
++            }
+             if (tlv->value[0] != 0) {
+                 printf("%s:%d: result code: failure\n", __func__, __LINE__);
+                 return -1;
+             }
+-            sta_info.associated = true;
+-            sta_info.frame_body_len = static_cast<unsigned int>(htons(tlv->len) - 1);
++            sta_info.frame_body_len = report_len - 1;
+             memcpy(sta_info.frame_body, &tlv->value[1], static_cast<size_t>(sta_info.frame_body_len));
+ 
+             found_cap_report = true;
+@@ -846,11 +878,6 @@
+         set_state(em_state_ctrl_sta_cap_confirmed);
+     }
+ 
+-    dm_easy_mesh_t::macbytes_to_string(sta_info.id, sta_mac_str);
+-    dm_easy_mesh_t::macbytes_to_string(sta_info.bssid, bssid_str);
+-    dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), radio_mac_str);
+-    snprintf(key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, bssid_str, radio_mac_str);
+-
+     // For MLO STA, update all affiliated link rows.
+     for (i = 0; i < dm->get_num_assoc_sta_mld(); i++) {
+         assoc_info = &dm->m_assoc_sta_mld[i].m_assoc_sta_mld_info;
+@@ -877,39 +904,18 @@
+                 continue;
+             }
+ 
+-            dm_easy_mesh_t::macbytes_to_string(link_sta_info.bssid, link_bssid_str);
+-            dm_easy_mesh_t::macbytes_to_string(link_sta_info.radiomac, link_radio_str);
+-            snprintf(link_key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, link_bssid_str, link_radio_str);
+-
+-            existing_link_sta = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_assoc_map, link_key));
+-            if (existing_link_sta == NULL) {
+-                hash_map_put(dm->m_sta_assoc_map, strdup(link_key), new dm_sta_t(&link_sta_info));
+-                em_printfout("Client cap DB new link: %s len=%u assoc=%d",
+-                        link_key, link_sta_info.frame_body_len, link_sta_info.associated);
+-            } else {
+-                memcpy(&existing_link_sta->m_sta_info, &link_sta_info, sizeof(em_sta_info_t));
+-                em_printfout("Client cap DB update link: %s len=%u assoc=%d",
+-                        link_key, link_sta_info.frame_body_len, link_sta_info.associated);
+-            }
+-            updated_any = true;
++            updated_any |= merge_associated_client_capabilities(dm, link_sta_info);
+         }
+         break;
+     }
+ 
+     if (updated_any == false) {
+-        existing_sta = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_assoc_map, key));
+-        if (existing_sta == NULL) {
+-            hash_map_put(dm->m_sta_assoc_map, strdup(key), new dm_sta_t(&sta_info));
+-            em_printfout("Client cap DB new: %s len=%u assoc=%d",
+-                    key, sta_info.frame_body_len, sta_info.associated);
+-        } else {
+-            memcpy(&existing_sta->m_sta_info, &sta_info, sizeof(em_sta_info_t));
+-            em_printfout("Client cap DB update: %s len=%u assoc=%d",
+-                    key, sta_info.frame_body_len, sta_info.associated);
+-        }
++        updated_any = merge_associated_client_capabilities(dm, sta_info);
+     }
+ 
+-    dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
++    if (updated_any) {
++        dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
++    }
+     return 0;
+ }
+ 
+@@ -1716,8 +1722,8 @@
+             case em_msg_type_ap_cap_rprt:
+                 if (get_service_type() == em_service_type_ctrl)
+                 {
++                    auto command_lock = get_mgr()->get_orch()->lock_commands();
+                     if (handle_ap_cap_report(data, len) == 0){
+-                        set_state(em_state_ctrl_ap_cap_report_received);
+                         std::vector<em_t *> em_radios;
+                         dm_easy_mesh_t *dm = get_data_model();
+                         em_printfout("AP capability report handled successfully by em radio:%s agent al_mac:%s src_mac:%s",
+@@ -1726,7 +1732,9 @@
+                         get_mgr()->get_all_em_for_al_mac(hdr->src, em_radios);
+                         for (auto &em : em_radios)
+                         {
+-                            em->set_state(em_state_ctrl_ap_cap_report_received);
++                            if (em->get_state() == em_state_ctrl_ap_cap_query_pending) {
++                                em->set_state(em_state_ctrl_ap_cap_report_received);
++                            }
+                             em_printfout("em_msg_type_ap_cap_rprt handle success, state: %s", em_t::state_2_str(em->get_state()));
+                         }
+                         em_radios.clear();
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <stdio.h>
++#include "em_orch.h"
+ #include <string.h>
+ #include <stdlib.h>
+ #include <errno.h>
+@@ -6698,11 +6699,14 @@
+                 em_printfout("All radios are configured for al_mac:%s, sending topology response", util::mac_to_string(hdr->dst).c_str());
+                 len = send_topology_response_msg(data, ntohs(cmdu->id));
+                 if(len) {
++                    auto command_lock = get_mgr()->get_orch()->lock_commands();
+                     for(auto &em : em_radios) {
+                             if (is_radio_disabled(em)) {
+                                 continue;
+                             }
+-                            em->set_state(em_state_agent_topo_synchronized);
++                            if (em->get_state() == em_state_agent_onewifi_bssconfig_ind) {
++                                em->set_state(em_state_agent_topo_synchronized);
++                            }
+                     }
+                     em_printfout("Sent topology response message, set state to em_state_agent_topo_synchronized");
+                 }
+@@ -6711,6 +6715,8 @@
+ 			break;
+ 
+         case em_msg_type_topo_resp:
++        {
++            auto command_lock = get_mgr()->get_orch()->lock_commands();
+             if ((get_service_type() == em_service_type_ctrl) && (get_state() == em_state_ctrl_topo_sync_pending)){
+                 if (handle_topology_response(data, len) >= 0) {
+                     set_state(em_state_ctrl_topo_synchronized);
+@@ -6722,8 +6728,10 @@
+                         util::mac_to_string(hdr->src).c_str());
+                     get_mgr()->get_all_em_for_al_mac(hdr->src, em_radios);
+                     for (auto &em : em_radios) {
+-                        em->set_state(em_state_ctrl_topo_synchronized);
+-                        em->set_ssid_mismatch(false);
++                        if (em->get_state() == em_state_ctrl_topo_sync_pending) {
++                            em->set_state(em_state_ctrl_topo_synchronized);
++                            em->set_ssid_mismatch(false);
++                        }
+                         printf("%s:%d em_msg_type_topo_resp handle success, state: %s\n", __func__, __LINE__, em_t::state_2_str(em->get_state()));
+                     }
+                     em_radios.clear();
+@@ -6747,6 +6755,7 @@
+                 // Periodic Topology Responses repair a missed multicast notification.
+                 handle_topology_response_clients(data, len);
+             }
++        }
+             break;
+ 
+         case em_msg_type_topo_notif:
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <stdio.h>
++#include "em_orch.h"
+ #include <string.h>
+ #include <stdlib.h>
+ #include <errno.h>
+@@ -1850,7 +1851,6 @@
+         tlv_len -= static_cast<int> (sizeof(em_tlv_t) + htons(tlv->len));
+         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+     }
+-	set_state(em_state_ctrl_channel_queried);
+ 	return 0;
+ }
+ 
+@@ -2360,12 +2360,15 @@
+     
+         case em_msg_type_channel_pref_rprt:
+ 		if (get_service_type() == em_service_type_ctrl) {
++            auto command_lock = get_mgr()->get_orch()->lock_commands();
+ 			handle_channel_pref_rprt(data, len);
+             std::vector<em_t*> em_radios;
+             em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *>(data);
+             get_mgr()->get_all_em_for_al_mac(hdr->src, em_radios);
+             for (auto &em : em_radios) {
+-                em->set_state(em_state_ctrl_channel_queried);
++                if (em->get_state() == em_state_ctrl_channel_query_pending) {
++                    em->set_state(em_state_ctrl_channel_queried);
++                }
+                 printf("%s:%d em_msg_type_channel_pref_rprt handle success, state: %s\n", __func__, __LINE__, em_t::state_2_str(em->get_state()));
+             }
+             em_radios.clear();
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -392,6 +392,8 @@
+ 
+ public:
+ 
++    em_orch_t *get_orch() override { return m_orch; }
++
+     bus_handle_t m_bus_hdl;
+     bool do_start_dpp_onboarding = false;
+     bool do_regen_dpp_uri = false;
