@@ -133,6 +133,12 @@ public:
     void handle_timeout();
 };
 '''.replace("LOCKING", locking)
+ready_dispatch = "void em_orch_t::advance_commands(" in source
+if ready_dispatch:
+    harness = harness.replace("bool orchestrate(em_cmd_t *, em_t *);",
+                              "bool orchestrate(em_cmd_t *, em_t *, bool = true);")
+    harness = harness.replace("void handle_timeout();",
+                              "void handle_timeout(); void handle_ready_commands(); void advance_commands(bool);")
 for signature in (
     "void em_orch_t::update_stats(",
     "void em_orch_t::pop_stats(",
@@ -145,6 +151,9 @@ for signature in (
     "void em_orch_t::handle_timeout(",
 ):
     harness += method(source, signature)
+if ready_dispatch:
+    for signature in ("void em_orch_t::handle_ready_commands(", "void em_orch_t::advance_commands("):
+        harness += method(source, signature)
 harness += r'''
 using namespace std::chrono_literals;
 

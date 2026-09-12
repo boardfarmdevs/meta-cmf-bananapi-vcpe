@@ -35,6 +35,8 @@ WIFI_EM_AP_METRICS_CLEANUP_PATCH := "${THISDIR}/${BPN}/0023-ap-metrics-release-e
 WIFI_EM_ASSOC_RESTORE_PATCH := "${THISDIR}/${BPN}/0024-hwsim-reactivate-live-associated-client-cache.patch"
 WIFI_ACTION_FRAME_QUEUE_PATCH := "${THISDIR}/${BPN}/0025-prioritize-and-validate-action-frame-requests.patch"
 WIFI_EM_METRICS_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0026-ap-metrics-replace-provider-snapshot.patch"
+WIFI_SCHEDULER_STATUS_API_PATCH := "${THISDIR}/${BPN}/0027-declare-radio-scheduler-status-functions.patch"
+WIFI_ASSOCIATION_PUBLICATION_PATCH := "${THISDIR}/${BPN}/0028-publish-association-deltas-on-control-events.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -67,6 +69,11 @@ python do_patch_append() {
         bb.fatal('meta-cmf-bananapi-vcpe: patch is neither cleanly applicable '
                  'nor already applied:\n%s' %
                  forward.stdout.decode('utf-8', errors='replace'))
+
+    with open(d.getVar('WIFI_SCHEDULER_STATUS_API_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
+    with open(d.getVar('WIFI_ASSOCIATION_PUBLICATION_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
 
     bb.note("meta-cmf-bananapi-vcpe: applying sign-compare fix to vap_svc.c")
     with open(d.getVar('VAP_SVC_SIGNCOMPARE_PATCH'), 'rb') as f:
@@ -292,6 +299,10 @@ do_patch[vardepsexclude] += "VAP_SVC_SIGNCOMPARE_PATCH WIFI_EM_HDRLEN_PATCH \
 do_patch[vardepsexclude] += "WIFI_EM_ASSOC_RESTORE_PATCH"
 do_patch[vardepsexclude] += "WIFI_EM_METRICS_SNAPSHOT_PATCH"
 do_patch[file-checksums] += "${WIFI_EM_METRICS_SNAPSHOT_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_SCHEDULER_STATUS_API_PATCH"
+do_patch[file-checksums] += "${WIFI_SCHEDULER_STATUS_API_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_ASSOCIATION_PUBLICATION_PATCH"
+do_patch[file-checksums] += "${WIFI_ASSOCIATION_PUBLICATION_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

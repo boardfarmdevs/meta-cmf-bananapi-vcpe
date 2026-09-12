@@ -51,6 +51,50 @@ synthetic EasyMesh-shaped snapshots. Its records use `simulated://` and
 `simulated_*` sources and state `live_observer_compatible: false`. This is a
 policy test double, not evidence that the controller reported a measurement.
 
+## Opt-in Native Load Policy
+
+Default operation remains signal-only. Select `configs/load-aware-policy.yaml`
+for an experiment; live mode requires root in the VM and
+`--candidate-provider controller`. Its owned native IEEE 1905 receiver closes
+on exit. Default operation starts no additional collector.
+
+From the repository root, copy the room manifest, change only `policy` to
+`gen/optimizer/configs/load-aware-policy.yaml`, and add
+`--manifest /absolute/temporary-manifest.json` to the normal interactive
+command. Stop the existing room service first; never run two actuating
+optimizers. Restart the unchanged service to restore signal-only operation.
+
+Configure a same-band, different-channel fronthaul AP first. Do not retune
+the active backhaul radio. Band-directed profiles can restrict `freq_list`:
+explicitly permit the new channel before BTM; a scan alone does
+not grant eligibility. Verify kernel **and native controller** channel state.
+RDK local retunes need an operating-channel report; an agent refresh is test
+preconditioning, never a timed-steer repair. After a refresh, replay the native
+metrics-reporting policy and verify fresh reports: agent timer state is volatile.
+Global `Device.WiFi.ApplyRadioSettings` can also apply stale channel settings
+on unrelated radios. Snapshot all three **live** channels, preserve them during
+the test and verify their exact restoration, including 6 GHz.
+The policy does not reconfigure
+radios or client capabilities automatically.
+
+Schema-2 snapshots carry native AP utilization (0–255), station count,
+packet-counter activity, receipt timestamps and provider epoch. The survey
+bridge supplies only provenance/liveness, not load values or SNR inputs.
+Packets/second are activity, not offered demand or calibrated capacity;
+backhaul hops are a conservative cost guard, not a bandwidth estimate.
+
+Strong links balance from sustained high load to a fresh quieter channel
+with viable RF and no extra wireless hop. RDK's independent five-second
+native reports use a ten-second hold, with five-second freshness/skew bounds;
+both reports must advance. prpl's profile uses one-second skew/five-second
+hold. These opt-in parameters do not change native reporting or default room
+gates. One active client moves at a time, then settles with
+cooldown; weak links retain signal protection. Missing, stale, skewed,
+synthetic or epoch-mismatched observations cannot become zero load. Decisions
+record explicit reasons and evidence. Native BTM may still be rejected by
+the client. Reception-backed candidates, demand/capacity estimation and
+general channel selection remain separate work.
+
 ## Install and test
 
 ```sh

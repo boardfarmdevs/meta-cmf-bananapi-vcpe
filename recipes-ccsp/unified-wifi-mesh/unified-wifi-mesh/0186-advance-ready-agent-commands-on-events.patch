@@ -1,0 +1,114 @@
+Subject: [PATCH] agent: advance ready commands after native events
+
+Association notifications already represent completed native changes, but
+admission and retirement waited for the 250 ms orchestration tick. Progress
+ready work after agent events on the existing manager thread and recursive
+command lock. Preserve pending order, exclusive radio ownership and the
+normal periodic timeout path; event dispatch never advances timeout stats
+or transient retry/cancellation handlers. The controller keeps its existing
+dispatch path. No protocol, security, scan or reporting interval is shortened.
+
+Upstream-Status: Pending
+
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -62,6 +62,8 @@
+ 	 * @note Ensure that the timeout duration is correctly set before calling this function.
+ 	 */
+ 	void handle_timeout();
++    void handle_ready_commands();
++    void advance_commands(bool allow_timeouts);
+ 
+     
+ 	/**!
+@@ -343,7 +345,7 @@
+ 	 *
+ 	 * @note Ensure that both pcmd and em are properly initialized before calling this function.
+ 	 */
+-	bool orchestrate(em_cmd_t *pcmd, em_t *em);
++    bool orchestrate(em_cmd_t *pcmd, em_t *em, bool allow_timeouts = true);
+ 
+     
+ 	/**!
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -347,7 +347,7 @@
+     }
+ }
+ 
+-bool em_orch_t::orchestrate(em_cmd_t *pcmd, em_t *em)
++bool em_orch_t::orchestrate(em_cmd_t *pcmd, em_t *em, bool allow_timeouts)
+ {
+     auto command_lock = lock_commands();
+     bool done = false;
+@@ -369,8 +369,10 @@
+             // em_printfout("%s:%d: skipping orchestration:%s(%s) because of incorrect state, state:%s\n", __func__, __LINE__, 
+ 			// 		em_cmd_t::get_orch_op_str(pcmd->get_orch_op()), em_cmd_t::get_cmd_type_str(pcmd->m_type), 
+ 			// 		em_t::state_2_str(em->get_state()));
+-            update_stats(pcmd);
+-            orch_transient(pcmd, em);
++            if (allow_timeouts) {
++                update_stats(pcmd);
++                orch_transient(pcmd, em);
++            }
+         }
+ 
+     } else if (orch_state == em_orch_state_progress) {
+@@ -378,8 +380,10 @@
+             em->set_orch_state(em_orch_state_fini);
+             done = true;
+         } else {
+-            update_stats(pcmd);
+-            orch_transient(pcmd, em);
++            if (allow_timeouts) {
++                update_stats(pcmd);
++                orch_transient(pcmd, em);
++            }
+         }
+ 
+     } else if (orch_state == em_orch_state_fini) {
+@@ -563,6 +567,16 @@
+ 
+ void em_orch_t::handle_timeout()
+ {
++    advance_commands(true);
++}
++
++void em_orch_t::handle_ready_commands()
++{
++    advance_commands(false);
++}
++
++void em_orch_t::advance_commands(bool allow_timeouts)
++{
+     auto command_lock = lock_commands();
+     em_cmd_t *pcmd;
+     em_t *em;
+@@ -579,7 +593,7 @@
+         ret = true;
+         for (j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; j >= 0; j--) {
+             em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, static_cast<unsigned int>(j)));
+-            ret &= orchestrate(pcmd, em);
++            ret &= orchestrate(pcmd, em, allow_timeouts);
+         }
+ 
+         if (ret == true) {
+@@ -617,7 +631,7 @@
+         for (unsigned int radio_index = 0;
+              radio_index < queue_count(pending_command->m_em_candidates); radio_index++) {
+             auto *radio = static_cast<em_t *>(queue_peek(pending_command->m_em_candidates, radio_index));
+-            orchestrate(pending_command, radio);
++            orchestrate(pending_command, radio, allow_timeouts);
+         }
+     }
+ 
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1428,6 +1428,7 @@
+             break;
+     }
+ 
++    m_orch->handle_ready_commands();
+ }
+ 
+ void em_agent_t::handle_5s_tick()
