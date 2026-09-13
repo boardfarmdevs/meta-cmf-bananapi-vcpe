@@ -10,32 +10,38 @@ to check a machine now.
 | --- | --- |
 | Canonical branch | `codex/0913-clean` |
 | Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0913-clean/meta-cmf-bananapi-vcpe` |
-| Running appliance | `rev140:rdkeasymesh-20-0908` |
+| Qualification appliance | `rev140:rdkeasymesh-0913` (not yet release-accepted) |
+| Last accepted appliance | `rev140:rdkeasymesh-20-0908`, stopped for rollback |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
-| Default pool | 20 clients, five physical mesh containers / six displayed roles |
+| Fixed pool | 100 clients; default room selects 20 online; five mesh containers / six displayed roles |
 | prplMesh peer | Separate repository and appliance on rev150; no prpl lab on rev140 |
 
 Controller and Agent-1 share the root container. Four extenders complete the
-mesh. The twenty clients comprise ten private and ten IoT stations. A room may
+mesh. The default twenty clients comprise ten private and ten IoT stations. A room may
 make roles unavailable without destroying containers or resizing the appliance.
 Outer VM autostart is disabled; manually starting the VM starts its lab and room.
 
-0913 is being built and qualified in the new canonical checkout. It provides
+0913 is being qualified in the new canonical checkout. It provides
 one 100-client-capacity appliance, a default room with 20 online clients, and
-`fifty-client-counter-roam`. The deployed/release rows above and below still
-refer to the last accepted deployment until cutover is verified. 0913's Yocto
-build uses `/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`.
+`fifty-client-counter-roam`. Both Yocto images have rebuilt using
+`/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`. Room initial-convergence
+failures still block release packaging; there is no accepted 0913 thin tar or
+box yet. The old VM stays stopped while qualification runs.
 
 ## Browser addresses
 
-| View | rev140 RDK |
-| --- | --- |
-| Live room | <http://192.168.2.140:48891/> |
-| Network topology | <http://192.168.2.140:48889/> |
-| wmediumd console | <http://192.168.2.140:48890/> |
-| Inner LXD UI | <https://192.168.2.140:48892/ui/> |
-| Grafana: inner containers and outer VM | <https://192.168.2.140:48893/> |
+| View | Last accepted ports | 0913 qualification ports |
+| --- | --- | --- |
+| Live room | <http://192.168.2.140:48891/> | <http://192.168.2.140:49891/> |
+| Network topology | <http://192.168.2.140:48889/> | <http://192.168.2.140:49889/> |
+| wmediumd console | <http://192.168.2.140:48890/> | <http://192.168.2.140:49890/> |
+| Inner LXD UI | <https://192.168.2.140:48892/ui/> | Not installed yet |
+| Grafana: inner containers and outer VM | <https://192.168.2.140:48893/> | Not installed yet |
+
+The last accepted ports do not serve the stopped rollback VM. Qualification
+services may restart during builds and tests. Monitoring is installed after
+sanitized export so enrollment keys and passwords cannot enter release images.
 
 No `?mode=` is needed. LXD proxy devices persist across host/VM reboots;
 do not recreate them after every start. The destination services still need
@@ -46,8 +52,9 @@ Grafana additionally require enrollment/login.
 
 [Release information](release-notes.md) explains where historical records belong.
 
-Latest packaged downloads are **0909**; the existing production VM is still
-**0908**. Both hosts mirror `/home/rev/releases/0909/`:
+Latest packaged downloads are **0909**; **0908** is the stopped rollback
+appliance, not the active qualification VM. Both hosts mirror
+`/home/rev/releases/0909/`:
 
 - `rdkeasymesh-0909-thin.tar`: universal LXD import; select profile 20 for rooms.
 - `rdkeasymesh-0909-virtualbox.tar`: Windows/Vagrant distribution wrapper.
