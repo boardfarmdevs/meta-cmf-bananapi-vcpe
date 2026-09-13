@@ -21,6 +21,7 @@ expected_radios=$(configured_parameter radios 128)
 expected_channels=$(configured_parameter channels 3)
 expected_regtest=$(configured_parameter regtest 5)
 
+test "$(cat /sys/module/cfg80211/version)" = lab-netns-owner-1
 test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$expected_radios"
 test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = "$expected_channels"
 test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest"
