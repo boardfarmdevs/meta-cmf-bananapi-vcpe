@@ -6,6 +6,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 source "$root/gen/vm/lxd/profile.sh"
 grep -Fq 'RELEASE-NOTES.md' "$root/gen/vm/lxd/build.sh"
 grep -Fq 'expected_clients=${HEALTH_EXPECT_CLIENTS:-100}' "$root/gen/vm/scripts/50-runtime-service.sh"
+grep -Fq 'hwsim_radios=${HWSIM_RADIOS:-128}' "$root/gen/vm/scripts/20-prepare-lab-host.sh"
+grep -Fq 'expected_radios=$(configured_parameter radios 128)' "$root/gen/vm/scripts/guest/easymesh-hwsim-pool"
 grep -Fq 'hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-128}' "$root/gen/vm/scripts/80-redeploy-accepted-lab.sh"
 grep -Fq 'test "$counts" = 5/15/50/104' "$root/gen/vm/scripts/80-redeploy-accepted-lab.sh"
 

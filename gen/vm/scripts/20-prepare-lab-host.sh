@@ -136,7 +136,7 @@ rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build"
 
 # Start a tri-band pool only after installing the multichannel registration
 # patch and confirming that no copied runtime state is present in this guest.
-hwsim_radios=${HWSIM_RADIOS:-32}
+hwsim_radios=${HWSIM_RADIOS:-128}
 case "$hwsim_radios" in
     ''|*[!0-9]*|0) echo "HWSIM_RADIOS must be a positive integer" >&2; exit 2 ;;
 esac

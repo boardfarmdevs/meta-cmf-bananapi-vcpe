@@ -17,10 +17,7 @@ configured_parameter() {
     printf '%s\n' "${value:-$fallback}"
 }
 
-# Validate the pool against the persistent module configuration rather than a
-# historical profile size.  Small currently uses 32 radios; larger accepted
-# profiles can change the same modprobe file without replacing this helper.
-expected_radios=$(configured_parameter radios 32)
+expected_radios=$(configured_parameter radios 128)
 expected_channels=$(configured_parameter channels 3)
 expected_regtest=$(configured_parameter regtest 5)
 
