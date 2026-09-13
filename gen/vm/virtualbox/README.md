@@ -89,9 +89,9 @@ No Vagrant Cloud download or Internet access is needed for default lab
 provisioning once the software and complete release are installed. Vagrant
 verifies the local box checksum, imports the VM, replaces its bootstrap SSH
 key, initializes the fixed 100-client pool and waits for the native lab and
-HTTP services. First boot creates 25 nested instances from the offline image
-inputs; allow roughly 20–40 minutes on a suitable SSD, possibly longer on a
-slower host. Progress is printed every thirty seconds. This is provisioning
+HTTP services. First boot creates 105 nested instances from the offline image
+inputs. Allow tens of minutes on an SSD; a slower or directory-backed host can
+take more than an hour. Progress is printed every thirty seconds. This is provisioning
 time, not roaming or optimizer response time.
 
 The box remains thin until the first `up`: it contains no provisioned mesh or
@@ -228,8 +228,9 @@ can be removed deliberately after acceptance. It does not stop/delete any
 existing VM or unload another hypervisor's kernel modules.
 
 Qualify an actual import from the resulting `.box`, not only the conversion:
-first-boot report, 25 nested instances, browser views, twenty-client native
-metrics and room convergence, a small room and restoration, then a graceful
+first-boot report, 105 nested instances and a 100-client native baseline,
+browser views, default twenty-client and fifty-client room convergence and
+restoration, then a graceful
 halt/up cycle. Record versions, timings, checksums and failures beside the box.
 Testing on a Linux VirtualBox host demonstrates the provider/disk/bootstrap
 path, **not firsthand Windows-host validation**. Keep that distinction in

@@ -289,8 +289,7 @@ The importer validates the pool before creating the VM. The source host's
 pool name is recorded for traceability but is not imposed on a destination
 host.
 
-Monitor the first imported cold reconstruction (replace `20` with the selected
-profile):
+Monitor the first imported cold reconstruction:
 
 ```sh
 lxc console rdkeasymesh-@EASYMESH_RELEASE_ID@ --show-log
