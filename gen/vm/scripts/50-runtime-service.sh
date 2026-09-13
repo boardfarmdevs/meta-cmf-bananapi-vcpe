@@ -3,7 +3,7 @@ set -euo pipefail
 
 test -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 
-profile=${EASYMESH_SCALE_PROFILE:-small}
+profile=${EASYMESH_SCALE_PROFILE:-unified}
 expected_clients=${HEALTH_EXPECT_CLIENTS:-20}
 cat > /etc/default/easymesh-lab <<EOF
 EASYMESH_SCALE_PROFILE=$profile

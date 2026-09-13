@@ -143,8 +143,8 @@ sleep() { :; }
 
     def test_guest_reuses_offline_profile_and_no_downloads(self):
         script = (ROOT / "guest/easymesh-vagrant-up").read_text()
-        self.assertIn("easymesh-select-thin-profile 20", script)
-        self.assertIn(".final_instances == 25", script)
+        self.assertIn("easymesh-select-thin-profile 100", script)
+        self.assertIn(".final_instances == 105", script)
         self.assertIn("systemctl is-failed --quiet easymesh-thin-firstboot.service", script)
         self.assertNotIn("apt-get", script)
         self.assertNotIn("git clone", script)

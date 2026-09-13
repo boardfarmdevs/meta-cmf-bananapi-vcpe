@@ -32,9 +32,8 @@ def plan(profile: str) -> str:
 @pytest.mark.parametrize(
     ("profile", "cohorts", "hwsim"),
     (
-        ("small", "private=10\tiot=10\ttotal=20", "required=25\tpool=32"),
-        ("medium", "private=25\tiot=25\ttotal=50", "required=55\tpool=64"),
-        ("stress", "private=50\tiot=50\ttotal=100", "required=105\tpool=128"),
+        ("unified", "private=50\tiot=50\ttotal=100", "required=105\tpool=128"),
+        ("100", "private=50\tiot=50\ttotal=100", "required=105\tpool=128"),
     ),
 )
 def test_named_client_profiles_have_stable_counts(profile, cohorts, hwsim):
@@ -44,12 +43,16 @@ def test_named_client_profiles_have_stable_counts(profile, cohorts, hwsim):
     assert f"HWSIM\t{hwsim}" in output
 
 
-def test_small_profile_assigns_distinct_ssid_cohorts_and_security():
-    rows = plan("small").splitlines()[4:]
+def test_unified_pool_preserves_original_twenty_clients_and_extends_both_cohorts():
+    rows = plan("unified").splitlines()[4:]
 
-    assert len(rows) == 20
+    assert len(rows) == 100
     assert all("\tprivate\t" in row for row in rows[:10])
-    assert all("\tiot\t" in row and row.endswith("\tiot_ssid\twpa2\tauto") for row in rows[10:])
+    assert all("\tiot\t" in row and row.endswith("\tiot_ssid\twpa2\tauto") for row in rows[10:20])
+    assert sum("\tprivate\t" in row for row in rows) == 50
+    assert sum("\tiot\t" in row for row in rows) == 50
+    assert all("\tprivate\t" in row for row in rows[20::2])
+    assert all("\tiot\t" in row for row in rows[21::2])
     assert rows[8].endswith("\tprivate_ssid\twpa2\t2.4")
     assert rows[9].endswith("\tprivate_ssid\tsae\t6")
     assert rows[9].startswith("9\twlan-client-009\t")

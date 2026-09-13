@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
-release_id=${EASYMESH_RELEASE_ID:-0908}
+release_id=${EASYMESH_RELEASE_ID:-0913}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
@@ -12,7 +12,7 @@ esac
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
     | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
 default_host_address=${default_host_address:-127.0.0.1}
-profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-20}")
+profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-unified}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
 release_name=$(easymesh_profile_release_name "$profile")
@@ -60,7 +60,7 @@ Build inputs:
   EASYMESH_EXTENDER_IMAGE=/path/to/extender.rootfs.lxc.tar.bz2
 
 Common overrides:
-  EASYMESH_LAB_PROFILE=$profile_clients (20, 50 or 100)
+  EASYMESH_LAB_PROFILE=$profile_clients (fixed capacity: 100 clients)
   EASYMESH_LXD_NAME=$name
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
@@ -418,9 +418,7 @@ build_vm() {
         "http://$proxy_check_address:$webui_port/api/v1/topology"
     wait_http_ready "wmediumd Console proxy" \
         "http://$proxy_check_address:$console_port/api/v1/health"
-    if [ "$profile_clients" = 20 ]; then
-        wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
-    fi
+    wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
@@ -501,8 +499,8 @@ export_vm() {
     clear_secure_boot_config
     short=$(git -C "$root" rev-parse --short=7 HEAD)
     created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    bundle="$export_dir/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd"
-    output="$bundle/rdkeasymesh-${profile_clients}-${release_id}-${short}-lxd.tar.zst"
+    bundle="$export_dir/rdkeasymesh-${release_id}-${short}-lxd"
+    output="$bundle/rdkeasymesh-${release_id}-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
     if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
@@ -669,7 +667,7 @@ export_thin_vm() {
 LAB_STACK=rdkeasymesh
 LAB_RELEASE_ID=$release_id
 LAB_PROFILE_SELECTABLE=true
-LAB_SUPPORTED_PROFILES=20,50,100
+LAB_SUPPORTED_PROFILES=100
 LAB_DEFAULT_DISK=96GiB
 LAB_BUILD_STORAGE=$actual_storage
 LAB_SOURCE_COMMIT=$meta_commit
@@ -683,12 +681,10 @@ EOF
         --arg source_commit "$meta_commit" --arg created_at "$created" \
         --arg archive "$(basename "$output")" \
         --arg disk 96GiB --arg build_storage "$actual_storage" \
-        '{schema_version:2,stack:$stack,release_id:$release_id,profile_selectable:true,
-          supported_profiles:[20,50,100],source_commit:$source_commit,created_at:$created_at,
+        '{schema_version:2,stack:$stack,release_id:$release_id,profile_selectable:false,
+          client_capacity:100,default_room_clients:20,source_commit:$source_commit,created_at:$created_at,
           archive:$archive,release_flavor:"thin",first_boot_provisioning:true,
-          profiles:{"20":{name:"small",instance:("rdkeasymesh-20-"+$release_id),clients:20,hwsim_radios:32,cpus:6,memory:"8GiB"},
-                    "50":{name:"medium",instance:("rdkeasymesh-50-"+$release_id),clients:50,hwsim_radios:64,cpus:8,memory:"12GiB"},
-                    "100":{name:"stress",instance:("rdkeasymesh-100-"+$release_id),clients:100,hwsim_radios:128,cpus:12,memory:"20GiB"}},
+          capacity:{instance:("rdkeasymesh-"+$release_id),clients:100,hwsim_radios:128,cpus:8,memory:"16GiB"},
           defaults:{disk:$disk},
           build:{storage_pool:$build_storage},trim:{applied:true,report:"trim-report.txt"},
           status:"candidate"}' > "$bundle/release.json"

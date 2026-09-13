@@ -14,33 +14,12 @@ modprobe_conf=${EASYMESH_PROFILE_MODPROBE_CONF:-/etc/modprobe.d/easymesh-hwsim.c
 test_mode=${EASYMESH_PROFILE_TEST_MODE:-false}
 
 usage() {
-    echo "usage: $0 20|50|100" >&2
+    echo "usage: $0 [100] (fixed appliance capacity)" >&2
 }
 
-case "${1:-}" in
-    20)
-        profile=small
-        clients=20
-        radios=32
-        ;;
-    50)
-        profile=medium
-        clients=50
-        radios=64
-        ;;
-    100)
-        profile=stress
-        clients=100
-        radios=128
-        ;;
-    -h|--help|'')
-        usage
-        exit 2
-        ;;
-    *)
-        usage
-        exit 2
-        ;;
+case "${1:-100}" in
+    100) profile=unified; clients=100; radios=128 ;;
+    *) usage; exit 2 ;;
 esac
 
 install -d -m 0755 "$state_dir" "$(dirname "$defaults")" \

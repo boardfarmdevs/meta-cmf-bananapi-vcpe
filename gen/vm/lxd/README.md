@@ -5,9 +5,9 @@ performance and kernel-debug reference.
 
 ```text
 Ubuntu 22.04/24.04 host + LXD/KVM
-`-- rdkeasymesh-CLIENTS-@EASYMESH_RELEASE_ID@ (Ubuntu 24.04/Linux 7 LXD VM)
+`-- rdkeasymesh-@EASYMESH_RELEASE_ID@ (Ubuntu 24.04/Linux 7 LXD VM)
     |-- Docker: Boardfarm DHCP/NAT and br-wan101
-    |-- nested LXD: controller, four extenders, 20/50/100-client roster
+    |-- nested LXD: controller, four extenders, 100-client capacity; default room: 20 online
     |-- hwsim + multichannel wmediumd
     |-- EasyMesh WebUI :8888
     `-- wmediumd Console :8890
@@ -38,12 +38,21 @@ cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
-EASYMESH_WEBUI_HOST_IP=192.168.2.140 ./import.sh --profile 20
+EASYMESH_WEBUI_HOST_IP=192.168.2.140 ./import.sh
 ```
 
-Choose `--profile 50` or `--profile 100` only when the host has the CPU, RAM,
-and storage declared in `release.json`. The choice is required and immutable.
-The remaining build and export sections are for release maintainers.
+0913 uses one appliance with capacity for **100 clients**. There is no import
+size choice and no separate 20/50/100 VM. Rooms control the online subset:
+the default room uses 20 and `fifty-client-counter-roam` uses 50. Loading a room
+applies RF and presence automatically without recreating the pool. All five
+physical mesh containers (six logical roles) remain provisioned.
+
+Defaults are 8 vCPUs, 16 GiB RAM, 128 radios, and a sparse 96-GiB disk. Leave
+resources for the host. First boot provisions and validates all 100 clients,
+then the room service disconnects unused stations. This baseline health gate
+is distinct from live room membership. Baseline recovery restores all 100;
+restarting the room selects its default 20. The remaining sections are for
+release maintainers.
 
 ## Prepare an outer host
 
@@ -59,7 +68,7 @@ test -c /dev/kvm
 The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
 `lxd` group, and initializes LXD only when no storage pool exists.
 
-Validate profile metadata, immutable selection, and import argument handling
+Validate fixed capacity, idempotent initialization, and import argument handling
 without creating an appliance:
 
 ```sh
@@ -71,11 +80,9 @@ bash ./test-runtime-branch.sh
 
 ## Build a clean appliance
 
-The source checkout must be clean. Select one immutable client profile and
-provide the accepted controller and extender images explicitly:
+The source checkout must be clean. Provide the accepted controller and extender images explicitly:
 
 ```sh
-EASYMESH_LAB_PROFILE=20 \
 EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
 EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
   ./build.sh build
@@ -83,12 +90,12 @@ EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
 
 The builder:
 
-1. creates a fresh Ubuntu 24.04 VM with six vCPUs, 8 GiB RAM and a sparse
-   64-GiB disk;
+1. creates a fresh Ubuntu 24.04 VM with 8 vCPUs, 16 GiB RAM and a sparse
+   96-GiB disk;
 2. installs and boots the accepted Linux 7 kernel;
 3. installs Docker, nested LXD and the single Boardfarm repository;
-4. builds and loads the patched 32-radio, three-channel hwsim module;
-5. deploys the controller, four extenders, and the selected equally split
+4. builds and loads the patched 128-radio, three-channel hwsim module;
+5. deploys the controller, four extenders, and the 100-client equally split
    private/IoT client roster;
 6. keeps BPI NVRAM identities under `/var/lib/easymesh-lab/nvram`, outside
    the replaceable source checkout;
@@ -114,17 +121,15 @@ therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
 ./build.sh restart
 ```
 
-Ready builder profiles `20`, `50`, and `100` create separate instances named
-`rdkeasymesh-PROFILE-@EASYMESH_RELEASE_ID@`. The universal thin release asks for one of those
-profiles during import and locks it before any nested node is created. The
-profile cannot be changed after selection; import the universal artifact again
-to create a different profile. The builder detects the address
+The builder creates `rdkeasymesh-@EASYMESH_RELEASE_ID@`. Both the builder and
+thin import initialize the same 100-client pool. Change the online population
+by loading a room, not by importing another VM. The builder detects the address
 used by the outer host's IPv4 default route and exposes:
 
 ```text
 http://HOST:18889/  EasyMesh WebUI
 http://HOST:18890/  wmediumd Console
-http://HOST:18891/  interactive room (20-client profile)
+http://HOST:18891/  interactive room (20 online by default, capacity 100)
 ```
 
 Override site-local settings without changing image identity:
@@ -146,7 +151,7 @@ Use `lxc start` for subsequent manual starts. To disable autostart on an older
 import:
 
 ```sh
-lxc config set rdkeasymesh-20-@EASYMESH_RELEASE_ID@ boot.autostart false
+lxc config set rdkeasymesh-@EASYMESH_RELEASE_ID@ boot.autostart false
 ```
 
 ## Ready builders and the universal thin release
@@ -161,7 +166,7 @@ The release has two forms with different purposes:
 - `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` is the one portable download. It retains the
   installed VM, exact source, controller/extender archives,
   and one reusable WLAN-client image, but contains zero provisioned lab
-  instances. `./import.sh --profile 20|50|100` selects CPU, memory and the
+  instances. `./import.sh|50|100` selects CPU, memory and the
   32/64/128-radio hwsim pool, writes an immutable profile lock, and provisions
   the selected roster entirely offline.
   It
@@ -191,7 +196,6 @@ The builder may be any accepted profile. Supply the original checksummed images
 because a ready export deliberately removed its staging cache:
 
 ```sh
-EASYMESH_LAB_PROFILE=20 \
 EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
 EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
   ./build.sh export-thin
@@ -257,7 +261,7 @@ intact:
 
 ```sh
 EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
-  ./import.sh --profile 20
+  ./import.sh
 ```
 
 Use `--profile 50` or `--profile 100` on a sufficiently sized host. Defaults
@@ -282,7 +286,7 @@ When the host's default storage pool cannot hold the selected sparse disk,
 choose an existing pool explicitly for both build and import:
 
 ```sh
-EASYMESH_LXD_STORAGE=bpi-lab ./import.sh --profile 20
+EASYMESH_LXD_STORAGE=bpi-lab ./import.sh
 ```
 
 The importer validates the pool before creating the VM. The source host's
@@ -293,17 +297,17 @@ Monitor the first imported cold reconstruction (replace `20` with the selected
 profile):
 
 ```sh
-lxc console rdkeasymesh-20-@EASYMESH_RELEASE_ID@ --show-log
-lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- journalctl -fu easymesh-lab.service
-lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- /usr/local/sbin/easymesh-labctl check
+lxc console rdkeasymesh-@EASYMESH_RELEASE_ID@ --show-log
+lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- journalctl -fu easymesh-lab.service
+lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- /usr/local/sbin/easymesh-labctl check
 ```
 
 Follow both provisioning and normal runtime gates:
 
 ```sh
-lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- \
+lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- \
   journalctl -fu easymesh-thin-firstboot.service -u easymesh-lab.service
-lxc exec rdkeasymesh-20-@EASYMESH_RELEASE_ID@ -- \
+lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- \
   jq . /var/lib/easymesh-lab/thin-firstboot-report.json
 ```
 
@@ -315,7 +319,7 @@ Acceptance requires `result: "pass"`, `initial_instances: 0`, and
 Review the exact target, then delete only that instance:
 
 ```sh
-EASYMESH_LAB_PROFILE=20 ./build.sh delete
+./build.sh delete
 ```
 
 The delete command is destructive. It does not delete LXD itself, storage
@@ -323,7 +327,7 @@ pools, networks, source checkouts, or another lab instance.
 ## Optional container management and metrics
 
 For browser-ready inner LXD UI and a provisioned Grafana dashboard, use
-`bash import.sh --profile 20 --monitoring` when importing a newly packaged
+`bash import.sh --monitoring` when importing a newly packaged
 thin release, or `bash observability/enable.sh VM HOST_IPV4 LABEL` for an
 existing running VM. The option downloads two monitoring images (or uses
 preloaded copies); omit it to preserve the normal offline thin-import contract.

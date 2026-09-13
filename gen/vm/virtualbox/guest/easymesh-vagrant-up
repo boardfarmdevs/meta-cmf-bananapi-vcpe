@@ -22,12 +22,12 @@ until lxc query /1.0 >/dev/null 2>&1; do
     (( SECONDS < deadline )) || failure
     sleep 2
 done
-/usr/local/sbin/easymesh-select-thin-profile 20
-grep -qx 'HEALTH_EXPECT_CLIENTS=20' "$state/thin-profile.lock.env"
+/usr/local/sbin/easymesh-select-thin-profile 100
+grep -qx 'HEALTH_EXPECT_CLIENTS=100' "$state/thin-profile.lock.env"
 systemctl daemon-reload
 systemctl reset-failed easymesh-thin-firstboot.service easymesh-lab.service
 systemctl --no-block start easymesh-lab.service
-echo 'Starting the offline 20-client lab; the first boot can take 20–40 minutes.'
+echo 'Provisioning the offline 100-client pool; the live room starts with 20 online.'
 next_report=$SECONDS
 until systemctl is-active --quiet easymesh-lab.service; do
     systemctl is-failed --quiet easymesh-lab.service && failure
@@ -41,7 +41,7 @@ until systemctl is-active --quiet easymesh-lab.service; do
     fi
     sleep 5
 done
-jq -e '.result == "pass" and .clients == 20 and .final_instances == 25' \
+jq -e '.result == "pass" and .clients == 100 and .final_instances == 105' \
     "$state/thin-firstboot-report.json" >/dev/null
 systemctl start easymesh-room-demo.service
 for endpoint in http://127.0.0.1:8888/api/v1/topology \

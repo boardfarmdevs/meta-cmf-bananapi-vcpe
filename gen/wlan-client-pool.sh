@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Provision deterministic private and IoT WLAN client cohorts.
-#
-# The small profile is the current acceptance target: ten private clients plus
-# ten IoT clients. Medium/stress are named now so scenarios and CI do not
-# hardcode 20, but require separate capacity acceptance before use.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ACTION=${1:-plan}
 [ $# -eq 0 ] || shift
 
-PROFILE=small
-PRIVATE_COUNT=
-IOT_COUNT=
+PROFILE=unified
+PRIVATE_COUNT=50
+IOT_COUNT=50
 PRIVATE_SSID=${PRIVATE_SSID:-private_ssid}
 PRIVATE_PSK=${PRIVATE_PSK:-test-fronthaul}
 IOT_SSID=${IOT_SSID:-iot_ssid}
@@ -22,43 +17,28 @@ usage() {
     cat <<'EOF'
 Usage: wlan-client-pool.sh {plan|up|down|status} [options]
 
-  --profile small|medium|stress  20, 50 or 100 total clients (default: small)
-  --private COUNT                override the private cohort size
-  --iot COUNT                    override the IoT cohort size
-
+One appliance always provisions 100 clients: 50 private and 50 IoT.
+Rooms select the online subset without recreating containers or radios.
+The first 20 retain their original identities and band/security settings.
 Examples:
-  ./wlan-client-pool.sh plan --profile small
-  ./wlan-client-pool.sh up --private 10 --iot 10
+  ./wlan-client-pool.sh plan
+  ./wlan-client-pool.sh up
   ./wlan-client-pool.sh status
-
-Small is the current acceptance target. Medium and stress deliberately use the
-same naming/cohort model, but must pass their own hwsim, medium, memory and
-controller scale gates before they are declared supported. The patched lab
-hwsim module supports a bounded 128-radio static pool for the stress profile.
 EOF
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --profile) PROFILE=$2; shift 2 ;;
-        --private) PRIVATE_COUNT=$2; shift 2 ;;
-        --iot) IOT_COUNT=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
 case "$PROFILE" in
-    small)  default_private=10; default_iot=10 ;;
-    medium) default_private=25; default_iot=25 ;;
-    stress) default_private=50; default_iot=50 ;;
-    *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
+    unified|100) PROFILE=unified ;;
+    *) echo '0913 has one fixed 100-client pool; select online clients in the room' >&2; exit 2 ;;
 esac
-PRIVATE_COUNT=${PRIVATE_COUNT:-$default_private}
-IOT_COUNT=${IOT_COUNT:-$default_iot}
-for value in "$PRIVATE_COUNT" "$IOT_COUNT"; do
-    [[ "$value" =~ ^[0-9]+$ ]] || { echo "client counts must be non-negative integers" >&2; exit 2; }
-done
 TOTAL=$((PRIVATE_COUNT + IOT_COUNT))
 [ "$TOTAL" -gt 0 ] || { echo "at least one client is required" >&2; exit 2; }
 [ "$TOTAL" -le 100 ] || { echo "this naming scheme is bounded to 100 clients" >&2; exit 2; }
@@ -89,30 +69,38 @@ radio_plan() {
     fi
 }
 
+client_parameters() {
+    local index=$1
+    if [ "$index" -lt 20 ]; then
+        ordinal=$((index % 10 + 1))
+        if [ "$index" -lt 10 ]; then cohort=private; else cohort=iot; fi
+    else
+        ordinal=$(((index - 20) / 2 + 11))
+        if [ "$((index % 2))" -eq 0 ]; then cohort=private; else cohort=iot; fi
+    fi
+    band=auto
+    security=wpa2
+    if [ "$cohort" = private ]; then
+        ssid=$PRIVATE_SSID
+        psk=$PRIVATE_PSK
+        [ "$ordinal" -ne 9 ] || band=2.4
+        if [ "$ordinal" -eq 10 ]; then band=6; security=sae; fi
+    else
+        ssid=$IOT_SSID
+        psk=$IOT_PSK
+    fi
+}
+
 print_plan() {
-    local index name cohort ordinal band security
+    local index name cohort ordinal band security ssid psk
     printf 'PROFILE\t%s\n' "$PROFILE"
-    printf 'CLIENTS\tprivate=%d\tiot=%d\ttotal=%d\n' \
-        "$PRIVATE_COUNT" "$IOT_COUNT" "$TOTAL"
-    printf 'HWSIM\trequired=%d\tpool=%s\n' \
-        "$required_radios" "$(radio_plan)"
+    printf 'CLIENTS\tprivate=%d\tiot=%d\ttotal=%d\n' "$PRIVATE_COUNT" "$IOT_COUNT" "$TOTAL"
+    printf 'HWSIM\trequired=%d\tpool=%s\n' "$required_radios" "$(radio_plan)"
     printf 'INDEX\tCONTAINER\tCOHORT\tORDINAL\tSSID\tSECURITY\tBAND\n'
     for index in $(seq 0 $((TOTAL - 1))); do
         name=$(container_name "$index")
-        if [ "$index" -lt "$PRIVATE_COUNT" ]; then
-            cohort=private; ordinal=$((index + 1))
-            band=auto; security=wpa2
-            [ "$ordinal" -ne "$((PRIVATE_COUNT - 1))" ] || band=2.4
-            if [ "$ordinal" -eq "$PRIVATE_COUNT" ]; then
-                band=6; security=sae
-            fi
-            printf '%d\t%s\t%s\t%d\t%s\t%s\t%s\n' \
-                "$index" "$name" "$cohort" "$ordinal" "$PRIVATE_SSID" "$security" "$band"
-        else
-            cohort=iot; ordinal=$((index - PRIVATE_COUNT + 1))
-            printf '%d\t%s\t%s\t%d\t%s\t%s\t%s\n' \
-                "$index" "$name" "$cohort" "$ordinal" "$IOT_SSID" wpa2 auto
-        fi
+        client_parameters "$index"
+        printf '%d\t%s\t%s\t%d\t%s\t%s\t%s\n' "$index" "$name" "$cohort" "$ordinal" "$ssid" "$security" "$band"
     done
 }
 
@@ -221,16 +209,7 @@ up)
     # inventory fan-out and avoids flooding LXD at 50/100-client scale.
     for index in $(seq 0 $((TOTAL - 1))); do
         name=$(container_name "$index")
-        if [ "$index" -lt "$PRIVATE_COUNT" ]; then
-            cohort=private; ordinal=$((index + 1)); ssid=$PRIVATE_SSID
-            band=auto; security=wpa2
-            [ "$ordinal" -ne "$((PRIVATE_COUNT - 1))" ] || band=2.4
-            if [ "$ordinal" -eq "$PRIVATE_COUNT" ]; then
-                band=6; security=sae
-            fi
-        else
-            cohort=iot; ordinal=$((index - PRIVATE_COUNT + 1)); ssid=$IOT_SSID; security=wpa2; band=auto
-        fi
+        client_parameters "$index"
         client_ready "$name" "$cohort" "$ordinal" "$ssid" "$security" "$band" &
         probe_pids+=("$!")
         probe_indices+=("$index")
@@ -261,18 +240,7 @@ up)
         args=()
         [ "$index" -eq 0 ] || args=(-i "$index")
         name=$(container_name "$index")
-        if [ "$index" -lt "$PRIVATE_COUNT" ]; then
-            ordinal=$((index + 1))
-            cohort=private; ssid=$PRIVATE_SSID; psk=$PRIVATE_PSK
-            band=auto; security=wpa2
-            [ "$ordinal" -ne "$((PRIVATE_COUNT - 1))" ] || band=2.4
-            if [ "$ordinal" -eq "$PRIVATE_COUNT" ]; then
-                band=6; security=sae
-            fi
-        else
-            ordinal=$((index - PRIVATE_COUNT + 1))
-            cohort=iot; ssid=$IOT_SSID; psk=$IOT_PSK; security=wpa2; band=auto
-        fi
+        client_parameters "$index"
         if [ "${healthy[$index]:-0}" = 1 ]; then
             echo "$name: already healthy on $ssid; keeping existing radio and identity"
         else

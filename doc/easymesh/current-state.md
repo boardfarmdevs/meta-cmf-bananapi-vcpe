@@ -8,8 +8,8 @@ to check a machine now.
 
 | Item | Current value |
 | --- | --- |
-| Canonical branch | `codex/0908-clean` |
-| Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0908-clean/meta-cmf-bananapi-vcpe` |
+| Canonical branch | `codex/0913-clean` |
+| Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0913-clean/meta-cmf-bananapi-vcpe` |
 | Running appliance | `rev140:rdkeasymesh-20-0908` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
@@ -20,6 +20,12 @@ Controller and Agent-1 share the root container. Four extenders complete the
 mesh. The twenty clients comprise ten private and ten IoT stations. A room may
 make roles unavailable without destroying containers or resizing the appliance.
 Outer VM autostart is disabled; manually starting the VM starts its lab and room.
+
+0913 is being built and qualified in the new canonical checkout. It provides
+one 100-client-capacity appliance, a default room with 20 online clients, and
+`fifty-client-counter-roam`. The deployed/release rows above and below still
+refer to the last accepted deployment until cutover is verified. 0913's Yocto
+build uses `/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`.
 
 ## Browser addresses
 

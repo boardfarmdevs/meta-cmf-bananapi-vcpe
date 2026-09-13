@@ -13,7 +13,7 @@ for dependency in VBoxManage qemu-img qemu-nbd jq python3 sha256sum tar flock gr
     command -v "$dependency" >/dev/null || { echo "Missing build dependency: $dependency (see README.md)." >&2; exit 1; }
 done
 sudo -n true
-jq -e '.stack == "rdkeasymesh" and .release_flavor == "thin" and .profile_selectable == true' \
+jq -e '.stack == "rdkeasymesh" and .release_flavor == "thin" and .client_capacity == 100' \
     "$thin_dir/release.json" >/dev/null
 (cd "$thin_dir"; sha256sum -c SHA256SUMS)
 archive=$(jq -r .archive "$thin_dir/release.json")
@@ -74,7 +74,7 @@ jq -n --slurpfile source "$thin_dir/release.json" \
       release_id:$source[0].release_id,box:$box,source_commit:$source[0].source_commit,
       source_archive:$source[0].archive,source_archive_sha256:$archive_sha256,
       adapter_manifest_sha256:$adapter_sha256,virtualbox_builder_version:$virtualbox,
-      clients:20,physical_mesh_devices:5,logical_mesh_roles:6,cpus:6,memory_mb:8192,
+      client_capacity:100,default_room_clients:20,physical_mesh_devices:5,logical_mesh_roles:6,cpus:8,memory_mb:16384,
       initial_nested_instances:0,status:"candidate"}' > "$output/release.json"
 tar -xOf "$thin_dir/$archive" backup/virtual-machine.img \
     | dd of="$work/source.img" bs=4M conv=sparse status=none
@@ -129,7 +129,7 @@ qemu-img check "$disk"
 qemu-img convert -p -f qcow2 -O vmdk -o subformat=monolithicSparse "$disk" "$work/appliance.vmdk"
 VBoxManage createvm --name "$name" --ostype Ubuntu_64 --basefolder "$work" --register
 registered=true
-VBoxManage modifyvm "$name" --memory 8192 --cpus 6 --ioapic on --acpi on \
+VBoxManage modifyvm "$name" --memory 16384 --cpus 8 --ioapic on --acpi on \
     --firmware efi64 --rtc-use-utc on --nic1 nat --nic-type1 virtio \
     --nested-hw-virt off --paravirt-provider kvm --autostart-enabled off \
     --boot1 disk --boot2 none --boot3 none --boot4 none --graphicscontroller vmsvga

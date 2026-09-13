@@ -7,15 +7,7 @@ if [ -r "$script_dir/release.env" ]; then
     . "$script_dir/release.env"
 fi
 usage() {
-    if [ "${LAB_PROFILE_SELECTABLE:-false}" = true ]; then
-        cat >&2 <<EOF
-usage: $0 --profile 20|50|100 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]
-
-The universal thin release requires one profile selection before first boot.
-EOF
-    else
-        echo "usage: $0 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]" >&2
-    fi
+    echo "usage: $0 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]" >&2
 }
 
 monitoring=false
@@ -28,9 +20,8 @@ while [ "$#" -gt 0 ]; do
             shift
             ;;
         --profile)
-            [ "$#" -ge 2 ] || { usage; exit 2; }
-            selected_clients=$2
-            shift 2
+            echo "Client sizing is selected by the room; 0913 always provides capacity for 100." >&2
+            exit 2
             ;;
         -h|--help)
             usage
@@ -56,38 +47,18 @@ while [ "$#" -gt 0 ]; do
 done
 
 profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
-release_id=${LAB_RELEASE_ID:-0908}
+release_id=${LAB_RELEASE_ID:-0913}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
 esac
 if [ "$profile_selectable" = true ]; then
-    case "$selected_clients" in
-        20)
-            selected_profile=small
-            selected_radios=32
-            selected_cpus=6
-            selected_memory=8GiB
-            ;;
-        50)
-            selected_profile=medium
-            selected_radios=64
-            selected_cpus=8
-            selected_memory=12GiB
-            ;;
-        100)
-            selected_profile=stress
-            selected_radios=128
-            selected_cpus=12
-            selected_memory=20GiB
-            ;;
-        *)
-            echo "the universal thin release requires --profile 20, 50 or 100" >&2
-            usage
-            exit 2
-            ;;
-    esac
-    default_name="rdkeasymesh-${selected_clients}-${release_id}"
+    selected_clients=100
+    selected_profile=unified
+    selected_radios=128
+    selected_cpus=8
+    selected_memory=16GiB
+    default_name="rdkeasymesh-${release_id}"
 else
     [ -z "$selected_clients" ] || {
         echo "--profile is valid only for a profile-selectable thin release" >&2
@@ -98,7 +69,7 @@ else
     selected_radios=${LAB_HWSIM_RADIOS:-unknown}
     selected_cpus=${LAB_DEFAULT_CPUS:-6}
     selected_memory=${LAB_DEFAULT_MEMORY:-8GiB}
-    default_name=${LAB_DEFAULT_NAME:-rdkeasymesh-20-${release_id}}
+    default_name=${LAB_DEFAULT_NAME:-rdkeasymesh-${release_id}}
 fi
 
 if [ -z "$backup" ]; then

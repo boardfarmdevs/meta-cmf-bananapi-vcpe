@@ -103,7 +103,7 @@ lxc image info wlan-client-base >/dev/null
 
 if [ "$selectable" = true ]; then
     printf 'thin_profile=select-at-import\n'
-    printf 'thin_clients=20,50,100\n'
+    printf 'thin_clients=100\n'
 else
     printf 'thin_profile=%s\n' "$EASYMESH_SCALE_PROFILE"
     printf 'thin_clients=%s\n' "$HEALTH_EXPECT_CLIENTS"
