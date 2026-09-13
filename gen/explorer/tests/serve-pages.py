@@ -16,6 +16,11 @@ def main():
             project.mkdir(exist_ok=True)
             (project / "explorer").symlink_to(output, target_is_directory=True)
             (project / "index.html").symlink_to(source / "pages-index.html")
+            for directory in ("viewer", "golden"):
+                (project / directory).symlink_to(
+                    source.parent / "wmediumd/configurator/worlds" / directory,
+                    target_is_directory=True,
+                )
         handler = partial(SimpleHTTPRequestHandler, directory=str(root))
         with ThreadingHTTPServer(("127.0.0.1", 4178), handler) as server:
             server.serve_forever()

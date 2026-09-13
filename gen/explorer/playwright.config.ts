@@ -1,5 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
+const browserEnvironment = { ...process.env };
+delete browserEnvironment.DISPLAY;
+
 export default defineConfig({
   testDir: './tests',
   workers: 1,
@@ -13,8 +16,15 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     launchOptions: {
+      env: browserEnvironment,
       executablePath: process.env.CHROMIUM_PATH,
-      args: ['--num-raster-threads=2', '--disable-gpu'],
+      args: [
+        '--num-raster-threads=2',
+        '--ozone-platform=headless',
+        '--enable-unsafe-swiftshader',
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+      ],
     },
   },
   webServer: {

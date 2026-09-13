@@ -157,6 +157,7 @@ test('all protocol journeys and the qualification view work', async ({
   for (const journey of [
     'Client traffic',
     'Commanded steering',
+    'Band steering',
     'Mesh onboarding',
     'RF feedback loop',
   ]) {
@@ -191,6 +192,84 @@ test('all protocol journeys and the qualification view work', async ({
   await expect(page.locator('.state-view')).toContainText(
     'No live lab is connected',
   );
+  await expect(page.locator('.state-view')).toContainText(
+    '17/17 rooms pass on each stack',
+  );
+  await expect(page.locator('.state-view')).toContainText(
+    'AP-registration-loss trigger remains unreproduced',
+  );
+});
+
+test('band inspector describes native measurements and bounded qualification', async ({
+  page,
+}) => {
+  await page.goto(explorerPath);
+  await page.getByRole('button', { name: 'Reference optimizer' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Band steering', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('client_nl80211_received_scan');
+  await expect(dialog).toContainText('12 required band transitions per stack');
+  await expect(dialog).toContainText('not vendor-autonomous optimization');
+  await expect(
+    dialog.getByRole('link', {
+      name: 'band-steering.md',
+      exact: true,
+    }),
+  ).toHaveAttribute(
+    'href',
+    new RegExp(
+      `/blob/${revision}/doc/easymesh/reference/optimizer/band-steering.md$`,
+    ),
+  );
+});
+
+test('new band rooms remain disconnected static previews and the manual explains them', async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  const errors: string[] = [];
+  page.on('request', (requested) => requests.push(requested.url()));
+  page.on('pageerror', (error) => errors.push(error.message));
+  for (const room of [
+    'band-upgrade-24-5',
+    'band-upgrade-5-6',
+    'band-ap-counter-roam',
+  ]) {
+    await page.goto(`/meta-cmf-bananapi-vcpe/viewer/?world=${room}`);
+    await expect(page.locator('#worldmeta')).toContainText(room);
+    await expect(page.locator('#world option')).toHaveCount(17);
+    await expect(page.locator('meta[name="room-viewer-mode"]')).toHaveAttribute(
+      'content',
+      'no-connect',
+    );
+    await expect(page.locator('#err')).toBeHidden();
+    await page.locator('#play').click();
+    await expect(page.locator('#play')).toHaveText('Pause');
+    await page.locator('#play').click();
+    await expect(page.locator('#play')).toHaveText('Play');
+  }
+  await page.goto('/meta-cmf-bananapi-vcpe/viewer/manual.html#band-steering');
+  await expect(
+    page.getByRole('heading', { name: 'Dedicated band-steering rooms' }),
+  ).toBeVisible();
+  await expect(page.locator('#optimizer')).toContainText(
+    'Public Pages is a disconnected preview.',
+  );
+  await page.locator('#manualSearch').fill('band-upgrade');
+  await expect(page.locator('#optimizer')).toBeVisible();
+  await expect(page.locator('#quick-start')).toBeHidden();
+  expect(
+    requests.every(
+      (address) => new URL(address).origin === 'http://127.0.0.1:4178',
+    ),
+  ).toBe(true);
+  expect(
+    requests.some((address) => new URL(address).pathname.startsWith('/api/')),
+  ).toBe(false);
+  expect(errors).toEqual([]);
 });
 
 test('landing and explorer navigation preserve sibling viewer and manual URLs', async ({

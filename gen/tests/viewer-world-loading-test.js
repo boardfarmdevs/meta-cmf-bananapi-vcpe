@@ -8,6 +8,10 @@ const source = fs.readFileSync(path.resolve(__dirname,
   '../wmediumd/configurator/worlds/viewer/index.html'), 'utf8');
 const loading = source.slice(source.indexOf("  const sel = $('#world');"),
   source.indexOf('  // ---- controls', source.indexOf("  const sel = $('#world');")));
+const staticCatalog = vm.runInNewContext(source.match(/const GOLDEN = (\[[\s\S]*?\]);/)[1]);
+const installedCatalog = fs.readdirSync(path.resolve(__dirname, '../wmediumd/configurator/worlds/golden'))
+  .filter(filename => filename.endsWith('.world.json')).map(filename => filename.slice(0, -11)).sort();
+assert.deepEqual(Array.from(staticCatalog).sort(), installedCatalog, 'static catalog includes every installed room');
 
 class WorldFile {
   constructor(contents, size = contents.length) {

@@ -28,11 +28,16 @@ Geist and Geist Mono fonts are bundled from pinned npm packages, not loaded
 from Google Fonts at runtime. The original formatting configuration is retained.
 `package-lock.json` pins the dependency tree for `npm ci`.
 
-The explanatory content deliberately retains the supplied documentation
-revision `b82cce9fd362dd93313286f910583e685afe8e9a`. "Current state" inside
-the explorer means that snapshot, not current host measurements or the latest
-room-feature results. Topology clients, bands and parentage are examples.
-Use the repository's current documentation for subsequent results.
+The explanatory content now pins the qualified band-steering source revision
+`685479e0622e6eaa52711de69c5bdfcc18040f09` (13 September 2026 UTC).
+Architecture inspectors explain native receive-channel reporting, modeled RF
+load boundaries, passive received scans and external band policy. A fifth
+protocol walkthrough follows a band change from profile setup through native
+BTM and physical-owner/WLAN verification. The qualification view records the
+17/17 room results on both stacks and the unresolved prpl preparation caveat.
+Reorganized reference links resolve at the same immutable source revision.
+"Current state" means that dated evidence, not current host measurements.
+Topology clients, bands and parentage remain illustrative examples.
 
 ## Build and run
 
@@ -75,10 +80,14 @@ port 4178, not Vite's development server or a backend. They cover:
   revision, using local git objects rather than network access.
 - Architecture drawers, related components, keyboard tabs and closing drawers.
 - All three topology arrangements and example client inspection.
-- Every step of all four protocol walkthroughs and the qualification view.
+- Every step of all five protocol walkthroughs and the qualification view.
 - Sibling viewer/manual navigation and mobile viewport containment.
+- All three band-room previews, the seventeen-room static catalog, manual
+  search, and the absence of live API requests from disconnected previews.
 
-The browser runs one test at a time with bounded raster threads. If a compatible
+The browser runs one test at a time with bounded raster threads and software
+WebGL for the room preview. Headless launches discard the desktop `DISPLAY`.
+If a compatible
 Chromium installation is already available, set `CHROMIUM_PATH` instead of
 downloading one. Screenshots and failed-test traces stay in ignored
 `test-results/`; generated output and npm dependencies are also ignored.

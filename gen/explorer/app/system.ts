@@ -1,4 +1,4 @@
-export const revision = 'b82cce9fd362dd93313286f910583e685afe8e9a';
+export const revision = '685479e0622e6eaa52711de69c5bdfcc18040f09';
 export const source = (path: string) =>
   `https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/${path ? 'blob' : 'tree'}/${revision}/doc/easymesh/${path}`;
 export type Entry = {
@@ -58,13 +58,17 @@ export const entries: Record<string, Entry> = {
     [
       ['Container', 'bpibroadband'],
       ['Internal port', '8888'],
-      ['VM host forwarding', '18889'],
+      ['Published RDK topology', 'rev140:48889'],
       ['Surfaces', 'Network topology · mesh devices · clients · policy'],
       ['Command boundary', 'libemcli / TLS → onewifi_em_ctrl'],
       ['Model', 'Topology plus detailed association / metric records'],
     ],
     ['controller', 'database', 'client', 'optimizer'],
-    ['concepts/architecture.md', 'reference/metrics.md', 'current-state.md'],
+    [
+      'concepts/architecture.md',
+      'reference/observability/metrics.md',
+      'current-state.md',
+    ],
     'The explorer’s topology is an illustrative reconstruction, not a live capture. No lab API is connected.',
   ),
   controller: entry(
@@ -98,7 +102,7 @@ export const entries: Record<string, Entry> = {
       ['24 STAs means', '20 WLAN clients + 4 backhaul stations'],
     ],
     ['controller', 'cli', 'tests'],
-    ['concepts/architecture.md', 'reference/metrics.md'],
+    ['concepts/architecture.md', 'reference/observability/metrics.md'],
   ),
   agent: entry(
     'EasyMesh agent',
@@ -168,11 +172,14 @@ export const entries: Record<string, Entry> = {
       ['wifi0', '2.4 GHz · baseline channel 6'],
       ['wifi1', '5 GHz · baseline channel 36'],
       ['wifi2', '6 GHz · 20 MHz · operating class 131'],
-      ['Kernel profile', 'Linux 7.0.0-28 · radios=32 channels=3 regtest=5'],
+      ['Kernel profile', 'Linux 7.0.0-30 · radios=32 channels=3 regtest=5'],
       ['Inventory', '5 BPI wiphys + 20 client wiphys in the 20-client profile'],
     ],
     ['hwsim', 'hal', 'wmediumd'],
-    ['concepts/architecture.md', 'reference/single-wiphy-radio-model.md'],
+    [
+      'concepts/architecture.md',
+      'reference/platform/single-wiphy-radio-model.md',
+    ],
     'Three physical wiphys per BPI are not equivalent. The documented architecture requires one.',
   ),
   bridge: entry(
@@ -413,13 +420,19 @@ export const entries: Record<string, Entry> = {
     'Creates software Wi-Fi radios assigned to each container’s network namespace.',
     'The regular Linux cfg80211/mac80211 stack remains in the path. Each BPI receives one wiphy with several virtual interfaces; every WLAN station also has its own radio.',
     [
-      ['Kernel profile', 'Linux 7.0.0-28'],
+      ['Kernel profile', 'Linux 7.0.0-30 · receive-context patch 0011'],
       ['Module settings', 'radios=32 channels=3 regtest=5'],
       ['Namespace', 'Assigned to LXD participant'],
       ['Frame transport', 'Generic netlink ↔ wmediumd'],
       ['Frequency owner', 'Active VIF, not parent wiphy'],
+      ['Passive reception', 'Native home + scan / ROC channels → medium'],
+      ['Survey', 'Context-qualified modeled occupancy; unknown is not idle'],
     ],
-    ['radios', 'hal', 'wmediumd'],
+    ['radios', 'hal', 'wmediumd', 'band'],
+    [
+      'reference/radio/virtual-rf-assessment.md',
+      'reference/optimizer/band-steering.md',
+    ],
   ),
   wmediumd: entry(
     'wmediumd.patched',
@@ -432,14 +445,19 @@ export const entries: Record<string, Entry> = {
       ['Delivery', 'Channel + SNR / PER / interference model'],
       ['Control socket', '/run/wmediumd-control.sock · SOCK_SEQPACKET'],
       ['Telemetry', 'Host-only snapshots, links, events and counters'],
+      ['Silent receivers', 'Kernel receive contexts, not last-TX guesses'],
       [
         'Dynamic updates',
         'Generation-checked atomic pair / frequency controls',
       ],
     ],
     ['hwsim', 'configurator', 'console', 'optimizer'],
-    ['concepts/rf-simulation.md', 'reference/wmediumd-internals.md'],
-    'wmediumd applies RF conditions; it does not select a client’s target AP. The optional kernel medium is a reduced-physics comparison backend.',
+    [
+      'concepts/rf-simulation.md',
+      'reference/radio/wmediumd-internals.md',
+      'reference/optimizer/band-steering.md',
+    ],
+    'wmediumd applies RF conditions; it does not select a client’s target AP. Modeled load and legacy-rate airtime are not calibrated physical capacity. The optional kernel medium is a reduced-physics comparison backend.',
   ),
   tooling: entry(
     'Experiment tooling',
@@ -461,7 +479,7 @@ export const entries: Record<string, Entry> = {
     'green',
     'External host-side Python package',
     'Observes actual telemetry and proposes or deploys bounded steering actions.',
-    'The optimizer normalizes identities, validates fresh complete observations, collects same-band candidate RCPI, evaluates a threshold/hysteresis baseline, and journals the result. It does not live in the RDK-B containers.',
+    'The optimizer normalizes identities, validates fresh complete observations, and journals bounded native steering. Ordinary clients retain same-band policy. Explicitly profiled clients use fresh client-received scans for capability-aware band preference. The policy does not live in the RDK-B containers.',
     [
       ['Modes', 'Observe · recommend · explicitly opted-in act · replay'],
       ['Inputs', 'Topology, BSS ownership, current + candidate RCPI'],
@@ -472,9 +490,51 @@ export const entries: Record<string, Entry> = {
       ['Action adapter', 'gen/steer.sh → exact BSSID'],
       ['Verification', 'Station, controller model, traffic, stability'],
     ],
-    ['cli', 'steer', 'tests', 'configurator'],
-    ['concepts/optimizer.md', 'reference/optimizer-architecture.md'],
+    ['cli', 'band', 'steer', 'tests', 'configurator'],
+    [
+      'concepts/optimizer.md',
+      'reference/optimizer/architecture.md',
+      'reference/optimizer/band-steering.md',
+    ],
     'This is a research harness. An autonomous production steering policy is not implemented. Configured SNR is not a substitute for reported RCPI.',
+  ),
+  band: entry(
+    'Band steering',
+    'green',
+    'External policy · native received scans + BTM',
+    'Qualified 2.4 ↔ 5 GHz, 5 ↔ 6 GHz, and combined AP/band roaming.',
+    'Up to four explicitly profiled clients use asynchronous passive SCAN TYPE=ONLY and kernel BSS records. Serving and candidate signal come from the same received direction and fresh scan, not geometry. Native controller requests, real reassociation and WLAN traffic determine success.',
+    [
+      [
+        'Eligibility',
+        'Actual radio capabilities · allowed bands · SSID · SAE / PMF',
+      ],
+      ['Measurements', 'client_nl80211_received_scan · two-second freshness'],
+      ['Receive path', 'Paired hwsim / wmediumd native scan-channel reporting'],
+      [
+        'Policy guards',
+        'One-second hold + new scan · three-second dwell · five-second cooldown',
+      ],
+      [
+        'Dedicated rooms',
+        'band-upgrade-24-5 · band-upgrade-5-6 · band-ap-counter-roam',
+      ],
+      [
+        'Independent proof',
+        '12 required band transitions per stack; pinned controls stay put',
+      ],
+      [
+        'Cleanup',
+        'Original supplicant settings restored; default twenty-client pool retained',
+      ],
+    ],
+    ['optimizer', 'hwsim', 'wmediumd', 'supplicant', 'steer', 'tests'],
+    [
+      'reference/optimizer/band-steering.md',
+      'gen/optimizer/optimizer/band_scan.py',
+      'gen/optimizer/optimizer/band_steering.py',
+    ],
+    'This is external lab policy using native steering, not vendor-autonomous optimization or native end-to-end 802.11k beacon-report qualification. A preferred band may have weaker signal. This explorer never scans or steers a live client.',
   ),
   steer: entry(
     'Steering adapter',
@@ -508,12 +568,12 @@ export const entries: Record<string, Entry> = {
       ],
     ],
     ['wmediumd', 'room', 'console', 'tests'],
-    ['concepts/rf-simulation.md', 'reference/wmediumd-configurator.md'],
+    ['concepts/rf-simulation.md', 'reference/radio/configurator.md'],
   ),
   console: entry(
     'wmediumd Console',
     'green',
-    'HTTP :8890 · VM forward :18890',
+    'HTTP :8890 · published RDK rev140:48890',
     'Shows what the RF medium applied and how frames behaved.',
     'The console exposes radio / link graphs, active RF values, counters, outcomes, events and configuration provenance. It consumes the host-only telemetry socket and provides REST, WebSocket and Prometheus surfaces.',
     [
@@ -523,12 +583,12 @@ export const entries: Record<string, Entry> = {
       ['Role', 'RF observation, separate from optimizer decisions'],
     ],
     ['wmediumd', 'configurator', 'room'],
-    ['concepts/rf-simulation.md', 'reference/wmediumd-console.md'],
+    ['concepts/rf-simulation.md', 'reference/radio/console.md'],
   ),
   room: entry(
     'Interactive room',
     'green',
-    'HTTP :8891 · VM forward :18891',
+    'HTTP :8891 · published RDK rev140:48891',
     'A spatial presentation connects movement to RF conditions and observed mesh behavior.',
     'The room service combines a Golden World, controlled position / presence changes, reported telemetry and bounded external optimizer behavior. Playback and dragging update the RF world through verified controls.',
     [
@@ -536,9 +596,10 @@ export const entries: Record<string, Entry> = {
       ['Display', 'Client placement · signal · topology · traffic'],
       ['Control semantics', 'Revision checks · bounded server-owned playback'],
       ['Observation', 'Read-only observers and evidence replay'],
+      ['Qualified catalog', '14 original rooms + 3 dedicated band rooms'],
     ],
-    ['configurator', 'optimizer', 'cli', 'tests'],
-    ['live-room-demo/README.md', 'current-state.md'],
+    ['configurator', 'optimizer', 'band', 'cli', 'tests'],
+    ['live-room-demo/README.md', 'reference/optimizer/band-steering.md'],
     'This architecture explorer is a separate explanatory page. Its interactions do not acquire a room lease or change RF.',
   ),
   tests: entry(
@@ -558,28 +619,39 @@ export const entries: Record<string, Entry> = {
       ['Evidence', 'Source revision · hashes · inputs · timestamps · outcomes'],
     ],
     ['database', 'client', 'optimizer', 'state'],
-    ['concepts/architecture.md', 'current-state.md', 'guide/operations.md'],
+    [
+      'concepts/architecture.md',
+      'reference/testing/room-acceptance.md',
+      'guide/operations.md',
+    ],
   ),
   state: entry(
     '0908 qualification boundaries',
     'green',
-    'Documentation snapshot · 9 September 2026',
-    'The corrected fresh RDK appliance passes cold reconstruction at 20 clients.',
-    'The 0908 clean rebuild records five physical mesh devices, fifteen logical radios, fifty BSS records and zero native service restarts. The RDK deployment is on rev140; the separate prplMesh repository and live room are on rev150.',
+    'Documentation snapshot · 13 September 2026 UTC',
+    'All seventeen rooms pass on RDK/rev140 and prplMesh/rev150.',
+    'Both complete catalogs and separate three-room band repeats pass independent audits. Native identities remain unchanged inside each measured suite; default twenty-client restoration, topology ownership, WLAN traffic, and fresh measurement checks pass without relaxing the original room gates.',
     [
       ['Accepted scale', '1 gateway + 4 extenders + 20 WLAN clients'],
       ['Medium baseline', 'Userspace wmediumd'],
       [
-        'Reported limitation',
-        'Fresh import needed one extender metrics-policy replay',
+        'Room acceptance',
+        '60 / 45 / 90-second settling bounds + five-second stable hold',
+      ],
+      [
+        'Native preparation',
+        'prpl required a clean restart; an AP-registration-loss trigger remains unreproduced',
       ],
       [
         'Not claimed',
         'Autonomous production steering or completed 12-hour churn soak',
       ],
     ],
-    ['tests', 'gateway', 'optimizer'],
-    ['current-state.md', 'reference/release-0908-acceptance.md'],
-    'Older 0905/0906 records remain in the documentation. This explorer labels examples and does not claim live health or repeat historical acceptance tests.',
+    ['tests', 'gateway', 'optimizer', 'band'],
+    [
+      'reference/optimizer/band-steering.md',
+      'reference/testing/room-acceptance.md',
+    ],
+    'These are bounded feature tests, not a soak, intrinsic stack-speed ranking or proof of calibrated RF capacity. No live lab is connected; inspect the dated evidence rather than treating illustrative topology as telemetry.',
   ),
 };

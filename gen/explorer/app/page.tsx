@@ -531,8 +531,12 @@ export default function Explorer() {
           <span>
             Real Wi-Fi & EasyMesh protocols. Simulated radios & propagation.
           </span>
-          <a href={source('current-state.md')} target="_blank" rel="noreferrer">
-            0908 source snapshot <ArrowUpRight size={13} />
+          <a
+            href={source('reference/optimizer/band-steering.md')}
+            target="_blank"
+            rel="noreferrer"
+          >
+            13 September qualification <ArrowUpRight size={13} />
           </a>
         </footer>
         <Sheet
