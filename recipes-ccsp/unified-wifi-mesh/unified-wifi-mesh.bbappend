@@ -185,6 +185,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0185-report-unsolicited-radio-channel-updates.patch \
     file://0186-advance-ready-agent-commands-on-events.patch \
     file://0187-policy-select-ready-owner-and-check-admission.patch \
+    file://0188-cli-serve-offline-ui-dependencies.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
@@ -713,7 +714,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg file://web-vendor.tar.gz"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -737,6 +738,8 @@ do_install_append_qemux86bpibroadband() {
     install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
     cp -rf ${WORKDIR}/static/. ${D}/usr/ccsp/EasyMesh/static/
+    (cd ${WORKDIR}; sha256sum -c vendor/SHA256SUMS)
+    cp -r ${WORKDIR}/vendor ${D}/usr/ccsp/EasyMesh/static/
     # The helper archive supplies the cross-built Go binary and its baseline
     # assets.  Overlay the static files from the patched source tree so WebUI
     # fixes remain normal, reviewable source patches instead of binary tarball
