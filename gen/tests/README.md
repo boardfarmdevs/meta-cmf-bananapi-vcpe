@@ -10,6 +10,19 @@ This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
 unless a section says otherwise.
 
+Run the Python suites together without a live lab:
+
+```sh
+PYTHONPATH="$PWD/gen/wmediumd/configurator:$PWD/gen/optimizer:$PWD/gen/demo:$PWD/gen/demo/tests:$PWD/gen/tests" \
+  python3 -m pytest --import-mode=importlib \
+  gen/wmediumd/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests
+```
+
+The test directories on `PYTHONPATH` supply shared fixtures and
+`observer_status`; omitting them is an invocation error, not a live-lab failure.
+Compiled native regressions such as `policy-submission-test.py` additionally
+take the patched Yocto source tree; see their `--help` output.
+
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The
 HTTP counterpart in `gen/demo/tests/test_server.py` checks clean root redirects,
@@ -63,7 +76,8 @@ The unpatched handler fails its state assertion; patch `0154` makes it pass.
 
 ### Devices and containers
 
-The accepted small lab has five EasyMesh devices and twenty WLAN clients:
+The 0913 appliance has five EasyMesh devices and capacity for 100 WLAN clients.
+The default room enables these twenty clients:
 
 | Lab object | LXD container | EasyMesh role |
 |---|---|---|
@@ -71,6 +85,9 @@ The accepted small lab has five EasyMesh devices and twenty WLAN clients:
 | Extenders | `bpiap`, `bpiap-001`, `bpiap-002`, `bpiap-003` | EasyMesh agents |
 | Private clients | `wlan-client` through `wlan-client-009` | `private_ssid` stations |
 | IoT clients | `wlan-client-010` through `wlan-client-019` | `iot_ssid` stations |
+
+`wlan-client-020` through `wlan-client-099` extend the fixed pool with
+alternating private/IoT clients. Rooms control their presence, not VM sizing.
 
 The WebUI names extenders from their persistent EasyMesh AL identities. A
 container suffix therefore does not necessarily equal its displayed
