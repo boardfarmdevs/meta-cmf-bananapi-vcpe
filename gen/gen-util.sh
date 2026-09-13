@@ -545,6 +545,11 @@ ensure_lxd_lab_pool() {
 
 
 check_and_create_virt_wlan() {
+    sudo modprobe cfg80211
+    if [ "$(cat /sys/module/cfg80211/version 2>/dev/null)" != lab-netns-owner-1 ]; then
+        echo "cfg80211 lacks namespace-safe socket cleanup; rebuild hwsim and reboot the lab VM" >&2
+        exit 1
+    fi
     # Define the expected interfaces
     local interfaces=("virt-wlan0" "virt-wlan1" "virt-wlan2" "virt-wlan3")
     local missing=0
