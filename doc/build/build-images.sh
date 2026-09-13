@@ -4,13 +4,14 @@ source_root=$(cd "$(dirname "$0")/../.." && pwd)
 workspace=$(dirname "$source_root")
 evidence=$workspace/release-evidence
 threads=${BUILD_THREADS:-8}
-downloads=${BUILD_DOWNLOADS:-$workspace/downloads}
+downloads=${BUILD_DOWNLOADS:-$HOME/oe/downloads}
+sstate=${BUILD_SSTATE:-$HOME/oe/sstate-cache}
 role_selection=${1:-both}
 case "$role_selection" in controller|extender|both) ;; *) echo 'usage: bash doc/build/build-images.sh [controller|extender|both]' >&2; exit 2 ;; esac
 [[ "$threads" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid BUILD_THREADS' >&2; exit 2; }
 test -z "$(git -C "$source_root" status --porcelain)" || { echo 'Commit source changes before building' >&2; exit 1; }
 test -f "$workspace/meta-cmf-bananapi/setup-environment-refboard-rdkb"
-mkdir -p "$evidence" "$downloads" "$workspace/sstate-cache"
+mkdir -p "$evidence" "$downloads" "$sstate"
 python3 - "$source_root/doc/build/rdkb-bpi-nosrc-0908.xml" "$workspace" <<'PY'
 import pathlib
 import subprocess
@@ -30,7 +31,7 @@ cat > "$workspace/clean-build.conf" <<EOF
 BB_NUMBER_THREADS:forcevariable = "$threads"
 PARALLEL_MAKE:forcevariable = "-j $threads"
 DL_DIR:forcevariable = "$downloads"
-SSTATE_DIR:forcevariable = "$workspace/sstate-cache"
+SSTATE_DIR:forcevariable = "$sstate"
 SSTATE_MIRRORS:forcevariable = ""
 EOF
 for role in controller extender; do
@@ -64,7 +65,7 @@ for role in controller extender; do
         ! grep -q '##RDK_FLAVOR##' conf/local.conf
         grep -Fq 'meta-cmf-bananapi-vcpe' conf/bblayers.conf
         bitbake -R "$workspace/clean-build.conf" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
-        grep -Fx "SSTATE_DIR=\"$workspace/sstate-cache\"" "$record/environment.txt"
+        grep -Fx "SSTATE_DIR=\"$sstate\"" "$record/environment.txt"
         grep -Fx "DL_DIR=\"$downloads\"" "$record/environment.txt"
         grep -Fx 'SSTATE_MIRRORS=""' "$record/environment.txt"
         cp conf/local.conf conf/bblayers.conf "$record/"
