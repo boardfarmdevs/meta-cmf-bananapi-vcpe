@@ -6,7 +6,7 @@ interactive room and EM CLI WebUI. prplMesh is not included or changed.
 
 ```text
 Windows x86-64 + Vagrant + VirtualBox
-  └─ Ubuntu appliance: 6 vCPUs, 8 GiB RAM, sparse 96-GiB disk
+  └─ Ubuntu appliance: 8 vCPUs, 16 GiB RAM, sparse 96-GiB disk
        ├─ nested LXD: controller/root agent + 4 extenders + 100 provisioned clients
        ├─ Docker: Boardfarm WAN/DHCP
        ├─ hwsim virtual radios + userspace wmediumd
@@ -55,8 +55,8 @@ double-click an isolated `.vbox`; use the accompanying `Vagrantfile`.
 3. Reboot if requested. Open a new **native Windows PowerShell**, not WSL.
    Run `VBoxManage --version` and `vagrant --version`. If `VBoxManage` is not
    on PATH, use `& "$env:ProgramFiles\Oracle\VirtualBox\VBoxManage.exe" --version`.
-4. Allow at least 8 GiB for the guest plus Windows headroom: a 16-GiB host is
-   the minimum practical demo machine; 24 GiB or more is preferable. Use an
+4. Allow the default 16 GiB for the guest plus Windows headroom; a 32-GiB host
+   is preferable for the 100-client-capacity appliance. Use an
    SSD with about 150 GiB free for the box cache, imported sparse disk and
    future writes. Vagrant and VirtualBox each keep an artifact/disk copy.
 5. Keep the directory on a local NTFS disk, for example `C:\labs\rdk-0913`,
@@ -132,7 +132,7 @@ vagrant up --provider=virtualbox
 The Vagrantfile refuses duplicate/colliding service ports instead of silently
 renumbering them. Optional variables are `EASYMESH_LXD_UI_PORT`,
 `EASYMESH_GRAFANA_PORT`, `EASYMESH_CPUS` (minimum 6) and
-`EASYMESH_MEMORY_MB` (minimum 8192). Changing resources requires a halt/reload.
+`EASYMESH_MEMORY_MB` (default 16384, minimum 12288). Changing resources requires a halt/reload.
 Profile 50/100 support remains with the separately qualified LXD appliance.
 
 ## 5. Daily operation and diagnosis
