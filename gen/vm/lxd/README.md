@@ -166,22 +166,19 @@ The release has two forms with different purposes:
 - `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` is the one portable download. It retains the
   installed VM, exact source, controller/extender archives,
   and one reusable WLAN-client image, but contains zero provisioned lab
-  instances. `./import.sh|50|100` selects CPU, memory and the
-  32/64/128-radio hwsim pool, writes an immutable profile lock, and provisions
-  the selected roster entirely offline.
-  It
+  instances. `./import.sh` initializes the fixed 100-client, 128-radio pool
+  entirely offline and records an immutable initialization lock. It
   records `/var/lib/easymesh-lab/thin-firstboot-report.json`, and then passes
   through the same runtime and health gates as a ready appliance. Later boots
   use the normal fast reconstruction path. Thin provisioning has no additional
-  fixed systemd start deadline because its duration scales with the profile and
+  fixed systemd start deadline because its duration depends on the host and
   storage backend; the deployment scripts retain bounded readiness gates for
-  each operation. In particular, creating a stress-profile roster on a
+  each operation. In particular, creating the 100-client roster on a
   directory-backed LXD pool can legitimately take more than one hour.
 
 The thin release is not a network installer: its longer first boot does not
 clone repositories or fetch container images. Its sparse 96-GiB logical disk
-supports the stress profile; a smaller selected roster consumes only the blocks
-it actually writes.
+supports the complete pool and consumes only the blocks it actually writes.
 
 ## Export a release
 
@@ -192,7 +189,7 @@ After a passing check:
 ```
 
 The same accepted builder VM can be turned into the universal thin release.
-The builder may be any accepted profile. Supply the original checksummed images
+The builder must pass the 100-client baseline. Supply the original checksummed images
 because a ready export deliberately removed its staging cache:
 
 ```sh
@@ -256,7 +253,7 @@ cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 sha256sum -c SHA256SUMS
 ```
 
-Select one profile. No inner archive argument is needed when the bundle is
+No size selection or inner archive argument is needed when the bundle is
 intact:
 
 ```sh
@@ -264,9 +261,8 @@ EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
   ./import.sh
 ```
 
-Use `--profile 50` or `--profile 100` on a sufficiently sized host. Defaults
-are 6 vCPU/8 GiB, 8 vCPU/12 GiB, and 12 vCPU/20 GiB respectively. The importer
-refuses a missing or invalid choice and never silently defaults to a profile.
+Defaults are 8 vCPUs and 16 GiB RAM. The importer rejects `--profile`; select
+the online client population by loading a room instead.
 
 The importer refuses to overwrite an existing instance, chooses an address on
 the selected LXD network, starts the VM, and reconciles the guest's outer NIC

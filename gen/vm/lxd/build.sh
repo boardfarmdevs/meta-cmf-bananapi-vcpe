@@ -289,10 +289,9 @@ run_root() {
 check_baseline() (
     restore_room=false
     trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-demo.service || result=$?; fi; exit "$result"' EXIT
-    if run_root systemctl is-active --quiet easymesh-room-demo.service; then
-        run_root systemctl stop easymesh-room-demo.service || return
-        restore_room=true
-    fi
+    room_state=$(run_root systemctl show easymesh-room-demo.service -p ActiveState --value)
+    case "$room_state" in active|activating) restore_room=true ;; esac
+    run_root systemctl stop easymesh-room-demo.service || return
     run_root "$@" /usr/local/sbin/easymesh-labctl check
 )
 
