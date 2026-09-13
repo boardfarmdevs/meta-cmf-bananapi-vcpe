@@ -4,6 +4,8 @@
 
 Observations, policy and native actuation.
 
+- [Band steering and dedicated-room qualification](band-steering.md)
+
 - [Concepts](../../concepts/optimizer.md)
 - [CLI implementation](../../../../gen/optimizer/README.md)
 - [External optimizer architecture](architecture.md)
