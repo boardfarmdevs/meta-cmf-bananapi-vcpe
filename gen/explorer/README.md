@@ -116,7 +116,7 @@ and retains `.nojekyll`. `viewer/` and `golden/` are not touched. The root
 page becomes a small navigation landing page instead of immediately redirecting
 to the room viewer; existing direct viewer and manual URLs stay unchanged.
 
-After review and authorization, commit source on `codex/0908-clean` and the
+After review and authorization, commit source on `codex/0913-clean` and the
 static publication on `gh-pages`, then push each to the existing upstream.
 Verify the Pages deployment and open the public `/explorer/` URL after it
 finishes. Never publish `node_modules/`, the ZIP, `.env` files, test output,
