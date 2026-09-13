@@ -26,6 +26,7 @@ from .conductor import LiveConductor, load_manifest
 from .engine import RoomEngine
 from .events import EventStore
 from .interactions import InteractiveMediumSession
+from .band_profiles import BandProfileManager
 from .recovery import RecoveryJournal, inventory_identity, load_recovery, recover_medium
 from .server import RoomDemoServer
 from .worlds import BoundWorlds
@@ -313,6 +314,7 @@ def _interactive(args) -> int:
             worlds=BoundWorlds(world, layout, CONFIGURATOR / "worlds"),
             disconnect_client=lambda role: disconnected_client(plan, role, recovery),
             reconnect_client=lambda role: resume_bound_client(plan, role, recovery),
+            band_profiles=BandProfileManager(plan, recovery),
             recovery=recovery,
             adaptive_backhaul=backhaul_adapter is not None,
             model_backhaul=args.model_backhaul,
