@@ -1,0 +1,49 @@
+Subject: [PATCH] webconfig: publish association deltas on control events
+
+Associated-client changes are already authoritative when the control event
+handler finishes updating its maps. Waiting for the idle-only, one-second
+round-robin analyzer adds arbitrary delay and can starve publication under
+continuous control traffic. Publish pending deltas on the same control
+thread after each completed event, retaining its normal encode/notification
+path and analytics. Keep the timer path for retry and non-event producers.
+No scan, authentication, PMF, radio-settling or reporting-policy timer changes.
+
+Upstream-Status: Pending
+
+--- a/source/core/wifi_ctrl.h
++++ b/source/core/wifi_ctrl.h
+@@ -417,1 +417,2 @@
+ void wait_wifi_scan_result(wifi_ctrl_t *ctrl);
++int webconfig_publish_pending_associations(wifi_ctrl_t *ctrl);
+--- a/source/core/wifi_ctrl.c
++++ b/source/core/wifi_ctrl.c
+@@ -389,3 +389,4 @@
+                 destroy_wifi_event(event);
++                webconfig_publish_pending_associations(ctrl);
+ 
+                 clock_gettime(CLOCK_MONOTONIC, &ctrl->last_signalled_time);
+--- a/source/core/wifi_ctrl_webconfig.c
++++ b/source/core/wifi_ctrl_webconfig.c
+@@ -383,2 +383,16 @@
+ 
++int webconfig_publish_pending_associations(wifi_ctrl_t *ctrl)
++{
++    webconfig_subdoc_type_t type = webconfig_subdoc_type_associated_clients;
++    if (!(ctrl->webconfig_state & ctrl_webconfig_state_associated_clients_cfg_rsp_pending)) {
++        return RETURN_OK;
++    }
++    int result = webconfig_send_associate_status(ctrl);
++    if (result == RETURN_OK) {
++        apps_mgr_analytics_event(&ctrl->apps_mgr, wifi_event_type_webconfig,
++            wifi_event_webconfig_set_status, &type);
++    }
++    return result;
++}
++
+ int webconfig_send_full_associate_status(wifi_ctrl_t *ctrl)
+@@ -599,4 +612,2 @@
+         case ctrl_webconfig_state_associated_clients_cfg_rsp_pending:
+-            type = webconfig_subdoc_type_associated_clients;
+-            webconfig_send_associate_status(ctrl);
+-            break;
++            return webconfig_publish_pending_associations(ctrl);

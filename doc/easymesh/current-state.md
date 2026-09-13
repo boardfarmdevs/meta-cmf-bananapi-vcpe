@@ -1,6 +1,6 @@
 # Current RDK lab
 
-Reviewed 10 September 2026. This is the deployment/release summary, not a live
+Reviewed 13 September 2026. This is the deployment/release summary, not a live
 health monitor. Use the browser and service checks in [operations](guide/operations.md)
 to check a machine now.
 
@@ -61,9 +61,10 @@ not proof of live deployment or complete room convergence.
 - The deployed profiling configuration uses an **external** client policy and
   unassisted native BTM. Backhaul is protected at startup, not automatically
   optimized from room geometry. A star is not necessarily a reporting defect.
-- RDK native candidate admission/HTTP 503–504 failures can leave incomplete
-  measurements. Some 6-GHz target verifications fail. Do not claim all-room
-  best-AP convergence or zero outside-stack latency.
+- Event-driven association publication and radio-retune reporting repairs are
+  deployed. All fourteen rooms pass the unchanged policy-convergence gates,
+  including extender loss. Historical native failures remain retained; this
+  does not establish absolute-best-AP convergence or zero outside-stack delay.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;
@@ -72,8 +73,9 @@ not proof of live deployment or complete room convergence.
   of memory exhaustion. Keep observer load out of native performance claims.
 - Neighbor-network rooms remain a [proposal](reference/proposals/neighbor-rooms/design.md).
 
-The retained room improvement evidence is under
-`/home/rev/releases/0908/room-feature-improvements-20260909/`; newer thin-import
-evidence is under `/home/rev/releases/0909/evidence/`.
+Current room, RF and native-to-browser evidence is indexed in
+[room acceptance](reference/testing/room-acceptance.md); thin-import evidence
+remains under `/home/rev/releases/0909/evidence/`. Live fixes are newer than
+those unchanged packaged downloads.
 These are bounded tests, not soak qualification or an intrinsic RDK/prpl speed
 ranking. Use [room acceptance](reference/testing/room-acceptance.md) for new runs.

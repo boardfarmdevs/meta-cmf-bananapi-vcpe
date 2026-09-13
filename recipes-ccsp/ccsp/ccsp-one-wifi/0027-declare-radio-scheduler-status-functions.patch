@@ -1,0 +1,24 @@
+Subject: [PATCH] webconfig: declare scheduler boolean status functions
+
+The webconfig caller had no declarations for these functions and assumed
+an int return. On i386 the per-radio implementation returns bool in AL
+while EAX still contains the controller pointer. The caller tests all of
+EAX, so a completed radio timer appears permanently active and the North
+radio subdoc never gets published. Declare the shared API with the actual
+return and argument types, including the related VAP and global checks.
+
+Upstream-Status: Pending
+
+--- a/source/core/wifi_ctrl.h
++++ b/source/core/wifi_ctrl.h
+@@ -417,3 +417,10 @@
+ void wait_wifi_scan_result(wifi_ctrl_t *ctrl);
++bool check_wifi_csa_sched_timeout_active_status(wifi_ctrl_t *ctrl);
++bool check_wifi_radio_sched_timeout_active_status(wifi_ctrl_t *ctrl);
++bool check_wifi_csa_sched_timeout_active_status_of_radio_index(wifi_ctrl_t *ctrl, int radio_index);
++bool check_wifi_radio_sched_timeout_active_status_of_radio_index(wifi_ctrl_t *ctrl, int radio_index);
++bool check_wifi_vap_sched_timeout_active_status(wifi_ctrl_t *ctrl, BOOL (*callback)(UINT ap_index));
++bool check_wifi_multivap_sched_timeout_active_status(wifi_ctrl_t *ctrl, int radio_index);
++
+ bool is_sta_enabled(void);
+ void reset_wifi_radios();

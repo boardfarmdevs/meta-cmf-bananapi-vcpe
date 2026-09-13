@@ -182,6 +182,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0182-admit-completed-candidate-reports-during-onboarding.patch \
     file://0183-btm-reports-preserve-capability-state-and-ack-ownership.patch \
     file://0184-remove-association-queue-timer-stalls.patch \
+    file://0185-report-unsolicited-radio-channel-updates.patch \
+    file://0186-advance-ready-agent-commands-on-events.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
