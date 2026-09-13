@@ -1,0 +1,115 @@
+Subject: [PATCH] Complete explicit policy activation on its eligible radio
+
+Select an idle, executable radio rather than the arbitrary AL vector front.
+An explicit SetPolicy has one candidate, so that owner sends the device-wide
+policy even when a sibling is still onboarding. Misconfigured is a stable
+post-timeout state from which an idempotent policy can restore reporting.
+Keep automatic onboarding's existing multi-radio policy coordination.
+
+The CLI must inspect the native status: a non-null response can reject a
+command as busy. Retry only that explicit non-admission within the existing
+eight-second policy budget; never treat a missing or rejected result as
+successful activation. No metric values or convergence gates are changed.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/policy_cfg/em_policy_cfg.cpp b/src/em/policy_cfg/em_policy_cfg.cpp
+index 4a13b85..629a441 100644
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -1014,6 +1014,13 @@ void em_policy_cfg_t::process_ctrl_state()
+ 		case em_state_ctrl_set_policy_pending:
+             {
+                 em_printfout("Processing set policy pending state for radio %s", util::mac_to_string(get_radio_interface_mac()).c_str());
++                if (get_current_cmd()->get_type() == em_cmd_type_set_policy) {
++                    int send_result = send_policy_cfg_request_msg();
++                    if (send_result < 0) {
++                        em_printfout("Failed to send explicit policy from selected radio");
++                    }
++                    break;
++                }
+                  std::vector<em_t *> em_radios;
+                 dm_easy_mesh_t *dm = get_data_model();
+                 mac_address_t current_ruid;
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index ff6231b..c21ba4d 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -374,7 +374,6 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+         case em_cmd_type_sta_disassoc:
+         case em_cmd_type_sta_link_metrics:
+         case em_cmd_type_scan_channel:
+-        case em_cmd_type_set_policy:
+         case em_cmd_type_bsta_cap:
+             if ((em->get_state() == em_state_ctrl_configured) ||
+                 (em->get_state() == em_state_ctrl_topo_synchronized) ||
+@@ -382,6 +381,11 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+                 return true;
+             }
+             break;
++        case em_cmd_type_set_policy:
++            return (em->get_state() == em_state_ctrl_configured) ||
++                   (em->get_state() == em_state_ctrl_topo_synchronized) ||
++                   (em->get_state() == em_state_ctrl_channel_selected) ||
++                   (em->get_state() == em_state_ctrl_misconfigured);
+         case em_cmd_type_unassoc_sta_query:
+             /* Candidate measurements are read-only and remain valid in the
+              * stable states reached before/after channel orchestration. */
+@@ -651,8 +655,16 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
+         std::vector<em_t *> em_radios;
+         m_mgr->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
+         if (!em_radios.empty()) {
+-            em_printfout("Set Policy: %s pushed to queue", util::mac_to_string(em_radios.front()->get_radio_interface_mac()).c_str());
+-            queue_push(pcmd->m_em_candidates, em_radios.front());
++            auto selected = em_radios.front();
++            for (auto radio : em_radios) {
++                if (radio && radio->get_orch_state() != em_orch_state_progress &&
++                    is_em_ready_for_orch_exec(pcmd, radio)) {
++                    selected = radio;
++                    break;
++                }
++            }
++            em_printfout("Set Policy: %s pushed to queue", util::mac_to_string(selected->get_radio_interface_mac()).c_str());
++            queue_push(pcmd->m_em_candidates, selected);
+             count++;
+         }
+         return count;
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index d1423a7..7197265 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -6300,12 +6300,29 @@ func applyWifiPolicyConfig(policyTree *C.em_network_node_t) bool {
+     }
+ 
+     //Execute the set_policy command with updated policies
+-    result := execEMCommand(cmd, set_policy_node)
+-    if result == nil {
+-        return false
++    return submitWifiPolicyCommand(func() string {
++        result := execEMCommand(cmd, set_policy_node)
++        if result == nil {
++            return ""
++        }
++        defer C.free_network_tree(result)
++        return getTreeValue(result, "Status")
++    }, 8*time.Second)
++}
++
++func submitWifiPolicyCommand(submit func() string, timeout time.Duration) bool {
++    deadline := time.Now().Add(timeout)
++    for {
++        status := submit()
++        if status == "Success" {
++            return true
++        }
++        if status != "Error_Prev_Cmd_In_Progress" || !time.Now().Before(deadline) {
++            log.Printf("Controller rejected policy submission: %q", status)
++            return false
++        }
++        time.Sleep(min(100*time.Millisecond, time.Until(deadline)))
+     }
+-    C.free_network_tree(result)
+-    return true
+ }
+ 
+ // applyWifiPolicyConfigForDevice clones the edited policy tree and retains only

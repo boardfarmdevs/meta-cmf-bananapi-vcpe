@@ -184,6 +184,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0184-remove-association-queue-timer-stalls.patch \
     file://0185-report-unsolicited-radio-channel-updates.patch \
     file://0186-advance-ready-agent-commands-on-events.patch \
+    file://0187-policy-select-ready-owner-and-check-admission.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
