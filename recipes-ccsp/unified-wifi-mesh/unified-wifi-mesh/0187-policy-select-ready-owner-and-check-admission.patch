@@ -75,10 +75,10 @@ index ff6231b..c21ba4d 100644
          }
          return count;
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
-index d1423a7..7197265 100644
+index d1423a7..4fcb726 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -6300,12 +6300,29 @@ func applyWifiPolicyConfig(policyTree *C.em_network_node_t) bool {
+@@ -6300,12 +6300,33 @@ func applyWifiPolicyConfig(policyTree *C.em_network_node_t) bool {
      }
  
      //Execute the set_policy command with updated policies
@@ -106,7 +106,11 @@ index d1423a7..7197265 100644
 +            log.Printf("Controller rejected policy submission: %q", status)
 +            return false
 +        }
-+        time.Sleep(min(100*time.Millisecond, time.Until(deadline)))
++        pause := 100 * time.Millisecond
++        if remaining := time.Until(deadline); remaining < pause {
++            pause = remaining
++        }
++        time.Sleep(pause)
      }
 -    C.free_network_tree(result)
 -    return true

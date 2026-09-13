@@ -162,5 +162,6 @@ with tempfile.TemporaryDirectory(prefix="policy-submission-") as temporary:
     subprocess.run(["g++", "-std=c++11", "-Wall", "-Wextra", "-Werror", "-x", "c++", "-", "-o", str(executable)], input=program, text=True, check=True)
     subprocess.run([str(executable)], check=True)
     (directory / "main.go").write_text(go_program)
-    subprocess.run(["go", "run", str(directory / "main.go")], check=True)
+    (directory / "go.mod").write_text("module policy_test\n\ngo 1.19\n")
+    subprocess.run(["go", "run", "."], cwd=directory, check=True)
 print("PASS selected policy owner, cold-state admission, unchanged onboarding and bounded truthful CLI submission")
