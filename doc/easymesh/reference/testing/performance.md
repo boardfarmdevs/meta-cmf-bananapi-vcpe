@@ -56,5 +56,42 @@ run, not as JSON/log dumps in the active manuals.
 Report successful distributions **and** censored failures, incomplete
 measurements, sample gaps, unsupported timestamp fields and restoration status.
 Test medium/radio behavior independently before blaming renderer delays.
-No result here claims zero external overhead, real-world propagation fidelity,
-all-room convergence or long-term stability.
+Do not extrapolate a bounded run into claims of zero external overhead,
+real-world propagation fidelity or long-term stability.
+
+## 0913 bounded qualification
+
+The RDK run on 2026-09-14 tests source `5d954ad` with rebuilt controller and
+extender images, eight VM CPUs, 16 GiB RAM and the fixed 100-client pool.
+All 18 rooms pass the unchanged 60/45/90-second gates, native ownership audits
+and topology checks. Native identities remain unchanged during the run;
+host sampling is complete and there are no event gaps. All 144 submitted
+actions verify with traffic: request-to-verification p50/p95/max is
+1.768/4.232/6.285 seconds. Fourteen superseded collections correspond to changed
+contexts; no candidate-unavailable collections or native response timeouts occur.
+The 50-client room settles initially in 32.124 seconds and finally in 19.774
+seconds, including the five-second stable requirement.
+
+Separate provider diagnostics show why layered attribution matters:
+
+- Two deliberate native 2.4 GHz scans each produce one response per private
+  BSSID on all five APs, rather than three. The capture has zero drops. This
+  measures transmitted response multiplicity, not successful delivery latency.
+- Four two-client 2.4 GHz moves in a 50-client world settle in 24.931–27.061
+  seconds, versus 26.001–43.841 previously. Removing pre-drag candidate reuse
+  eliminates five unnecessary Agent-1 detours: eight verified roams instead of
+  thirteen. These bounded before/after observations do not isolate native stack
+  speed or establish a statistical performance guarantee.
+- A separate uploaded world simultaneously enables forty clients and relocates
+  two 2.4 GHz clients at its six-second mark. The 10-to-50-client burst settles
+  in 24.997 seconds; both affected clients verify on their intended extender
+  in about two seconds after submission. Only explicit band capabilities and
+  normal room Play are used, with no BSSID pinning or native restarts.
+
+Detailed evidence is retained on the observer under
+`/home/rev/work/release-0913/evidence/rdk-management-routing/legacy-mlo/`:
+`catalog/` contains the full suite and default restoration; `probe-check.*`
+and `fifty-diagnostic/` contain the separate diagnostics; `burst-24/` records
+the join-burst case. Earlier failures
+remain in sibling directories. This qualifies room behavior, not an exported
+thin/VirtualBox artifact or a Windows boot.

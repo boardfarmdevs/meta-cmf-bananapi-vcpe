@@ -22,14 +22,16 @@ mesh. The default twenty clients comprise ten private and ten IoT stations. A ro
 make roles unavailable without destroying containers or resizing the appliance.
 Outer VM autostart is disabled; manually starting the VM starts its lab and room.
 
-0913 is being qualified in the new canonical checkout. It provides
-one 100-client-capacity appliance, a default room with 20 online clients, and
-`fifty-client-counter-roam`. Both Yocto images have rebuilt using
-`/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`. Room initial-convergence
-qualification remains in progress; there is no accepted 0913 thin tar or box
-yet. A transmitter/frequency queue-head correction passes the focused band,
-50-client and default-walk rooms. The full eighteen-room rerun must pass
-before release packaging. The old VM stays stopped while qualification runs.
+0913 provides one 100-client-capacity appliance, a default room with 20 online
+clients, and `fifty-client-counter-roam`. Both Yocto images have rebuilt using
+`/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`. The 2026-09-14 bounded
+room qualification passes **18/18 rooms**, including initial convergence,
+playback, checkpoints, physical ownership and rendered topology. All 144
+submitted steering actions verify with traffic; no native response timeouts
+or unavailable candidate collections occur. Default twenty-client restoration
+also passes. RDK 0913 thin/box packaging and fresh-import acceptance remain
+outstanding; room qualification is not artifact acceptance. The rollback VM
+stays stopped until the replacement release is accepted.
 
 ## Browser addresses
 
@@ -76,36 +78,19 @@ not proof of live deployment or complete room convergence.
 - The deployed profiling configuration uses an **external** client policy and
   unassisted native BTM. Backhaul is protected at startup, not automatically
   optimized from room geometry. A star is not necessarily a reporting defect.
-- Event-driven association publication and radio-retune reporting repairs are
-  present. Earlier fourteen-room acceptance, including extender loss, does not
-  qualify the new 100-client pool. The 0913 release requires all eighteen rooms
-  to pass the unchanged gates. The latest full catalog passes seventeen of
-  eighteen rooms: the 50-client room has an intermittent initial-convergence
-  failure on a 2.4 GHz client, although its playback and final convergence pass.
-  Passing focused runs do not qualify this failure. Band audits now query
-  only their participants concurrently, rather than all 105 containers. Band settings now
-  use transaction-scoped client namespaces, retaining process identity checks,
-  native commands, settings readback and the original association deadlines.
-  Controls enter the unprivileged client's user namespace and use its binary
-  search paths, rather than inheriting the outer systemd service's paths.
-  Under that service environment, a read-only three-client settings capture
-  falls from 0.92–0.94 seconds with LXD exec to about 0.114 seconds through native
-  namespaces, with identical results and no concurrent host storage maintenance;
-  this is not steering latency. World acknowledgements must
-  also match the requested room, not a late reply to its predecessor. These
-  corrections still require a clean full-catalog pass; historical failures
-  remain retained.
+- Band setup uses transaction-scoped client namespaces with process identity,
+  native settings/readback and association checks. Band audits query their
+  participants concurrently. World acknowledgements match the requested room,
+  not a late reply to its predecessor.
 - Profiling candidate caches now track committed RF changes per client, not
   only world and association changes. Moving an AP invalidates all affected
   client comparisons; moving clients invalidates their own cached and in-flight
   results without cancelling unrelated collection or resetting fair scheduling.
-  This prevents steering with pre-drag measurements marked as current. Live
-  requalification is pending. The remaining probe fanout comes from frequency-only
-  MLO redirection of legacy VAPs whose configured link ID is unset: notifications
-  from 5/6 GHz interfaces are redirected to the same 2.4 GHz BSS. The hwsim HAL
-  now requires a validated MLO link before that fallback, retaining normal
-  off-channel rejection and explicit kernel link routing. This native change
-  also needs rebuilt-image deployment and a fresh over-the-air capture.
+  This prevents steering with pre-drag measurements marked as current.
+- The hwsim HAL preserves per-BSS receive context and requires a validated MLO
+  link before frequency-only redirection. Off-channel legacy notifications no
+  longer generate duplicate probe responses; live captures verify one response
+  per private BSSID instead of three. Physical-driver behavior is unchanged.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;
