@@ -93,5 +93,17 @@ Detailed evidence is retained on the observer under
 `catalog/` contains the full suite and default restoration; `probe-check.*`
 and `fifty-diagnostic/` contain the separate diagnostics; `burst-24/` records
 the join-burst case. Earlier failures
-remain in sibling directories. This qualifies room behavior, not an exported
-thin/VirtualBox artifact or a Windows boot.
+remain in sibling directories. This catalog qualifies room behavior; artifact
+acceptance is a separate check.
+
+The exact `40a9064` thin tar subsequently passes fresh zero-to-105 provisioning,
+the full 100-client native/traffic baseline and three imported-room checks:
+50-client counter-roam, 5-to-6-GHz band upgrade and stationary ten-client room.
+There are no failed verifications, native response timeouts or unavailable
+collections in that run. Default-20 restoration also passes. After monitoring
+installation, all twenty active clients pass traffic again and the final room
+is healthy, converged, paused and unleased. The rebuilt HAL hashes match on all
+five APs. Exact bytes and evidence are identified by
+`/home/rev/releases/0913/rdk-0913-acceptance.json` and
+`evidence/rdk-0913-final/`. The separate VirtualBox artifact has static checks
+only; neither a VirtualBox guest boot nor a Windows boot is qualified.

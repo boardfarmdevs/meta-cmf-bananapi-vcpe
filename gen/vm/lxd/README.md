@@ -48,7 +48,12 @@ applies RF and presence automatically without recreating the pool. All five
 physical mesh containers (six logical roles) remain provisioned.
 
 Defaults are 8 vCPUs, 16 GiB RAM, 128 radios, and a sparse 96-GiB disk. Leave
-resources for the host. First boot provisions and validates all 100 clients,
+resources for the host. Budget at least 120 GiB of free backing-storage space
+for a new import, plus space for retained VMs, exports and build intermediates.
+The compressed download size is not the disk requirement: a storage backend
+may allocate the entire logical disk. Check the selected pool and its backing
+filesystem before importing; do not delete a working rollback merely because
+a replacement has been downloaded. First boot provisions and validates all 100 clients,
 then the room service disconnects unused stations. This baseline health gate
 is distinct from live room membership. Baseline recovery restores all 100;
 restarting the room selects its default 20. The remaining sections are for

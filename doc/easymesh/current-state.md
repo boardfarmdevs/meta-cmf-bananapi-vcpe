@@ -1,6 +1,6 @@
 # Current RDK lab
 
-Reviewed 13 September 2026. This is the deployment/release summary, not a live
+Reviewed 14 September 2026. This is the deployment/release summary, not a live
 health monitor. Use the browser and service checks in [operations](guide/operations.md)
 to check a machine now.
 
@@ -10,8 +10,8 @@ to check a machine now.
 | --- | --- |
 | Canonical branch | `codex/0913-clean` |
 | Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0913-clean/meta-cmf-bananapi-vcpe` |
-| Qualification appliance | `rev140:rdkeasymesh-0913` (not yet release-accepted) |
-| Last accepted appliance | `rev140:rdkeasymesh-20-0908`, stopped for rollback |
+| Deployed appliance | `rev140:rdkeasymesh-0913`, accepted from the exact 0913 thin tar |
+| Packaged source | `40a9064`; native images rebuilt from `5d954ad` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
 | Fixed pool | 100 clients; default room selects 20 online; five mesh containers / six displayed roles |
@@ -29,23 +29,29 @@ room qualification passes **18/18 rooms**, including initial convergence,
 playback, checkpoints, physical ownership and rendered topology. All 144
 submitted steering actions verify with traffic; no native response timeouts
 or unavailable candidate collections occur. Default twenty-client restoration
-also passes. RDK 0913 thin/box packaging and fresh-import acceptance remain
-outstanding; room qualification is not artifact acceptance. The rollback VM
-stays stopped until the replacement release is accepted.
+also passes. The exact sanitized thin tar independently passes fresh
+zero-to-105-container provisioning, the 100-client native/traffic baseline,
+50-client, 5-to-6-GHz and 10-client room playback, and default-20 restoration.
+First provisioning took 84 minutes 56 seconds on this host; it is a one-time
+operation, not room-switch latency. Inner/outer monitoring and subsequent
+default-room traffic pass. The obsolete 0908 lab VM and its restricted metrics
+certificate are removed. The stopped 0913 thin builder remains available.
 
 ## Browser addresses
 
-| View | Last accepted ports | 0913 qualification ports |
-| --- | --- | --- |
-| Live room | <http://192.168.2.140:48891/> | <http://192.168.2.140:49891/> |
-| Network topology | <http://192.168.2.140:48889/> | <http://192.168.2.140:49889/> |
-| wmediumd console | <http://192.168.2.140:48890/> | <http://192.168.2.140:49890/> |
-| Inner LXD UI | <https://192.168.2.140:48892/ui/> | Not installed yet |
-| Grafana: inner containers and outer VM | <https://192.168.2.140:48893/> | Not installed yet |
+| View | rev140 RDK |
+| --- | --- |
+| Live room | <http://192.168.2.140:48891/> |
+| Network topology | <http://192.168.2.140:48889/> |
+| wmediumd console | <http://192.168.2.140:48890/> |
+| Inner LXD UI | <https://192.168.2.140:48892/ui/> |
+| Grafana: inner containers and outer VM | <https://192.168.2.140:48893/> |
 
-The last accepted ports do not serve the stopped rollback VM. Qualification
-services may restart during builds and tests. Monitoring is installed after
-sanitized export so enrollment keys and passwords cannot enter release images.
+These ports now serve the accepted 0913 import; temporary 498xx test ports are
+retired. Monitoring is installed after sanitized export so enrollment keys and
+passwords cannot enter release images. Both authenticated Grafana dashboards
+pass checks, with metrics for all 105 nested containers and the outer VM.
+See [monitoring](reference/observability/monitoring.md) for browser enrollment.
 
 No `?mode=` is needed. LXD proxy devices persist across host/VM reboots;
 do not recreate them after every start. The destination services still need
@@ -56,20 +62,24 @@ Grafana additionally require enrollment/login.
 
 [Release information](release-notes.md) explains where historical records belong.
 
-Latest packaged downloads are **0909**; **0908** is the stopped rollback
-appliance, not the active qualification VM. Both hosts mirror
-`/home/rev/releases/0909/`:
+Both rev140 and rev150 mirror the **0913** downloads under
+`/home/rev/releases/0913/`:
 
-- `rdkeasymesh-0909-thin.tar`: universal LXD import; select profile 20 for rooms.
-- `rdkeasymesh-0909-virtualbox.tar`: Windows/Vagrant distribution wrapper.
-- `rdkeasymesh-0909-virtualbox/rdkeasymesh-0909-virtualbox.box`: actual box.
+- `rdkeasymesh-0913-thin.tar`: accepted universal LXD import; no profile selection.
+- `rdkeasymesh-0913-virtualbox.tar`: Windows/Vagrant distribution wrapper.
+- `rdkeasymesh-0913-virtualbox/rdkeasymesh-0913-virtualbox.box`: actual box.
 
 Use the adjacent SHA-256 files, bundle `release.json`, and release-directory
-acceptance/evidence for exact source and image identities. 0909 reuses accepted
-0908 native builds with newer lab tooling; it is not another full Yocto rebuild.
-Fresh thin imports passed bounded native/traffic checks. 0909 VirtualBox had
-artifact checks, not a new guest-boot or Windows acceptance run. Packaging is
-not proof of live deployment or complete room convergence.
+`rdk-0913-acceptance.json` for exact source, image and accepted outer-tar
+identities. The embedded candidate status records creation time; the adjacent
+acceptance record applies to those unchanged bytes. Older downloads are
+historical, not the current deployment.
+
+The new box passes image integrity, OVF dry-run, Vagrant configuration and
+checksum checks. Its separate `acceptance.json` explicitly says
+**artifact-validated-boot-unverified**: rev120 was unreachable, so no actual
+VirtualBox guest or Windows boot was tested. The running KVM labs were not
+stopped to work around that limitation.
 
 ## Supported behavior and limits
 
@@ -101,7 +111,7 @@ not proof of live deployment or complete room convergence.
 
 Current room, RF and native-to-browser evidence is indexed in
 [room acceptance](reference/testing/room-acceptance.md); thin-import evidence
-remains under `/home/rev/releases/0909/evidence/`. Live fixes are newer than
-those unchanged packaged downloads.
+remains under `/home/rev/releases/0913/evidence/rdk-0913-final/`. All five
+imported HAL libraries and the running medium match the qualified binary hashes.
 These are bounded tests, not soak qualification or an intrinsic RDK/prpl speed
 ranking. Use [room acceptance](reference/testing/room-acceptance.md) for new runs.
