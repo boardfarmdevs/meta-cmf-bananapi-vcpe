@@ -26,8 +26,10 @@ Outer VM autostart is disabled; manually starting the VM starts its lab and room
 one 100-client-capacity appliance, a default room with 20 online clients, and
 `fifty-client-counter-roam`. Both Yocto images have rebuilt using
 `/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`. Room initial-convergence
-failures still block release packaging; there is no accepted 0913 thin tar or
-box yet. The old VM stays stopped while qualification runs.
+qualification remains in progress; there is no accepted 0913 thin tar or box
+yet. A transmitter/frequency queue-head correction passes the focused band,
+50-client and default-walk rooms. The full eighteen-room rerun must pass
+before release packaging. The old VM stays stopped while qualification runs.
 
 ## Browser addresses
 
@@ -77,8 +79,9 @@ not proof of live deployment or complete room convergence.
 - Event-driven association publication and radio-retune reporting repairs are
   present. Earlier fourteen-room acceptance, including extender loss, does not
   qualify the new 100-client pool. The 0913 release requires all eighteen rooms
-  to pass the unchanged gates; its 50-client initial-settling failure is still
-  under investigation. Historical failures remain retained.
+  to pass the unchanged gates. The targeted 50-client retest passes initial
+  settling in 43.384 seconds, checkpoint and final; this does not replace
+  the required full-catalog rerun. Historical failures remain retained.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;
