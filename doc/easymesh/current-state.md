@@ -79,9 +79,14 @@ not proof of live deployment or complete room convergence.
 - Event-driven association publication and radio-retune reporting repairs are
   present. Earlier fourteen-room acceptance, including extender loss, does not
   qualify the new 100-client pool. The 0913 release requires all eighteen rooms
-  to pass the unchanged gates. The targeted 50-client retest passes initial
-  settling in 43.384 seconds, checkpoint and final; this does not replace
-  the required full-catalog rerun. Historical failures remain retained.
+  to pass the unchanged gates. The full-catalog rerun passes seventeen rooms
+  but fails 50-client initial convergence; its checkpoint and final pass.
+  A targeted pass does not override this failure. Tracing finds authentication
+  responses waiting behind multiplied probe responses in the medium queue.
+  The HAL now preserves hostapd's per-BSS receive identity instead of
+  redispatching each per-BSS notification to every BSS again. Compiled routing
+  and negative-control tests pass; new images and live qualification are
+  still required. Historical failures remain retained.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;

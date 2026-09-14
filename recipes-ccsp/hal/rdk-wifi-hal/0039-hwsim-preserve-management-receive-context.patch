@@ -1,0 +1,52 @@
+Subject: [PATCH] hwsim: preserve per-BSS management receive context
+
+The HAL subscribes to management frames separately for each AP interface.
+mac80211 therefore reports broadcast probe requests once per receiving BSS.
+The hostapd event currently omits rx_mgmt.drv_priv, so hostapd_mgmt_rx fans
+each notification out to every BSS on that radio again. Three listening
+BSSes generate three responses per advertised BSSID for one probe request.
+During concurrent client scans this multiplies medium queues and delays
+native authentication responses beyond their receive deadline.
+
+Set the existing per-BSS driver identity for both normal and explicitly
+forwarded AP events. Preserve receive frequency and signal in the normal
+nl80211 path. This uses hostapd's existing per-BSS dispatch contract, without
+deduplicating packets by time, dropping legitimate probes, reprioritizing
+management subtypes or changing authentication/steering timers. Scope the
+adaptation to HWSIM_RADIO; physical-driver and STA dispatch remain unchanged.
+
+Upstream-Status: Pending
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -2496,6 +2496,10 @@
+         os_memset(&event, 0, sizeof(event));
+         event.rx_mgmt.frame = (unsigned char *)mgmt;
+         event.rx_mgmt.frame_len = len;
++#ifdef HWSIM_RADIO
++        event.rx_mgmt.freq = recv_freq;
++        event.rx_mgmt.ssi_signal = sig_dbm;
++#endif
+ #ifdef CMXB7_PORT
+         event.rx_mgmt.snr_db = snr;
+ #endif
+@@ -2512,6 +2516,9 @@
+             supplicant_event(&interface->wpa_s, EVENT_RX_MGMT, &event);
+ #endif
+         } else {
++#ifdef HWSIM_RADIO
++            event.rx_mgmt.drv_priv = interface->u.ap.hapd.drv_priv;
++#endif
+             wpa_supplicant_event(&interface->u.ap.hapd, EVENT_RX_MGMT, &event);
+         }
+         pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
+@@ -14321,6 +14328,9 @@
+         supplicant_event(&interface->wpa_s, EVENT_RX_MGMT, &event);
+ #endif
+     } else {
++#ifdef HWSIM_RADIO
++        event.rx_mgmt.drv_priv = interface->u.ap.hapd.drv_priv;
++#endif
+         wpa_supplicant_event(&interface->u.ap.hapd, EVENT_RX_MGMT, &event);
+     }
+     pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
