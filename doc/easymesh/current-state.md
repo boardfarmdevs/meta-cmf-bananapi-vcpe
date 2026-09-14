@@ -100,8 +100,12 @@ not proof of live deployment or complete room convergence.
   client comparisons; moving clients invalidates their own cached and in-flight
   results without cancelling unrelated collection or resetting fair scheduling.
   This prevents steering with pre-drag measurements marked as current. Live
-  requalification is pending; the 2.4 GHz probe-response fanout investigation
-  also remains open despite the earlier receive-context correction.
+  requalification is pending. The remaining probe fanout comes from frequency-only
+  MLO redirection of legacy VAPs whose configured link ID is unset: notifications
+  from 5/6 GHz interfaces are redirected to the same 2.4 GHz BSS. The hwsim HAL
+  now requires a validated MLO link before that fallback, retaining normal
+  off-channel rejection and explicit kernel link routing. This native change
+  also needs rebuilt-image deployment and a fresh over-the-air capture.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;

@@ -29,6 +29,7 @@ SRC_URI += "file://0003-set_interface_properties-dont-match-phy_index-single-phy
 # exploratory START_AP workaround superseded by the malformed-ACL diagnosis.
 CFLAGS_append = " -DHWSIM_RADIO"
 SRC_URI += "file://0039-hwsim-preserve-management-receive-context.patch"
+SRC_URI += "file://0040-hwsim-preserve-legacy-rx-interface-before-mlo-routing.patch"
 
 # Embedded hostapd otherwise retains a departed hwsim AP peer for five minutes,
 # masking a future authorization edge when a steering test returns to that AP.

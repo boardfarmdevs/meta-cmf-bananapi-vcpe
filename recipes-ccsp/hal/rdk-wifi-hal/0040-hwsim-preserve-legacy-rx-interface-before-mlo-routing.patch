@@ -1,0 +1,33 @@
+Subject: [PATCH] hwsim: retain legacy receive interface before MLO routing
+
+On a multi-channel hwsim PHY, cfg80211 delivers broadcast management frames
+to registered VIFs on multiple logical bands. Private VAPs advertise MLO
+enabled in the data model, but their unset link ID is 255. Frequency-only
+MLO lookup redirects each such notification to the same private BSS before
+hostapd can reject the original off-channel interface. One probe request
+therefore creates three distinct responses even with rx_mgmt.drv_priv set.
+
+Require the existing validated MLO link ID before frequency-only redirection
+under HWSIM_RADIO. Legacy notifications retain their registered interface
+and the receive-frequency check rejects off-channel delivery. Preserve
+explicit kernel link-ID dispatch, established MLO links and physical-driver
+behavior. Do not deduplicate packets, change scan/steering timers or discard
+legitimate repeated probe requests.
+
+Upstream-Status: Pending
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -2620,7 +2620,11 @@
+         if (link_id != -1) {
+             interface = wifi_hal_get_mld_interface_by_link_id(interface, link_id);
+-        } else if (freq != 0) {
++        } else if (freq != 0
++#ifdef HWSIM_RADIO
++            && wifi_hal_get_mld_link_id(interface) != NL80211_DRV_LINK_ID_NA
++#endif
++        ) {
+             interface = wifi_hal_get_mld_interface_by_freq(interface, freq);
+         }
+     }
+ #endif // HOSTAPD_VERSION >= 211 && CONFIG_GENERIC_MLO
