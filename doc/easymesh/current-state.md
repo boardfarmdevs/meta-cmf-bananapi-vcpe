@@ -80,12 +80,18 @@ not proof of live deployment or complete room convergence.
   present. Earlier fourteen-room acceptance, including extender loss, does not
   qualify the new 100-client pool. The 0913 release requires all eighteen rooms
   to pass the unchanged gates. With per-BSS management receive routing fixed,
-  50-client initial convergence passes in 30.989 seconds. The full run passes
-  seventeen rooms; the remaining band test aborts when its audit unnecessarily
-  queries all 105 containers. Band audits now query only their participants
-  concurrently, preserving the original deadlines and native traffic checks.
-  A clean full-catalog rerun is still required. Historical failures remain
-  retained.
+  50-client initial convergence passes in 27.993 seconds. Band audits now query
+  only their participants concurrently, rather than all 105 containers. The
+  subsequent run exposes a separate 45-second world-load timeout: repeated LXD
+  exec operations make native band setup take 44.692 seconds. Band settings now
+  use transaction-scoped client namespaces, retaining process identity checks,
+  native commands, settings readback and the original association deadlines.
+  A read-only three-client settings capture falls from 1.53 seconds with LXD
+  exec to 0.11–0.14 seconds through native namespaces, with identical results;
+  this is transport timing, not steering latency. World acknowledgements must
+  also match the requested room, not a late reply to its predecessor. These
+  corrections still require a clean full-catalog pass; historical failures
+  remain retained.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;

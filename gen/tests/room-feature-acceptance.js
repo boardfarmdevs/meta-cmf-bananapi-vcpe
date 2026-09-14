@@ -12,6 +12,17 @@ const lower = value => String(value || '').toLowerCase();
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 
+function worldApplyResponse(response, selection) {
+  if (!response.url().endsWith('/api/demo/world/apply')) return false;
+  const request = response.request();
+  if (request.method() !== 'POST') return false;
+  try {
+    return request.postDataJSON()?.world === selection;
+  } catch {
+    return false;
+  }
+}
+
 function expectedFrame(world, timeMs) {
   const frame = world.generations.findLast(item => item.time_ms <= timeMs) || world.generations[0];
   const next = world.generations.find(item => item.time_ms > timeMs);
@@ -477,7 +488,7 @@ async function run(args) {
     const started = performance.now();
     const clickedAt = Date.now();
     const [response] = await Promise.all([
-      room.waitForResponse(response => response.url().endsWith('/api/demo/world/apply'), {timeout: 45000}),
+      room.waitForResponse(response => worldApplyResponse(response, id), {timeout: 45000}),
       room.locator('#world').selectOption(id),
     ]);
     const body = await response.json();
@@ -691,7 +702,7 @@ async function run(args) {
       if (await room.evaluate(() => Boolean(document.fullscreenElement)).catch(() => false)) await room.locator('#roomFullscreen').click();
       if (token) {
         const [response] = await Promise.all([
-          room.waitForResponse(response => response.url().endsWith('/api/demo/world/apply'), {timeout: 45000}),
+          room.waitForResponse(response => worldApplyResponse(response, 'default'), {timeout: 45000}),
           room.locator('#defaultWorld').click(),
         ]);
         report.restoration = {applied: response.ok()};
@@ -737,6 +748,6 @@ function kernelClientAudit(bindings, wanted, associations, links) {
   return {onlineCount: online.size, offlineCount: bound.size - online.size, passed: errors.length === 0, errors, links};
 }
 
-module.exports = {expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors, kernelClientAudit};
+module.exports = {worldApplyResponse, expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors, kernelClientAudit};
 if (require.main === module) run(argumentsFrom(process.argv.slice(2))).then(report => { process.exitCode = report.passed ? 0 : 1; })
   .catch(error => { console.error(error); process.exitCode = 2; });
