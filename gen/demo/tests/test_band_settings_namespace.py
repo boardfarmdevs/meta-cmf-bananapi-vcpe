@@ -21,9 +21,9 @@ def settings_with_native_commands(state=None):
         if arguments[:2] == ("lxc", "query"):
             assert options == {"timeout": 5}
             return json.dumps(state)
-        assert arguments[:13] == ("nsenter", "--target", "1234", "--user", "--mount", "--net", "--pid", "--root", "--wd",
-                                  "--", "wpa_cli", "-i", "wlan0")
-        operation, *parameters = arguments[13:]
+        assert arguments[:15] == ("nsenter", "--target", "1234", "--user", "--mount", "--net", "--pid", "--root", "--wd",
+                                  "--", "/usr/bin/env", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "wpa_cli", "-i", "wlan0")
+        operation, *parameters = arguments[15:]
         if operation == "status":
             return f"address={STATION}\nwpa_state=COMPLETED\nssid=private_ssid\nfreq=2437"
         if operation == "list_networks":
@@ -46,6 +46,14 @@ def test_capture_discovers_only_selected_instance_once_and_uses_native_cli():
     assert native.call_args_list[0].args == ("lxc", "query", f"/1.0/instances/{CONTAINER}/state")
     assert all(call.args[0] == "nsenter" for call in native.call_args_list[1:])
     assert not hasattr(settings._sessions, "current")
+
+
+def test_native_cli_has_container_paths_when_merged_usr_service_path_omits_sbin(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin")
+    settings, native = settings_with_native_commands()
+    assert settings.capture(CONTAINER, STATION)["values"] == VALUES
+    assert all(call.args[10:13] == ("/usr/bin/env", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "wpa_cli")
+               for call in native.call_args_list[1:])
 
 
 def test_write_reuses_namespace_for_identity_readback_and_discards_it_afterwards():

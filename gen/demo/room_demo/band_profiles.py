@@ -80,7 +80,8 @@ class ClientBandSettings:
             if self._start_ticks(process) != session["start_ticks"]:
                 raise ActuatorError("band settings client namespace identity changed")
             result = self.command("nsenter", "--target", str(process), "--user", "--mount", "--net", "--pid", "--root", "--wd",
-                                  "--", "wpa_cli", "-i", "wlan0", *arguments).strip()
+                                  "--", "/usr/bin/env", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+                                  "wpa_cli", "-i", "wlan0", *arguments).strip()
             if self._start_ticks(process) != session["start_ticks"]:
                 raise ActuatorError("band settings client namespace identity changed")
             return result

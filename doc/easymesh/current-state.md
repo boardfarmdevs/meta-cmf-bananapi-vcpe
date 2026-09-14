@@ -86,9 +86,11 @@ not proof of live deployment or complete room convergence.
   exec operations make native band setup take 44.692 seconds. Band settings now
   use transaction-scoped client namespaces, retaining process identity checks,
   native commands, settings readback and the original association deadlines.
-  A read-only three-client settings capture falls from 1.53 seconds with LXD
-  exec to 0.11–0.14 seconds through native namespaces, with identical results;
-  this is transport timing, not steering latency. World acknowledgements must
+  Controls enter the unprivileged client's user namespace and use its binary
+  search paths, rather than inheriting the outer systemd service's paths.
+  Under that service environment, a read-only three-client settings capture
+  falls from 4.97–6.59 seconds with LXD exec to 0.36–1.26 seconds through native
+  namespaces, with identical results; this is not steering latency. World acknowledgements must
   also match the requested room, not a late reply to its predecessor. These
   corrections still require a clean full-catalog pass; historical failures
   remain retained.
