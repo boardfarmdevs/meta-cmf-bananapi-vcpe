@@ -87,9 +87,9 @@ node --check gen/tests/room-feature-acceptance.js
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright-core
 export CHROMIUM_PATH=/absolute/path/to/chromium/chrome
 node gen/tests/room-feature-acceptance.js --yes-act --flavor rdk \
-  --host rev140 --vm rdkeasymesh-20-0908 \
-  --room-url http://192.168.2.140:48891/ \
-  --topology-url http://192.168.2.140:48889/ \
+  --host rev140 --vm rdkeasymesh-0913 \
+  --room-url http://192.168.2.140:49891/ \
+  --topology-url http://192.168.2.140:49889/ \
   --worlds /absolute/path/to/deployed-goldens \
   --output /absolute/path/to/new-results --native-audits 1 \
   --initial-timeout 60 --checkpoint-timeout 45 --final-timeout 90
@@ -152,11 +152,13 @@ Receiver queue draining is not calibrated physical capacity.
 
 ## Current qualification
 
-The current catalog includes three dedicated band-steering rooms in addition
-to the fourteen original scenarios. See [band-steering qualification](../optimizer/band-steering.md#results)
-for the current seventeen-room results, native receive-channel requirements,
-verified band transitions and preparation limitations. The table below is the
-earlier RF baseline, not coverage of the three added rooms.
+The 0913 catalog contains eighteen rooms: fourteen original scenarios, three
+dedicated band-steering rooms and `fifty-client-counter-roam`. It uses a fixed
+100-client pool, not separately sized VMs. Follow [current deployment status](../../current-state.md)
+for release acceptance; earlier smaller-pool passes do not qualify 0913.
+See [band-steering qualification](../optimizer/band-steering.md#results) for the
+previous seventeen-room results and native receive-channel requirements.
+The table below is the earlier RF baseline, not coverage of the added rooms.
 
 ### Pre-band RF baseline
 

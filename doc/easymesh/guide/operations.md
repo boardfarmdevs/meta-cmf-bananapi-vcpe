@@ -15,11 +15,13 @@
 Use [current state](../current-state.md) for artifact names and live VM identity.
 Verify outer and extracted checksums before import. A thin import provisions
 locally; source builds and optional monitoring dependency installation need
-network access. Keep room deployments on profile 20.
+network access. 0913 has one fixed 100-client pool; the default room selects
+20 online and other rooms select their own subset. There is no VM size profile.
 
-The audited clean source build deliberately uses workspace-local downloads and
-sstate, with external mirrors disabled. Do not assume it uses `~/oe/` merely
-because a separate development build does; verify effective BitBake configuration.
+The clean source build reuses `/home/rev/oe/downloads` and
+`/home/rev/oe/sstate-cache` on the canonical build host, with external sstate
+mirrors disabled. It records the effective BitBake configuration in build
+evidence. This is a fresh workspace build, not a cache-empty rebuild.
 The build guide owns cache overrides and reproducibility requirements.
 
 ## Everyday lifecycle
@@ -27,7 +29,7 @@ The build guide owns cache overrides and reproducibility requirements.
 On the physical LXD host, replace VM with the name from `lxc list`:
 
 ```sh
-VM=rdkeasymesh-20-0908
+VM=rdkeasymesh-0913
 lxc config get "$VM" boot.autostart
 lxc start "$VM"
 lxc exec "$VM" -- systemctl is-active easymesh-lab.service easymesh-room-demo.service

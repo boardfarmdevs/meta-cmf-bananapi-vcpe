@@ -75,9 +75,10 @@ not proof of live deployment or complete room convergence.
   unassisted native BTM. Backhaul is protected at startup, not automatically
   optimized from room geometry. A star is not necessarily a reporting defect.
 - Event-driven association publication and radio-retune reporting repairs are
-  deployed. All fourteen rooms pass the unchanged policy-convergence gates,
-  including extender loss. Historical native failures remain retained; this
-  does not establish absolute-best-AP convergence or zero outside-stack delay.
+  present. Earlier fourteen-room acceptance, including extender loss, does not
+  qualify the new 100-client pool. The 0913 release requires all eighteen rooms
+  to pass the unchanged gates; its 50-client initial-settling failure is still
+  under investigation. Historical failures remain retained.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;

@@ -46,13 +46,13 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-profile_selectable=${LAB_PROFILE_SELECTABLE:-false}
+first_boot_provisioning=${LAB_FIRST_BOOT_PROVISIONING:-${LAB_PROFILE_SELECTABLE:-false}}
 release_id=${LAB_RELEASE_ID:-0913}
 case "$release_id" in
     [0-9][0-9][0-9][0-9]) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
 esac
-if [ "$profile_selectable" = true ]; then
+if [ "$first_boot_provisioning" = true ]; then
     selected_clients=100
     selected_profile=unified
     selected_radios=128
@@ -283,7 +283,7 @@ if [ "$actual_address" != "$guest_address" ]; then
     exit 1
 fi
 
-if [ "$profile_selectable" = true ]; then
+if [ "$first_boot_provisioning" = true ]; then
     # The backup contains no provisioned nodes and cannot start the lab while
     # its selection marker exists.  Select and lock the roster only after the
     # VM identity and site network have been reconciled.  The outer LXD agent
@@ -324,7 +324,7 @@ if [ "$monitoring" = true ]; then
     bash "$script_dir/observability/enable.sh" "$name" "$host_address"
 fi
 
-if [ "$profile_selectable" = true ]; then
+if [ "$first_boot_provisioning" = true ]; then
     # Return after starting the potentially long offline provisioning job.
     # The checksummed first-boot report and labctl gate provide completion.
     # Profile selection removes the file tested by ConditionPathExists in

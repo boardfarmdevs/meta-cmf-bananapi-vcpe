@@ -146,8 +146,10 @@ fi
 # delayed API becomes ready before profile selection and that timeout leaves
 # the profile lock and host proxies unpublished.
 cat > "$bundle/release.env" <<'EOF'
-LAB_PROFILE_SELECTABLE=true
-LAB_SUPPORTED_PROFILES=100
+LAB_PROFILE_SELECTABLE=false
+LAB_FIRST_BOOT_PROVISIONING=true
+LAB_CLIENT_CAPACITY=100
+LAB_DEFAULT_ROOM_CLIENTS=20
 EOF
 ready_count=$stage/nested-ready.count
 export EASYMESH_TEST_NESTED_READY_COUNT=$ready_count
