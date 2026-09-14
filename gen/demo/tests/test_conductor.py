@@ -36,6 +36,23 @@ from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def test_health_rejects_missing_mesh_nodes_even_when_database_and_clients_match(self):
+        conductor, store = self._conductor()
+        conductor.manifest["health"] = {"interval_seconds": 1, "expected_mesh_devices": 5, "expected_clients": 100}
+        conductor.room_state = lambda: {"expected_online_clients": 10}
+        payload = {"api_active": 10, "model_devices": 5, "model_radios": 15,
+                   "model_bsses": 50, "model_associated": 14, "topology_nodes": 6, "complete_nodes": 6}
+        with patch.object(conductor, "_wait_for_run", return_value=True), \
+                patch.object(conductor, "_active", return_value=True), \
+                patch.object(conductor, "_sleep", return_value=True):
+            for nodes, complete, healthy in [(4, 4, False), (6, 4, False), (6, 6, True)]:
+                with self.subTest(nodes=nodes, complete=complete), patch("room_demo.conductor.mesh_health",
+                        return_value={**payload, "topology_nodes": nodes, "complete_nodes": complete}):
+                    conductor._health_worker()
+                    observed = store.current()["latest"]["health.sample"]["payload"]
+                    self.assertEqual(observed["healthy"], healthy)
+                    self.assertEqual(observed["expected_online_clients"], 10)
+
     def test_full_verification_queue_never_marks_unsent_clients_pending(self):
         conductor, store = self._conductor()
         conductor.interactive = True

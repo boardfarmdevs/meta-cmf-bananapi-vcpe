@@ -960,6 +960,8 @@ class LiveConductor:
                 payload["expected_online_clients"] = expected_clients
                 payload["healthy"] = (
                     payload.get("api_active") == expected_clients
+                    and payload.get("topology_nodes") == expected_devices + 1
+                    and payload.get("complete_nodes") == expected_devices + 1
                     and payload.get("model_devices") == expected_devices
                     and payload.get("model_radios") == expected_devices * 3
                     and payload.get("model_bsses") == expected_devices * 10

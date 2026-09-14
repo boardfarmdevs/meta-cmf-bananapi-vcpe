@@ -165,6 +165,9 @@ func makeNativeSteeringHandler(runner nativeSteeringRunner) http.HandlerFunc {
 			}
 		}
 		success := returncode == 0 && len(statuses) == 1 && statuses[0] == "Success" && ctx.Err() == nil
+		if success {
+			recordBTMRequest(payload.Station, payload.Source, payload.Target, started)
+		}
 		code := http.StatusOK
 		if !success {
 			code = http.StatusServiceUnavailable

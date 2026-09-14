@@ -226,6 +226,52 @@ def test_unsupported_backend_rejected():
         RdkBackhaulAdapter({"bindings": {}})
 
 
+def test_radio_preparation_is_idempotent_and_never_selects_parents():
+    adapter = adapter_fixture()
+    adapter.containers = {"gateway": "bpibroadband", "extender_1": "bpiap"}
+    ready = "ssid mesh_backhaul\nchannel 36 (5180 MHz), width: 20 MHz\n"
+    adapter.command.side_effect = lambda role, *arguments, **kwargs: "0x1003" if arguments[0] == "cat" else ready
+    result = adapter.prepare_radios()
+    assert result["parent_selection"] is False
+    assert all(not state["actions"] for state in result["radios"].values())
+    assert all(call.args[1] in {"iw", "cat"} for call in adapter.command.call_args_list)
+    adapter.observe.assert_not_called()
+    adapter.set_bssid.assert_not_called()
+
+
+def test_radio_preparation_applies_lazy_ap_and_brings_down_sta_up():
+    adapter = adapter_fixture()
+    adapter.containers = {"extender_1": "bpiap"}
+    adapter.command.side_effect = ["type AP", "Value : true", "setvalues succeeded",
+                                   "ssid mesh_backhaul\nchannel 36 (5180 MHz)", "0x1002", "", "0x1003"]
+    result = adapter.prepare_radios()
+    assert result["radios"]["extender_1"]["actions"] == ["apply_enabled_backhaul_ap", "bring_backhaul_sta_up"]
+    assert adapter.command.call_args_list[2].args[3] == "Device.WiFi.AccessPoint.14.ForceApply"
+    assert adapter.command.call_args_list[5].args == ("extender_1", "ip", "link", "set", "wifi1.3", "up")
+    adapter.set_bssid.assert_not_called()
+
+
+@pytest.mark.parametrize("enabled", ["Value : false", "Failed to get the data"])
+def test_radio_preparation_respects_disabled_or_unknown_ap(enabled):
+    adapter = adapter_fixture()
+    adapter.containers = {"extender_1": "bpiap"}
+    adapter.command.side_effect = ["type AP", enabled]
+    with pytest.raises(RuntimeError, match="not administratively enabled"):
+        adapter.prepare_radios()
+    assert adapter.command.call_count == 2
+
+
+def test_radio_preparation_requires_operating_channel_and_sta_readback():
+    adapter = adapter_fixture()
+    adapter.containers = {"extender_1": "bpiap"}
+    adapter.command.side_effect = ["ssid mesh_backhaul", "Value : true", "setvalues succeeded"] + ["ssid mesh_backhaul"] * 8
+    with patch("room_demo.backhaul.time.sleep"), pytest.raises(RuntimeError, match="did not start"):
+        adapter.prepare_radios()
+    adapter.command.side_effect = ["ssid mesh_backhaul\nchannel 36 (5180 MHz)", "0x1002", "", "0x1002"]
+    with pytest.raises(RuntimeError, match="remains administratively down"):
+        adapter.prepare_radios()
+
+
 def test_incomplete_parent_graph_is_not_reported_as_stable():
     with pytest.raises(ValueError, match="incomplete"):
         select_parent({"first": "second", "second": "first"}, [])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import itertools
 import re
 import subprocess
@@ -113,6 +114,42 @@ class RdkBackhaulAdapter:
                 raise RuntimeError(f"{role}: unknown parent BSSID {address}")
             parents[role] = owners[address]
         return parents
+
+    def prepare_radios(self):
+        def prepare(role):
+            actions = []
+
+            def ap_ready():
+                output = self.command(role, "iw", "dev", "wifi1.1", "info")
+                return bool(re.search(r"^\s*ssid mesh_backhaul\s*$", output, re.M)
+                            and re.search(r"^\s*channel 36 \(5180 MHz\)", output, re.M))
+
+            if not ap_ready():
+                enabled = self.command(role, "rbuscli", "getv", "Device.WiFi.AccessPoint.14.Enable")
+                if not re.search(r"Value\s*:\s*true\b", enabled):
+                    raise RuntimeError(f"{role}: backhaul AP is not administratively enabled")
+                self.command(role, "rbuscli", "setvalues", "Device.WiFi.AccessPoint.14.ForceApply",
+                             "boolean", "true", timeout=6)
+                for attempt in range(8):
+                    if ap_ready():
+                        break
+                    time.sleep(0.5)
+                else:
+                    raise RuntimeError(f"{role}: enabled backhaul AP did not start on channel 36")
+                actions.append("apply_enabled_backhaul_ap")
+            if role != "gateway":
+                flags = self.command(role, "cat", "/sys/class/net/wifi1.3/flags")
+                if not int(flags.strip(), 0) & 1:
+                    self.command(role, "ip", "link", "set", "wifi1.3", "up")
+                    flags = self.command(role, "cat", "/sys/class/net/wifi1.3/flags")
+                    if not int(flags.strip(), 0) & 1:
+                        raise RuntimeError(f"{role}: backhaul STA interface remains administratively down")
+                    actions.append("bring_backhaul_sta_up")
+            return role, {"ap_ready": True, "actions": actions}
+
+        with ThreadPoolExecutor(max_workers=len(self.containers)) as executor:
+            radios = dict(executor.map(prepare, self.containers))
+        return {"radios": radios, "parent_selection": False}
 
     def set_bssid(self, child, address):
         if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", address):

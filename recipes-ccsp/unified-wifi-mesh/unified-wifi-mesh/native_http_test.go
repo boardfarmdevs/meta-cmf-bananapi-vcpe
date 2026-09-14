@@ -18,6 +18,21 @@ type stalledHTTPWriter struct {
 	release chan struct{}
 }
 
+func TestRoomLayoutDoesNotWaitForNativeOwnership(test *testing.T) {
+	apiRequestMutex.Lock()
+	defer apiRequestMutex.Unlock()
+	done := make(chan struct{})
+	go func() {
+		withNativeAPIOwnership(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { close(done) })).ServeHTTP(
+			httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v1/room-layout", nil))
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		test.Fatal("room layout waited behind native metrics")
+	}
+}
+
 func (writer *stalledHTTPWriter) Write(data []byte) (int, error) {
 	close(writer.entered)
 	<-writer.release

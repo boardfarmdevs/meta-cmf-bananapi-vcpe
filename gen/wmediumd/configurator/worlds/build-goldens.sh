@@ -51,5 +51,8 @@ emit band-steering-lane.json band-ap-counter-roam.json band-ap-counter-roam.worl
 emit home-five-agent.json one-client-handover.json home-a-one-client-handover.world.json
 emit large-room-five-agent.json perimeter-counter-roam.json large-room-perimeter-counter-roam.world.json
 emit large-room-client-cluster.json extender-evacuation.json large-room-extender-evacuation.world.json
+emit backhaul-courtyard.json backhaul-branch-formation.json backhaul-branch-formation.world.json
+emit backhaul-courtyard.json backhaul-parent-handover.json backhaul-parent-handover.world.json
+emit backhaul-courtyard.json backhaul-isolation-recovery.json backhaul-isolation-recovery.world.json
 
 echo "golden RF sequences: ${mode#--} passed"

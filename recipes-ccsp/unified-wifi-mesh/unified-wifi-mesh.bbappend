@@ -186,11 +186,13 @@ EASYMESH_CORE_PATCHES = " \
     file://0186-advance-ready-agent-commands-on-events.patch \
     file://0187-policy-select-ready-owner-and-check-admission.patch \
     file://0188-cli-serve-offline-ui-dependencies.patch \
+    file://0189-cli-follow-room-and-clarify-roam-history.patch \
 "
-SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js"
+SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
 SRC_URI += "file://native_steering.go file://native_steering_test.go"
 SRC_URI += "file://native_http.go file://native_http_test.go"
+SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go file://room-topology.js file://steering-cues.js"
 
 python do_patch_append() {
     import os
@@ -199,7 +201,10 @@ python do_patch_append() {
                     os.path.join(d.getVar("S"), "src/rdkb-cli/static/signal-meter.js"))
     shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "fullscreen-control.js"),
                     os.path.join(d.getVar("S"), "src/rdkb-cli/static/fullscreen-control.js"))
-    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go"):
+    for name in ("room-topology.js", "steering-cues.js", "room-name.js", "room-projection.js", "pane-divider.js", "pane-divider.css"):
+        shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
+                        os.path.join(d.getVar("S"), "src/rdkb-cli/static", name))
+    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli", name))
 }
@@ -749,6 +754,12 @@ do_install_append_qemux86bpibroadband() {
         ${S}/src/rdkb-cli/static/signal-meter.js \
         ${S}/src/rdkb-cli/static/fullscreen-control.js \
         ${S}/src/rdkb-cli/static/topology-fullscreen.js \
+        ${S}/src/rdkb-cli/static/room-topology.js \
+        ${S}/src/rdkb-cli/static/room-name.js \
+        ${S}/src/rdkb-cli/static/room-projection.js \
+        ${S}/src/rdkb-cli/static/pane-divider.js \
+        ${S}/src/rdkb-cli/static/pane-divider.css \
+        ${S}/src/rdkb-cli/static/steering-cues.js \
         ${S}/src/rdkb-cli/static/style.css \
         ${D}/usr/ccsp/EasyMesh/static/
     install -m 0644 ${WORKDIR}/iot-device.svg \

@@ -44,6 +44,29 @@ node gen/tests/viewer-sidebar-layout-test.js
 The Node module path must provide `playwright-core`; `CHROMIUM_PATH` is optional
 when its matching browser is already installed at Playwright's default location.
 
+`node gen/tests/viewer-room-convergence-test.js` checks continuous readiness,
+exact room counts, current RF epochs, freshness, band policy and failure states.
+`viewer-room-convergence-browser-test.js` uses the same Playwright environment
+to check the prominent status card beside Play and in full screen, fixed-size
+desktop/mobile layout, and no DOM changes during routine measurement progress.
+Both run without changing a live lab.
+
+`node gen/tests/viewer-room-guide-test.js` checks that every bundled RDK room
+has detailed RF/optimizer/evidence/limits guidance and that counts, durations
+and pauses match its golden plan. `viewer-room-guide-browser-test.js` uses the
+same Playwright environment to test hover, keyboard and touch, small viewports,
+busy/read-only guards, catalog changes, safe custom-room text and load delegation.
+It also loads the real no-connect viewer through an isolated local HTTP server;
+no live lab is contacted. Chromium uses software WebGL without an X display.
+The screenshot defaults to `/tmp/rdk-room-guide.png` (`ROOM_GUIDE_SCREENSHOT`
+overrides it). Run `viewer-world-loading-test.js` alongside it to check the
+existing immediate live-load flow, error restoration and upload boundaries.
+
+`room-backhaul-features.js` is the short, explicitly armed RDK live check for
+the three geometry-backhaul rooms. It separates correct RF/policy behavior
+from observed native parent selection and checks default-room recovery.
+See the [backhaul feature procedure](../../doc/easymesh/reference/testing/room-acceptance.md#short-backhaul-feature-test).
+
 `test_lxd_observability.py` checks the optional nested-LXD monitoring bundle's
 dashboard filters, verified scrape configuration, shell syntax and reference
 links. Its Compose checks require the v2 plugin but no running Docker daemon:
@@ -848,6 +871,32 @@ assets to replace the persistent `/nvram/static` copy at startup and rejects a
 no-clobber copy that would leave an old browser bundle active after deployment.
 
 ## WebUI unit tests
+
+`pane-divider-browser-test.js` uses the Playwright environment above to cover
+keyboard and touch resizing, persisted independent widths, bounds, reset,
+mobile/desktop transitions and storage failures. The actual room and topology
+browser tests also drag their dividers and verify canvas/SVG resizing without
+graph replacement or lab writes.
+
+`webui-room-follow-test.js SCRIPT_JS` checks every bundled room generation,
+identity mapping, collision spacing and packed visual footprints across every
+bundled generation, orientation retention, current association ownership, same-AP
+band changes and steering-method evidence. The viewer browser test also compares
+the shared floor projection with the actual Three.js camera at the room corners.
+`webui-room-follow-browser-test.js
+STATIC_DIRECTORY` uses the Playwright environment above and the actual offline
+WebUI assets (including `vendor/`) with fixture APIs. It covers continuous
+coordinates despite slow metrics, no pose-only SVG replacement, manual dragging,
+outage/reconnect, world switches and room headings (including manual layout),
+the compact single-row topology heading, fullscreen, all three cue colors, source labels
+and expiry without delaying the client or sending any lab writes.
+
+The room server unit tests cover its small read-only coordinate projection.
+Go tests `room_layout_test.go`, `steering_actions_test.go`, `native_http_test.go`
+and `native_steering_test.go` cover bounded/coalesced transport, rejected responses,
+timeouts, history/evidence and independence from native API ownership. Run these
+with their production files and a test-only `apiRequestMutex sync.Mutex` stub
+when not building the complete native Go/C package.
 
 The four JavaScript tests load `rdkb-cli/static/script.js` directly with mocked
 browser/API objects. Supply the patched source file from the

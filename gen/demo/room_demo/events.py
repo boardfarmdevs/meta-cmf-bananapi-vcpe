@@ -391,6 +391,24 @@ class EventStore:
         with self._condition:
             return copy.deepcopy(self._state)
 
+    def mesh_layout(self) -> dict[str, Any]:
+        with self._condition:
+            state = self._state
+            nodes = []
+            for device in state["network"].get("mesh", {}).get("nodes", []):
+                role = device.get("role")
+                position = state["roles"].get(role, {})
+                if position.get("kind") != "fronthaul_ap":
+                    continue
+                nodes.append({"device_id": device.get("device_id"), "role": role,
+                              "position": copy.deepcopy(position.get("authoritative_position"))})
+            return {"schema": "easymesh.room-layout.v1", "run_id": self.run_id,
+                    "world_epoch": state["world_epoch"], "sequence": state["sequence"],
+                    "world": state["scenario"], "state": state["run_state"],
+                    "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "network_observed_at": state["network"].get("observed_at"),
+                    "nodes": nodes}
+
     def environment_epoch(self) -> int:
         with self._condition:
             return self._state["environment_epoch"]

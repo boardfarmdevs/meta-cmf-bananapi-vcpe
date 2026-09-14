@@ -6,27 +6,29 @@
 
 ## Open and control
 
-Open the live room and network topology side by side. The room's built-in
-Help is the detailed control reference; this page describes the operating rules.
-No `?mode=` is required for the normal live URL.
+Open both views side by side; no `?mode=` is required. Built-in Help contains
+the detailed controls and evidence boundaries.
 
-- **Load world** immediately applies its initial geometry, RF and presence to
-  the lab. Wait for completion; there is no separate Apply World step.
-- **Play / Pause** controls scripted movement. You can also drag devices without
-  switching camera/interactive modes. A moving best AP may change continuously.
-- **Ctrl-click any client** selects the traffic probe. Selection does not steer
-  that station or give it a special permanent role. “Private-Laptop” is not a
-  separate appliance capability.
-- Station names remain visible. Drag the black properties label out of the way.
-- **Full screen** is available in both views; Esc exits. Topology layout fitting
-  changes presentation, not radio positions or actual parent selection.
-- Stop/restore a custom run before leaving. Return to the default twenty-client
-  world and leave it paused when handing the lab to someone else.
+- **Load world** applies geometry, RF and presence immediately; wait for completion.
+- **Play / Pause** controls scripted movement. Dragging remains available.
+- **Ctrl-click any client** selects the traffic probe, without steering it.
+- Station names remain visible; drag the black properties label out of the way.
+- Drag the **grey divider** to resize panels. Widths persist separately per view.
+  Arrow keys adjust; double-click resets. Mobile panels remain stacked.
+- The **room name** shares the topology header, including fullscreen. Unavailable
+  room data marks it **last observed**. Hover over the follow checkbox for status.
+- **Full screen** expands either drawing; Esc exits.
+- **Follow room layout** tracks committed coordinates in the room's default
+  camera orientation. Controller stays near Agent-1; clients stay with their AP.
+  Diagram dragging switches to manual; checking resumes. Camera orbit is local
+  to the room, not shared with topology.
+- AP groups pack around visible bubbles and fit with a **six-pixel margin**,
+  preserving orientation. **Optimize Layout** also tightens manual arrangements.
+- Restore the default twenty-client world and leave it paused before handoff.
 
-Twenty client containers and six logical mesh roles remain provisioned.
-Smaller worlds make selected roles unavailable; they do not rebuild the VM.
-Absent clients must disappear from the observed roster after convergence.
-Disabling an extender's **fronthaul** does not disable its backhaul.
+Worlds change active presence within the provisioned pool, without rebuilding
+the VM. Absent clients disappear from the converged roster. Disabling
+**fronthaul** does not disable backhaul. Resizing/packing never changes RF.
 
 ## Read the views correctly
 
@@ -41,42 +43,38 @@ Disabling an extender's **fronthaul** does not disable its backhaul.
 | Fronthaul disabled | Client-facing AP unavailable; mesh uplink may still work |
 | Network topology | Controller-reported ownership; verify independently for tests |
 
-The same signal scale is used in both views. A client can have the best
-available AP without green/maximal SNR. Walls, distance, band eligibility,
-SSID, policy margins and station behavior still matter. RDK and prpl radios
-have different inventory mappings; compare identities, not just drawing labels.
+Both views share signal thresholds. The best eligible AP need not provide
+green/maximal SNR: walls, distance, band, SSID and policy still matter.
+RDK/prpl inventory mappings differ; compare identities, not drawing ordinals.
 
 ## Optimizer activity
 
-The deployed room can use an external policy that requests native BTM; it is
-not evidence of a native autonomous optimizer. Check the displayed authority.
+Roam cues show six seconds of history without delaying association rendering.
+`FROM` marks the previous location, not another connected client. Teal means an
+accepted **BTM request**, not proven delivery/causation; pink means **reported
+non-BTM**; grey means **unknown**. Missing BTM evidence does not prove non-BTM.
 
-“Reading” is collection activity; “stable/converged” describes the last
-qualified evaluation, not a new handover. Auto BTM permits requests—it does
-not guarantee immediate movement. Read the current epoch, freshness, target,
-decision reason and terminal verification in recent events.
+Check authority: external policy requesting native BTM is not a native optimizer.
 
-**Measurements unavailable** pauses automatic decisions when a safe fresh
-candidate set cannot be obtained. The room remains interactive. Preserve the
-error/age/retry information rather than treating grey as zero, borrowing stale
-candidates or forcing clients onto the dashed link.
+“Reading” means collection; “stable/converged” means the last qualified
+evaluation. Auto BTM permits requests, not immediate movement. Inspect epochs,
+freshness, targets, decisions and terminal verification.
 
-A star can be correct in profiling: startup backhaul is protected. Moving
-extenders does not by itself request native backhaul optimization. The
-[coordination reference](../reference/rooms/architecture.md) separates demonstration
-assistance, client profiling and explicitly modeled-backhaul experiments.
+**Measurements unavailable** pauses decisions, not interaction. Preserve errors
+and retry information; never substitute stale candidates or treat grey as zero.
+
+A star can be correct with protected startup backhaul. See
+[coordination](../reference/rooms/architecture.md) for profiling, assistance and
+modeled-backhaul experiments.
 
 ## Safe use and troubleshooting
 
-Use one operator lease and one RF writer. Do not run a second scenario, manual
-RF-assisted steer or conductor against the same medium. A paused room may
-still collect/steer; stop its service before a standalone native experiment.
+Use one operator lease and RF writer. Pause may still collect/steer; stop the
+room service before standalone native experiments.
 
-If a load or recovery fails, keep the fault and journal. Do not delete the
-ownership record, invent topology entries or restart every native service.
-Check service health, current world/epoch, actual station link and candidate
-freshness in that order. Remote access is covered in
-[transport and access](../reference/rooms/access.md).
+On failure, preserve faults/journals. Check service health, world/epoch, actual
+station links and freshness; do not erase ownership or fabricate topology.
+See [remote access](../reference/rooms/access.md).
 
 For a correctness claim, use [room acceptance](../reference/testing/room-acceptance.md).
 A screenshot, accepted API request or interesting animation is not a pass.

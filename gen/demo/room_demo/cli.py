@@ -300,8 +300,8 @@ def _interactive_preflight(conductor, expected_agents, expected_clients, recover
 
 
 def _interactive(args) -> int:
-    if args.model_backhaul and (not args.profiling or args.mode != "stimulus"):
-        raise ActuatorError("--model-backhaul requires --profiling --mode stimulus: no external client or parent steering")
+    if args.model_backhaul and args.adaptive_backhaul:
+        raise ActuatorError("--model-backhaul cannot be combined with --adaptive-backhaul: select one parent authority")
     if args.profiling and args.adaptive_backhaul:
         raise ActuatorError("--profiling excludes --adaptive-backhaul: external parent selection is not native EasyMesh policy")
     if args.mode == "act" and not args.yes_act:
@@ -319,7 +319,8 @@ def _interactive(args) -> int:
     store = EventStore(run_id, runtime_world, runner.run_dir / "live-events.jsonl", asynchronous=True)
     recovery = RecoveryJournal(args.recovery_file, run_id, _hash(inventory),
                                inventory_identity_sha256=inventory_identity(inventory))
-    backhaul_adapter = RdkBackhaulAdapter(plan) if args.adaptive_backhaul and args.mode == "act" else None
+    backhaul_radios = RdkBackhaulAdapter(plan)
+    backhaul_adapter = backhaul_radios if args.adaptive_backhaul and args.mode == "act" else None
     if args.adaptive_backhaul and backhaul_adapter is None:
         raise ActuatorError("--adaptive-backhaul requires interactive --mode act --yes-act")
     interactions = RoomEngine(
@@ -337,6 +338,7 @@ def _interactive(args) -> int:
             recovery=recovery,
             adaptive_backhaul=backhaul_adapter is not None,
             model_backhaul=args.model_backhaul,
+            prepare_backhaul=backhaul_radios.prepare_radios,
         )
     )
     # Interactive act mode is a continuously running reconciler. Keep a
@@ -634,7 +636,7 @@ def parser() -> argparse.ArgumentParser:
     interactive.add_argument("--adaptive-backhaul", action="store_true",
                              help="model mesh RF and select loop-free RDK OneWifi parents (act only)")
     interactive.add_argument("--model-backhaul", action="store_true",
-                             help="model backhaul RF without choosing parents (profiling stimulus only)")
+                             help="override all room RF policies with geometry; native parent selection, independent of client policy")
     interactive.add_argument(
         "--max-actions", type=int,
         help="automatic BTM circuit breaker in act mode (default: 100)",
