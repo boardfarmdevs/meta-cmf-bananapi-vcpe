@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +13,62 @@ AUDIT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUDIT)
 LINK = "Connected to 02:00:00:00:01:00 (on wlan0)\n\tfreq: 5180.0\n"
 INFO = "Interface wlan0\n\taddr 02:00:00:10:01:00\n"
+
+
+@pytest.fixture
+def medium_files(tmp_path):
+    runtime = tmp_path / "runtime"
+    processes = tmp_path / "proc"
+    process = processes / "1234"
+    runtime.mkdir()
+    process.mkdir(parents=True)
+    binary = "/usr/local/bin/wmediumd-candidate"
+    contents = b"compiled medium fixture"
+    digest = hashlib.sha256(contents).hexdigest()
+    arguments = [binary, "-F", "-c", str(runtime / "wmediumd.cfg")]
+    process.joinpath("exe").write_bytes(contents)
+    process.joinpath("stat").write_text("1234 (medium candidate) " + " ".join(["S"] + ["0"] * 18 + ["5678"]))
+    process.joinpath("cmdline").write_bytes("\0".join(arguments).encode() + b"\0")
+    runtime.joinpath("wmediumd.pid").write_text("1234\n")
+    runtime.joinpath("wmediumd-binary.sha256").write_text(f"1234\t{digest}\t{binary}\n")
+    return runtime, processes, arguments, digest
+
+
+def test_medium_identity_uses_live_manifest_not_a_binary_filename(medium_files):
+    runtime, processes, arguments, digest = medium_files
+    assert AUDIT.rdk_medium_identity(runtime, processes) == {
+        "pid": 1234, "start_ticks": 5678, "command": arguments, "sha256": digest}
+
+
+@pytest.mark.parametrize("changed", ["pid", "exe", "command", "config", "manifest"])
+def test_medium_identity_rejects_stale_or_mismatched_provenance(medium_files, changed):
+    runtime, processes, arguments, digest = medium_files
+    if changed == "pid":
+        runtime.joinpath("wmediumd.pid").write_text("1235\n")
+    elif changed == "exe":
+        processes.joinpath("1234/exe").write_bytes(b"different medium")
+    elif changed in {"command", "config"}:
+        arguments[0 if changed == "command" else 3] = "/different/path"
+        processes.joinpath("1234/cmdline").write_bytes("\0".join(arguments).encode())
+    else:
+        runtime.joinpath("wmediumd-binary.sha256").write_text(f"1\t{digest}\t{arguments[0]}\n")
+    with pytest.raises(RuntimeError):
+        AUDIT.rdk_medium_identity(runtime, processes)
+
+
+def test_medium_identity_rejects_pid_reuse_during_audit(medium_files, monkeypatch):
+    runtime, processes, _, _ = medium_files
+    original = Path.read_bytes
+
+    def read_bytes(path):
+        if path.name == "exe":
+            stat = path.with_name("stat")
+            stat.write_text(stat.read_text().replace("5678", "9999"))
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    with pytest.raises(RuntimeError, match="changed during"):
+        AUDIT.rdk_medium_identity(runtime, processes)
 
 
 @pytest.mark.parametrize("after,traffic_ok,stable", [

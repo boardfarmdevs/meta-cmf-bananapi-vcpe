@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import concurrent.futures
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -12,6 +13,29 @@ def command(*arguments, timeout=25):
     if result.returncode:
         raise RuntimeError(result.stderr or result.stdout)
     return result.stdout.strip()
+
+
+def rdk_medium_identity(runtime=Path("/run/meta-cmf-wmediumd"), processes=Path("/proc")):
+    manifest_path = runtime / "wmediumd-binary.sha256"
+    manifest = manifest_path.read_text()
+    process, expected_hash, binary = manifest.rstrip("\n").split("\t")
+    if (not process.isdecimal() or int(process) <= 1 or not Path(binary).is_absolute()
+            or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)):
+        raise RuntimeError("invalid medium process manifest")
+    process_directory = processes / process
+    start_ticks = process_directory.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19]
+    arguments = process_directory.joinpath("cmdline").read_bytes().rstrip(b"\0").decode().split("\0")
+    if (arguments[0] != binary or "-c" not in arguments
+            or arguments[arguments.index("-c") + 1:arguments.index("-c") + 2] != [str(runtime / "wmediumd.cfg")]):
+        raise RuntimeError("medium command does not match its process manifest")
+    digest = hashlib.sha256(process_directory.joinpath("exe").read_bytes()).hexdigest()
+    if digest != expected_hash:
+        raise RuntimeError("running medium binary does not match its process manifest")
+    if (runtime.joinpath("wmediumd.pid").read_text().strip() != process
+            or manifest_path.read_text() != manifest
+            or process_directory.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19] != start_ticks):
+        raise RuntimeError("medium process changed during identity audit")
+    return {"pid": int(process), "start_ticks": int(start_ticks), "command": arguments, "sha256": digest}
 
 
 def identity(flavor):
@@ -31,8 +55,7 @@ def identity(flavor):
         else:
             result[name]["services"] = command("lxc", "exec", name, "--", "pgrep", "-a", "-f",
                 "beerocks_|ieee1905_transport|hostapd -B")
-    result["medium"] = (command("pgrep", "-a", "-x", "wmediumd") if flavor == "prpl" else
-                        command("pgrep", "-a", "-f", "^.*[/]wmediumd[.]patched[ ]+-c"))
+    result["medium"] = command("pgrep", "-a", "-x", "wmediumd") if flavor == "prpl" else rdk_medium_identity()
     return result
 
 

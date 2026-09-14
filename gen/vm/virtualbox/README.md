@@ -133,7 +133,8 @@ The Vagrantfile refuses duplicate/colliding service ports instead of silently
 renumbering them. Optional variables are `EASYMESH_LXD_UI_PORT`,
 `EASYMESH_GRAFANA_PORT`, `EASYMESH_CPUS` (minimum 6) and
 `EASYMESH_MEMORY_MB` (default 16384, minimum 12288). Changing resources requires a halt/reload.
-Profile 50/100 support remains with the separately qualified LXD appliance.
+Both providers use the same fixed 100-client pool; the loaded room selects
+the online subset, not a different appliance size.
 
 ## 5. Daily operation and diagnosis
 
