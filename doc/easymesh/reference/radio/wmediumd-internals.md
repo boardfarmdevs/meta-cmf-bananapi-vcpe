@@ -578,7 +578,8 @@ increase in those diagnostics is a regression.
   and recovery without stopping a container.
 - [client carousel](../../experiments/README.md) exercises repeated
   client movement visible in the live topology.
-- [client scale](../../experiments/README.md) defines the 20/50/100-client profiles,
-  pair-state growth, measured wmediumd cost and overload gates.
+- [client scale](../../experiments/README.md) covers larger online cohorts within
+  the fixed 100-client pool; [performance diagnostics](../testing/performance.md)
+  covers measured wmediumd cost and overload gates.
 - [patch set](../platform/patch-set.md) places the wmediumd and kernel patches in the
   complete component ownership model.
