@@ -20,12 +20,13 @@ the lab automatically merely because it rebooted.
 
 For Windows installation, browser URLs, lifecycle and release building, use
 [`virtualbox/README.md`](virtualbox/README.md). This provider supports RDK's
-default 20-client lab, not prplMesh. A VirtualBox `.vbox` is just a machine
+100-client-capacity appliance (20 online in the default room), not prplMesh.
+A VirtualBox `.vbox` is just a machine
 configuration; the portable download is a Vagrant `.box` containing the disk
 and OVF, accompanied by a `Vagrantfile`.
 
-Read the [0908 VirtualBox qualification](virtualbox/ACCEPTANCE-0908.md) for
-the tested scope and the known native metrics/convergence limitation.
+Use the release's adjacent acceptance evidence for its tested scope. Historical
+VirtualBox checks do not qualify a newly generated box.
 
 Use [`lxd/README.md`](lxd/README.md) for host installation, clean appliance
 build, import, lifecycle, acceptance, export, and removal.

@@ -276,6 +276,13 @@ async function run(args) {
     args: ['--no-sandbox', '--ozone-platform=headless', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader',
       '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows']});
   const context = await browser.newContext({viewport: {width: 1280, height: 900}});
+  const labOrigins = new Set([args['room-url'], args['topology-url']].map(value => new URL(value).origin));
+  report.browserNetwork = 'lab-origins-only';
+  await context.route('**/*', route => {
+    const address = new URL(route.request().url());
+    return !['http:', 'https:'].includes(address.protocol) || labOrigins.has(address.origin) ?
+      route.continue() : route.abort('blockedbyclient');
+  });
   const room = await context.newPage();
   const topology = await context.newPage();
   if (args['observer-cpus']) {
@@ -330,6 +337,15 @@ async function run(args) {
         stdout: error.stdout?.slice(-4000), stderr: error.stderr?.slice(-4000)});
       throw error;
     }
+  }
+  async function auditKernel(sampleResult) {
+    if (!sampleResult) return {passed: false, errors: [{reason: 'model_snapshot_unavailable'}]};
+    const started = performance.now();
+    const clientContainers = Object.fromEntries(Object.entries(bindings).map(([role, client]) => [role, client.container]));
+    const links = await guest('links', JSON.stringify(clientContainers));
+    return {...kernelClientAudit(bindings, sampleResult.wanted, sampleResult.roomAssociations, links),
+      elapsedMs: performance.now() - started, observedAt: new Date().toISOString(),
+      modelObservedAt: sampleResult.wallTime, modelAgeAtStartMs: started - sampleResult.monoMs};
   }
   async function events() {
     while (!stopped) {
@@ -552,13 +568,36 @@ async function run(args) {
     const initial = await request('/api/demo/interactions');
     if (initial.lease?.held || initial.recording?.active) throw new Error('Refusing to steal a control lease or interrupt recording');
     report.before = await guest('identity', args.flavor);
-    const current = await request('/api/demo/current');
+    let current;
+    const baselineDeadline = performance.now() + 60000;
+    do {
+      current = await request('/api/demo/current');
+      bindings = Object.fromEntries(current.network.clients.map(client => [client.role, client]));
+      if (current.health.healthy && current.health.api_total === 20 &&
+          current.health.expected_online_clients === 20 && Object.keys(bindings).length === 20) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } while (performance.now() < baselineDeadline);
     report.temporaryActionLimit = current.optimizer.maximum_actions;
     eventSequence = current.sequence;
     bindings = Object.fromEntries(current.network.clients.map(client => [client.role, client]));
-    if (Object.keys(bindings).length !== 20) throw new Error('Preflight requires default twenty-client baseline after room-service restart');
+    if (!current.health.healthy || current.health.api_total !== 20 ||
+        current.health.expected_online_clients !== 20 || Object.keys(bindings).length !== 20) {
+      save('preflight-current.json', current);
+      throw new Error('Preflight requires a healthy default twenty-client baseline after room-service restart');
+    }
     save('bindings.json', bindings);
-    const catalog = (await request('/api/demo/worlds')).worlds;
+    const catalogResponse = await request('/api/demo/worlds');
+    if (catalogResponse.client_bindings) {
+      const pool = catalogResponse.client_bindings;
+      if (Object.keys(pool).length !== initial.pool_clients ||
+          Object.entries(bindings).some(([role, client]) => lower(pool[role]?.sta_mac) !== lower(client.sta_mac)) ||
+          Object.values(pool).some(client => !client.sta_mac || !client.container)) {
+        throw new Error('Catalog client identities do not match the provisioned pool and live baseline');
+      }
+      bindings = pool;
+      save('bindings.json', bindings);
+    }
+    const catalog = catalogResponse.worlds;
     report.catalog = catalog;
     eventTask = events();
     await room.goto(args['room-url']);
@@ -582,6 +621,8 @@ async function run(args) {
           requestTiming: loaded.requestTiming, server: loaded.result, goldenSha256: world.golden_sha256};
         if (!activeRoom.load.passed) throw new Error('Deployed golden identity does not match the selected room');
         activeRoom.initial = await settle(world, Number(args['initial-timeout'] || 90), 'loaded');
+        activeRoom.initial.kernel = await auditKernel(activeRoom.initial.final);
+        activeRoom.initial.passed &&= activeRoom.initial.kernel.passed;
         await screenshot('loaded');
         await room.bringToFront();
         if (!await room.evaluate(() => Boolean(document.fullscreenElement))) await room.locator('#roomFullscreen').click();
@@ -613,6 +654,8 @@ async function run(args) {
             visited.add(checkpoint);
             const started = performance.now();
             const settled = await settle(world, Number(args['checkpoint-timeout'] || 60), 'checkpoint-' + checkpoint);
+            settled.kernel = await auditKernel(settled.final);
+            settled.passed &&= settled.kernel.passed;
             activeRoom.checkpoints.push({timeMs: checkpoint, ...settled});
             await screenshot('checkpoint-' + checkpoint);
             await clickPlay(); checkpointMs += performance.now() - started;
@@ -623,10 +666,8 @@ async function run(args) {
           checkpointWaitSeconds: checkpointMs / 1000, checkpointsVisited: [...visited]};
         if (!completed) throw new Error('Playback exceeded bounded wall-clock deadline');
         activeRoom.final = await settle(world, Number(args['final-timeout'] || 120), 'final');
+        activeRoom.kernel = await auditKernel(activeRoom.final.final);
         await screenshot('final');
-        const offline = Object.fromEntries(Object.entries(bindings).filter(([, client]) => !lastSample.result.wanted.includes(lower(client.sta_mac))).map(([role, client]) => [role, client.container]));
-        const links = await guest('links', JSON.stringify(offline));
-        activeRoom.kernel = {offlineCount: Object.keys(offline).length, passed: Object.values(links).every(value => value.includes('Not connected')), links};
       } catch (error) {
         activeRoom.errors.push({phase, message: error.stack});
       } finally {
@@ -676,6 +717,26 @@ async function run(args) {
   return report;
 }
 
-module.exports = {expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors};
+function kernelClientAudit(bindings, wanted, associations, links) {
+  const online = new Set(wanted.map(lower));
+  const model = new Map(associations.map(client => [lower(client.mac), lower(client.bssid)]));
+  const bound = new Set(Object.values(bindings).map(client => lower(client.sta_mac)));
+  const errors = [...online].filter(mac => !bound.has(mac)).map(mac => ({mac, reason: 'unbound_online_client'}));
+  for (const [role, client] of Object.entries(bindings)) {
+    const mac = lower(client.sta_mac);
+    const link = links[role];
+    const connected = typeof link === 'string' ? link.match(/^Connected to ([0-9a-f:]{17})\b/im) : null;
+    if (online.has(mac)) {
+      const actual = connected ? lower(connected[1]) : null;
+      const expected = model.get(mac) || null;
+      if (!actual || !expected || actual !== expected) errors.push({role, mac, expected, actual, reason: 'native_owner_mismatch'});
+    } else if (typeof link !== 'string' || !/^Not connected\.\s*$/.test(link)) {
+      errors.push({role, mac, reason: 'offline_client_connected_or_unobserved'});
+    }
+  }
+  return {onlineCount: online.size, offlineCount: bound.size - online.size, passed: errors.length === 0, errors, links};
+}
+
+module.exports = {expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors, kernelClientAudit};
 if (require.main === module) run(argumentsFrom(process.argv.slice(2))).then(report => { process.exitCode = report.passed ? 0 : 1; })
   .catch(error => { console.error(error); process.exitCode = 2; });

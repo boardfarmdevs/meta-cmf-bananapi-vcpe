@@ -22,8 +22,9 @@ Only one RF writer may run at a time. The default room is itself a writer.
 1. Run source/unit checks for the changed subsystem.
 2. Test one bounded scenario and confirm exact medium restoration.
 3. Test all affected rooms, then the full catalog when justified.
-4. Run larger-profile or duration tests only when explicitly qualifying them.
-   Passing profile 20 or a short room run is not 50/100-client or soak acceptance.
+4. Qualify larger online cohorts or longer durations explicitly, using the same
+   100-client-capacity VM. A passing 20-client room does not qualify 50 or 100
+   online clients, and bounded room tests are not soak acceptance.
 
 A successful command, 1905 ACK, green UI label or client-side association alone
 is insufficient. Require intended physical BSSID, controller ownership,

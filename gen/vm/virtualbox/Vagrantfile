@@ -50,8 +50,8 @@ Vagrant.configure("2") do |config|
   config.vm.provider "virtualbox" do |provider|
     provider.gui = false
     provider.check_guest_additions = false
-    provider.cpus = lab_integer("EASYMESH_CPUS", 6, 6, 64)
-    provider.memory = lab_integer("EASYMESH_MEMORY_MB", 8192, 8192, 262144)
+    provider.cpus = lab_integer("EASYMESH_CPUS", 8, 6, 64)
+    provider.memory = lab_integer("EASYMESH_MEMORY_MB", 16384, 12288, 262144)
     provider.customize ["modifyvm", :id, "--firmware", "efi64"]
     provider.customize ["modifyvm", :id, "--nic-type1", "virtio"]
     provider.customize ["modifyvm", :id, "--nested-hw-virt", "off"]
@@ -60,7 +60,7 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell", run: "always", privileged: true,
                       inline: "/usr/local/sbin/easymesh-vagrant-up"
   config.vm.post_up_message = <<~MESSAGE
-    RDK EasyMesh: 20 clients, 5 physical mesh devices / 6 logical UI roles.
+    RDK EasyMesh: up to 100 clients (default room: 20 online), 5 physical mesh devices / 6 logical UI roles.
     Topology: http://127.0.0.1:#{ports.fetch('easymesh-webui').last}/
     Console:  http://127.0.0.1:#{ports.fetch('wmediumd-console').last}/
     Room:     http://127.0.0.1:#{ports.fetch('room-demo').last}/

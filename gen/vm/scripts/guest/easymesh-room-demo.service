@@ -10,7 +10,7 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=/home/easymesh/git/meta-cmf-bananapi-vcpe
 Environment=PYTHONUNBUFFERED=1
-ExecCondition=/usr/bin/grep -qx HEALTH_EXPECT_CLIENTS=20 /etc/default/easymesh-lab
+ExecCondition=/usr/bin/grep -qx HEALTH_EXPECT_CLIENTS=100 /etc/default/easymesh-lab
 ExecStart=/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/demo/room-demo interactive --mode act --yes-act --profiling --max-actions 100 --listen 0.0.0.0:8891 --output-root /home/easymesh/easymesh-evidence/room-runs
 TimeoutStopSec=180
 Restart=on-failure

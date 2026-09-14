@@ -50,6 +50,16 @@ Keep failures and incomplete runs in separate evidence directories.
 | Cleanup | Default twenty-client world, paused, no lease/fault; original service/action cap restored |
 
 A continuously moving target need not be strictly converged every instant.
+At each initial, checkpoint and final settled boundary, the harness reads
+`iw dev wlan0 link` for the complete fixed pool with four bounded workers.
+Every online client must match its native-model BSSID; every offline client
+must be disconnected. Missing observations fail. The independent audit's
+`elapsedMs` is recorded separately from convergence timing; it does not relax
+the 60/45/90-second policy bounds. Earlier reports checked only offline clients
+and selected live probes, not every online client's physical owner.
+Physical audits precede screenshots at all three boundaries. Their model
+timestamp and age at audit start are recorded: screenshot delays must not
+compare a later physical association against an old native snapshot.
 Record one-second target sampling cadence and actual gaps; screenshots can
 slow sampling. Do not infer continuous failure across unobserved intervals.
 
@@ -77,9 +87,9 @@ node --check gen/tests/room-feature-acceptance.js
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright-core
 export CHROMIUM_PATH=/absolute/path/to/chromium/chrome
 node gen/tests/room-feature-acceptance.js --yes-act --flavor rdk \
-  --host rev140 --vm rdkeasymesh-20-0908 \
-  --room-url http://192.168.2.140:48891/ \
-  --topology-url http://192.168.2.140:48889/ \
+  --host rev140 --vm rdkeasymesh-0913 \
+  --room-url http://192.168.2.140:49891/ \
+  --topology-url http://192.168.2.140:49889/ \
   --worlds /absolute/path/to/deployed-goldens \
   --output /absolute/path/to/new-results --native-audits 1 \
   --initial-timeout 60 --checkpoint-timeout 45 --final-timeout 90
@@ -142,11 +152,13 @@ Receiver queue draining is not calibrated physical capacity.
 
 ## Current qualification
 
-The current catalog includes three dedicated band-steering rooms in addition
-to the fourteen original scenarios. See [band-steering qualification](../optimizer/band-steering.md#results)
-for the current seventeen-room results, native receive-channel requirements,
-verified band transitions and preparation limitations. The table below is the
-earlier RF baseline, not coverage of the three added rooms.
+The 0913 catalog contains eighteen rooms: fourteen original scenarios, three
+dedicated band-steering rooms and `fifty-client-counter-roam`. It uses a fixed
+100-client pool, not separately sized VMs. Follow [current deployment status](../../current-state.md)
+for release acceptance; earlier smaller-pool passes do not qualify 0913.
+See [band-steering qualification](../optimizer/band-steering.md#results) for the
+previous seventeen-room results and native receive-channel requirements.
+The table below is the earlier RF baseline, not coverage of the added rooms.
 
 ### Pre-band RF baseline
 

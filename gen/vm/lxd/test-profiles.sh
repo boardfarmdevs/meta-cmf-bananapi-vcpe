@@ -5,6 +5,11 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
 grep -Fq 'RELEASE-NOTES.md' "$root/gen/vm/lxd/build.sh"
+grep -Fq 'expected_clients=${HEALTH_EXPECT_CLIENTS:-100}' "$root/gen/vm/scripts/50-runtime-service.sh"
+grep -Fq 'hwsim_radios=${HWSIM_RADIOS:-128}' "$root/gen/vm/scripts/20-prepare-lab-host.sh"
+grep -Fq 'expected_radios=$(configured_parameter radios 128)' "$root/gen/vm/scripts/guest/easymesh-hwsim-pool"
+grep -Fq 'hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-128}' "$root/gen/vm/scripts/80-redeploy-accepted-lab.sh"
+grep -Fq 'test "$counts" = 5/15/50/104' "$root/gen/vm/scripts/80-redeploy-accepted-lab.sh"
 
 check() {
     local input=$1 name=$2 clients=$3 radios=$4 release_name=$5
@@ -14,17 +19,17 @@ check() {
     test "$(easymesh_profile_release_name "$input")" = "$release_name"
 }
 
-check 20 small 20 32 rdkeasymesh-20-0908
-check small small 20 32 rdkeasymesh-20-0908
-check 50 medium 50 64 rdkeasymesh-50-0908
-check medium medium 50 64 rdkeasymesh-50-0908
-check 100 stress 100 128 rdkeasymesh-100-0908
-check stress stress 100 128 rdkeasymesh-100-0908
-test "$(easymesh_thin_release_name)" = rdkeasymesh-0908-thin
-test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 20)" = \
-    rdkeasymesh-20-0901
-test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = \
-    rdkeasymesh-0901-thin
+check 100 unified 100 128 rdkeasymesh-0913
+check unified unified 100 128 rdkeasymesh-0913
+test "$(easymesh_thin_release_name)" = rdkeasymesh-0913-thin
+test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 100)" = rdkeasymesh-0901
+test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = rdkeasymesh-0901-thin
+for obsolete in 20 50 small medium stress; do
+    if easymesh_profile_name "$obsolete" >/dev/null 2>&1; then
+        echo "obsolete size accepted: $obsolete" >&2
+        exit 1
+    fi
+done
 if easymesh_profile_name 21 >/dev/null 2>&1; then
     echo 'invalid profile was accepted' >&2
     exit 1
@@ -58,12 +63,9 @@ mv "$tmp/rdkeasymesh-0831-thin" "$tmp/rdkeasymesh-0901-thin"
 test -f "$tmp/rdkeasymesh-0901-thin.tar"
 test -f "$tmp/rdkeasymesh-0901-thin.tar.sha256"
 
-for clients in 20 50 100; do
-    case "$clients" in
-        20) expected_profile=small; expected_radios=32 ;;
-        50) expected_profile=medium; expected_radios=64 ;;
-        100) expected_profile=stress; expected_radios=128 ;;
-    esac
+for clients in 100; do
+    expected_profile=unified
+    expected_radios=128
     state="$tmp/state-$clients"
     defaults="$tmp/defaults-$clients"
     modprobe_conf="$tmp/modprobe-$clients.conf"
@@ -109,18 +111,18 @@ done
 
 mkdir "$tmp/universal-import"
 install -m 0755 "$root/gen/vm/lxd/import.sh" "$tmp/universal-import/import.sh"
-printf 'LAB_PROFILE_SELECTABLE=true\nLAB_SUPPORTED_PROFILES=20,50,100\n' \
+printf 'LAB_PROFILE_SELECTABLE=true\nLAB_SUPPORTED_PROFILES=100\n' \
     > "$tmp/universal-import/release.env"
 if "$tmp/universal-import/import.sh" >"$tmp/missing-profile.out" 2>&1; then
-    echo 'universal import accepted a missing profile' >&2
+    echo 'unified import accepted a missing archive' >&2
     exit 1
 fi
-grep -F 'requires --profile 20, 50 or 100' "$tmp/missing-profile.out" >/dev/null
+grep -F 'automatic selection requires exactly one .tar.zst' "$tmp/missing-profile.out" >/dev/null
 if "$tmp/universal-import/import.sh" --profile 21 \
     >"$tmp/invalid-profile.out" 2>&1; then
     echo 'universal import accepted an invalid profile' >&2
     exit 1
 fi
-grep -F 'requires --profile 20, 50 or 100' "$tmp/invalid-profile.out" >/dev/null
+grep -F 'Client sizing is selected by the room' "$tmp/invalid-profile.out" >/dev/null
 
 echo 'PASS: RDK EasyMesh portable profiles'

@@ -14,12 +14,16 @@ def test_0908_retains_reviewed_upstream_revisions():
     assert all(len(revision) == 40 for revision in projects("0908").values())
 
 
-def test_clean_build_uses_workspace_local_caches_and_complete_images():
+def test_clean_build_uses_shared_oe_caches_and_complete_images():
     script = ROOT / "doc/build/build-images.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     source = script.read_text()
-    assert 'BUILD_DOWNLOADS:-$workspace/downloads' in source
-    assert 'SSTATE_DIR:forcevariable = "$workspace/sstate-cache"' in source
+    assert 'BUILD_DOWNLOADS:-$HOME/oe/downloads' in source
+    assert 'BUILD_SSTATE:-$HOME/oe/sstate-cache' in source
+    assert 'DL_DIR:forcevariable = "$downloads"' in source
+    assert 'SSTATE_DIR:forcevariable = "$sstate"' in source
+    assert 'grep -Fx "SSTATE_DIR=\\\"$sstate\\\""' in source
+    assert 'grep -Fx "DL_DIR=\\\"$downloads\\\""' in source
     assert 'SSTATE_MIRRORS:forcevariable = ""' in source
     assert "rdk-generic-broadband-image" in source
     assert "rdk-generic-ap-extender-image" in source
@@ -68,7 +72,7 @@ def test_room_is_installed_from_source_with_current_profiling_defaults():
     assert "Requires=easymesh-lab.service" in unit
     assert "After=easymesh-lab.service" in unit
     assert "ConditionPathExists=!/var/lib/easymesh-lab/thin-profile-selection.required" in unit
-    assert "ExecCondition=/usr/bin/grep -qx HEALTH_EXPECT_CLIENTS=20" in unit
+    assert "ExecCondition=/usr/bin/grep -qx HEALTH_EXPECT_CLIENTS=100" in unit
     assert "--mode act --yes-act --profiling" in unit
     assert "--adaptive-backhaul" not in unit
     assert "WantedBy=multi-user.target easymesh-lab.service" in unit

@@ -17,6 +17,7 @@ from wmdcfg.world import _hash, compile_world, playback_pause_points
 from .events import EventStore
 from .client_wifi import parallel_disconnections, parallel_reconnections
 from .recovery import RecoveryJournal
+from .pool import expand_initial_world
 
 
 class InteractionError(RuntimeError):
@@ -111,6 +112,10 @@ class InteractiveMediumSession:
         self._recorded_world: dict[str, Any] | None = None
         self._command_executor: Callable[..., Any] | None = None
         first = world["generations"][0]
+        if self.worlds is not None:
+            world = expand_initial_world(world, self.worlds.roles)
+            self.world = world
+            first = world["generations"][0]
         self._roles = {
             role: {
                 "position": [float(value) for value in first["positions"][role]],
@@ -150,7 +155,7 @@ class InteractiveMediumSession:
             for role in world["roles"]
         }
         if self.worlds is not None:
-            self._nodes = self.worlds.rf_nodes(world, layout)
+            self._nodes = self.worlds.rf_nodes(self._playback_world, layout)
 
     def set_command_executor(self, executor: Callable[..., Any]) -> None:
         """Route autonomous movement ticks through the owning RoomEngine."""
@@ -238,7 +243,11 @@ class InteractiveMediumSession:
                         self._instance_id, self._generation, self._baseline
                     )
                     recovery_prepared = True
-                applied = self._apply_generation(initial_updates)
+                with parallel_disconnections(
+                    self.disconnect_client(role) for role in self._allowed_roles
+                    if self.disconnect_client is not None and not self._roles[role]["present"]
+                ):
+                    applied = self._apply_generation(initial_updates)
                 for item in applied:
                     _, value, overridden = client.get_frequency_link(
                         item["source"], item["destination"], item["frequency_mhz"]
@@ -503,7 +512,18 @@ class InteractiveMediumSession:
     def world_catalog(self) -> dict[str, Any]:
         if self.worlds is None:
             return {"enabled": False, "worlds": []}
-        return {"enabled": True, **self.worlds.catalog()}
+        return {
+            "enabled": True, **self.worlds.catalog(),
+            "client_bindings": {
+                role: {
+                    "role": role,
+                    "container": binding.get("container"),
+                    "sta_mac": binding.get("station_mac", binding.get("radio_permanent_mac")),
+                }
+                for role, binding in self.plan["bindings"].items()
+                if binding["role_type"] == "station"
+            },
+        }
 
     def _room_updates(self) -> list[dict[str, Any]]:
         by_key = {}
@@ -577,7 +597,8 @@ class InteractiveMediumSession:
                         self._applied_values[key] = (value, overridden)
                     apply_timing["medium_apply_readback_ms"] = round((time.monotonic() - disconnected_at) * 1000, 3)
                 reconnect_started = time.monotonic()
-                with (self.band_profiles.transition(world.get("band_steering", {}))
+                with (self.band_profiles.transition(world.get("band_steering", {}),
+                                                   present_roles={role for role, state in roles.items() if state["present"]})
                       if self.band_profiles else nullcontext()):
                     parallel_reconnections(self.reconnect_client, (
                         role for role in self._allowed_roles if self.reconnect_client is not None and roles[role]["present"]

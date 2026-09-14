@@ -1,0 +1,22 @@
+Subject: [PATCH] CLI: serve pinned browser dependencies from the appliance
+
+CDN failures otherwise leave topology rendering with d3 undefined. The recipe
+installs the versioned vendor archive, including fonts and upstream licenses.
+
+Upstream-Status: Inappropriate [offline laboratory appliance]
+
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -31,8 +31,8 @@
+-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+-    <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
++    <link href="static/vendor/fontawesome/css/all.min.css" rel="stylesheet">
++    <link href="static/vendor/animate-4.1.1.min.css" rel="stylesheet">
+     <!-- Added Chart.js library -->
+-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+-    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
++    <script src="static/vendor/chart-3.9.1.min.js"></script>
++    <script src="static/vendor/d3-7.9.0.min.js"></script>
+ </head>
+ <body>
+     <div class="app-container">

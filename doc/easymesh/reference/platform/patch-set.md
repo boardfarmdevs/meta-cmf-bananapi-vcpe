@@ -12,8 +12,8 @@ tooling, deployment automation, and tests remain separate host infrastructure.
 ## Scope
 
 The recipe's ordered `SRC_URI` and each component's patch directory are the
-source of truth for the current series; EasyMesh currently extends through
-`0174`. The detailed classifications below explain ownership, not a second
+source of truth for the current series. The detailed classifications below
+explain ownership, not a second
 complete patch manifest. Never infer image content from the host checkout; record
 the image filename, hash, and source revision used to build it.
 
@@ -531,6 +531,20 @@ wmediumd patches, in order:
 `wmediumd-up.sh` runs the medium's internal acceptance suite before launch.
 
 ## Build and acceptance
+
+### Cold policy admission
+
+EasyMesh patch `0187` assigns an explicit SetPolicy request to an idle,
+executable radio for the target AL, including a stable misconfigured radio
+recovering from an onboarding timeout. It does not depend on unordered radio
+enumeration or change the automatic onboarding sender gate. The CLI checks
+the native status rather than treating any JSON reply as success; only an
+explicit previous-command-in-progress rejection is retried within its budget.
+The compiled native/Go regression is `gen/tests/policy-submission-test.py`.
+Successful queue admission still does not prove an agent ACK or fresh metrics;
+live acceptance must observe those separately.
+
+### Image provenance
 
 Release artifact locations and identity evidence are listed in
 [current state](../../current-state.md). A build is accepted when both role

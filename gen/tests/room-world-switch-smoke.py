@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import json
 from pathlib import Path
@@ -17,21 +18,21 @@ def command(*arguments):
 
 
 def identities():
-    instances = json.loads(command("lxc", "list", "--format", "json"))
+    instances = json.loads(command("lxc", "query", "/1.0/instances?recursion=2"))
     result = {}
     for instance in instances:
         name = instance["name"]
         if not name.startswith(("wlan-client", "bpiap", "bpibroadband")):
             continue
-        state = json.loads(command("lxc", "query", f"/1.0/instances/{name}/state"))
+        state = instance["state"]
         if state["status"] != "Running":
             raise RuntimeError(f"{name} is not running")
         result[name] = state["pid"]
         if not name.startswith("wlan-client"):
             result[name + "/services"] = command("lxc", "exec", name, "--", "systemctl", "show",
                 "onewifi", "em_agent", "-p", "MainPID", "-p", "NRestarts", "-p", "ActiveState")
-    if sum(name.startswith("wlan-client") for name in result) != 20:
-        raise RuntimeError("requires the default 20-client pool")
+    if sum(name.startswith("wlan-client") for name in result) != 100:
+        raise RuntimeError("requires the provisioned 100-client pool")
     result["controller-services"] = command("lxc", "exec", "bpibroadband", "--", "systemctl", "show",
         "em_ctrl", "em_cli", "-p", "MainPID", "-p", "NRestarts", "-p", "ActiveState")
     medium_pid = Path("/run/meta-cmf-wmediumd/wmediumd.pid").read_text().strip()
@@ -139,10 +140,13 @@ def main():
                     and health.get("healthy") is True and health.get("expected_online_clients") == expected
                     and (converged or not require_convergence)):
                 offline = [role for role in mac_by_role if not current["roles"][role]["present"]]
-                for role in offline:
+                def verify_offline(role):
                     link = command("lxc", "exec", containers_by_role[role], "--", "iw", "dev", "wlan0", "link")
                     if "Not connected" not in link:
                         raise RuntimeError(f"{role}: controller roster converged but isolated client remains connected")
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
+                    list(workers.map(verify_offline, offline))
                 if stable_since is None:
                     stable_since = time.monotonic()
                 if time.monotonic() - stable_since < 10:
@@ -190,6 +194,12 @@ def main():
         if time.monotonic() >= preflight_deadline:
             raise RuntimeError("start acceptance from a healthy default 20-client room")
         time.sleep(2)
+    pool = request("/api/demo/worlds").get("client_bindings", {})
+    if len(pool) != 100 or any(pool.get(role, {}).get("sta_mac", "").lower() != mac
+                               for role, mac in mac_by_role.items()):
+        raise RuntimeError("catalog identities must cover the full pool and match the default room")
+    mac_by_role = {role: client["sta_mac"].lower() for role, client in pool.items()}
+    containers_by_role = {role: client["container"] for role, client in pool.items()}
     report["run_id"] = current["run_id"]
     original_room = request("/api/demo/interactions")
     if original_room.get("movement_active") or original_room.get("recording", {}).get("active"):

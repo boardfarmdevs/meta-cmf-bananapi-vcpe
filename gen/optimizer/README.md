@@ -14,6 +14,9 @@ Implemented now:
 - explicit unknown freshness and missing candidate-measurement handling;
 - a pure threshold/margin/hold/dwell/cooldown decision engine;
 - explicit association-timeout outcome and bounded exponential failure backoff;
+- prompt failed-attempt reporting when native ownership moves from the observed
+  source to a different AP than requested; absence or an unproven cached owner
+  still uses the original timeout, and target success still requires traffic;
 - an opt-in band-upgrade baseline that still selects an exact BSSID and applies
   target RCPI, maximum-loss, hold, dwell and cooldown gates;
 - a deterministic closed-loop golden-world test double with accept, reject and

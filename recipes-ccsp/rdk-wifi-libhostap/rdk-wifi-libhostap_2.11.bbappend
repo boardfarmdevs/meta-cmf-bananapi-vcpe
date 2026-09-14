@@ -34,3 +34,4 @@ SRC_URI += "file://0003-defer-wds-sta-setup-until-station-authorized.patch"
 # on the first 4-addr frame (M2) before the 4-way -- defer that to authorization too.
 SRC_URI += "file://0004-defer-wds-on-rx-from-unknown-until-authorized.patch"
 SRC_URI += "file://0005-qualified-bss-load-survey.patch"
+SRC_URI += "file://0006-notify-successful-reauthorization.patch"

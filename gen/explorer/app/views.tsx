@@ -304,6 +304,45 @@ const journeys: Record<
       },
     ],
   },
+  band: {
+    title: 'A client changes AP and band',
+    intro:
+      'Follow the qualified received-scan path, not a geometry shortcut or vendor-autonomous policy.',
+    result:
+      'Three dedicated rooms pass on each stack with twelve required band transitions, native owner and WLAN verification, and unchanged pinned controls. The browser walkthrough performs no lab actions.',
+    steps: [
+      {
+        title: 'Apply an explicit client profile',
+        body: 'The live room captures original supplicant settings, validates actual capabilities and security, initializes the requested starting band, then opens only the permitted bands. Setup is not measured steering.',
+        ids: ['room', 'band', 'supplicant'],
+        wire: 'Room profile → capability / SSID / SAE / PMF checks',
+      },
+      {
+        title: 'Receive beacons during a passive scan',
+        body: 'SCAN TYPE=ONLY does not select a network. hwsim reports actual home and temporary scan channels so wmediumd can deliver beacons to a silent receiver. The collector reads the kernel BSS cache after the correlated completion.',
+        ids: ['hwsim', 'wmediumd', 'band'],
+        wire: 'Native receive context → beacon reception → nl80211 BSS dump',
+      },
+      {
+        title: 'Compare fresh received observations',
+        body: 'Both serving and candidate RCPI use client-received scans no older than two seconds. Association and world identity must match. A one-second condition hold needs another fresh scan; three-second dwell and normal five-second post-steer cooldown remain explicit policy time.',
+        ids: ['band', 'optimizer'],
+        wire: 'Fresh same-direction signal → safe band preference',
+      },
+      {
+        title: 'Request native steering',
+        body: 'The external policy requests an exact eligible BSSID through the native controller. The source AP sends BTM and the real station decides how to respond. No forced reassociation or RF steering assist is part of the timed action.',
+        ids: ['steer', 'controller', 'agent', '11v'],
+        wire: 'Controller → source AP → BTM → native association',
+      },
+      {
+        title: 'Verify, inspect, and restore',
+        body: 'The test checks station MAC, BSSID and frequency before and after a WLAN gateway ping, plus room and native topology agreement. Leaving the room restores saved client settings. A green badge alone never passes acceptance.',
+        ids: ['client', 'tests', 'room', 'band'],
+        wire: 'Physical owner + traffic + both views → audited outcome',
+      },
+    ],
+  },
   onboarding: {
     title: 'An extender joins the mesh',
     intro: 'From a radio namespace to a converged EasyMesh device model.',
@@ -394,7 +433,8 @@ export function ProtocolPaths({ inspect }: { inspect: Inspect }) {
           <div className="eyebrow">FOLLOW THE BOUNDARIES</div>
           <h2>One system. Several paths.</h2>
           <p>
-            Step through a packet, a command, onboarding, or an RF experiment.
+            Step through traffic, steering, a band change, onboarding, or RF
+            feedback.
           </p>
         </div>
       </div>
@@ -408,6 +448,7 @@ export function ProtocolPaths({ inspect }: { inspect: Inspect }) {
         <TabsList className="journey-tabs">
           <TabsTrigger value="data">Client traffic</TabsTrigger>
           <TabsTrigger value="steering">Commanded steering</TabsTrigger>
+          <TabsTrigger value="band">Band steering</TabsTrigger>
           <TabsTrigger value="onboarding">Mesh onboarding</TabsTrigger>
           <TabsTrigger value="rf">RF feedback loop</TabsTrigger>
         </TabsList>
@@ -501,11 +542,11 @@ export function CurrentState({ inspect }: { inspect: Inspect }) {
         </div>
         <a
           className="quiet-button"
-          href={source('current-state.md')}
+          href={source('reference/optimizer/band-steering.md')}
           target="_blank"
           rel="noreferrer"
         >
-          Read the full current state <ArrowUpRight size={16} />
+          Read the qualification results <ArrowUpRight size={16} />
         </a>
       </div>
       <div className="state-grid">
@@ -524,7 +565,16 @@ export function CurrentState({ inspect }: { inspect: Inspect }) {
             </li>
             <li>Patched userspace wmediumd as the accepted default medium.</li>
             <li>
-              0908 fresh cold reconstruction with zero native service restarts.
+              17/17 rooms pass on each stack; native identities stay unchanged
+              inside each measured suite.
+            </li>
+            <li>
+              Three dedicated band rooms; twelve required band changes verified
+              per stack.
+            </li>
+            <li>
+              Default twenty-client restoration; no browser errors or event
+              gaps.
             </li>
           </ul>
           <button onClick={() => inspect('state')}>
@@ -538,13 +588,15 @@ export function CurrentState({ inspect }: { inspect: Inspect }) {
           <h3>Boundaries to preserve</h3>
           <ul>
             <li>
-              The fresh RDK import needed one extender metrics-policy replay.
+              prpl qualification followed clean native startup. An intermittent
+              AP-registration-loss trigger remains unreproduced.
             </li>
             <li>
               Arbitrary independent node stop/start recovery is not yet
               accepted.
             </li>
             <li>A completed 12-hour churn soak is not claimed.</li>
+            <li>Modeled survey/load is not calibrated physical RF capacity.</li>
             <li>
               The external research optimizer is not an autonomous production
               policy.
@@ -572,6 +624,11 @@ export function CurrentState({ inspect }: { inspect: Inspect }) {
                 'Compiled support; runtime FT not established',
               ],
               ['11k', '802.11k', 'Separate runtime qualification needed'],
+              [
+                'band',
+                'Band steering',
+                'Native received scans + verified BTM; not 802.11k proof',
+              ],
               ['dhcpclient', 'DHCPv4', 'udhcpc lease on wlan0'],
             ].map(([id, title, t]) => (
               <button key={id} onClick={() => inspect(id)}>

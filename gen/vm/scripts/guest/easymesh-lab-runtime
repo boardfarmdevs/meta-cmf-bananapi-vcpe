@@ -198,6 +198,10 @@ start_kernel_metrics_proxy() {
 }
 
 verify_medium_backend() {
+    [ "$(cat /sys/module/cfg80211/version 2>/dev/null)" = lab-netns-owner-1 ] || {
+        echo "cfg80211 lacks namespace-safe socket cleanup" >&2
+        return 1
+    }
     local status
     case "$medium_backend" in
     userspace)

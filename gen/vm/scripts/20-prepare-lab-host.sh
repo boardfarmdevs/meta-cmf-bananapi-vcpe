@@ -11,7 +11,7 @@ meta_workspace=/home/easymesh/git
 boardfarm_workspace=/home/easymesh/boardfarm-open-0406
 meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-}
-runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0908-clean}
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0913-clean}
 alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
@@ -136,7 +136,7 @@ rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build"
 
 # Start a tri-band pool only after installing the multichannel registration
 # patch and confirming that no copied runtime state is present in this guest.
-hwsim_radios=${HWSIM_RADIOS:-32}
+hwsim_radios=${HWSIM_RADIOS:-128}
 case "$hwsim_radios" in
     ''|*[!0-9]*|0) echo "HWSIM_RADIOS must be a positive integer" >&2; exit 2 ;;
 esac

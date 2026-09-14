@@ -13,15 +13,15 @@ extender_sha256=${EXTENDER_SHA256:?set EXTENDER_SHA256}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:?set EXPECTED_WMEDIUMD_SHA256}
 evidence_root=${EASYMESH_EVIDENCE_ROOT:-/home/easymesh/easymesh-evidence}
 nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
-hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-32}
+hwsim_pool_radios=${EASYMESH_HWSIM_POOL_RADIOS:-128}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 evidence="$evidence_root/$run_id"
 
 case "$hwsim_pool_radios" in
     ''|*[!0-9]*) echo 'EASYMESH_HWSIM_POOL_RADIOS must be an integer' >&2; exit 2 ;;
 esac
-if [ "$hwsim_pool_radios" -lt 25 ]; then
-    echo 'the accepted five-node/20-client profile requires at least 25 hwsim radios' >&2
+if [ "$hwsim_pool_radios" -lt 105 ]; then
+    echo 'the five-node/100-client pool requires at least 105 hwsim radios' >&2
     exit 2
 fi
 # bpi.sh intentionally gives HWSIM_RADIOS a different meaning: the number of
@@ -45,6 +45,20 @@ test "$(sha256sum "$extender_image" | awk '{print $1}')" = \
 test "$(sha256sum "$repo/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 
+room_state=$(sudo systemctl show easymesh-room-demo.service -p ActiveState --value)
+restore_room() {
+    result=$?
+    trap - EXIT
+    if [ "$room_state" = active ] || [ "$room_state" = activating ]; then
+        sudo systemctl start easymesh-room-demo.service || {
+            restore_result=$?
+            [ "$result" -ne 0 ] || result=$restore_result
+        }
+    fi
+    exit "$result"
+}
+sudo systemctl stop easymesh-room-demo.service
+trap restore_room EXIT
 sudo systemctl stop easymesh-lab.service 2>/dev/null || true
 sudo systemctl stop wmediumd-console.service 2>/dev/null || true
 sudo systemctl reset-failed easymesh-lab.service 2>/dev/null || true
@@ -142,9 +156,12 @@ sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-health-audit" \
     /usr/local/sbin/easymesh-health-audit
 sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-lab.service" \
     /etc/systemd/system/easymesh-lab.service
+printf 'EASYMESH_SCALE_PROFILE=unified\nHEALTH_EXPECT_CLIENTS=100\n' \
+    | sudo tee /etc/default/easymesh-lab >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-lab.service
 sudo systemctl start easymesh-lab.service
+sudo systemctl stop easymesh-room-demo.service
 
 bash "$repo/gen/wmediumd/observer/install.sh"
 sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \
@@ -162,8 +179,8 @@ done
     exit 1
 }
 test "$(jq -r '.packet_metrics.available' <<< "$console_status")" = true
-test "$(jq -r '.identity_inventory.entries' <<< "$console_status")" = 25
-test "$(jq -r '.identity_inventory.matched' <<< "$console_status")" = 25
+test "$(jq -r '.identity_inventory.entries' <<< "$console_status")" = 105
+test "$(jq -r '.identity_inventory.matched' <<< "$console_status")" = 105
 
 sudo easymesh-labctl check
 
@@ -173,11 +190,11 @@ counts=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e '
         (select count(*) from RadioList), "/",
         (select count(*) from BSSList), "/",
         (select count(*) from STAList where Associated=1));' 2>/dev/null)
-test "$counts" = 5/15/50/24
+test "$counts" = 5/15/50/104
 
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
-test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "private_ssid") | .staMAC] | unique | length' <<< "$topology")" = 10
-test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "iot_ssid") | .staMAC] | unique | length' <<< "$topology")" = 10
+test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "private_ssid") | .staMAC] | unique | length' <<< "$topology")" = 50
+test "$(jq '[.nodes[]?.STAList[]? | select(.ssid == "iot_ssid") | .staMAC] | unique | length' <<< "$topology")" = 50
 test "$(jq '[.edges[]? | select(
     .mediaType == "Wireless LAN" and
     .signal.status == "fresh" and

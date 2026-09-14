@@ -1,13 +1,13 @@
 # RDK EasyMesh on Windows with Vagrant and VirtualBox
 
-This is the **RDK-only, 20-client** alternative to the outer LXD VM. It uses
-the same 0908 Ubuntu 24.04/Linux 7 guest, native BPI images, userspace wmediumd,
+This is the **RDK-only, up-to-100-client** alternative to the outer LXD VM. It uses
+the same 0913 Ubuntu 24.04/Linux 7 guest, native BPI images, userspace wmediumd,
 interactive room and EM CLI WebUI. prplMesh is not included or changed.
 
 ```text
 Windows x86-64 + Vagrant + VirtualBox
-  └─ Ubuntu appliance: 6 vCPUs, 8 GiB RAM, sparse 96-GiB disk
-       ├─ nested LXD: controller/root agent + 4 extenders + 20 clients
+  └─ Ubuntu appliance: 8 vCPUs, 16 GiB RAM, sparse 96-GiB disk
+       ├─ nested LXD: controller/root agent + 4 extenders + 100 provisioned clients
        ├─ Docker: Boardfarm WAN/DHCP
        ├─ hwsim virtual radios + userspace wmediumd
        └─ WebUI, console, interactive room; optional LXD UI/Grafana
@@ -21,16 +21,16 @@ is still required to run the outer VirtualBox VM.
 
 ## 1. What to download
 
-Download `rdkeasymesh-0908-virtualbox.tar` and its adjacent `.tar.sha256` from
+Download `rdkeasymesh-0913-virtualbox.tar` and its adjacent `.tar.sha256` from
 the release host. Windows' built-in `tar` extracts the complete
-`rdkeasymesh-0908-virtualbox` release directory:
+`rdkeasymesh-0913-virtualbox` release directory:
 
 ```text
 Vagrantfile
 README.md
 release.json
-rdkeasymesh-0908-virtualbox.box
-rdkeasymesh-0908-virtualbox.box.sha256
+rdkeasymesh-0913-virtualbox.box
+rdkeasymesh-0913-virtualbox.box.sha256
 SHA256SUMS
 source-release.json
 adapter-files.sha256
@@ -55,11 +55,11 @@ double-click an isolated `.vbox`; use the accompanying `Vagrantfile`.
 3. Reboot if requested. Open a new **native Windows PowerShell**, not WSL.
    Run `VBoxManage --version` and `vagrant --version`. If `VBoxManage` is not
    on PATH, use `& "$env:ProgramFiles\Oracle\VirtualBox\VBoxManage.exe" --version`.
-4. Allow at least 8 GiB for the guest plus Windows headroom: a 16-GiB host is
-   the minimum practical demo machine; 24 GiB or more is preferable. Use an
+4. Allow the default 16 GiB for the guest plus Windows headroom; a 32-GiB host
+   is preferable for the 100-client-capacity appliance. Use an
    SSD with about 150 GiB free for the box cache, imported sparse disk and
    future writes. Vagrant and VirtualBox each keep an artifact/disk copy.
-5. Keep the directory on a local NTFS disk, for example `C:\labs\rdk-0908`,
+5. Keep the directory on a local NTFS disk, for example `C:\labs\rdk-0913`,
    outside OneDrive and network shares. Guest Additions, shared folders and
    the VirtualBox Extension Pack are not required for this lab.
 
@@ -75,12 +75,12 @@ Copy the release tar and checksum to `C:\labs`, then in PowerShell:
 
 ```powershell
 cd C:\labs
-$expectedTar = ((Get-Content .\rdkeasymesh-0908-virtualbox.tar.sha256 -Raw).Trim() -split '\s+')[0]
-if ((Get-FileHash .\rdkeasymesh-0908-virtualbox.tar -Algorithm SHA256).Hash -ine $expectedTar) { throw 'Release checksum mismatch' }
-tar -xf .\rdkeasymesh-0908-virtualbox.tar
-cd .\rdkeasymesh-0908-virtualbox
-$expected = ((Get-Content .\rdkeasymesh-0908-virtualbox.box.sha256 -Raw).Trim() -split '\s+')[0]
-$actual = (Get-FileHash .\rdkeasymesh-0908-virtualbox.box -Algorithm SHA256).Hash
+$expectedTar = ((Get-Content .\rdkeasymesh-0913-virtualbox.tar.sha256 -Raw).Trim() -split '\s+')[0]
+if ((Get-FileHash .\rdkeasymesh-0913-virtualbox.tar -Algorithm SHA256).Hash -ine $expectedTar) { throw 'Release checksum mismatch' }
+tar -xf .\rdkeasymesh-0913-virtualbox.tar
+cd .\rdkeasymesh-0913-virtualbox
+$expected = ((Get-Content .\rdkeasymesh-0913-virtualbox.box.sha256 -Raw).Trim() -split '\s+')[0]
+$actual = (Get-FileHash .\rdkeasymesh-0913-virtualbox.box -Algorithm SHA256).Hash
 if ($actual -ine $expected) { throw 'Box checksum mismatch' }
 vagrant up --provider=virtualbox
 ```
@@ -88,15 +88,15 @@ vagrant up --provider=virtualbox
 No Vagrant Cloud download or Internet access is needed for default lab
 provisioning once the software and complete release are installed. Vagrant
 verifies the local box checksum, imports the VM, replaces its bootstrap SSH
-key, selects the immutable 20-client profile and waits for the native lab and
-HTTP services. First boot creates 25 nested instances from the offline image
-inputs; allow roughly 20–40 minutes on a suitable SSD, possibly longer on a
-slower host. Progress is printed every thirty seconds. This is provisioning
+key, initializes the fixed 100-client pool and waits for the native lab and
+HTTP services. First boot creates 105 nested instances from the offline image
+inputs. Allow tens of minutes on an SSD; a slower or directory-backed host can
+take more than an hour. Progress is printed every thirty seconds. This is provisioning
 time, not roaming or optimizer response time.
 
 The box remains thin until the first `up`: it contains no provisioned mesh or
 client containers. Later starts reuse those instances and reconstruct runtime
-state. The default live room returns with twenty clients; smaller rooms can
+state. The default live room returns with twenty online clients; rooms up to 100 can
 make clients unavailable without deleting their containers.
 
 ## 4. Browser URLs
@@ -132,8 +132,9 @@ vagrant up --provider=virtualbox
 The Vagrantfile refuses duplicate/colliding service ports instead of silently
 renumbering them. Optional variables are `EASYMESH_LXD_UI_PORT`,
 `EASYMESH_GRAFANA_PORT`, `EASYMESH_CPUS` (minimum 6) and
-`EASYMESH_MEMORY_MB` (minimum 8192). Changing resources requires a halt/reload.
-Profile 50/100 support remains with the separately qualified LXD appliance.
+`EASYMESH_MEMORY_MB` (default 16384, minimum 12288). Changing resources requires a halt/reload.
+Both providers use the same fixed 100-client pool; the loaded room selects
+the online subset, not a different appliance size.
 
 ## 5. Daily operation and diagnosis
 
@@ -161,46 +162,12 @@ sudo lxc list
 curl -fsS http://127.0.0.1:8891/api/demo/current | jq '.health, .optimizer.fleet'
 ```
 
-The first-boot report must say `pass`, 20 clients and 25 final instances.
+The first-boot report must say `pass`, 100 clients and 105 final instances.
 Measured default-room convergence additionally requires twenty clients
 checked, eighty fresh candidate comparisons and `measurement_complete=true`.
 The console and viewer expose simulated RF separately from native measurements;
 unknown/stale native measurements must not be interpreted as good signal.
 
-The original RDK 0908 LXD import needed one metrics-policy replay for an
-extender. If that known native activation weakness occurs, inspect the logs
-and use this idempotent recovery inside the guest, then verify fresh metrics:
-
-```sh
-curl -fsS --max-time 90 -X POST http://127.0.0.1:8888/api/v1/metricsreporting/enable \
-  -H 'Content-Type: application/json' -d '{"interval":5}'
-```
-
-This is recovery, not proof that native policy acknowledgement is fixed.
-Do not run the baseline zero-loss audit concurrently with a moving live room.
-For a deliberate baseline check, stop the room first and always restore it:
-
-```sh
-sudo systemctl stop easymesh-room-demo
-sudo easymesh-labctl check; result=$?
-sudo systemctl start easymesh-room-demo
-echo "health audit exit status: $result"
-```
-
-If Vagrant fails while inspecting an unrelated inaccessible VirtualBox VM,
-inspect `VBoxManage list vms`. Repair that VM's registration deliberately or
-use a separate Windows user account with its own VirtualBox registry. The lab
-scripts do not unregister other people's VMs to work around this host issue.
-
-To delete this deployment, first preserve any evidence you need, then run
-`vagrant destroy` in its directory. This deletes the guest and all nested lab
-data. Run `vagrant box list`, then `vagrant box remove NAME --provider=virtualbox`
-with this release's exact name to remove its reusable cache separately. Box
-names include twelve checksum characters, so a replacement 0908 download
-cannot silently reuse an older cached disk. Downloading a new box does not
-upgrade an existing VM: preserve its evidence and explicitly destroy/recreate
-it if an upgrade is wanted. Removing the cache does not delete your downloaded
-release. Do not remove unrelated VirtualBox or LXD machines.
 
 ## 6. Optional LXD UI and Grafana
 
@@ -212,7 +179,7 @@ maintenance window, use the existing monitoring installer inside the guest:
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/lxd/observability
 sudo env LAB_MONITORING_BIND_ADDRESS=10.0.2.15 \
   LAB_MONITORING_PUBLIC_HOST=127.0.0.1 LAB_GRAFANA_PORT=18893 \
-  LAB_MONITORING_ALLOW_RESTART=1 bash setup.sh rdk-virtualbox-0908
+  LAB_MONITORING_ALLOW_RESTART=1 bash setup.sh rdk-virtualbox-0913
 ```
 
 `10.0.2.15` is the default adapter-1 NAT guest address; confirm with
@@ -237,8 +204,8 @@ Windows for this offline disk conversion.
 
 ```sh
 cd gen/vm/virtualbox
-bash build.sh /absolute/path/rdkeasymesh-0908-thin /absolute/path/rdkeasymesh-0908-virtualbox
-cd /absolute/path/rdkeasymesh-0908-virtualbox
+bash build.sh /absolute/path/rdkeasymesh-0913-thin /absolute/path/rdkeasymesh-0913-virtualbox
+cd /absolute/path/rdkeasymesh-0913-virtualbox
 vagrant validate
 vagrant up --provider=virtualbox
 ```
@@ -262,8 +229,9 @@ can be removed deliberately after acceptance. It does not stop/delete any
 existing VM or unload another hypervisor's kernel modules.
 
 Qualify an actual import from the resulting `.box`, not only the conversion:
-first-boot report, 25 nested instances, browser views, twenty-client native
-metrics and room convergence, a small room and restoration, then a graceful
+first-boot report, 105 nested instances and a 100-client native baseline,
+browser views, default twenty-client and fifty-client room convergence and
+restoration, then a graceful
 halt/up cycle. Record versions, timings, checksums and failures beside the box.
 Testing on a Linux VirtualBox host demonstrates the provider/disk/bootstrap
 path, **not firsthand Windows-host validation**. Keep that distinction in
@@ -272,7 +240,7 @@ After recording qualification in optional `acceptance.json`/`ACCEPTANCE.md`,
 create the Windows download with:
 
 ```sh
-bash package-release.sh /absolute/path/rdkeasymesh-0908-virtualbox
+bash package-release.sh /absolute/path/rdkeasymesh-0913-virtualbox
 ```
 
 This packages only the explicit release files, never `.vagrant`, test SSH keys,

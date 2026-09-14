@@ -8,11 +8,9 @@ gen="$repo/gen"
 assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
-profile=${EASYMESH_SCALE_PROFILE:-small}
+profile=${EASYMESH_SCALE_PROFILE:-unified}
 case "$profile" in
-    20|small) profile=small; expected_clients=20; expected_private=10; expected_iot=10 ;;
-    50|medium) profile=medium; expected_clients=50; expected_private=25; expected_iot=25 ;;
-    100|stress) profile=stress; expected_clients=100; expected_private=50; expected_iot=50 ;;
+    100|unified) profile=unified; expected_clients=100; expected_private=50; expected_iot=50 ;;
     *) echo "invalid EASYMESH_SCALE_PROFILE: $profile" >&2; exit 2 ;;
 esac
 
