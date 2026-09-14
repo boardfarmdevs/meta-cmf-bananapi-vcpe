@@ -119,13 +119,11 @@ def band_links(request):
     if not 1 <= len(mapping) <= 4 or any(not re.fullmatch(r"prpl-client-[0-9]{2,3}|wlan-client(?:-[0-9]{3})?", container)
                                        for container in mapping.values()):
         raise ValueError("band probes require one to four bound WLAN clients")
-    instances = json.loads(command("lxc", "query", "/1.0/instances?recursion=2", timeout=5))
-    processes = {item["name"]: item["state"]["pid"] for item in instances if item["state"]["status"] == "Running"}
-
     def inspect(item):
         role, container = item
-        process = processes.get(container)
-        if type(process) is not int or process <= 1:
+        state = json.loads(command("lxc", "query", f"/1.0/instances/{container}/state", timeout=5))
+        process = state.get("pid")
+        if state.get("status") != "Running" or type(process) is not int or process <= 1:
             raise RuntimeError(f"{container}: native client namespace is unavailable")
         value = command("nsenter", "--target", str(process), "--net", "--", sys.executable,
                         str(Path(__file__).resolve()), "band-probe", request["target"], timeout=15)
