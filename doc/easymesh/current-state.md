@@ -79,21 +79,29 @@ not proof of live deployment or complete room convergence.
 - Event-driven association publication and radio-retune reporting repairs are
   present. Earlier fourteen-room acceptance, including extender loss, does not
   qualify the new 100-client pool. The 0913 release requires all eighteen rooms
-  to pass the unchanged gates. With per-BSS management receive routing fixed,
-  50-client initial convergence passes in 27.993 seconds. Band audits now query
-  only their participants concurrently, rather than all 105 containers. The
-  subsequent run exposes a separate 45-second world-load timeout: repeated LXD
-  exec operations make native band setup take 44.692 seconds. Band settings now
+  to pass the unchanged gates. The latest full catalog passes seventeen of
+  eighteen rooms: the 50-client room has an intermittent initial-convergence
+  failure on a 2.4 GHz client, although its playback and final convergence pass.
+  Passing focused runs do not qualify this failure. Band audits now query
+  only their participants concurrently, rather than all 105 containers. Band settings now
   use transaction-scoped client namespaces, retaining process identity checks,
   native commands, settings readback and the original association deadlines.
   Controls enter the unprivileged client's user namespace and use its binary
   search paths, rather than inheriting the outer systemd service's paths.
   Under that service environment, a read-only three-client settings capture
-  falls from 4.97–6.59 seconds with LXD exec to 0.36–1.26 seconds through native
-  namespaces, with identical results; this is not steering latency. World acknowledgements must
+  falls from 0.92–0.94 seconds with LXD exec to about 0.114 seconds through native
+  namespaces, with identical results and no concurrent host storage maintenance;
+  this is not steering latency. World acknowledgements must
   also match the requested room, not a late reply to its predecessor. These
   corrections still require a clean full-catalog pass; historical failures
   remain retained.
+- Profiling candidate caches now track committed RF changes per client, not
+  only world and association changes. Moving an AP invalidates all affected
+  client comparisons; moving clients invalidates their own cached and in-flight
+  results without cancelling unrelated collection or resetting fair scheduling.
+  This prevents steering with pre-drag measurements marked as current. Live
+  requalification is pending; the 2.4 GHz probe-response fanout investigation
+  also remains open despite the earlier receive-context correction.
 - Strict convergence requires membership, physical/native ownership, fresh
   eligible candidates and traffic—not a green badge or an accepted request.
 - Monitoring covers inner LXD containers and the outer VM's guest resources;

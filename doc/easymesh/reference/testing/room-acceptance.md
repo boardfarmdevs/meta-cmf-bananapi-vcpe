@@ -28,6 +28,12 @@ or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
    drop-in, daemon-reload and restart **only the room**, outside measurement.
    Verify twenty-client readiness and the chosen cap. Remove only this drop-in
    and restore the original configuration after testing.
+6. Keep host builds, image exports, backups and storage maintenance outside
+   timed runs. In particular, check active `fstrim.service` jobs and host/guest
+   I/O pressure when LXD operations time out: discard on a filesystem containing
+   a loop-backed LXD pool can delay otherwise idle guests. Record any interrupted
+   maintenance and rerun affected cases in a separate evidence directory. Keep
+   normal maintenance timers enabled; do not label host stalls as stack latency.
 
 Do not discard an RF journal or restart native services to make a case pass.
 Keep failures and incomplete runs in separate evidence directories.

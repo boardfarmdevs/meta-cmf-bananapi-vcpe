@@ -26,6 +26,17 @@ def test_profile_observation_survives_motion_but_not_membership_or_world_change(
     assert key != conductor._observation_key(room)
 
 
+def test_profile_candidate_epochs_invalidate_only_affected_clients(conductor_and_store):
+    conductor, _store = conductor_and_store
+    conductor._role_by_mac = {"first": "sta_01", "second": "sta_02"}
+    before = {"candidate_epochs": {"global": 1, "roles": {"sta_01": 0}}}
+    after = {"candidate_epochs": {"global": 1, "roles": {"sta_01": 1}}}
+    assert conductor._candidate_changes({"first", "second"}, before, after) == {"first"}
+    after["candidate_epochs"]["global"] = 2
+    assert conductor._candidate_changes({"first", "second"}, before, after) == {"first", "second"}
+    assert conductor._candidate_changes({"first"}, {"environment_epoch": 1}, {"environment_epoch": 2}) == {"first"}
+
+
 def test_profile_does_not_probe_or_retimestamp_kernel_metrics(conductor_and_store):
     conductor, _store = conductor_and_store
     conductor.profiling = True
