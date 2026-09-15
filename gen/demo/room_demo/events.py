@@ -219,7 +219,10 @@ class EventStore:
                 "contamination": copy.deepcopy(payload),
             })
         elif kind in {"optimizer.evaluation", "optimizer.measurement.unavailable"}:
+            safety = self._state["optimizer"].get("steering_safety")
             self._state["optimizer"] = copy.deepcopy(payload)
+            if safety and safety.get("revision", -1) > (payload.get("steering_safety") or {}).get("revision", -1):
+                self._state["optimizer"]["steering_safety"] = safety
         elif kind == "optimizer.verification" and payload.get("policy_state"):
             optimizer = self._state["optimizer"]
             optimizer["last_verification"] = copy.deepcopy(payload)
@@ -250,6 +253,13 @@ class EventStore:
                 self._state["traffic_probe"] = copy.deepcopy(probe)
         elif kind == "health.sample":
             self._state["health"] = copy.deepcopy(payload)
+        if kind in {"optimizer.safety", "optimizer.action"}:
+            optimizer = self._state["optimizer"]
+            safety = payload.get("steering_safety")
+            if safety and safety.get("revision", -1) >= (optimizer.get("steering_safety") or {}).get("revision", -1):
+                optimizer["steering_safety"] = copy.deepcopy(safety)
+            if payload.get("actions_used") is not None:
+                optimizer["actions_used"] = payload["actions_used"]
         if kind in {"traffic.probe.selected", "network.snapshot"} and self._state["traffic_probe"]:
             network = self._state["network"]
             network["traffic_probe"] = copy.deepcopy(self._state["traffic_probe"])
@@ -390,6 +400,24 @@ class EventStore:
     def current(self) -> dict[str, Any]:
         with self._condition:
             return copy.deepcopy(self._state)
+
+    def mesh_layout(self) -> dict[str, Any]:
+        with self._condition:
+            state = self._state
+            nodes = []
+            for device in state["network"].get("mesh", {}).get("nodes", []):
+                role = device.get("role")
+                position = state["roles"].get(role, {})
+                if position.get("kind") != "fronthaul_ap":
+                    continue
+                nodes.append({"device_id": device.get("device_id"), "role": role,
+                              "position": copy.deepcopy(position.get("authoritative_position"))})
+            return {"schema": "easymesh.room-layout.v1", "run_id": self.run_id,
+                    "world_epoch": state["world_epoch"], "sequence": state["sequence"],
+                    "world": state["scenario"], "state": state["run_state"],
+                    "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "network_observed_at": state["network"].get("observed_at"),
+                    "nodes": nodes}
 
     def environment_epoch(self) -> int:
         with self._condition:

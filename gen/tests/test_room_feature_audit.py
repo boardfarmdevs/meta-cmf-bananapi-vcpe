@@ -146,12 +146,13 @@ def test_band_links_enters_bound_native_namespace_once(monkeypatch, container):
     def command(*arguments, **kwargs):
         calls.append((arguments, kwargs))
         if arguments[0] == "lxc":
-            return json.dumps([{"name": container, "state": {"pid": 1234, "status": "Running"}}])
+            assert arguments == ("lxc", "query", f"/1.0/instances/{container}/state")
+            return json.dumps({"pid": 1234, "status": "Running"})
         return json.dumps(evidence)
 
     monkeypatch.setattr(AUDIT, "command", command)
     assert AUDIT.band_links({"target": "10.0.0.1", "mapping": {"client": container}}) == {"client": evidence}
-    assert calls == [(("lxc", "query", "/1.0/instances?recursion=2"), {"timeout": 5}),
+    assert calls == [(("lxc", "query", f"/1.0/instances/{container}/state"), {"timeout": 5}),
                      (("nsenter", "--target", "1234", "--net", "--", AUDIT.sys.executable,
                        str(Path(AUDIT.__file__).resolve()), "band-probe", "10.0.0.1"), {"timeout": 15})]
 
@@ -165,8 +166,8 @@ def test_band_links_rejects_unbound_or_unbounded_probes(mapping):
 
 @pytest.mark.parametrize("process,status", [(0, "Stopped"), (1234, "Stopped"), (1, "Running"), (True, "Running"), ("1234", "Running")])
 def test_band_links_refuses_missing_native_namespace(monkeypatch, process, status):
-    monkeypatch.setattr(AUDIT, "command", lambda *args, **kwargs: json.dumps([
-        {"name": "prpl-client-01", "state": {"pid": process, "status": status}}]))
+    monkeypatch.setattr(AUDIT, "command", lambda *args, **kwargs: json.dumps(
+        {"pid": process, "status": status}))
     with pytest.raises(RuntimeError, match="namespace is unavailable"):
         AUDIT.band_links({"target": "10.0.0.1", "mapping": {"client": "prpl-client-01"}})
 

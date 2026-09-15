@@ -7,10 +7,25 @@ The deployed golden files determine exact roles, RF values and timing. Start
 paused, wait for load/roster/measurement readiness, then press Play at 1×.
 Watch actual ownership in both views, not just the simulated candidate line.
 
+In the RDK viewer, open **Browse rooms · RF & optimizer guide** below the World
+selector. Hover, keyboard-focus or tap a room for its simulated RF inputs,
+expected optimizer behavior, evidence to check in both views, and limitations.
+Browsing does not load a room; **Load room** uses the normal immediate live-load
+flow. The quick selector remains available, with detailed native tooltips where
+the browser supports them. Observer/replay views can browse but cannot load;
+the no-connect sandbox only loads geometry previews.
+
+The guide covers every bundled room, not arbitrary uploaded world files. Its
+shared RF explanation distinguishes synthetic candidate RCPI from native
+association evidence and explains why presence changes are not controlled
+channel-load tests. For implementation details, see the
+[virtual RF assessment](../radio/virtual-rf-assessment.md). Guide expectations
+are not a claim that a particular live run has passed.
+
 | World ID | Script | Clients / expected behavior |
 | --- | ---: | --- |
 | `fifty-client-counter-roam` | 36 s | 50; two walkers swap Ext-1/Ext-2 regions while 48 peers stay fixed; pause at 18 s, then return |
-| `band-upgrade-24-5` | 30 s | Same-AP 2.4/5 GHz upgrade/fallback; pinned client remains on 2.4 GHz |
+| `band-upgrade-24-5` | 30 s | Same-AP 2.4/5 GHz upgrade/fallback; capability-limited reference client remains on 2.4 GHz, not BSSID-pinned |
 | `band-upgrade-5-6` | 30 s | Same-AP 5/6 GHz steering; inspect native BSSID, frequency and traffic |
 | `band-ap-counter-roam` | 40 s | Combined AP/band changes; consult the signed band's checkpoint expectations |
 | `home-a-stationary` | 60 s | 10; fixed geometry, no sustained unnecessary AP churn |
@@ -27,6 +42,25 @@ Watch actual ownership in both views, not just the simulated candidate line.
 | `home-a-private-client-room-walk` | 240 s | 20; default narrated walker with nineteen reference clients |
 | `home-a-slow-walk-ten` | 60 s | 20; ten walkers plus ten static clients |
 | `home-b-slow-walk-ten` | 60 s | 20; changed AP geometry; compare serving APs without assuming adaptive backhaul |
+| `backhaul-branch-formation` | 24 s | 10; geometry-driven backhaul; roles 3/4 move behind a partition, creating relay opportunities through roles 1/2 |
+| `backhaul-parent-handover` | 24 s | 10; geometry-driven backhaul; role 3 and a nearby client move between upper/lower relay regions |
+| `backhaul-isolation-recovery` | 24 s | 10; geometry-driven backhaul; role 4 and a nearby client cross a 70 dB isolation wall and return |
+
+The three backhaul rooms pause at 12 s and return to their initial positions
+by 22 s. All APs remain provisioned and present; there is no fronthaul-off
+shortcut, BSSID forcing or external parent planner in the normal profiling
+server. The orange policy card identifies **Geometry-driven backhaul · native
+parent selection**. Other rooms still default to protected startup RF.
+
+At the pause compare verified applied bidirectional RF, actual `wifi1.3`
+uplink BSSID, native topology and gateway traffic. Branch/parent changes are
+native observations, not guaranteed script outcomes. The isolation room should
+show lost upstream service even though the nearby client's fronthaul remains
+strong. A stale parent can remain reported until native timeout; distinguish
+that from actual connectivity. Resume, then verify recovery; changing back to
+Default also requires real topology and traffic checks, not just RF readback.
+Use the [short backhaul feature test](../testing/room-acceptance.md#short-backhaul-feature-test)
+instead of applying client-only health gates during an intentional outage.
 
 **Quick demo:** One Client Handover. **Most visible population change:** Flash
 Crowd. **Most interesting guided roaming:** Perimeter Counter-Roam.

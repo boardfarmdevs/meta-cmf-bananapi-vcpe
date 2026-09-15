@@ -21,13 +21,18 @@ or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
    samples before lab mutation and retains it through restoration. Samples
    include CPU/pressure, RAM, temperature and available throttle counters.
    Its stdin closes on shutdown; sampler failure invalidates host coverage.
-5. The room's default 100-action cap is session-wide. A complete catalog may
-   exceed it. Save the unit and, if needed, create a **named temporary runtime**
-   drop-in under `/run/systemd/system/` that copies the original `ExecStart`
-   with only `--max-actions 2000` changed. Clear the old ExecStart in the
-   drop-in, daemon-reload and restart **only the room**, outside measurement.
-   Verify twenty-client readiness and the chosen cap. Remove only this drop-in
-   and restore the original configuration after testing.
+5. Current interactive sessions default to unlimited total actions
+   (`maximum_actions: null`) with rate, oscillation and failure safety guards
+   enabled. Verify these with `tests/room-final-readiness.py`; do not add the
+   obsolete 2000-action override. Save any explicit operator limit and restore
+   it afterward. Any policy-profile change uses a named temporary runtime
+   drop-in and restarts only the room, outside measurement.
+6. Keep host builds, image exports, backups and storage maintenance outside
+   timed runs. In particular, check active `fstrim.service` jobs and host/guest
+   I/O pressure when LXD operations time out: discard on a filesystem containing
+   a loop-backed LXD pool can delay otherwise idle guests. Record any interrupted
+   maintenance and rerun affected cases in a separate evidence directory. Keep
+   normal maintenance timers enabled; do not label host stalls as stack latency.
 
 Do not discard an RF journal or restart native services to make a case pass.
 Keep failures and incomplete runs in separate evidence directories.
@@ -72,6 +77,11 @@ the connected actual tree, not form geometric branches.
 
 ## Execute
 
+The client-steering harness records geometry-backhaul catalog entries under
+`separateBackhaulRooms` and excludes them from its client-only campaign. An
+explicit request to run one through that harness is rejected rather than
+misclassifying an intended backhaul outage. Existing room gates are unchanged.
+
 New reports identify `convergenceCriterion=configured-steering-policy`.
 `policyConverged` includes roster, ownership, freshness and completeness checks;
 `optimizerPolicySatisfied` is only the policy's raw verdict. The separate
@@ -102,6 +112,109 @@ sharing a lab host. Repeat `--world WORLD_ID` only for explicitly targeted
 runs; omit it to enumerate the live catalog. Use independent output directories,
 browsers and host samplers for simultaneous backends. Inspect the harness's
 nonzero exit and report; completing playback alone is not acceptance.
+
+## Short backhaul feature test
+
+The RDK-only short suite runs the three 24-second geometry-backhaul rooms,
+using the real viewer's load/Play controls and inspecting Network Topology.
+It samples physical uplink BSSIDs and gateway probes through out-of-band LXD
+access at the pause and return. No native process, parent BSSID or action budget
+is changed by the harness. It requires a healthy, unowned default room first.
+
+```sh
+PLAYWRIGHT_MODULE=/path/to/playwright-core CHROMIUM_PATH=/path/to/chromium \
+node gen/tests/room-backhaul-features.js \
+  --yes-act true --host rev140 --vm rdkeasymesh-0913 \
+  --room-url http://192.168.2.140:48891 \
+  --topology-url http://192.168.2.140:48889 \
+  --output /tmp/new-backhaul-feature-results
+```
+
+Use a new output directory. The suite records applied RF, room policy/clock,
+controller parents, native link/probe observations and screenshots of both
+views. Native branch/handover observations are reported separately from
+`featureChecksPassed`; correct geometry does not prove native optimization.
+The isolation checkpoint must apply −20 dB mesh links without marking the AP
+absent. Local fronthaul remains strong in the deterministic fixture.
+Isolation also requires a successful initial upstream probe (at most 15 s to
+settle), then a disconnected native uplink and failed traffic at the checkpoint.
+After the scripted return, native recovery is observed for at most 20 s before
+restoring Default. `--room backhaul-isolation-recovery` runs just that scenario
+for a focused retest; omitting `--room` runs all three.
+
+Playback has a 35-second deadline per half-script. Cleanup restores Default,
+checks exact fixed-RF readback and allows at most 60 seconds for twenty clients,
+six topology nodes and successful gateway probes from all APs. Missing native
+observations or recovery failures are not treated as expected outages. No
+forced parent change or native restart is used to hide a failure. This is a
+bounded functionality check, not a soak or a complete native-policy qualification.
+
+### Rev140 short results: 2026-09-14
+
+Initial geometry-only checks passed for all three rooms in a 141-second live run, including
+geometry RF application, real Play/checkpoints/return, native-parent authority
+and exact fixed-RF restoration. Default recovery passed within its bounded
+window: twenty clients, six topology nodes and gateway probes from every AP.
+No native process restart or forced parent change was used by the test.
+
+| Room | RF/features | Native observation during the short checkpoint |
+| --- | --- | --- |
+| Branch formation | Pass after radio-readiness recovery; stricter 91-second retest | Both branches and gateway traffic verified, all ten clients converged at the initial layout and movement checkpoint, both views agreed |
+| Parent handover | Pass | No relay handover observed; the moving extender retained Agent-1 |
+| Isolation/recovery | Pass, including focused retest | Verified working uplink → disconnection/failed traffic → native recovery after scripted return, then Default recovery |
+
+The initial run exposed two limitations: extender `wifi1.1` AP interfaces
+existed but did not report an operating backhaul SSID/channel in these samples;
+and controller roster health could remain green while independent uplink
+probes failed. Geometry-room loading now applies enabled, unstarted relay APs
+and verifies backhaul STA interfaces are administratively up, without selecting
+parents. Health also requires all six live topology nodes, not just cached DB
+counts. Membership and signal bars still are not end-to-end connectivity proof.
+
+Evidence and both-view screenshots are outside the repository at
+`/home/rev/work/release-0913/evidence/backhaul-rooms-20260914-short-01/` on rev150.
+`report.json` is the original run; `native-readiness-analysis.json` derives AP
+readiness from its saved `iw` output without rerunning or changing the lab.
+Review found that the original isolation room's initial one-packet upstream
+probe had already failed. That run is retained, but is not a clean on/off
+traffic proof. The starting/return position was moved closer to Agent-1 and
+the harness gained the explicit initial-reachability gate. A focused 78-second
+retest at `backhaul-isolation-20260914-short-02/` in the same evidence parent
+passed initial traffic, actual isolation and native recovery within the
+20-second return window, followed by verified default-room restoration.
+Focused Python checks passed 96 tests and 14 subtests; viewer/browser,
+documentation and golden-regeneration checks passed. No full catalog or soak
+campaign was run, and the original eighteen golden room files were unchanged.
+
+The missing-extender incident was a real link loss, not room presence removal.
+After enabling relay APs and bringing the two down STA interfaces up, native
+association selected `extender_3 → extender_1` and `extender_4 → extender_2`
+without a BSSID write. These are stable world roles; displayed extender
+ordinals can change after rediscovery. The prolonged outage also left both
+nodes' client-facing APs inactive. Recovering their OneWifi/agent services and
+replaying `/api/v1/metricsreporting/enable` restored APs and serving reports.
+Those were explicit incident-recovery operations, not actions hidden inside
+playback or the passing test. Radio preparation does not provide automatic
+recovery from every native service fault during a long outage.
+
+The stronger branch test requires operating backhaul APs and all six
+client-facing APs per node, waits up to 60 seconds for initial client
+convergence, then tests Play and waits up to 60 seconds at the checkpoint for
+native parents, every AP's gateway probe, ten measured client decisions, and
+both views to agree. This avoids mixing unfinished initial-room steering with
+movement. The first two stricter attempts failed on client reporting/steering
+and candidate-query contention; their evidence is retained, not counted as
+passes. The final run passed in **90.756 seconds**, including default restoration
+to twenty clients/six nodes. It observed initial convergence after 38.6 seconds
+and checkpoint convergence 12.0 seconds after the first checkpoint sample.
+The initial tree was already branched: this is a warm playback regression,
+not a cold-start branch-formation or proactive backhaul-optimization benchmark.
+
+Evidence is under `backhaul-relay-recovery-20260914/` and
+`backhaul-branch-readiness-20260914-short-01/` through `-03/` in the same evidence
+parent; `-03/report.json` and its two screenshots contain the passing result.
+The readiness/health changes passed 146 focused Python tests plus ten subtests,
+and the focused viewer/status/harness checks passed. PrplMesh was unchanged.
 
 ## Evidence and restoration
 

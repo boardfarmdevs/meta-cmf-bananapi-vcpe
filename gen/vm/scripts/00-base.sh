@@ -19,6 +19,7 @@ apt-get install -y --no-install-recommends \
     docker.io \
     fakeroot \
     git \
+    iputils-ping \
     iw \
     jq \
     libconfig-dev \
@@ -32,6 +33,7 @@ apt-get install -y --no-install-recommends \
     sshpass \
     tcpdump \
     uidmap \
+    util-linux \
     zstd
 
 systemctl enable --now docker

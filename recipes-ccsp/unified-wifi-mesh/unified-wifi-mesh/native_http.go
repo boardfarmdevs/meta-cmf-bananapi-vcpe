@@ -46,7 +46,7 @@ func (response *nativeHTTPResponse) Write(data []byte) (int, error) {
 
 func withNativeAPIOwnership(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/api/v1/ws" || request.URL.Path == "/api/v1/coordination" || request.Method == http.MethodOptions {
+		if request.URL.Path == "/api/v1/ws" || request.URL.Path == "/api/v1/coordination" || request.URL.Path == "/api/v1/room-layout" || request.Method == http.MethodOptions {
 			next.ServeHTTP(writer, request)
 			return
 		}
