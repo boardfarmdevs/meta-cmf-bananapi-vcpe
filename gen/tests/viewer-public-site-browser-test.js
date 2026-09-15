@@ -22,7 +22,7 @@ async function run() {
     assert.equal(await page.locator('#interactionBadge').textContent(), 'NO CONNECT');
     assert.match(await page.locator('#roomConvergence').textContent(), /PREVIEW ONLY/);
     const rooms = await page.locator('#world option').evaluateAll(options => options.map(option => option.value));
-    assert.equal(rooms.length, 21);
+    assert.equal(rooms.length, 25);
     for (const room of rooms) {
       const response = page.waitForResponse(result => new URL(result.url()).pathname.endsWith('/golden/' + room + '.world.json'));
       await page.locator('#world').selectOption(room);

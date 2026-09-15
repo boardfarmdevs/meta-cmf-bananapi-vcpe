@@ -21,13 +21,12 @@ or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
    samples before lab mutation and retains it through restoration. Samples
    include CPU/pressure, RAM, temperature and available throttle counters.
    Its stdin closes on shutdown; sampler failure invalidates host coverage.
-5. The room's default 100-action cap is session-wide. A complete catalog may
-   exceed it. Save the unit and, if needed, create a **named temporary runtime**
-   drop-in under `/run/systemd/system/` that copies the original `ExecStart`
-   with only `--max-actions 2000` changed. Clear the old ExecStart in the
-   drop-in, daemon-reload and restart **only the room**, outside measurement.
-   Verify twenty-client readiness and the chosen cap. Remove only this drop-in
-   and restore the original configuration after testing.
+5. Current interactive sessions default to unlimited total actions
+   (`maximum_actions: null`) with rate, oscillation and failure safety guards
+   enabled. Verify these with `tests/room-final-readiness.py`; do not add the
+   obsolete 2000-action override. Save any explicit operator limit and restore
+   it afterward. Any policy-profile change uses a named temporary runtime
+   drop-in and restarts only the room, outside measurement.
 6. Keep host builds, image exports, backups and storage maintenance outside
    timed runs. In particular, check active `fstrim.service` jobs and host/guest
    I/O pressure when LXD operations time out: discard on a filesystem containing
