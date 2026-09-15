@@ -872,6 +872,19 @@ no-clobber copy that would leave an old browser bundle active after deployment.
 
 ## WebUI unit tests
 
+`viewer-steering-resume-browser-test.js` exercises Resume through the actual
+browser control functions: lease and revision checks, paused/read-only states,
+unchanged room/counters and stale-pause rejection. The demo tests
+`test_steering_safety.py` and `test_steering_control.py` cover rolling limits,
+350 requests without lifetime exhaustion, failure/oscillation pauses, concurrent
+admission, idempotent Resume and no RF/playback changes.
+
+`steering-cues-test.js STEERING_CUES_JS` checks obstacle routing, simultaneous
+paths, 100 non-overlapping labels, same-position band changes and purple BTM.
+`steering-cues-browser-test.js STEERING_CUES_JS D3_JS [SCREENSHOT_PNG]` uses the
+Playwright environment below to check 24 concurrent cues, entity/text clearance
+masks, label collisions, repeated ticks, moved APs and six-second expiry.
+
 `pane-divider-browser-test.js` uses the Playwright environment above to cover
 keyboard and touch resizing, persisted independent widths, bounds, reset,
 mobile/desktop transitions and storage failures. The actual room and topology

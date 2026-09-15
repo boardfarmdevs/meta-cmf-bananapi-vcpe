@@ -24,6 +24,8 @@ the detailed controls and evidence boundaries.
   to the room, not shared with topology.
 - AP groups pack around visible bubbles and fit with a **six-pixel margin**,
   preserving orientation. **Optimize Layout** also tightens manual arrangements.
+  Room following pulls distant groups inward, preserving bearings and relative
+  ordering, not RF distances.
 - Restore the default twenty-client world and leave it paused before handoff.
 
 Worlds change active presence within the provisioned pool, without rebuilding
@@ -49,10 +51,18 @@ RDK/prpl inventory mappings differ; compare identities, not drawing ordinals.
 
 ## Optimizer activity
 
-Roam cues show six seconds of history without delaying association rendering.
-`FROM` marks the previous location, not another connected client. Teal means an
-accepted **BTM request**, not proven delivery/causation; pink means **reported
-non-BTM**; grey means **unknown**. Missing BTM evidence does not prove non-BTM.
+The convergence badge distinguishes checked from online clients and names health
+mismatches. Steering has no default lifetime cap: rolling limits recover
+automatically; repeated failures/oscillation pause affected clients only.
+**Resume steering** clears those pauses without resetting room, counters or
+cooldowns. Measurements continue.
+
+Six-second roam cues identify client and source → destination without delaying
+association rendering. Purple means an accepted **BTM request**, not proven
+causation; pink means **reported non-BTM**; grey means **unknown**.
+Concurrent trails separate where possible; masks protect icons and text.
+Labels avoid entities and each other, using side columns when crowded.
+Neither timing nor native steering changes.
 
 Check authority: external policy requesting native BTM is not a native optimizer.
 

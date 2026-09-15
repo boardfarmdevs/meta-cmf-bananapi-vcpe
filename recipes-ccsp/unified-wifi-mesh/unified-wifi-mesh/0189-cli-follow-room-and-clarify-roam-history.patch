@@ -220,7 +220,15 @@ Upstream-Status: Inappropriate [interactive virtual-radio laboratory]
  
        steeringEffectGroup.selectAll('.sta-steering-intent-path')
          .attr('d', effect => {
-@@ -4091,6 +4063,7 @@
+@@ -4084,13 +4056,15 @@
+           const midY = (sourceY + targetY) / 2 - 30;
+           return `M${sourceX},${sourceY} Q${midX},${midY} ${targetX},${targetY}`;
+         });
++      steeringCues.layout(steeringEffectGroup);
+     });
+ 
+     simulation.on('tick')();
+     this.layoutTopologyLabels();
      this.fitTopologyToView();
  
      function dragstarted(event, d) {
@@ -228,7 +236,15 @@ Upstream-Status: Inappropriate [interactive virtual-radio laboratory]
        self.beginTopologyInteraction();
      }
  
-@@ -4202,6 +4175,37 @@
+@@ -4125,6 +4099,7 @@
+         y: event.y - nodeY
+       };
+       updateSTAVisual(d3.select(this), d);
++      simulation.on('tick')();
+     }
+ 
+     function staDragEnded(_event, d) {
+@@ -4202,6 +4177,37 @@
      ), 80);
    }
  
@@ -266,7 +282,15 @@ Upstream-Status: Inappropriate [interactive virtual-radio laboratory]
    topologySSIDLabel(geometry) {
      const cohort = geometry.ssid === 'private_ssid' ? 'private'
        : geometry.ssid === 'iot_ssid' ? 'iot' : null;
-@@ -4472,6 +4476,7 @@
+@@ -4311,6 +4317,7 @@
+       label.setAttribute('y', placement.y + baseline - nodeY);
+       obstacles.push(placement);
+     }
++    steeringCues.layout(this.topologyView.group.select('.steering-effects'));
+   }
+ 
+   /**
+@@ -4472,6 +4479,7 @@
      if (navLink) navLink.classList.add('active');
  
      this.currentTab = tabName;
@@ -341,10 +365,10 @@ Upstream-Status: Inappropriate [interactive virtual-radio laboratory]
 +        PaneDivider.attach({container: document.querySelector('.app-body'), handle: document.getElementById('topologyPanelDivider'),
 +            property: '--sidebar-width', storageKey: 'easymesh.topology-panel-width', initial: 280, minimum: 140, breakpoint: 768});
 +    </script>
-+    <script src="static/room-topology.js?v=4"></script>
++    <script src="static/room-topology.js?v=5"></script>
 +    <script src="static/room-name.js?v=1"></script>
-+    <script src="static/steering-cues.js?v=1"></script>
-+    <script src="static/script.js?v=room-follow-divider-0913-1"></script>
++    <script src="static/steering-cues.js?v=2"></script>
++    <script src="static/script.js?v=steering-clearance-1"></script>
      <script src="static/wireless-settings.js"></script>
      <script src="static/map.js"></script>
  </body>

@@ -308,6 +308,8 @@ def _interactive(args) -> int:
         raise ActuatorError("interactive act mode requires --yes-act")
     if args.max_actions is not None and args.max_actions < 1:
         raise ActuatorError("interactive --max-actions must be a positive integer")
+    if getattr(args, "steering_rate_limit", 300) < 1:
+        raise ActuatorError("--steering-rate-limit must be a positive integer")
     manifest, world_path, bindings_path = _paths(args)
     world, source, inventory, binding_doc, plan = _prepare(world_path, bindings_path, pool=True)
     manifest = pool_manifest(manifest, plan)
@@ -328,6 +330,7 @@ def _interactive(args) -> int:
             store, world, layout, plan, args.socket,
             lease_seconds=args.lease_seconds,
             traffic_probe_role=manifest["hero"]["role"],
+            resume_steering=lambda revision: conductor.resume_steering(revision),
             worlds=BoundWorlds(
                 world, layout, CONFIGURATOR / "worlds",
                 roles={role: binding["role_type"] for role, binding in plan["bindings"].items()},
@@ -341,17 +344,13 @@ def _interactive(args) -> int:
             prepare_backhaul=backhaul_radios.prepare_radios,
         )
     )
-    # Interactive act mode is a continuously running reconciler. Keep a
-    # generous explicit circuit breaker rather than inheriting the scripted
-    # demonstration's single-action budget.
     maximum_actions = args.max_actions
-    if maximum_actions is None and args.mode == "act":
-        maximum_actions = 100
     conductor = LiveConductor(
         store, plan, manifest, mode=args.mode, repo_root=REPO_ROOT,
         base_url=args.base_url, room_state=interactions.snapshot,
         room_projection=interactions.projection_snapshot,
         interactive=True, profiling=args.profiling, maximum_actions=maximum_actions,
+        steering_rate_limit=args.steering_rate_limit,
         steering_transaction=interactions.steering_action,
         backhaul_manager=BackhaulManager(backhaul_adapter, interactions.backhaul_action, store)
         if backhaul_adapter is not None else None,
@@ -361,6 +360,7 @@ def _interactive(args) -> int:
         store,
         DEFAULT_VIEWER,
         interactions,
+        optimizer_status=conductor.steering_status,
     )
     stop_event = threading.Event()
     clock_thread: threading.Thread | None = None
@@ -639,8 +639,10 @@ def parser() -> argparse.ArgumentParser:
                              help="override all room RF policies with geometry; native parent selection, independent of client policy")
     interactive.add_argument(
         "--max-actions", type=int,
-        help="automatic BTM circuit breaker in act mode (default: 100)",
+        help="optional finite-run BTM request cap; continuous sessions have no lifetime cap",
     )
+    interactive.add_argument("--steering-rate-limit", type=int, default=300,
+                             help="maximum automatic requests per rolling 60 seconds (default: 300)")
     interactive.add_argument("--base-url", default="http://127.0.0.1:8888")
     interactive.add_argument(
         "--listen", type=_address, default=("127.0.0.1", 8891), metavar="HOST:PORT"
