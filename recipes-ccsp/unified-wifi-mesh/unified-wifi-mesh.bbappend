@@ -185,6 +185,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0185-report-unsolicited-radio-channel-updates.patch \
     file://0186-advance-ready-agent-commands-on-events.patch \
     file://0187-policy-select-ready-owner-and-check-admission.patch \
+    file://0188-prioritize-control-and-preserve-radio-reports.patch \
     file://0188-cli-serve-offline-ui-dependencies.patch \
     file://0189-cli-follow-room-and-clarify-roam-history.patch \
 "

@@ -26,6 +26,7 @@ apt-get install -y --no-install-recommends \
     libnl-3-dev \
     libnl-genl-3-dev \
     net-tools \
+    nftables \
     patch \
     pkg-config \
     rsync \
