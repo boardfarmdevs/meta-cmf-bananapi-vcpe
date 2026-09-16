@@ -14,6 +14,7 @@ program = r'''
 #include <vector>
 enum { em_cmd_type_op_channel_report, em_state_agent_unconfigured,
        em_state_agent_topo_synchronized, em_state_agent_ap_cap_report,
+       em_state_agent_unassoc_sta_link_metrics_pending,
        em_state_agent_channel_select_configuration_pending, em_state_agent_configured,
        em_state_agent_sta_link_metrics_pending };
 using mac_address_t = unsigned char[6];
@@ -58,6 +59,7 @@ int admit(command *pcmd, radio_node *em) {
 int main() {
     for (int state : {em_state_agent_unconfigured, em_state_agent_topo_synchronized,
                       em_state_agent_ap_cap_report, em_state_agent_channel_select_configuration_pending,
+                      em_state_agent_unassoc_sta_link_metrics_pending,
                       em_state_agent_configured, em_state_agent_sta_link_metrics_pending}) {
         for (unsigned char identity : {1, 2, 3, 4}) {
             command report;

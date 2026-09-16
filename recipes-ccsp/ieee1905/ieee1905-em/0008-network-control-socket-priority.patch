@@ -1,0 +1,140 @@
+Subject: [PATCH] ieee1905: mark raw control sockets with Linux network-control UP
+
+The AL-SAP build sends over pnet, not EasyMesh's raw C++ socket. Set
+SO_PRIORITY=256+7 before passing an owned AF_PACKET descriptor to pnet.
+Linux maps this explicit priority to 802.11 user priority 7; existing
+WMM queues can then protect control exchanges from bulk best effort.
+Fail socket creation explicitly rather than silently send unprioritized
+traffic. pnet owns the supplied descriptor, including its error paths.
+The privileged unit test checks actual kernel priority and CLOEXEC.
+
+diff --git a/Cargo.lock b/Cargo.lock
+index f0c0305..a94d8c4 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1557,6 +1557,7 @@ dependencies = [
+  "either",
+  "futures",
+  "indexmap",
++ "libc",
+  "neli",
+  "netdev",
+  "nom 8.0.0",
+diff --git a/ieee1905-core/Cargo.toml b/ieee1905-core/Cargo.toml
+index 2d9ad67..a7a819e 100644
+--- a/ieee1905-core/Cargo.toml
++++ b/ieee1905-core/Cargo.toml
+@@ -15,6 +15,7 @@ rbus = ["rbus-core", "rbus-provider"]
+ rbus-core = { path = "../rbus-core", optional = true }
+ rbus-provider = { path = "../rbus-provider", optional = true }
+ pnet = "0.35.0"
++libc = "0.2"
+ netdev = "0.44.0"
+ nom = "8.0.0"
+ tokio = { version = "1.48.0", features = ["full", "tracing"] }
+diff --git a/ieee1905-core/src/ethernet_subject_transmission.rs b/ieee1905-core/src/ethernet_subject_transmission.rs
+index ec5494f..da23863 100644
+--- a/ieee1905-core/src/ethernet_subject_transmission.rs
++++ b/ieee1905-core/src/ethernet_subject_transmission.rs
+@@ -19,6 +19,7 @@
+ use crate::{next_task_id, spawn_join_set_named};
+ use anyhow::anyhow;
+ use pnet::datalink::MacAddr;
++use std::os::fd::IntoRawFd;
+ use std::sync::Arc;
+ use tokio::sync::{Mutex, mpsc};
+ use tokio::task::JoinSet;
+@@ -68,7 +69,17 @@ impl EthernetSender {
+ 
+             info!(interface_name = %interface.name, "Found network interface");
+ 
+-            let config = pnet::datalink::Config::default();
++            let socket = match crate::linux::control_socket::open() {
++                Ok(socket) => socket,
++                Err(error) => {
++                    error!(interface_name = %interface.name, %error, "Failed to open prioritized control socket");
++                    return;
++                }
++            };
++            let config = pnet::datalink::Config {
++                socket_fd: Some(socket.into_raw_fd()),
++                ..Default::default()
++            };
+             let (mut tx, _rx) = match pnet::datalink::channel(&interface, config) {
+                 Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
+                 Ok(_) => {
+diff --git a/ieee1905-core/src/linux.rs b/ieee1905-core/src/linux.rs
+index 51e6938..5bc7a83 100644
+--- a/ieee1905-core/src/linux.rs
++++ b/ieee1905-core/src/linux.rs
+@@ -1,3 +1,4 @@
++pub mod control_socket;
+ pub mod eth_tool;
+ pub mod if_link;
+ pub mod nl80211;
+diff --git a/ieee1905-core/src/linux/control_socket.rs b/ieee1905-core/src/linux/control_socket.rs
+new file mode 100644
+index 0000000..96fd224
+--- /dev/null
++++ b/ieee1905-core/src/linux/control_socket.rs
+@@ -0,0 +1,60 @@
++use std::io;
++use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
++
++pub fn open() -> io::Result<OwnedFd> {
++    let descriptor = unsafe {
++        libc::socket(
++            libc::AF_PACKET,
++            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
++            (libc::ETH_P_ALL as u16).to_be() as i32,
++        )
++    };
++    if descriptor < 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let socket = unsafe { OwnedFd::from_raw_fd(descriptor) };
++    let priority: libc::c_int = 256 + 7;
++    let result = unsafe {
++        libc::setsockopt(
++            socket.as_raw_fd(),
++            libc::SOL_SOCKET,
++            libc::SO_PRIORITY,
++            (&priority as *const libc::c_int).cast(),
++            std::mem::size_of_val(&priority) as libc::socklen_t,
++        )
++    };
++    if result < 0 {
++        return Err(io::Error::last_os_error());
++    }
++    Ok(socket)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    #[ignore = "requires CAP_NET_RAW and CAP_NET_ADMIN"]
++    fn network_control_priority_and_close_on_exec() {
++        let socket = open().expect("requires CAP_NET_RAW and CAP_NET_ADMIN");
++        let mut priority: libc::c_int = 0;
++        let mut length = std::mem::size_of_val(&priority) as libc::socklen_t;
++        assert_eq!(
++            unsafe {
++                libc::getsockopt(
++                    socket.as_raw_fd(),
++                    libc::SOL_SOCKET,
++                    libc::SO_PRIORITY,
++                    (&mut priority as *mut libc::c_int).cast(),
++                    &mut length,
++                )
++            },
++            0
++        );
++        assert_eq!(priority, 263);
++        assert_ne!(
++            unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
++            0
++        );
++    }
++}

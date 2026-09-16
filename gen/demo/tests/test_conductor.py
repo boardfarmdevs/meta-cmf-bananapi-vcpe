@@ -36,6 +36,40 @@ from room_demo.events import EventStore
 
 
 class ConductorProjectionTests(unittest.TestCase):
+    def test_received_scan_role_projection_preserves_evidence_and_does_not_mutate_provider(self):
+        from room_demo.conductor import _received_scan_status
+        neighbor = {"bssid": "ap", "observed_at": "2026-09-15T12:00:00Z",
+                    "advertised_bss_load": {"state": "available", "utilization": 0}}
+        status = {"station": {"available": True, "source": "client_nl80211_received_scan",
+                              "neighbors": [neighbor, {"bssid": "unknown"}]}}
+        projected = _received_scan_status(status, {"ap": "gateway"}, {"station": "client"})
+        self.assertEqual(projected["station"]["receiver_role"], "client")
+        self.assertEqual(projected["station"]["neighbors"][0], {**neighbor, "role": "gateway"})
+        self.assertIsNone(projected["station"]["neighbors"][1]["role"])
+        self.assertNotIn("receiver_role", status["station"])
+        self.assertNotIn("role", neighbor)
+        self.assertEqual(_received_scan_status({"station": {"available": False}}, {}, {}),
+                         {"station": {"available": False, "receiver_role": None, "neighbors": []}})
+
+    def test_load_aware_optimizer_registers_owner_hook_before_collection(self):
+        conductor, _store = self._conductor()
+        conductor.interactive = False
+        conductor.profiling = False
+        conductor.manifest.update({"policy": "policy.yaml", "optimizer": {
+            "allow_simulated_candidates": True, "request_only": True, "interval_seconds": 5,
+            "action_window_ms": [0, 1000], "max_actions": 1,
+        }})
+        receiver = Mock()
+        with patch("room_demo.conductor.load_policy", return_value=PolicyConfig(load_aware_enabled=True)), \
+             patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
+             patch("room_demo.conductor.NativeLoadProvider", return_value=receiver), \
+             patch("room_demo.conductor.ControllerCandidateProvider"), \
+             patch("room_demo.conductor.ControllerObserver", side_effect=RuntimeError("observer constructed")) as observer, \
+             patch.object(conductor, "_wait_for_run", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "observer constructed"):
+                conductor._optimizer_worker()
+        self.assertIs(observer.call_args.kwargs.get("ownership_observer"), receiver.observe_owners)
+
     def test_health_rejects_missing_mesh_nodes_even_when_database_and_clients_match(self):
         conductor, store = self._conductor()
         conductor.manifest["health"] = {"interval_seconds": 1, "expected_mesh_devices": 5, "expected_clients": 100}

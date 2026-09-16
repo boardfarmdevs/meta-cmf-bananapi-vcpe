@@ -1,0 +1,92 @@
+Subject: [PATCH] cli: show fresh native AP load on mesh-node hover
+
+Reuse the independent room-layout projection for passive AP reports. Preserve
+raw utilization, per-BSS station counts and report age; hide unavailable or
+stale values. Hovering never starts measurements or changes steering policy.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3912,14 +3912,27 @@
+                 ? `<br>Link: ${self.topologyBandLabel(incoming.band)} · ch ${Number(incoming.channel) > 0 ? incoming.channel : '?'}`
+                 : '') + signal
+             : '';
+-          tooltip.style('display', 'block')
+-          .html(`<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}`);
+-          self.positionTooltip(event, tooltip);
++          self.topologyRFHoverEvent = event;
++          self.topologyRFHover = () => {
++            if (!this.isConnected) {
++              self.topologyRFHover = null;
++              tooltip.style('display', 'none');
++              return;
++            }
++            const html = `<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}` +
++              (self.roomLayout?.rfHTML(d) || '');
++            tooltip.style('display', 'block');
++            if (tooltip.html() !== html) tooltip.html(html);
++            self.positionTooltip(self.topologyRFHoverEvent, tooltip);
++          };
++          self.topologyRFHover();
+         })
+         .on('mousemove', function(event) {
++          self.topologyRFHoverEvent = event;
+           self.positionTooltip(event, tooltip);
+         })
+         .on('mouseout', function() {
++          self.topologyRFHover = null;
+           tooltip.style('display', 'none');
+         });
+ 
+--- a/src/rdkb-cli/static/style.css
++++ b/src/rdkb-cli/static/style.css
+@@ -1017,6 +1017,24 @@
+   transition: top 0.1s ease-out, left 0.1s ease-out, opacity 0.2s ease-in-out;
+ }
+ 
++.topology-rf {
++  margin-top: 8px;
++  padding-top: 6px;
++  border-top: 1px solid #ddd;
++  width: min(420px, 84vw);
++  font-size: 13px;
++}
++.topology-rf table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
++.topology-rf th, .topology-rf td { padding: 4px 6px; text-align: left; vertical-align: top; }
++.topology-rf th { font-size: 11px; color: #555; border-bottom: 1px solid #ddd; }
++.topology-rf td { border-bottom: 1px solid #eee; }
++.topology-rf small { display: block; font-size: 10px; color: #555; line-height: 1.3; }
++.topology-rf td:nth-child(2) { min-width: 96px; }
++.topology-rf td:last-child { min-width: 76px; font-size: 11px; }
++.topology-rf .rf-utilization { display: block; height: 3px; margin-top: 2px; background: #ddd; border-radius: 2px; }
++.topology-rf .rf-utilization span { display: block; height: 100%; background: #8651a8; border-radius: 2px; }
++.topology-rf .rf-unavailable { color: #777; font-size: 11px; }
++
+ /* ===== DEVICE MANAGEMENT ===== */
+ 
+ .devices-container {
+--- a/src/rdkb-cli/static/index.html
++++ b/src/rdkb-cli/static/index.html
+@@ -27,7 +27,7 @@
+     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+     <meta http-equiv="Pragma" content="no-cache">
+     <meta http-equiv="Expires" content="0">
+-    <link rel="stylesheet" href="static/style.css?v=topology-divider-1">
++    <link rel="stylesheet" href="static/style.css?v=rf-hover-1">
+     <link rel="stylesheet" href="static/pane-divider.css?v=1">
+     <link href="static/vendor/fontawesome/css/all.min.css" rel="stylesheet">
+     <link href="static/vendor/animate-4.1.1.min.css" rel="stylesheet">
+@@ -2038,10 +2038,10 @@
+         PaneDivider.attach({container: document.querySelector('.app-body'), handle: document.getElementById('topologyPanelDivider'),
+             property: '--sidebar-width', storageKey: 'easymesh.topology-panel-width', initial: 280, minimum: 140, breakpoint: 768});
+     </script>
+-    <script src="static/room-topology.js?v=5"></script>
++    <script src="static/room-topology.js?v=rf-hover-1"></script>
+     <script src="static/room-name.js?v=1"></script>
+     <script src="static/steering-cues.js?v=2"></script>
+-    <script src="static/script.js?v=steering-clearance-1"></script>
++    <script src="static/script.js?v=rf-hover-1"></script>
+     <script src="static/wireless-settings.js"></script>
+     <script src="static/map.js"></script>
+ </body>

@@ -37,6 +37,7 @@ WIFI_ACTION_FRAME_QUEUE_PATCH := "${THISDIR}/${BPN}/0025-prioritize-and-validate
 WIFI_EM_METRICS_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0026-ap-metrics-replace-provider-snapshot.patch"
 WIFI_SCHEDULER_STATUS_API_PATCH := "${THISDIR}/${BPN}/0027-declare-radio-scheduler-status-functions.patch"
 WIFI_ASSOCIATION_PUBLICATION_PATCH := "${THISDIR}/${BPN}/0028-publish-association-deltas-on-control-events.patch"
+WIFI_EM_REPORTING_POLICY_PATCH := "${THISDIR}/${BPN}/0029-native-utilization-threshold-and-ap-query.patch"
 python do_patch_append() {
     import os
     import subprocess
@@ -239,6 +240,8 @@ python do_patch_append() {
         apply_layer_patch(f)
     with open(d.getVar('WIFI_EM_METRICS_SNAPSHOT_PATCH'), 'rb') as f:
         apply_layer_patch(f)
+    with open(d.getVar('WIFI_EM_REPORTING_POLICY_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -303,6 +306,8 @@ do_patch[vardepsexclude] += "WIFI_SCHEDULER_STATUS_API_PATCH"
 do_patch[file-checksums] += "${WIFI_SCHEDULER_STATUS_API_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_ASSOCIATION_PUBLICATION_PATCH"
 do_patch[file-checksums] += "${WIFI_ASSOCIATION_PUBLICATION_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_EM_REPORTING_POLICY_PATCH"
+do_patch[file-checksums] += "${WIFI_EM_REPORTING_POLICY_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

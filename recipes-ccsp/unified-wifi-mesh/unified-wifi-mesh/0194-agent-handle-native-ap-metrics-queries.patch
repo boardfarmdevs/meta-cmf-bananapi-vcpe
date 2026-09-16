@@ -1,0 +1,565 @@
+Subject: [PATCH] Handle bounded AP metrics queries through native OneWifi collection
+
+Upstream-Status: Pending
+
+--- a/inc/em_ap_metrics_query.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_ap_metrics_query.h	2026-09-15 15:11:20.862652299 -0700
+@@ -0,0 +1,67 @@
++#ifndef EM_AP_METRICS_QUERY_H
++#define EM_AP_METRICS_QUERY_H
++
++#include <cstddef>
++#include <cstring>
++
++inline bool em_decode_ap_metrics_query(const unsigned char *frame, size_t length,
++    em_cmd_ap_metrics_rprt_params_t &params)
++{
++    if (length < 25 || frame[12] != 0x89 || frame[13] != 0x3a ||
++        frame[14] != 0 || frame[16] != 0x80 || frame[17] != 0x0b ||
++        frame[20] != 0 || (frame[21] & 0x80) == 0) return false;
++    params.query = true;
++    params.query_id = static_cast<unsigned short>((frame[18] << 8) | frame[19]);
++    memcpy(params.query_source, frame + 6, 6);
++    params.query_bss_count = 0;
++    params.query_radio_count = 0;
++    bool found = false;
++    size_t offset = 22;
++    while (offset + 3 <= length) {
++        const unsigned char tag = frame[offset];
++        const size_t size = (frame[offset + 1] << 8) | frame[offset + 2];
++        offset += 3;
++        if (size > length - offset) return false;
++        if (tag == 0) return size == 0 && found &&
++            (params.query_bss_count != 0 || params.query_radio_count != 0);
++        if (tag == 0x93) {
++            if (found || size < 1 || frame[offset] > EM_MAX_BSSS ||
++                size != 1U + 6U * frame[offset]) return false;
++            found = true;
++            params.query_bss_count = frame[offset];
++            memcpy(params.query_bssids, frame + offset + 1, size - 1);
++        } else if (tag == 0x82) {
++            if (size != 6 || params.query_radio_count >= EM_MAX_RADIO_PER_AGENT) return false;
++            memcpy(params.query_radios[params.query_radio_count++], frame + offset, 6);
++        }
++        offset += size;
++    }
++    return false;
++}
++
++inline bool em_decode_ap_metrics_query_hex(const char *encoded, size_t length,
++    em_cmd_ap_metrics_rprt_params_t &params)
++{
++    if (length < 50 || length > 4096 || length % 2 != 0) return false;
++    unsigned char frame[2048];
++    const char digits[] = "0123456789abcdef";
++    for (size_t index = 0; index < length; ++index) {
++        const char *digit = strchr(digits, encoded[index]);
++        if (digit == nullptr || encoded[index] == 0) return false;
++        const unsigned char value = static_cast<unsigned char>(digit - digits);
++        if (index % 2 == 0) frame[index / 2] = value << 4;
++        else frame[index / 2] |= value;
++    }
++    return em_decode_ap_metrics_query(frame, length / 2, params);
++}
++
++inline bool em_ap_metrics_query_contains(const unsigned char addresses[][6], int count,
++    const unsigned char *address)
++{
++    for (int index = 0; index < count; ++index) {
++        if (memcmp(addresses[index], address, 6) == 0) return true;
++    }
++    return false;
++}
++
++#endif
+--- a/inc/em_base.h	2026-09-15 13:22:07.000000000 -0700
++++ b/inc/em_base.h	2026-09-15 15:18:56.890711402 -0700
+@@ -2400,6 +2400,7 @@
+     em_cmd_type_get_link_quality_report,
+     em_cmd_type_unassoc_sta_query,
+     em_cmd_type_unassoc_sta_result,
++    em_cmd_type_ap_metrics_query,
+ 
+     em_cmd_type_max,
+ } em_cmd_type_t;
+@@ -3110,6 +3111,7 @@
+     em_bus_event_type_unassoc_sta_link_metrics_query,
+     em_bus_event_type_unassoc_sta_result,
+     em_bus_event_type_failed_conn,
++    em_bus_event_type_ap_metrics_query,
+ 
+     em_bus_event_type_max
+ } em_bus_event_type_t;
+@@ -3347,6 +3349,13 @@
+     bool sta_link_metrics_include;
+     bool sta_traffic_stats_include;
+     bool wifi6_status_report_include;
++    bool query;
++    unsigned short query_id;
++    mac_address_t query_source;
++    int query_bss_count;
++    mac_address_t query_bssids[EM_MAX_BSSS];
++    int query_radio_count;
++    mac_address_t query_radios[EM_MAX_RADIO_PER_AGENT];
+ } __attribute__((__packed__)) em_cmd_ap_metrics_rprt_params_t;
+ 
+ typedef enum {
+--- a/inc/em_ctrl.h	2026-09-15 13:22:09.000000000 -0700
++++ b/inc/em_ctrl.h	2026-09-15 15:18:56.891711367 -0700
+@@ -393,7 +393,7 @@
+ 	 *
+ 	 * @note Ensure that the request is valid before calling this function.
+ 	 */
+-	void handle_ap_metrics_req();
++    void handle_ap_metrics_req(em_bus_event_t *evt);
+     
+ 	/**!
+ 	 * @brief Handles client metrics request.
+--- a/inc/em_metrics.h	2026-09-15 13:22:14.000000000 -0700
++++ b/inc/em_metrics.h	2026-09-15 15:24:26.021191237 -0700
+@@ -325,6 +325,7 @@
+ 	 * @note Ensure that the buffer is properly allocated and the length is correctly specified.
+ 	 */
+ 	int handle_ap_metrics_response(unsigned char *buff, unsigned int len);
++    int handle_ap_metrics_query(unsigned char *buff, unsigned int len);
+ 	int handle_vendor_msg(unsigned char *buff, unsigned int len);
+ 
+   	/**!
+@@ -681,6 +682,7 @@
+         * @note Used for ACK tracking and response correlation.
+         */
+ public:
++    int send_ap_metrics_query(unsigned char *frame, unsigned int length);
+        /**
+         * Parse and classify a 1905 ACK for one Unassociated STA query.
+         *
+--- a/src/agent/dm_easy_mesh_agent.cpp	2026-09-15 13:22:15.000000000 -0700
++++ b/src/agent/dm_easy_mesh_agent.cpp	2026-09-15 15:08:04.544559230 -0700
+@@ -40,6 +40,7 @@
+ #include "em_cmd_dev_init.h"
+ #include <stddef.h>
+ #include "dm_easy_mesh_agent.h"
++#include "em_ap_metrics_query.h"
+ #include <cjson/cJSON.h>
+ #include "ieee80211.h"
+ #include "em_cmd_sta_list.h"
+@@ -1252,7 +1253,7 @@
+     cJSON *json, *emap_metrics_report, *param_obj;
+     unsigned int radio_index = 0;
+     
+-    translate_and_decode_onewifi_subdoc(reinterpret_cast<char *>(evt->u.raw_buff), webconfig_subdoc_type_em_ap_metrics_report, "AP Metrics Report");
++    memset(&evt->params.u.ap_metrics_params, 0, sizeof(evt->params.u.ap_metrics_params));
+ 
+     json = cJSON_Parse(reinterpret_cast<const char *>(evt->u.raw_buff));
+     if (json == NULL) {
+@@ -1260,12 +1261,22 @@
+         return 0;
+     }
+     emap_metrics_report = cJSON_GetObjectItem(json, "EMAPMetricsReport");
+-    if (emap_metrics_report == NULL || !cJSON_IsArray(emap_metrics_report)) {
++    if (emap_metrics_report == NULL || !cJSON_IsArray(emap_metrics_report) ||
++        cJSON_GetArraySize(emap_metrics_report) <= 0 ||
++        cJSON_GetArraySize(emap_metrics_report) > EM_MAX_RADIO_PER_AGENT) {
+         em_printfout("Invalid or missing EMAPMetricsReport");
+         cJSON_Delete(json);
+         return 0;
+     }
+ 
++    cJSON *query = cJSON_GetObjectItemCaseSensitive(json, "APMetricsQuery");
++    if (query != nullptr && (!cJSON_IsString(query) ||
++        !em_decode_ap_metrics_query_hex(query->valuestring, strlen(query->valuestring),
++            evt->params.u.ap_metrics_params))) {
++        cJSON_Delete(json);
++        return 0;
++    }
++
+     for (int i = 0; i < cJSON_GetArraySize(emap_metrics_report); i++) {
+         cJSON *arr_obj = cJSON_GetArrayItem(emap_metrics_report, i);
+         if (arr_obj == NULL) {
+@@ -1282,6 +1293,10 @@
+         }
+ 
+         radio_index = static_cast<unsigned int>(param_obj->valueint);
++        if (radio_index >= m_num_radios) {
++            cJSON_Delete(json);
++            return 0;
++        }
+         memcpy(evt->params.u.ap_metrics_params.ruid[i], get_radio_by_ref(radio_index).get_radio_interface_mac(), sizeof(mac_addr_t));
+     }
+     evt->params.u.ap_metrics_params.num_radios = cJSON_GetArraySize(emap_metrics_report);
+@@ -1304,6 +1319,8 @@
+         evt->params.u.ap_metrics_params.wifi6_status_report_include = false;
+     }
+ 
++    translate_and_decode_onewifi_subdoc(reinterpret_cast<char *>(evt->u.raw_buff),
++        webconfig_subdoc_type_em_ap_metrics_report, "AP Metrics Report");
+     pcmd[num] = new em_cmd_ap_metrics_report_t(evt->params, *(this));
+     tmp = pcmd[num];
+     num++;
+--- a/src/agent/em_agent.cpp	2026-09-15 13:22:15.000000000 -0700
++++ b/src/agent/em_agent.cpp	2026-09-15 15:07:34.004633538 -0700
+@@ -1392,6 +1392,19 @@
+         case em_bus_event_type_ap_metrics_report:
+             handle_ap_metrics_report(evt);
+             break;
++        case em_bus_event_type_ap_metrics_query:
++        {
++            wifi_bus_desc_t *descriptor = get_bus_descriptor();
++            raw_data_t request = {};
++            request.data_type = bus_data_type_string;
++            request.raw_data.bytes = evt->u.raw_buff;
++            request.raw_data_len = strlen(reinterpret_cast<char *>(evt->u.raw_buff)) + 1;
++            if (descriptor == nullptr || descriptor->bus_set_fn(&m_bus_hdl,
++                "Device.WiFi.EM.APMetricsQuery", &request) != 0) {
++                em_printfout("AP Metrics Query collection request failed");
++            }
++            break;
++        }
+ 
+         case em_bus_event_type_bss_info:
+             handle_bss_info(evt);
+@@ -2389,6 +2402,7 @@
+             printf("%s:%d: Sending Assoc STA Link Metrics response\n", __func__, __LINE__);
+             break;
+ 
++        case em_msg_type_ap_metrics_query:
+         case em_msg_type_client_steering_req:
+             printf("\n%s:%d: Rcvd Client steering request\n", __func__, __LINE__);
+             em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+--- a/src/cmd/em_cmd.cpp	2026-09-15 13:22:00.000000000 -0700
++++ b/src/cmd/em_cmd.cpp	2026-09-15 15:18:56.892711332 -0700
+@@ -471,6 +471,10 @@
+             m_svc = em_service_type_ctrl;
+             break;
+         
++        case em_cmd_type_ap_metrics_query:
++            snprintf(m_name, sizeof(m_name), "%s", "ap_metrics_query");
++            m_svc = em_service_type_ctrl;
++            break;
+ 	case em_cmd_type_unassoc_sta_query:
+             snprintf(m_name, sizeof(m_name), "%s", "unassoc_sta_query");
+             m_svc = em_service_type_ctrl;
+@@ -803,6 +807,9 @@
+         case em_bus_event_type_ap_metrics_report:
+             type = em_cmd_type_ap_metrics_report;
+             break;
++        case em_bus_event_type_ap_metrics_query:
++            type = em_cmd_type_ap_metrics_query;
++            break;
+ 
+         case em_bus_event_type_get_reset:
+             type = em_cmd_type_get_reset;
+@@ -879,6 +886,9 @@
+         case em_cmd_type_unassoc_sta_query:
+             type = em_bus_event_type_unassoc_sta_query;
+             break;
++        case em_cmd_type_ap_metrics_query:
++            type = em_bus_event_type_ap_metrics_query;
++            break;
+ 
+         case em_cmd_type_unassoc_sta_result:
+             type = em_bus_event_type_unassoc_sta_result;
+@@ -962,4 +972,3 @@
+ 	deinit();
+ 	free(m_evt);
+ }
+-
+--- a/src/ctrl/em_ctrl.cpp	2026-09-15 13:22:14.000000000 -0700
++++ b/src/ctrl/em_ctrl.cpp	2026-09-15 15:24:26.023191167 -0700
+@@ -39,6 +39,8 @@
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <algorithm>
++#include <cctype>
++#include <vector>
+ #include <set>
+ #include <cjson/cJSON.h>
+ #include "em.h"
+@@ -428,9 +430,70 @@
+ 
+ }
+ 
+-void em_ctrl_t::handle_ap_metrics_req()
++void em_ctrl_t::handle_ap_metrics_req(em_bus_event_t *evt)
+ {
+-
++    cJSON *document = cJSON_Parse(evt->u.subdoc.buff);
++    cJSON *query = cJSON_GetObjectItemCaseSensitive(document, "wfa-dataelements:APMetricsQuery");
++    cJSON *agent = cJSON_GetObjectItemCaseSensitive(query, "AlMac");
++    cJSON *bssids = cJSON_GetObjectItemCaseSensitive(query, "BSSIDs");
++    auto parse_mac = [](cJSON *value, unsigned char *address) {
++        if (!cJSON_IsString(value) || strlen(value->valuestring) != 17) return false;
++        for (int index = 0; index < 6; ++index) {
++            const char *part = value->valuestring + index * 3;
++            if (!isxdigit(static_cast<unsigned char>(part[0])) ||
++                !isxdigit(static_cast<unsigned char>(part[1])) ||
++                (index < 5 && part[2] != ':')) return false;
++            address[index] = static_cast<unsigned char>(strtoul(std::string(part, 2).c_str(), nullptr, 16));
++        }
++        return (address[0] & 1) == 0;
++    };
++    mac_address_t destination = {};
++    if (!parse_mac(agent, destination) || !cJSON_IsArray(bssids) ||
++        cJSON_GetArraySize(bssids) < 1 || cJSON_GetArraySize(bssids) > EM_MAX_BSSS) {
++        cJSON_Delete(document);
++        m_ctrl_cmd->send_result(em_cmd_out_status_invalid_input);
++        return;
++    }
++    std::unique_lock<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    em_t *radio = static_cast<em_t *>(hash_map_get_first(m_em_map));
++    while (radio != nullptr && (radio->is_al_interface_em() ||
++        memcmp(radio->get_data_model()->get_agent_al_interface_mac(), destination, 6) != 0)) {
++        radio = static_cast<em_t *>(hash_map_get_next(m_em_map, radio));
++    }
++    if (radio == nullptr) {
++        cJSON_Delete(document);
++        m_ctrl_cmd->send_result(em_cmd_out_status_not_ready);
++        return;
++    }
++    const int count = cJSON_GetArraySize(bssids);
++    std::vector<unsigned char> frame(29 + 6 * count, 0);
++    memcpy(frame.data(), destination, 6);
++    memcpy(frame.data() + 6, radio->get_data_model()->get_ctl_mac(), 6);
++    frame[12] = 0x89;
++    frame[13] = 0x3a;
++    frame[16] = 0x80;
++    frame[17] = 0x0b;
++    const unsigned short identifier = get_next_msg_id();
++    frame[18] = identifier >> 8;
++    frame[19] = identifier & 0xff;
++    frame[21] = 0x80;
++    frame[22] = 0x93;
++    frame[23] = (1 + 6 * count) >> 8;
++    frame[24] = (1 + 6 * count) & 0xff;
++    frame[25] = count;
++    for (int index = 0; index < count; ++index) {
++        unsigned char *address = frame.data() + 26 + 6 * index;
++        if (!parse_mac(cJSON_GetArrayItem(bssids, index), address) ||
++            radio->get_data_model()->get_bss_info_with_mac(address) == nullptr) {
++            cJSON_Delete(document);
++            m_ctrl_cmd->send_result(em_cmd_out_status_invalid_input);
++            return;
++        }
++    }
++    cJSON_Delete(document);
++    topology_lock.unlock();
++    m_ctrl_cmd->send_result(radio->send_ap_metrics_query(frame.data(), static_cast<unsigned int>(frame.size())) < 0 ?
++        em_cmd_out_status_not_ready : em_cmd_out_status_success);
+ }
+ 
+ void em_ctrl_t::handle_unassoc_sta_metrics_query(em_bus_event_t *evt)
+@@ -923,6 +986,9 @@
+            handle_link_stats_alarm_report(evt);
+            break;
+ 
++        case em_bus_event_type_ap_metrics_query:
++           handle_ap_metrics_req(evt);
++           break;
+ 	case em_bus_event_type_unassoc_sta_query:
+            handle_unassoc_sta_metrics_query(evt);
+            break;
+--- a/src/em/em.cpp	2026-09-15 13:22:15.000000000 -0700
++++ b/src/em/em.cpp	2026-09-15 15:07:34.005633503 -0700
+@@ -361,6 +361,7 @@
+         case em_msg_type_beacon_metrics_query:
+         case em_msg_type_beacon_metrics_rsp:
+         case em_msg_type_ap_metrics_rsp:
++        case em_msg_type_ap_metrics_query:
+         case em_msg_type_topo_vendor:
+ 	case em_msg_type_unassoc_sta_link_metrics_query: 
+         case em_msg_type_unassoc_sta_link_metrics_rsp:	    
+--- a/src/em/metrics/em_metrics.cpp	2026-09-15 13:22:14.000000000 -0700
++++ b/src/em/metrics/em_metrics.cpp	2026-09-15 15:38:43.623087701 -0700
+@@ -40,6 +40,7 @@
+ #include <time.h>
+ #include <openssl/rand.h>
+ #include "em_metrics.h"
++#include "em_ap_metrics_query.h"
+ #include "em_msg.h"
+ #include "dm_easy_mesh.h"
+ #include "em_cmd.h"
+@@ -1425,6 +1426,31 @@
+ }
+ 
+ 
++int em_metrics_t::send_ap_metrics_query(unsigned char *frame, unsigned int length)
++{
++    em_cmd_ap_metrics_rprt_params_t params = {};
++    if (!em_decode_ap_metrics_query(frame, length, params)) return -1;
++    return send_frame(frame, length);
++}
++
++int em_metrics_t::handle_ap_metrics_query(unsigned char *buff, unsigned int len)
++{
++    em_cmd_ap_metrics_rprt_params_t params = {};
++    if (!em_decode_ap_metrics_query(buff, len, params) ||
++        memcmp(params.query_source, get_data_model()->get_ctl_mac(), 6) != 0 ||
++        len > 2048) return -1;
++    const char digits[] = "0123456789abcdef";
++    std::vector<char> encoded(len * 2 + 1, 0);
++    for (unsigned int index = 0; index < len; ++index) {
++        encoded[index * 2] = digits[buff[index] >> 4];
++        encoded[index * 2 + 1] = digits[buff[index] & 15];
++    }
++    get_mgr()->io_process(em_bus_event_type_ap_metrics_query,
++        reinterpret_cast<unsigned char *>(encoded.data()),
++        static_cast<unsigned int>(encoded.size()));
++    return 0;
++}
++
+ int em_metrics_t::send_ap_metrics_response(const em_cmd_ap_metrics_rprt_params_t &params)
+ {
+     if (params.num_radios < 0 || params.num_radios > EM_MAX_RADIO_PER_AGENT) {
+@@ -1465,7 +1491,7 @@
+         return true;
+     };
+ 
+-    memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
++    memcpy(tmp, params.query ? params.query_source : dm->get_ctl_mac(), sizeof(mac_address_t));
+     tmp += sizeof(mac_address_t);
+     len += sizeof(mac_address_t);
+ 
+@@ -1481,7 +1507,7 @@
+ 
+     memset(tmp, 0, sizeof(em_cmdu_t));
+     cmdu->type = htons(msg_type);
+-    cmdu->id = htons(get_mgr()->get_next_msg_id());
++    cmdu->id = htons(params.query ? params.query_id : get_mgr()->get_next_msg_id());
+     cmdu->last_frag_ind = 1;
+ 
+     tmp += sizeof(em_cmdu_t);
+@@ -1491,6 +1517,11 @@
+     //AP Metrics TLV (17.2.22)
+     for (bss_index = 0; bss_index < static_cast<int>(dm->m_num_bss); bss_index++) {
+ 
++        if (!em_ap_metrics_query_contains(params.ruid, params.num_radios,
++            dm->m_bss[bss_index].m_bss_info.ruid.mac) ||
++            (params.query && !em_ap_metrics_query_contains(params.query_bssids,
++                params.query_bss_count, dm->m_bss[bss_index].m_bss_info.bssid.mac))) continue;
++
+         if(dm->m_bss[bss_index].get_bss_info()->vap_mode != em_vap_mode_ap) {
+             em_printfout("Vap mode is not ap, skipping");
+             continue;
+@@ -1590,6 +1621,8 @@
+     }
+ 
+     for (int radio_index = 0; radio_index < params.num_radios; radio_index++) {
++        if (params.query && !em_ap_metrics_query_contains(params.query_radios,
++            params.query_radio_count, params.ruid[radio_index])) continue;
+         //Radio Metrics TLV (17.2.60)
+         if (get_profile_type() > em_profile_type_1) {
+             tlv = reinterpret_cast<em_tlv_t *> (tmp);
+@@ -3081,6 +3114,9 @@
+         case em_msg_type_ap_metrics_rsp:
+             handle_ap_metrics_response(data, len);
+             break;
++        case em_msg_type_ap_metrics_query:
++            handle_ap_metrics_query(data, len);
++            break;
+         case em_msg_type_topo_vendor:
+             handle_vendor_msg(data, len);
+             break;
+--- a/src/rdkb-cli/em_cmd_cli.cpp	2026-09-15 13:22:05.000000000 -0700
++++ b/src/rdkb-cli/em_cmd_cli.cpp	2026-09-15 15:18:56.893711297 -0700
+@@ -70,6 +70,7 @@
+     {.u = {.args = {2, {"", "", "", "", ""}, "MLDReconfig"}}},
+     {.u = {.args = {2, {"", "", "", "", ""}, "WifiReset"}}},
+     {.u = {.args = {2, {"", "", "", "", ""}, "UnassocSTAQuery.json"}}},
++    {.u = {.args = {2, {"", "", "", "", ""}, "APMetricsQuery.json"}}},
+ 	{.u = {.args = {0, {"", "", "", "", ""}, "max"}}},
+ };
+ 
+@@ -105,7 +106,8 @@
+     em_cmd_t(em_cmd_type_mld_reconfig, spec_params[27]),
+     em_cmd_t(em_cmd_type_get_reset, spec_params[28]),
+     em_cmd_t(em_cmd_type_unassoc_sta_query, spec_params[29]),
+-    em_cmd_t(em_cmd_type_max, spec_params[30]),
++    em_cmd_t(em_cmd_type_ap_metrics_query, spec_params[30]),
++    em_cmd_t(em_cmd_type_max, spec_params[31]),
+ };
+ 
+ int em_cmd_cli_t::get_edited_node(em_network_node_t *node, const char *header, char *buff)
+@@ -468,6 +470,14 @@
+             snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
+             break;
+ 
++        case em_cmd_type_ap_metrics_query:
++            bevt->type = em_bus_event_type_ap_metrics_query;
++            info = &bevt->u.subdoc;
++            snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
++            if ((bevt->data_len = get_edited_node(m_cmd.m_param.net_node,
++                "APMetricsQuery", info->buff)) < 0) return -1;
++            break;
++
+        case em_cmd_type_unassoc_sta_query:
+ 
+            bevt->type = em_bus_event_type_unassoc_sta_query;
+--- a/src/rdkb-cli/main.go	2026-09-15 13:22:15.000000000 -0700
++++ b/src/rdkb-cli/main.go	2026-09-15 15:45:58.773795995 -0700
+@@ -3167,6 +3167,7 @@
+ 	api.HandleFunc("/wifireset", WifiResetHandler).Methods("GET", "POST")
+ 
+ 	// Unassoc STA 
++    api.HandleFunc("/ap_metrics_query", apMetricsQueryHandler).Methods("POST")
+ 	api.HandleFunc("/unassoc_sta_query", unassocStaQueryHandler).Methods("POST")
+ 	api.HandleFunc("/unassoc_sta_metrics", unassocStaMetricsHandler).Methods("GET")
+ 
+@@ -4460,6 +4461,58 @@
+     })
+ }
+ 
++func apMetricsQueryHandler(writer http.ResponseWriter, request *http.Request) {
++    defer request.Body.Close()
++    request.Body = http.MaxBytesReader(writer, request.Body, 8192)
++    var query struct {
++        AlMac string
++        BSSIDs []string
++    }
++    if err := json.NewDecoder(request.Body).Decode(&query); err != nil ||
++        len(query.BSSIDs) == 0 || len(query.BSSIDs) > 24 {
++        http.Error(writer, "AlMac and 1..24 BSSIDs required", http.StatusBadRequest)
++        return
++    }
++    for index, value := range append([]string{query.AlMac}, query.BSSIDs...) {
++        address, err := net.ParseMAC(value)
++        if err != nil || len(address) != 6 || address[0]&1 != 0 {
++            http.Error(writer, "Invalid unicast MAC address", http.StatusBadRequest)
++            return
++        }
++        if index == 0 {
++            query.AlMac = address.String()
++        } else {
++            query.BSSIDs[index - 1] = address.String()
++        }
++    }
++    encoded, _ := json.Marshal(query)
++    payload := C.CString(string(encoded))
++    defer C.free(unsafe.Pointer(payload))
++    node := C.get_network_tree(payload)
++    if node == nil {
++        http.Error(writer, "Cannot encode query", http.StatusInternalServerError)
++        return
++    }
++    defer C.free_network_tree(node)
++    command := C.CString("ap_metrics_query OneWifiMesh")
++    defer C.free(unsafe.Pointer(command))
++    result := execEMCommand(command, node)
++    if result == nil {
++        http.Error(writer, "Native query unavailable", http.StatusServiceUnavailable)
++        return
++    }
++    defer C.free_network_tree(result)
++    if status := getTreeValue(result, "Status"); status != "Success" {
++        http.Error(writer, "Native query rejected: " + status, http.StatusServiceUnavailable)
++        return
++    }
++    writer.Header().Set("Content-Type", "application/json")
++    writer.WriteHeader(http.StatusAccepted)
++    _ = json.NewEncoder(writer).Encode(map[string]interface{}{
++        "success": true, "state": "submitted", "message": "Collection completes asynchronously in native AP Metrics responses",
++    })
++}
++
+ func submitCandidateQuery(jsonBytes []byte) error {
+     cJsonStr := C.CString(string(jsonBytes))
+     defer C.free(unsafe.Pointer(cJsonStr))

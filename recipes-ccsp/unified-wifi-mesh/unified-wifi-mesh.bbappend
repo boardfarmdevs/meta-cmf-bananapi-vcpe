@@ -185,8 +185,14 @@ EASYMESH_CORE_PATCHES = " \
     file://0185-report-unsolicited-radio-channel-updates.patch \
     file://0186-advance-ready-agent-commands-on-events.patch \
     file://0187-policy-select-ready-owner-and-check-admission.patch \
+    file://0188-prioritize-control-and-preserve-radio-reports.patch \
     file://0188-cli-serve-offline-ui-dependencies.patch \
     file://0189-cli-follow-room-and-clarify-roam-history.patch \
+    file://0190-agent-refresh-operating-channels-after-renew.patch \
+    file://0191-agent-refresh-operating-channels-periodically.patch \
+    file://0193-controller-lock-topology-notification-station-maps.patch \
+    file://0194-agent-handle-native-ap-metrics-queries.patch \
+    file://0195-cli-show-native-ap-load-on-hover.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

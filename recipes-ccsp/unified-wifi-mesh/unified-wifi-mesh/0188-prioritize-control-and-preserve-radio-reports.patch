@@ -1,0 +1,51 @@
+Subject: [PATCH] prioritize native control traffic and retain transient radio updates
+
+Assign Linux 802.1D user priority 7 to the alternative raw Ethernet sender.
+AL-SAP builds use ieee1905-em patch 0008 instead. The lab bridge classifier
+must restore this priority after veth forwarding and at wireless relay hops.
+The traffic still crosses the real wireless backhaul, including contention,
+loss and retransmissions. Priority-aware radio admission must be enabled in
+the virtual medium; this is not an out-of-band metrics shortcut.
+
+Accept radio callbacks during post-onboarding transient states, including a
+pending candidate report. The callback is authoritative even when a metrics
+transaction temporarily owns the radio; do not silently drop its channel report.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index dd30589..6184779 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -854,6 +854,15 @@ int em_t::send_frame(unsigned char *buff, unsigned int len, bool multicast)
+         return -1;
+     }
+ 
++    const int control_priority = 256 + 7;
++    if (setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &control_priority,
++                   sizeof(control_priority)) < 0) {
++        em_printfout("Could not assign IEEE 1905 network-control priority: %s",
++                     strerror(errno));
++        close(sock);
++        return -1;
++    }
++
+     sadr_ll.sll_ifindex = static_cast<int>(if_nametoindex(ifname));
+     sadr_ll.sll_halen = ETH_ALEN; // length of destination mac address
+     sadr_ll.sll_protocol = htons(ETH_P_ALL);
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 8d5b8ed..7c3332a 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -753,10 +753,7 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
+                 if (!(em->is_al_interface_em())) {
+                     radio = pcmd->m_data_model.get_radio(em->get_radio_interface_mac());
+                     if (radio != NULL &&
+-                        (em->get_state() == em_state_agent_topo_synchronized ||
+-                         em->get_state() == em_state_agent_ap_cap_report ||
+-                         em->get_state() == em_state_agent_channel_select_configuration_pending ||
+-                         em->get_state() >= em_state_agent_configured)) {
++                        em->get_state() >= em_state_agent_topo_synchronized) {
+                         queue_push(pcmd->m_em_candidates, em);
+                         count++;
+                         dm_easy_mesh_t::macbytes_to_string(em->get_radio_interface_mac(), dst_mac_str);

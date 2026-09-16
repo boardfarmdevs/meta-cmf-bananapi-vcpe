@@ -70,3 +70,13 @@ def test_startup_and_acceptance_require_loaded_namespace_fix():
         source = (ROOT / name).read_text()
         assert "/sys/module/cfg80211/version" in source
         assert "lab-netns-owner-1" in source
+
+
+def test_clean_appliance_reboots_after_radio_module_installation():
+    builder = (ROOT / "vm/lxd/build.sh").read_text()
+    installed = builder.index("bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh")
+    rebooted = builder.index('lxc restart "$name" --timeout 300', installed)
+    ready = builder.index("wait_agent", rebooted)
+    verified = builder.index('cat /sys/module/cfg80211/version', ready)
+    provisioned = builder.index("bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh", verified)
+    assert installed < rebooted < ready < verified < provisioned

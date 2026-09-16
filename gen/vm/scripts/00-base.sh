@@ -19,6 +19,9 @@ apt-get install -y --no-install-recommends \
     docker.io \
     fakeroot \
     git \
+    iperf3 \
+    iproute2 \
+    iptables \
     iputils-ping \
     iw \
     jq \
@@ -26,6 +29,7 @@ apt-get install -y --no-install-recommends \
     libnl-3-dev \
     libnl-genl-3-dev \
     net-tools \
+    nftables \
     patch \
     pkg-config \
     rsync \

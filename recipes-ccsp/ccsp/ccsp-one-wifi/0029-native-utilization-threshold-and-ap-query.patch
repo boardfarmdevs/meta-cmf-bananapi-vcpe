@@ -1,0 +1,546 @@
+Subject: [PATCH] Evaluate utilization edges independently and service AP metrics queries
+
+Upstream-Status: Pending
+
+--- a/include/wifi_em_util_threshold.h	1969-12-31 16:00:00.000000000 -0800
++++ b/include/wifi_em_util_threshold.h	2026-09-15 15:09:29.517569882 -0700
+@@ -0,0 +1,31 @@
++#ifndef WIFI_EM_UTIL_THRESHOLD_H
++#define WIFI_EM_UTIL_THRESHOLD_H
++
++#include <stdbool.h>
++
++typedef struct {
++    bool valid;
++    bool above;
++    unsigned int channel;
++    unsigned int threshold;
++} em_util_threshold_t;
++
++static bool em_util_threshold_crossed(em_util_threshold_t *state, unsigned int threshold,
++    unsigned int channel, unsigned int value, bool valid)
++{
++    if (threshold == 0 || threshold > 255) {
++        state->valid = false;
++        return false;
++    }
++    if (!valid || value > 255) return false;
++    bool above = value >= threshold;
++    bool crossed = state->valid && state->threshold == threshold &&
++        state->channel == channel && state->above != above;
++    state->valid = true;
++    state->above = above;
++    state->threshold = threshold;
++    state->channel = channel;
++    return crossed;
++}
++
++#endif
+--- a/include/wifi_events.h	2026-09-13 09:30:12.000000000 -0700
++++ b/include/wifi_events.h	2026-09-15 15:09:29.517569882 -0700
+@@ -186,6 +186,7 @@
+     wifi_event_type_sm_app_enable,
+     wifi_event_type_link_quality_rfc,
+     wifi_event_type_send_btm_req,
++    wifi_event_type_em_ap_metrics_query,
+     wifi_event_command_max,
+ 
+     wifi_event_monitor_diagnostics = wifi_event_type_base
+--- a/source/apps/em/wifi_em.c	2026-09-13 09:30:18.000000000 -0700
++++ b/source/apps/em/wifi_em.c	2026-09-15 15:58:41.594895606 -0700
+@@ -21,6 +21,7 @@
+ #include "scheduler.h"
+ #include "wifi_em_utils.h"
+ #include "wifi_em.h"
++#include "wifi_em_util_threshold.h"
+ #include "wifi_hal.h"
+ #include "wifi_hal_ap.h"
+ #include "wifi_mgr.h"
+@@ -47,8 +48,12 @@
+     wifi_app_t *app;
+     int sched_id;
+     int current_interval;
++    const char *query;
+ } em_ap_report_callback_arg_t;
+ 
++static int ap_report_push_cb(em_ap_report_callback_arg_t *args);
++static em_util_threshold_t em_util_thresholds[MAX_NUM_RADIOS];
++
+ typedef struct {
+     sta_data_t assoc_stats[BSS_MAX_NUM_STATIONS];
+     bool threshold_hit[BSS_MAX_NUM_STATIONS];
+@@ -1398,7 +1403,7 @@
+     unsigned char util255 = 0;
+ 
+     radio_index = provider_response->args.radio_index;
+-    if (radio_index >= MAX_NUM_RADIOS) {
++    if (radio_index < 0 || radio_index >= MAX_NUM_RADIOS) {
+         wifi_util_error_print(WIFI_EM, "%s:%d Invalid radio index %d\n", __func__, __LINE__,
+             radio_index);
+         return RETURN_ERR;
+@@ -1427,6 +1432,7 @@
+         __LINE__, radio_index, provider_response->stat_array_size);
+ 
+     for (count = 0; count < provider_response->stat_array_size; count++) {
++        if (channel_stats[count].ch_number != radio->oper.channel) continue;
+         wifi_util_dbg_print(WIFI_EM, "%s:%d count : %d ch_utilization_busy_tx: %d\r\n", __func__, __LINE__,
+             count, channel_stats[count].ch_utilization_busy_tx);
+         wifi_util_dbg_print(WIFI_EM, "%s:%d count : %d ch_utilization_busy_self: %d\r\n", __func__, __LINE__,
+@@ -1462,9 +1468,6 @@
+         radio_metrics = &em_ap_metrics_report_cache.radio_report[radio_index].radio_metrics;
+         memcpy(radio_metrics->ruid, radio_mac, sizeof(mac_addr_t));
+ 
+-        /* EasyMesh wants 1/255 fractions of the window; the HAL counters are
+-         * cumulative, so use the delta. First sample, channel change or counter
+-         * reset reports 0. */
+         survey_prev = &em_chan_survey_prev[radio_index];
+         if (survey_prev->total != 0 &&
+             survey_prev->chan == channel_stats[count].ch_number &&
+@@ -1489,11 +1492,6 @@
+             radio_metrics->receive_other = em_survey_fraction((d_rx > d_self) ? (d_rx - d_self) : 0, d_total);
+             /* Some drivers exclude own TX from busy, so cover at least TX+RX. */
+             util255 = em_survey_fraction((d_busy > d_tx + d_rx) ? d_busy : d_tx + d_rx, d_total);
+-        } else {
+-            radio_metrics->transmit = 0;
+-            radio_metrics->receive_self = 0;
+-            radio_metrics->receive_other = 0;
+-            util255 = 0;
+         }
+         survey_prev->chan = channel_stats[count].ch_number;
+         survey_prev->total = channel_stats[count].ch_utilization_total;
+@@ -1502,6 +1500,8 @@
+         survey_prev->busy_self = channel_stats[count].ch_utilization_busy_self;
+         survey_prev->busy_rx = channel_stats[count].ch_utilization_busy_rx;
+ 
++        if (d_total == 0) continue;
++
+         /* ANPI: 0..220 in steps of 0.5 dB starting at -110 dBm. */
+         anpi = (channel_stats[count].ch_noise + 110) * 2;
+         if (anpi < 0) {
+@@ -1558,6 +1558,24 @@
+         }
+     }
+ 
++    em_ap_report_callback_arg_t *report_args = &em_ap_metrics_report_cache.args;
++    if (report_args->app != NULL && d_total > 0) {
++        for (int policy_index = 0;
++             policy_index < report_args->policy_config.radio_metrics_policies.radio_count;
++             ++policy_index) {
++            radio_metrics_policy_t *policy =
++                &report_args->policy_config.radio_metrics_policies.radio_metrics_policy[policy_index];
++            if (em_get_radio_index_from_mac(policy->ruid) != radio_index) continue;
++            if (em_util_threshold_crossed(&em_util_thresholds[radio_index],
++                policy->ap_util_threshold, radio->oper.channel, util255, true)) {
++                em_ap_report_callback_arg_t triggered = *report_args;
++                triggered.policy_config.radio_metrics_policies.radio_count = 1;
++                triggered.policy_config.radio_metrics_policies.radio_metrics_policy[0] = *policy;
++                ap_report_push_cb(&triggered);
++            }
++        }
++    }
++
+     wifi_util_dbg_print(WIFI_EM, "%s:%d Process of radio chann stats response complete\r\n", __func__,
+         __LINE__);
+ 
+@@ -1915,7 +1933,9 @@
+         case em_app_event_type_assoc_dev_stats_periodic:
+             data[i].u.mon_stats_config.args.app_info = em_app_event_type_assoc_dev_stats_periodic;
+             data[i].u.mon_stats_config.interval_ms =
+-                app->data.u.em_data.em_config.ap_metric_policy.interval * 1000;
++                (app->data.u.em_data.em_config.ap_metric_policy.interval > 0 &&
++                 app->data.u.em_data.em_config.ap_metric_policy.interval < 5 ?
++                 app->data.u.em_data.em_config.ap_metric_policy.interval : 5) * 1000;
+             data->u.mon_stats_config.start_immediately = true;
+             break;
+ 
+@@ -1962,7 +1982,7 @@
+     unsigned int i = 0, j = 0, k = 0, cnt = 0;
+     int cache_vap_index = -1;
+     mac_addr_str_t radio_str;
+-    em_config_t *em_config = &args->app->data.u.em_data.em_config;
++    em_config_t *em_config = &args->policy_config;
+     int req_radio_count = em_config->radio_metrics_policies.radio_count;
+ 
+     wifi_util_error_print(WIFI_EM, "%s:%d: requested radio count %d\n",
+@@ -1978,6 +1998,10 @@
+ 
+     memset(data, 0, sizeof(webconfig_subdoc_data_t));
+     for (int i = 0; i < req_radio_count; i++) {
++        radio_metrics_policy_t *policy = &em_config->radio_metrics_policies.radio_metrics_policy[i];
++        policy_type = policy->traffic_stats ? (policy->link_metrics ?
++            em_ap_metrics_link_and_traffic : em_ap_metrics_traffic) :
++            (policy->link_metrics ? em_ap_metrics_link : em_ap_metrics_only);
+         radio_index = em_get_radio_index_from_mac(em_config->radio_metrics_policies.radio_metrics_policy[i].ruid);
+         radio = find_radio_config_by_index(radio_index);
+         if (radio == NULL) {
+@@ -2196,6 +2220,23 @@
+         goto cleanup;
+     }
+ 
++    if (args->query != NULL) {
++        cJSON *document = cJSON_Parse(data->u.encoded.raw);
++        if (document == NULL || cJSON_AddStringToObject(document, "APMetricsQuery", args->query) == NULL) {
++            cJSON_Delete(document);
++            rc = RETURN_ERR;
++            goto cleanup;
++        }
++        char *encoded = cJSON_PrintUnformatted(document);
++        cJSON_Delete(document);
++        if (encoded == NULL) {
++            rc = RETURN_ERR;
++            goto cleanup;
++        }
++        free(data->u.encoded.raw);
++        data->u.encoded.raw = encoded;
++    }
++
+     rdata.data_type = bus_data_type_string;
+     rdata.raw_data.bytes = (void *)data->u.encoded.raw;
+     rdata.raw_data_len = strlen(data->u.encoded.raw) + 1;
+@@ -2235,137 +2276,58 @@
+ int em_ap_report_config_task(wifi_app_t *app, em_config_t *em_config, wifi_mon_stats_request_state_t state,
+     int radio_index, em_policy_req_type_t policy_type)
+ {
+-    int rc = RETURN_OK;
++    em_ap_report_callback_arg_t *args = &em_ap_metrics_report_cache.args;
+     int interval = em_config->ap_metric_policy.interval;
+-    em_ap_report_callback_arg_t *task_args = &em_ap_metrics_report_cache.args;
+-
+-    if (state == mon_stats_request_state_stop) {
+-        rc = scheduler_cancel_timer_task(app->ctrl->sched, em_ap_metrics_report_cache.args.sched_id);
+-        if (rc != 0) {
+-            wifi_util_error_print(WIFI_EM, "%s:%d: Schedular task removal failure for sched id %d\n", __func__,
+-                __LINE__, em_ap_metrics_report_cache.args.sched_id);
+-            return RETURN_ERR;
++    args->app = app;
++    args->policy_type = policy_type;
++    args->policy_config = *em_config;
++    args->query = NULL;
++    if (state == mon_stats_request_state_stop || interval == 0) {
++        if (args->sched_id != 0) {
++            if (scheduler_cancel_timer_task(app->ctrl->sched, args->sched_id) != 0) return RETURN_ERR;
++            args->sched_id = 0;
+         }
+-        wifi_util_dbg_print(WIFI_EM, "%s:%d: Schedular task removal success for sched_id:%d\n", __func__,
+-            __LINE__, em_ap_metrics_report_cache.args.sched_id);
+-        em_ap_metrics_report_cache.args.sched_id = 0;
+-
++        args->current_interval = 0;
+         return RETURN_OK;
+     }
+-
+-    task_args->app = app;
+-    task_args->policy_type = policy_type;
+-    task_args->policy_config = *em_config;
+-
+-    rc = scheduler_add_timer_task(app->ctrl->sched, FALSE, &(em_ap_metrics_report_cache.args.sched_id),
+-        ap_report_push_cb, task_args, interval * 1000, 0, FALSE);
+-    if (rc != RETURN_OK) {
+-        wifi_util_error_print(WIFI_EM, "%s:%d: failed to add timer task\n", __func__, __LINE__);
++    int result = RETURN_OK;
++    if (args->sched_id == 0) {
++        result = scheduler_add_timer_task(app->ctrl->sched, FALSE, &args->sched_id,
++            ap_report_push_cb, args, interval * 1000, 0, FALSE);
++    } else if (args->current_interval != interval) {
++        result = scheduler_update_timer_task_interval(app->ctrl->sched, args->sched_id, interval * 1000);
+     }
+-
+-    wifi_util_dbg_print(WIFI_EM, "%s:%d: added timer task %d with interval=%d for radio index %d\n",
+-        __func__, __LINE__, em_ap_metrics_report_cache.args.sched_id, interval, radio_index);
+-
+-    return RETURN_OK;
++    if (result == RETURN_OK) args->current_interval = interval;
++    return result;
+ }
+ 
+ int ap_metrics_collector_config(wifi_app_t *app, wifi_monitor_data_t *data,
+     wifi_mon_stats_request_state_t state, em_config_t *em_config, em_policy_req_type_t policy_type)
+ {
+     wifi_event_route_t route;
+-    radio_metrics_policy_t *metrics_pol = NULL;
+-    em_policy_req_type_t ap_metrics_inclusion;
+-    int radio_index = -1;
+-    int radio_count = -1;
+-    unsigned int i = 0;
+-    unsigned int vapArrayIndex = 0;
+-    wifi_mgr_t *wifi_mgr = get_wifimgr_obj();
+-
+-    if (wifi_mgr == NULL) {
+-        wifi_util_error_print(WIFI_EM, "%s:%d: wifi_mgr is NULL\n", __func__, __LINE__);
+-        return RETURN_ERR;
+-    }
+-
++    wifi_mgr_t *manager = get_wifimgr_obj();
++    if (manager == NULL || em_common_config_to_monitor_queue(data, em_config) != RETURN_OK) return RETURN_ERR;
+     em_route(&route);
+-
+-    if (em_common_config_to_monitor_queue(data, em_config) != RETURN_OK) {
+-        wifi_util_error_print(WIFI_EM, "%s:%d em Config creation failed %d\r\n", __func__, __LINE__,
+-            stats_type_client);
+-        return RETURN_ERR;
+-    }
+-
+-    // 1. configure collection task and push to monitor Q
+-    // 2. Start schedular to collect reports from cache and publish to agent every interval
+-    // requested by Agent
+-    radio_count = em_config->radio_metrics_policies.radio_count;
+-
+-    for (i = 0; i < radio_count; i++) {
+-        radio_index = em_get_radio_index_from_mac(
+-            em_config->radio_metrics_policies.radio_metrics_policy[i].ruid);
+-
+-        if (radio_index == RETURN_ERR) {
+-            return RETURN_ERR;
++    for (int index = 0; index < em_config->radio_metrics_policies.radio_count; ++index) {
++        int radio_index = em_get_radio_index_from_mac(em_config->radio_metrics_policies.radio_metrics_policy[index].ruid);
++        if (radio_index < 0 || radio_index >= MAX_NUM_RADIOS) return RETURN_ERR;
++        data[index].u.mon_stats_config.data_type = mon_stats_type_radio_channel_stats;
++        data[index].u.mon_stats_config.args.radio_index = radio_index;
++        data[index].u.mon_stats_config.args.app_info = em_app_event_type_ap_metrics_rad_chan_stats;
++        data[index].u.mon_stats_config.args.scan_mode = WIFI_RADIO_SCAN_MODE_NONE;
++        data[index].u.mon_stats_config.interval_ms = 1000;
++        data[index].u.mon_stats_config.start_immediately = true;
++        push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config, &route);
++        data[index].u.mon_stats_config.data_type = mon_stats_type_vap_stats;
++        data[index].u.mon_stats_config.args.app_info = em_app_event_type_vap_stats_periodic;
++        data[index].u.mon_stats_config.interval_ms = 5000;
++        for (unsigned int vap_index = 0; vap_index < getNumberVAPsPerRadio(radio_index); ++vap_index) {
++            data[index].u.mon_stats_config.args.vap_index =
++                manager->radio_config[radio_index].vaps.rdk_vap_array[vap_index].vap_index;
++            push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config, &route);
+         }
+-
+-        data[i].u.mon_stats_config.data_type = mon_stats_type_radio_channel_stats;
+-        data[i].u.mon_stats_config.args.radio_index = radio_index;
+-        data[i].u.mon_stats_config.args.app_info = em_app_event_type_ap_metrics_rad_chan_stats;
+-        data[i].u.mon_stats_config.args.scan_mode = WIFI_RADIO_SCAN_MODE_NONE;
+-        data[i].u.mon_stats_config.interval_ms =
+-            em_config->ap_metric_policy.interval * 1000;
+-        data->u.mon_stats_config.start_immediately = true;
+-        push_event_to_monitor_queue(data + i, wifi_event_monitor_data_collection_config, &route);
+-
+-        data[i].u.mon_stats_config.data_type = mon_stats_type_vap_stats;
+-        data[i].u.mon_stats_config.args.radio_index = radio_index;
+-        data[i].u.mon_stats_config.args.app_info = em_app_event_type_vap_stats_periodic;
+-        data[i].u.mon_stats_config.interval_ms =
+-            em_config->ap_metric_policy.interval * 1000;
+-        data->u.mon_stats_config.start_immediately = true;
+-        // for each vap push the event to monitor queue
+-        // for extended metrics
+-        for (vapArrayIndex = 0;
+-             vapArrayIndex < getNumberVAPsPerRadio(radio_index);
+-             vapArrayIndex++) {
+-            data[i].u.mon_stats_config.args.vap_index =
+-                wifi_mgr->radio_config[data[i].u.mon_stats_config.args.radio_index]
+-                    .vaps.rdk_vap_array[vapArrayIndex]
+-                    .vap_index;
+-            push_event_to_monitor_queue(data + i, wifi_event_monitor_data_collection_config, &route);
+-            wifi_util_dbg_print(WIFI_EM, "%s:%d:configuring mon_stats_type_vap_stats radio=%d vap=%d app_info=%d\n",
+-                __func__, __LINE__, data[i].u.mon_stats_config.args.radio_index,
+-                data[i].u.mon_stats_config.args.vap_index,
+-                data[i].u.mon_stats_config.args.app_info);
+-        }
+-
+-        if (em_config->ap_metric_policy.interval == 0 ||
+-            em_ap_metrics_report_cache.args.sched_id == 0) {
+-            em_ap_report_config_task(app, em_config, state, radio_index, policy_type);
+-        } else if (em_config->ap_metric_policy.interval != em_ap_metrics_report_cache.args.current_interval &&
+-                   em_ap_metrics_report_cache.args.sched_id > 0) {
+-            if (scheduler_update_timer_task_interval(app->ctrl->sched,
+-                em_ap_metrics_report_cache.args.sched_id,
+-                em_config->ap_metric_policy.interval * 1000) != 0) {
+-
+-                wifi_util_error_print(WIFI_EM, "%s:%d scheduler update timer interval failed for timer task %d of radio %d\r\n",
+-                    __func__, __LINE__,
+-                    em_ap_metrics_report_cache.args.sched_id, radio_index);
+-            } else {
+-                wifi_util_error_print(WIFI_EM, "%s:%d scheduler update timer interval success for timer task:%d with interval=%d for radio %d\n",
+-                    __func__, __LINE__, em_ap_metrics_report_cache.args.sched_id,
+-                    em_config->ap_metric_policy.interval, radio_index);
+-            }
+-        }
+-
+-        wifi_util_error_print(WIFI_EM, "%s:%d scheduler update timer interval else for timer task:%d with interval=%d for radio %d\n",
+-                    __func__, __LINE__, em_ap_metrics_report_cache.args.sched_id,
+-                    em_config->ap_metric_policy.interval, radio_index);
+-
+-        em_ap_metrics_report_cache.args.policy_type = policy_type;
+-        em_ap_metrics_report_cache.args.current_interval = em_config->ap_metric_policy.interval;
+     }
+-
+-    return RETURN_OK;
++    return em_ap_report_config_task(app, em_config, state, 0, policy_type);
+ }
+ 
+ int ap_metrics_config_to_monitor_queue(wifi_app_t *app, wifi_monitor_data_t *data,
+@@ -2377,7 +2339,7 @@
+     int rad_cnt = em_config->radio_metrics_policies.radio_count;
+     int i = 0;
+ 
+-    if (em_config->ap_metric_policy.interval > 0) {
++    if (rad_cnt > 0) {
+         for (i = 0; i < rad_cnt; i++) {
+             metrics_pol = &em_config->radio_metrics_policies.radio_metrics_policy[i];
+             // check further if other optional fields to be included
+@@ -2399,7 +2361,9 @@
+         }
+     }
+ 
+-    ap_metrics_collector_config(app, data, state, em_config, ap_metrics_inclusion);
++    if (ap_metrics_collector_config(app, data, state, em_config, ap_metrics_inclusion) != RETURN_OK) {
++        return RETURN_ERR;
++    }
+ 
+     switch (ap_metrics_inclusion) {
+     case em_ap_metrics_only:
+@@ -2538,55 +2502,14 @@
+     new_policy_cfg = &webconfig_data->u.decoded.em_config;
+     rad_cnt = new_policy_cfg->radio_metrics_policies.radio_count;
+ 
+-    /*  AP metrics:
+-        1. if currently policy interval is active, stop the time and reset timer. If not start
+-       afresh if > 0
+-        2. if interval is same, skip interval check, check other policy changes,
+-        3. if policy interval = 0 just stop
+-        4. Also RCPI/Threshhold for AP metrics - TBD
+-        5. channel util > 0, if recent collection has crossed limit - TBD*/
+-
+-    // check for em_app_policy_req_type_ap_metrics
+-    // only update ap metrics related data to app data's config
+-    for (int i = 0; i < rad_cnt; i++) {
+-        metrics_pol = &new_policy_cfg->radio_metrics_policies.radio_metrics_policy[i];
+-        interval_changed = false;
+-        metrics_different = false;
+-        if (new_policy_cfg->ap_metric_policy.interval != current_policy_cfg->ap_metric_policy.interval) {
+-            interval_changed = true;
+-        }
+-
+-        if (memcmp(&new_policy_cfg->radio_metrics_policies,
+-                   &current_policy_cfg->radio_metrics_policies,
+-                   sizeof(radio_metrics_policies_t)) != 0) {
+-            metrics_different = true;
+-        }
+-
+-        if (new_policy_cfg->ap_metric_policy.interval >= 0 ||
+-            (interval_changed && metrics_different)) {
+-            wifi_util_dbg_print(WIFI_EM, "%s:%d New radio ap policy rcvd \n", __func__, __LINE__);
+-            temp_count = new_policy_cfg->radio_metrics_policies.radio_count;
+-            current_policy_cfg->radio_metrics_policies.radio_count = temp_count;
+-            if (temp_count != 0) {
+-                memcpy(current_policy_cfg->radio_metrics_policies.radio_metrics_policy,
+-                    new_policy_cfg->radio_metrics_policies.radio_metrics_policy,
+-                    temp_count * sizeof(radio_metrics_policy_t));
+-
+-                current_policy_cfg->ap_metric_policy.interval =
+-                    new_policy_cfg->ap_metric_policy.interval;
+-
+-                wifi_util_dbg_print(WIFI_EM, "%s:%d New radio ap policy updated \n", __func__,
+-                    __LINE__);
+-            }
+-        }
+-        if (current_policy_cfg->ap_metric_policy.interval == 0) {
+-            push_em_config_event_to_monitor_queue(app, mon_stats_request_state_stop,
+-                em_policy_req_type_ap_metrics, new_policy_cfg);
+-        } else {
+-            push_em_config_event_to_monitor_queue(app, mon_stats_request_state_start,
+-                em_policy_req_type_ap_metrics, new_policy_cfg);
+-        }
+-    }
++    if (rad_cnt < 0 || rad_cnt > MAX_NUM_RADIOS) return RETURN_ERR;
++    metrics_different = memcmp(&new_policy_cfg->radio_metrics_policies,
++        &current_policy_cfg->radio_metrics_policies, sizeof(radio_metrics_policies_t)) != 0;
++    if (metrics_different) memset(em_util_thresholds, 0, sizeof(em_util_thresholds));
++    current_policy_cfg->radio_metrics_policies = new_policy_cfg->radio_metrics_policies;
++    current_policy_cfg->ap_metric_policy = new_policy_cfg->ap_metric_policy;
++    if (push_em_config_event_to_monitor_queue(app, mon_stats_request_state_start,
++        em_policy_req_type_ap_metrics, current_policy_cfg) != RETURN_OK) return RETURN_ERR;
+ 
+     /*  1. STA Rcpi/threshold ==> send only link metrics
+         2. sta link metrics = 1, then send as part of ap metrics, not covered here */
+@@ -3035,9 +2958,49 @@
+     return bus_error_success;
+ }
+ 
++static int em_refresh_ap_survey(int radio_index)
++{
++    rdk_wifi_radio_t *radio = find_radio_config_by_index(radio_index);
++    if (radio == NULL) return RETURN_ERR;
++    wifi_channelStats_t sample = {0};
++    sample.ch_number = radio->oper.channel;
++    sample.ch_in_pool = true;
++    if (wifi_getRadioChannelStats(radio_index, &sample, 1) != RETURN_OK ||
++        sample.ch_utilization_total == 0) return RETURN_ERR;
++    radio_chan_data_t channel = {0};
++    channel.ch_number = sample.ch_number;
++    channel.ch_noise = sample.ch_noise;
++    channel.ch_utilization_total = sample.ch_utilization_total;
++    channel.ch_utilization_busy = sample.ch_utilization_busy;
++    channel.ch_utilization_busy_tx = sample.ch_utilization_busy_tx;
++    channel.ch_utilization_busy_rx = sample.ch_utilization_busy_rx;
++    channel.ch_utilization_busy_self = sample.ch_utilization_busy_self;
++    wifi_provider_response_t response = {0};
++    response.args.radio_index = radio_index;
++    response.stat_pointer = &channel;
++    response.stat_array_size = 1;
++    return radio_chan_stats_response(&response);
++}
++
+ void handle_em_command_event(wifi_app_t *app, wifi_event_t *event)
+ {
+     switch (event->sub_type) {
++    case wifi_event_type_em_ap_metrics_query:
++    {
++        em_ap_report_callback_arg_t request = em_ap_metrics_report_cache.args;
++        if (request.app == NULL) break;
++        bool available = true;
++        for (int index = 0; index < request.policy_config.radio_metrics_policies.radio_count; ++index) {
++            int radio_index = em_get_radio_index_from_mac(
++                request.policy_config.radio_metrics_policies.radio_metrics_policy[index].ruid);
++            if (radio_index < 0 || em_refresh_ap_survey(radio_index) != RETURN_OK) available = false;
++        }
++        if (available) {
++            request.query = event->u.core_data.msg;
++            ap_report_push_cb(&request);
++        }
++        break;
++    }
+     case wifi_event_type_notify_monitor_done:
+         is_monitor_done = TRUE;
+         {
+@@ -3308,6 +3271,26 @@
+     return (int)rc;
+ }
+ 
++static bus_error_t em_request_ap_metrics(char *event_name, raw_data_t *data, void *user_data)
++{
++    if (data == NULL || data->data_type != bus_data_type_string ||
++        data->raw_data.bytes == NULL || data->raw_data_len < 50 ||
++        data->raw_data_len > 4097) return bus_error_invalid_input;
++    const char *encoded = data->raw_data.bytes;
++    size_t length = strnlen(encoded, data->raw_data_len);
++    if ((length != data->raw_data_len && length != data->raw_data_len - 1) ||
++        length > 4096 || length % 2 != 0) return bus_error_invalid_input;
++    char request[4097];
++    memcpy(request, encoded, length);
++    request[length] = 0;
++    if (strspn(request, "0123456789abcdef") != length) return bus_error_invalid_input;
++    if (push_event_to_ctrl_queue(request, length + 1,
++        wifi_event_type_command, wifi_event_type_em_ap_metrics_query, NULL) != RETURN_OK) {
++        return bus_error_general;
++    }
++    return bus_error_success;
++}
++
+ static bus_error_t controller_set_client_acl_rules(char *event_name, raw_data_t *p_data, void *userData)
+ {
+     wifi_util_dbg_print(WIFI_CTRL, "%s:%d Received Client Assoc Ctrl Event from Agent\n", __func__, __LINE__);
+@@ -3549,6 +3532,9 @@
+         { WIFI_EM_AP_METRICS_REPORT, bus_element_type_method,
+             { NULL, NULL, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
+             { bus_data_type_string, false, 0, 0, 0, NULL } },
++        { "Device.WiFi.EM.APMetricsQuery", bus_element_type_method,
++            { NULL, em_request_ap_metrics, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
++            { bus_data_type_string, true, 0, 0, 0, NULL } },
+         { WIFI_EM_CLIENT_ASSOC_CTRL_REQ, bus_element_type_method,
+             { NULL, controller_set_client_acl_rules, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
+             { bus_data_type_bytes, true, 0, 0, 0, NULL } },
