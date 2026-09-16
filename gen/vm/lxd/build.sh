@@ -380,6 +380,9 @@ build_vm() {
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
         HWSIM_RADIOS="$profile_radios" \
         bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
+    lxc restart "$name" --timeout 300
+    wait_agent
+    run_root bash -c 'test "$(cat /sys/module/cfg80211/version)" = lab-netns-owner-1'
     run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
     # outer VM agent cannot be tracked by snapd, so appliance lifecycle runs as
