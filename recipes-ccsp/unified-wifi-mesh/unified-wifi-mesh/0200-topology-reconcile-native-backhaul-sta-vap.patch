@@ -1,0 +1,162 @@
+Subject: [PATCH] topology: reconcile the reported native backhaul STA VAP
+
+A successful native handover reported the new parent in its second topology
+response before the verification deadline. The vendor-BSS receive path still
+appended a second station-mode row, retaining the enabled previous parent.
+The controller selected that obsolete first row and discarded correctly
+correlated metrics against the wrong parent epoch.
+
+Apply the existing single-backhaul-STA-per-radio invariant directly to this
+receive path, before parent selection. Preserve APs, other radios and unrelated
+STA modes. Stage the bounded snapshot so truncated, ambiguous or oversized
+reports do not partially mutate the live model; propagate malformed payloads
+and pass the TLV length in host order. No steering deadline is extended and
+success responses do not substitute for observed topology or fresh metrics.
+
+Upstream-Status: Pending
+
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1013,7 +1013,7 @@
+ 	 *
+ 	 * @note Ensure that the value is not null and len is valid to avoid undefined behavior.
+ 	 */
+-	void handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len);
++	int handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len);
+ 
+     
+ 	/**!
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -1304,46 +1304,79 @@
+ 	(void)len;
+ }
+ 
+-void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len)
++int em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len)
+ {
+-	mac_addr_str_t	rd_mac_str, bss_mac_str;
+-	em_ap_vendor_op_bss_radio_t		   *radio;
+-	em_ap_vendor_operational_bss_t *bss;
+-	em_ap_vendor_op_bss_t *ap;
+-	unsigned int i, j, all_bss_len = 0;
+-	dm_bss_t *dm_bss;
+-	dm_easy_mesh_t  *dm;
+-	dm = get_data_model();
+-	ap = reinterpret_cast<em_ap_vendor_op_bss_t *> (value);
+-	radio = ap->radios;
+-	for (i = 0; i < ap->radios_num; i++) {
+-		dm_easy_mesh_t::macbytes_to_string(radio->ruid, rd_mac_str);
+-		bss = radio->bss;
+-		for (j = 0; j < radio->bss_num; j++) {
+-			dm_easy_mesh_t::macbytes_to_string(bss->bssid, bss_mac_str);
+-			dm_bss = dm->get_bss(radio->ruid, bss->bssid);
+-			if (dm_bss == NULL) {
+-				dm_bss = &dm->m_bss[dm->m_num_bss];
+-				dm_bss->init();
+-				dm->set_num_bss(dm->get_num_bss() + 1);
+-			}
+-			// fill up id first
+-			strncpy(dm_bss->m_bss_info.id.net_id, dm->m_device.m_device_info.id.net_id, sizeof(em_long_string_t));
+-			memcpy(dm_bss->m_bss_info.id.dev_mac, dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t));
+-			memcpy(dm_bss->m_bss_info.id.ruid, radio->ruid, sizeof(mac_address_t));
+-			memcpy(dm_bss->m_bss_info.id.bssid, bss->bssid, sizeof(mac_address_t));
+-			memcpy(dm_bss->m_bss_info.ruid.mac, radio->ruid, sizeof(mac_address_t));
+-			memcpy(dm_bss->m_bss_info.bssid.mac, bss->bssid, sizeof(mac_address_t));
+-			dm_bss->m_bss_info.id.haul_type = static_cast<em_haul_type_t> (bss->haultype);
+-			dm_bss->m_bss_info.vap_mode = static_cast<em_vap_mode_t> (bss->vap_mode);
+-
+-			bss = reinterpret_cast<em_ap_vendor_operational_bss_t *>(reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_vendor_operational_bss_t));
+-			all_bss_len += sizeof(em_ap_vendor_operational_bss_t);
+-		}
+-
+-		radio = reinterpret_cast<em_ap_vendor_op_bss_radio_t *>(reinterpret_cast<unsigned char *> (radio) + sizeof(em_ap_vendor_op_bss_radio_t) + all_bss_len);
+-		all_bss_len = 0;
+-	}
++    dm_easy_mesh_t *dm = get_data_model();
++    if (dm == NULL || value == NULL || len < sizeof(em_ap_vendor_op_bss_t) ||
++            dm->m_num_bss > EM_MAX_BSSS) {
++        return -1;
++    }
++    const auto *ap = reinterpret_cast<const em_ap_vendor_op_bss_t *>(value);
++    const unsigned char *cursor = value + sizeof(*ap);
++    unsigned int remaining = len - sizeof(*ap);
++    unsigned int reported_count = 0;
++    std::set<std::string> reported_radios;
++    std::vector<dm_bss_t> reconciled(dm->m_bss, dm->m_bss + dm->m_num_bss);
++    for (unsigned int radio_index = 0; radio_index < ap->radios_num; ++radio_index) {
++        if (remaining < sizeof(em_ap_vendor_op_bss_radio_t)) return -1;
++        const auto *radio = reinterpret_cast<const em_ap_vendor_op_bss_radio_t *>(cursor);
++        const unsigned int radio_length = sizeof(*radio) +
++            radio->bss_num * sizeof(em_ap_vendor_operational_bss_t);
++        if (radio_length > remaining ||
++                !reported_radios.insert(std::string(
++                    reinterpret_cast<const char *>(radio->ruid), sizeof(mac_address_t))).second) {
++            return -1;
++        }
++        reported_count += radio->bss_num;
++        if (reported_count > EM_MAX_BSSS) return -1;
++        std::set<std::string> reported_bssids;
++        bool backhaul_sta_reported = false;
++        for (unsigned int bss_index = 0; bss_index < radio->bss_num; ++bss_index) {
++            const auto *bss = &radio->bss[bss_index];
++            if (!reported_bssids.insert(std::string(
++                    reinterpret_cast<const char *>(bss->bssid), sizeof(mac_address_t))).second) {
++                return -1;
++            }
++            if (bss->vap_mode == em_vap_mode_sta && bss->haultype == em_haul_type_backhaul) {
++                if (backhaul_sta_reported) return -1;
++                backhaul_sta_reported = true;
++                reconciled.erase(std::remove_if(reconciled.begin(), reconciled.end(),
++                    [&](const dm_bss_t &current) {
++                        const auto &info = current.m_bss_info;
++                        return info.vap_mode == em_vap_mode_sta &&
++                            info.id.haul_type == em_haul_type_backhaul &&
++                            memcmp(info.ruid.mac, radio->ruid, sizeof(mac_address_t)) == 0 &&
++                            memcmp(info.bssid.mac, bss->bssid, sizeof(mac_address_t)) != 0;
++                    }), reconciled.end());
++            }
++            auto existing = std::find_if(reconciled.begin(), reconciled.end(),
++                [&](const dm_bss_t &current) {
++                    return memcmp(current.m_bss_info.ruid.mac, radio->ruid, sizeof(mac_address_t)) == 0 &&
++                        memcmp(current.m_bss_info.bssid.mac, bss->bssid, sizeof(mac_address_t)) == 0;
++                });
++            if (existing == reconciled.end()) {
++                dm_bss_t added;
++                added.init();
++                reconciled.push_back(added);
++                existing = reconciled.end() - 1;
++            }
++            auto &info = existing->m_bss_info;
++            strncpy(info.id.net_id, dm->m_device.m_device_info.id.net_id, sizeof(em_long_string_t));
++            memcpy(info.id.dev_mac, dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t));
++            memcpy(info.id.ruid, radio->ruid, sizeof(mac_address_t));
++            memcpy(info.id.bssid, bss->bssid, sizeof(mac_address_t));
++            memcpy(info.ruid.mac, radio->ruid, sizeof(mac_address_t));
++            memcpy(info.bssid.mac, bss->bssid, sizeof(mac_address_t));
++            info.id.haul_type = static_cast<em_haul_type_t>(bss->haultype);
++            info.vap_mode = static_cast<em_vap_mode_t>(bss->vap_mode);
++        }
++        cursor += radio_length;
++        remaining -= radio_length;
++    }
++    if (remaining != 0 || reconciled.size() > EM_MAX_BSSS) return -1;
++    std::copy(reconciled.begin(), reconciled.end(), dm->m_bss);
++    dm->set_num_bss(static_cast<unsigned int>(reconciled.size()));
++    return 0;
+ }
+ 
+ int em_configuration_t::create_tid_to_link_map_policy_tlv(unsigned char *buff)
+@@ -2922,7 +2955,10 @@
+ 			tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+ 			continue;
+ 		} else {
+-			handle_ap_vendor_operational_bss(tlv->value, tlv->len);
++			if (handle_ap_vendor_operational_bss(tlv->value, ntohs(tlv->len)) != 0) {
++                em_printfout("Invalid vendor operational BSS snapshot");
++                return -1;
++            }
+ 			break;
+ 		}
+ 	}
+

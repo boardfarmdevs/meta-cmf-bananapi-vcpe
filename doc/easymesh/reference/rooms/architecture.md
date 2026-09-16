@@ -186,6 +186,12 @@ observation confirms the new parent, it requests fresh serving AP metrics
 without waiting for the periodic cadence. A successful response cannot invent
 a parent or measurement; the bounded refresh avoids false timeouts caused by
 waiting for unrelated periodic topology discovery.
+The topology receive path replaces the previous backhaul STA-mode BSS on the
+same radio before selecting its parent. A new upstream BSSID must not append
+a second enabled parent record. APs and other radios remain unchanged;
+malformed, ambiguous or oversized vendor-BSS snapshots are rejected without
+partially changing the model. This also prevents fresh target-parent metrics
+from being discarded against a retained old-parent record.
 Failure does not prove OneWifi stopped its asynchronous connection attempt.
 An unresolved handover therefore remains recorded: its node cannot become a
 new target's ancestor, and that node can retry only the same requested parent,
