@@ -1344,8 +1344,8 @@ Upstream-Status: Pending
       $(top_srcdir)/src/ctrl/em_dev_test_ctrl.cpp \
       $(top_srcdir)/src/ctrl/tr_181/wfa_data_model/tr_181.cpp \
 --- a/src/ctrl/em_backhaul_ctrl.cpp	1969-12-31 16:00:00.000000000 -0800
-+++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-16 08:46:03.709430484 -0700
-@@ -0,0 +1,361 @@
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-16 09:37:15.378390627 -0700
+@@ -0,0 +1,360 @@
 +#include "em_ctrl.h"
 +#include "em_network_topo.h"
 +#include "em_backhaul_wire.h"
@@ -1545,10 +1545,8 @@ Upstream-Status: Pending
 +        if (now - m_backhaul_last_query >= 4000) {
 +            m_backhaul_last_query = now;
 +            ++m_backhaul_round;
-+            std::set<std::string> queried_parents;
 +            for (const auto &entry : network.nodes) {
 +                const auto &station = entry.second;
-+                const auto parent = network.aps.find(station.parent_bssid);
 +                if (station.al != network.root && !station.sta.empty()) {
 +                    int strongest_rcpi = -1;
 +                    std::string strongest;
@@ -1564,18 +1562,19 @@ Upstream-Status: Pending
 +                        station.serving.rcpi, static_cast<long long>(station.serving.observed ? now - station.serving.observed : -1),
 +                        backhaul_label(strongest).c_str(), strongest_rcpi);
 +                }
-+                if (station.al == network.root || station.sta.empty() || parent == network.aps.end() ||
-+                    !queried_parents.insert(station.parent_bssid).second) continue;
++            }
++            for (const auto &entry : network.aps) {
++                const auto &ap = entry.second;
 +                const unsigned short mid = get_next_msg_id();
-+                backhaul_query_t serving_query{true, parent->second, {}, now, m_backhaul_round};
++                backhaul_query_t serving_query{true, ap, {}, now, m_backhaul_round};
 +                for (const auto &peer : network.nodes) {
-+                    if (!peer.second.sta.empty() && peer.second.parent_bssid == station.parent_bssid)
++                    if (!peer.second.sta.empty() && peer.second.parent_bssid == ap.bssid)
 +                        serving_query.stations[peer.second.sta] = peer.second.parent_bssid;
 +                }
 +                m_backhaul_queries[mid] = serving_query;
 +                std::vector<unsigned char> payload{1};
-+                payload.insert(payload.end(), station.parent_bssid.begin(), station.parent_bssid.end());
-+                outgoing.push_back(em_backhaul::frame(parent->second.al, controller,
++                payload.insert(payload.end(), ap.bssid.begin(), ap.bssid.end());
++                outgoing.push_back(em_backhaul::frame(ap.al, controller,
 +                    em_msg_type_ap_metrics_query, mid, em_tlv_type_ap_metrics_query, payload));
 +            }
 +            for (const auto &entry : network.aps) {

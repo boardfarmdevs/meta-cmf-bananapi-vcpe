@@ -9,6 +9,10 @@ source = (root / "src/ctrl/em_backhaul_ctrl.cpp").read_text()
 handler = source[source.index("bool em_ctrl_t::handle_native_backhaul_frame"):]
 header = (root / "inc/em_ctrl.h").read_text()
 state = header[header.index("    struct backhaul_query_t"):header.index("    void handle_native_backhaul_tick();")]
+serving_marker = source.index("backhaul_query_t serving_query")
+query_start = source.rfind("            for (const auto &entry : network.aps)", 0, serving_marker)
+query_end = source.index("            for (const auto &entry : network.aps)", serving_marker)
+ap_queries = source[query_start:query_end]
 program = r'''
 #include "em_backhaul_policy.h"
 #include "em_backhaul_wire.h"
@@ -23,11 +27,13 @@ struct __attribute__((packed)) em_unassoc_sta_metric_t { unsigned char bytes[12]
 struct __attribute__((packed)) em_bh_steering_resp_t { unsigned char bytes[13]; };
 enum {
     em_msg_type_1905_ack = 0x8000,
+    em_msg_type_ap_metrics_query = 0x800b,
     em_msg_type_ap_metrics_rsp = 0x800c,
     em_msg_type_assoc_sta_link_metrics_rsp = 0x800e,
     em_msg_type_unassoc_sta_link_metrics_rsp = 0x8010,
     em_msg_type_bh_steering_rsp = 0x801a,
     em_tlv_type_assoc_sta_link_metric = 0x96,
+    em_tlv_type_ap_metrics_query = 0x93,
     em_tlv_type_unassoc_sta_link_metric_rsp = 0x98,
     em_tlv_type_bh_steering_rsp = 0x9f
 };
@@ -38,6 +44,14 @@ std::string backhaul_mac(const unsigned char *bytes) {
 class em_ctrl_t {
 public:
 STATE
+    unsigned short next_mid = 1000;
+    unsigned short get_next_msg_id() { return ++next_mid; }
+    void collect_ap_queries(std::vector<std::vector<unsigned char>> &outgoing) {
+        const auto &network = m_backhaul_network;
+        const auto &controller = m_backhaul_controller;
+        const int64_t now = backhaul_now();
+AP_QUERIES
+    }
     bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em);
 };
 HANDLER
@@ -170,9 +184,37 @@ int main() {
     assert(controller.m_backhaul_steer.mid == 0);
     assert(controller.m_backhaul_uncertain.at(child).failures == 1);
     assert(controller.m_backhaul_uncertain.at(child).request.target == target_bssid);
+    em_ctrl_t poller;
+    poller.m_backhaul_controller = control;
+    poller.m_backhaul_network = network;
+    const std::string leaf_bssid("\x02\x00\x00\x00\x00\x77", 6);
+    poller.m_backhaul_network.aps[leaf_bssid] = {child, leaf_bssid, 115, 36};
+    std::vector<std::vector<unsigned char>> polls;
+    poller.collect_ap_queries(polls);
+    assert(polls.size() == poller.m_backhaul_network.aps.size());
+    bool leaf_queried = false;
+    for (const auto &packet : polls) {
+        const auto mid = em_backhaul::read16(packet.data() + 18);
+        const auto &query = poller.m_backhaul_queries.at(mid);
+        assert(query.associated && query.sent == backhaul_now());
+        assert(em_backhaul::read16(packet.data() + 16) == em_msg_type_ap_metrics_query);
+        assert(packet[22] == em_tlv_type_ap_metrics_query && packet[25] == 1);
+        assert(backhaul_mac(packet.data() + 26) == query.ap.bssid);
+        if (query.ap.bssid == leaf_bssid) {
+            leaf_queried = true;
+            assert(query.stations.empty());
+            const auto previous = poller.m_backhaul_network.nodes.at(child).serving.observed;
+            auto empty = em_backhaul::frame(control, child, 0x800c, mid, 0x94, {});
+            poller.handle_native_backhaul_frame(empty.data(), empty.size(), nullptr);
+            assert(poller.m_backhaul_queries.count(mid) == 0);
+            assert(poller.m_backhaul_network.nodes.at(child).serving.observed == previous);
+        }
+    }
+    assert(leaf_queried);
+    std::cout << "PASS: production polling includes childless APs; their native replies exercise idle uplinks without inventing serving samples\n";
     std::cout << "PASS: production controller wire handler enforces MID, sender, destination, STA, parent epoch, channel, freshness, RCPI and native completion ownership\n";
 }
-'''.replace("STATE", state).replace("HANDLER", handler)
+'''.replace("STATE", state).replace("HANDLER", handler).replace("AP_QUERIES", ap_queries)
 with tempfile.TemporaryDirectory(prefix="native-backhaul-controller-") as temporary:
     executable = Path(temporary) / "test"
     subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",

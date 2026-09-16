@@ -111,6 +111,10 @@ duplicate responses. A changed AP owner, channel or operating class invalidates
 both retained samples and outstanding query evidence. The public-header provider and its consumers must use the
 same enlarged AP-event structure. It queries candidate APs for
 the backhaul STA using native Unassociated STA Link Metrics messages. Candidate
+AP-report polling also includes childless backhaul APs: their genuine native
+responses put traffic on otherwise idle uplinks, refreshing the kernel's
+packet-derived backhaul RSSI without depending on the external client optimizer.
+An empty AP report never supplies a fabricated serving sample. Candidate
 queries have independent message IDs and run across eligible APs in parallel;
 they do not overwrite the external client's command ownership. The native
 agent retains each query's message ID, operating class, channel, STA set and
