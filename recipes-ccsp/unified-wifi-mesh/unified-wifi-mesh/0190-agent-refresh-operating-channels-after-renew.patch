@@ -1,0 +1,25 @@
+Subject: [PATCH] agent: republish operating channels after accepted renew
+
+Controller startup deletes the persisted operating-class rows before
+configuration renew. An already running agent has its initial channel-report
+latch set, so it never republishes unchanged radios after that renew. A later
+single-radio retune restores only that radio's current channel, leaving the
+other bands absent from native inventory.
+
+Rearm the existing all-radio publication after a renew is accepted. The
+existing two-second tick waits for synchronized radios, reads their current
+OneWifi channels and sends native operating-channel reports. Failed or busy
+renew submissions do not rearm publication; normal operation remains one-shot.
+
+Upstream-Status: Pending
+
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -457,6 +457,7 @@ void em_agent_t::handle_autoconfig_renew(em_bus_event_t *evt)
+     }  else if ((num = static_cast<unsigned int>(m_data_model.analyze_autoconfig_renew(evt, pcmd))) == 0) {
+         printf("handle_autoconfig_renew cmd creation failed\n");
+     } else if (m_orch->submit_commands(pcmd, num) > 0) {
++        m_initial_op_channel_report_sent = false;
+     }
+ 
+ }

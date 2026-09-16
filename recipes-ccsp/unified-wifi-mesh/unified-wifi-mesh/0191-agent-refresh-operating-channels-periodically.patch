@@ -1,0 +1,65 @@
+Subject: [PATCH] agent: refresh authoritative channels on a monotonic deadline
+
+The initial publication latch only records local send success. Lost renews or
+reports can leave controller inventory empty indefinitely. Refresh real native
+channels without restarting services or synthesizing channel values.
+
+Schedule refresh for 30 steady-clock seconds after successful publication.
+The manager's nominal two-second callback alternates two/three seconds because
+its demultiplexer resets every five seconds; fifteen callbacks take 37-38
+seconds, not 30. Check the elapsed deadline at each existing callback, including
+delayed handlers, rather than counting calls. Publication occurs on the first
+scheduler opportunity at/after the deadline; this is not an instantaneous or
+hard wall-clock delivery guarantee. Readiness and transport still matter.
+
+Keep initial/renew retries and preserve the initial-success latch on failed
+periodic refresh so the independent association snapshot gate stays enabled.
+Extracted native manager scheduler tests cover 2/32/62-second publication,
+failed refresh, delayed handlers, and catch-up without premature publication.
+
+Upstream-Status: Pending
+
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -28,6 +28,7 @@
+ #include "em_simulator.h"
+ #include "bus.h"
+ 
++#include <chrono>
+ #include <deque>
+ #include <string>
+ #include <unordered_map>
+@@ -48,6 +49,7 @@
+     em_cmd_agent_t  *m_agent_cmd;
+ 	em_simulator_t	m_simulator;
+     bool m_initial_op_channel_report_sent = false;
++    std::chrono::steady_clock::time_point m_operating_channel_refresh_due{};
+     bool m_onewifi_wsc_subdoc_active = false;
+     std::string m_onewifi_wsc_ruid;
+     unsigned int m_onewifi_wsc_wait_ticks = 0;
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1545,15 +1545,20 @@
+         }
+         em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
+     }
+-    em_printfout("Initial operating channel reports sent: %u/%u",
++    em_printfout("Operating channel reports sent: %u/%u",
+         reports_sent, radio_nodes);
+     return reports_sent == radio_nodes;
+ }
+ 
+ void em_agent_t::handle_2s_tick()
+ {
+-    if (!m_initial_op_channel_report_sent) {
+-        m_initial_op_channel_report_sent = publish_initial_operating_channels();
++    if (!m_initial_op_channel_report_sent ||
++            std::chrono::steady_clock::now() >= m_operating_channel_refresh_due) {
++        if (publish_initial_operating_channels()) {
++            m_initial_op_channel_report_sent = true;
++            m_operating_channel_refresh_due = std::chrono::steady_clock::now() +
++                std::chrono::seconds(30);
++        }
+     }
+     static unsigned int association_refresh_ticks = 14;
+     if (m_initial_op_channel_report_sent && ++association_refresh_ticks >= 15) {

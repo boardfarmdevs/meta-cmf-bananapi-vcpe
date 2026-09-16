@@ -1,0 +1,422 @@
+Subject: [PATCH] agent: recover peer-bound channel reports and received policy
+
+Layer after monotonic 0191; retain its periodic fallback. A previously completed
+ACK cannot recover inventory when a subsequent restart loses both renew and
+policy. ACKs prove receipt, not durable controller inventory.
+
+Keep one serialized report per radio. Match MID and reversed Ethernet peers,
+invalidate on controller/local-AL changes before retry or ACK, and serialize
+report creation with cache updates. Retry identical bytes/MID with monotonic
+2/4/8/16/30-second deadlines, at the next existing scheduler opportunity.
+Leave BTM ownership and radio protocol state untouched.
+
+Make manager MID dispatch virtual and override only the agent allocator with
+an atomic nonzero 16-bit sequence, shared by all agent protocol message types.
+The controller allocator implementation is unchanged. Rebuild all agent-side
+objects using the updated interface; do not mix old/new class ABIs.
+
+Carry received policy source/destination through the event queue, bind the
+retained copy to current peers, and invalidate before deferred WSC replay.
+Serialize the existing partial-policy cache and reset its baseline on peer
+changes. Retry signed local apply failures without inventing a missing policy.
+Renew/policy rearm the publication deadline rather than clearing the sticky
+initial-success latch, preserving association refresh while channels are unready.
+
+Extracted regressions cover native allocator concurrency and manager dispatch,
+BTM/sibling/stale ACK isolation, peer changes while unready, policy queue/cache
+identity, complete native policy byte retention, 100-tick association health,
+and real OneWifi translator/encoder disabled flags and emitted field groups.
+Existing encoder omissions (traffic separation and vendor client filters) are
+not repaired by retaining policy bytes. Candidate admission delays are separate.
+This patch is not native-build or live qualified.
+
+Upstream-Status: Pending
+
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -28,8 +28,10 @@
+ #include "em_simulator.h"
+ #include "bus.h"
+ 
++#include <atomic>
+ #include <chrono>
+ #include <deque>
++#include <memory>
+ #include <string>
+ #include <unordered_map>
+ 
+@@ -50,6 +52,9 @@
+ 	em_simulator_t	m_simulator;
+     bool m_initial_op_channel_report_sent = false;
+     std::chrono::steady_clock::time_point m_operating_channel_refresh_due{};
++    std::atomic<unsigned short> m_agent_msg_id{0};
++    std::unique_ptr<em_received_policy_t> m_received_policy;
++    bool m_policy_apply_pending = false;
+     bool m_onewifi_wsc_subdoc_active = false;
+     std::string m_onewifi_wsc_ruid;
+     unsigned int m_onewifi_wsc_wait_ticks = 0;
+@@ -57,6 +62,7 @@
+     std::unordered_map<std::string, unsigned int> m_orphaned_onewifi_wsc_ticks;
+ 
+     bool publish_initial_operating_channels();
++    void apply_pending_policy();
+     bool rearm_onewifi_wsc_radio(const std::string& ruid, const char *reason);
+     void release_next_onewifi_wsc_radio(const char *reason);
+     bool is_onewifi_wsc_radio_tracked(const std::string& ruid) const;
+@@ -393,6 +399,7 @@
+ 	bool send_action_frame(uint8_t dest_mac[ETH_ALEN], uint8_t *action_frame, size_t action_frame_len, uint8_t vap_idx, unsigned int frequency=0, unsigned int wait_time_ms=0);
+ 
+ public:
++    unsigned short get_next_msg_id() override;
+ 
+     em_orch_t *get_orch() override { return m_orch; }
+ 
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -279,7 +279,7 @@
+ 	 *
+ 	 * @note The message ID is incremented with each call and wraps around at 0xFFFF.
+ 	 */
+-	unsigned short get_next_msg_id();
++	virtual unsigned short get_next_msg_id();
+ 
+ 	/**!
+ 	 * @brief Listens to manager nodes.
+--- a/inc/em_channel.h
++++ b/inc/em_channel.h
+@@ -20,6 +20,9 @@
+ #define EM_CHANNEL_H
+ 
+ #include <memory>
++#include <chrono>
++#include <mutex>
++#include <vector>
+ #include "em_base.h"
+ 
+ #define ACK_FROM_AGENT 0
+@@ -32,6 +35,11 @@
+      */
+     std::unique_ptr<em_scan_params_t> m_last_scan_req;
+     bool                              m_last_scan_req_valid;
++    std::mutex m_operating_channel_report_mutex;
++    std::vector<unsigned char> m_pending_operating_channel_report;
++    std::chrono::steady_clock::time_point m_operating_channel_retry_due{};
++    unsigned int m_operating_channel_retry_interval = 2;
++    bool operating_channel_report_peer_matches();
+ 
+ 	/**!
+ 	 * @brief Sends a frame of data.
+@@ -79,6 +87,8 @@
+ 	virtual int push_event(em_event_t *evt) = 0;
+ 
+ public:
++    bool acknowledge_operating_channel_report(unsigned char *buff, unsigned int len);
++    void retry_operating_channel_report();
+ 	
+ 	/**!
+ 	 * @brief Retrieves the manager instance.
+--- a/inc/em_policy_cfg.h
++++ b/inc/em_policy_cfg.h
+@@ -20,6 +20,23 @@
+ #define EM_POLICY_CFG_H
+ 
+ #include "em_base.h"
++#include <cstring>
++
++struct em_received_policy_t {
++    mac_address_t controller;
++    mac_address_t agent;
++    em_policy_cfg_params_t policy;
++
++    bool matches(const unsigned char *controller_mac, const unsigned char *agent_mac) const
++    {
++        const mac_address_t zero = {};
++        return controller_mac != NULL && agent_mac != NULL &&
++            memcmp(controller, zero, sizeof(zero)) != 0 &&
++            memcmp(agent, zero, sizeof(zero)) != 0 &&
++            memcmp(controller, controller_mac, sizeof(controller)) == 0 &&
++            memcmp(agent, agent_mac, sizeof(agent)) == 0;
++    }
++};
+ 
+ class em_cmd_t;
+ class em_policy_cfg_t {
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -342,6 +342,7 @@
+     if (m_onewifi_wsc_subdoc_active) {
+         em_printfout("OneWifi completed WSC subdoc for radio %s",
+             m_onewifi_wsc_ruid.c_str());
++        m_policy_apply_pending = m_received_policy != nullptr;
+         m_onewifi_wsc_subdoc_active = false;
+         m_onewifi_wsc_ruid.clear();
+         m_onewifi_wsc_wait_ticks = 0;
+@@ -457,7 +458,7 @@
+     }  else if ((num = static_cast<unsigned int>(m_data_model.analyze_autoconfig_renew(evt, pcmd))) == 0) {
+         printf("handle_autoconfig_renew cmd creation failed\n");
+     } else if (m_orch->submit_commands(pcmd, num) > 0) {
+-        m_initial_op_channel_report_sent = false;
++        m_operating_channel_refresh_due = {};
+     }
+ 
+ }
+@@ -1199,17 +1200,44 @@
+ 
+ void em_agent_t::handle_set_policy(em_bus_event_t *evt)
+ {
+-    unsigned int num;
+-    wifi_bus_desc_t *desc;
+-
+-    if((desc = get_bus_descriptor()) == NULL) {
+-       printf("descriptor is null");
++    if (evt == NULL || evt->data_len != sizeof(em_received_policy_t)) {
++        return;
++    }
++    std::unique_ptr<em_received_policy_t> received(new em_received_policy_t);
++    memcpy(received.get(), evt->u.raw_buff, sizeof(em_received_policy_t));
++    if (!received->matches(m_data_model.get_ctl_mac(),
++            m_data_model.get_agent_al_interface_mac())) {
++        return;
+     }
++    m_received_policy = std::move(received);
++    m_policy_apply_pending = true;
++    apply_pending_policy();
++}
+ 
+-    if (m_orch->is_cmd_type_in_progress(evt) == true) {
+-        printf("set policy in progress\n");
+-    } else if ((num = static_cast<unsigned int>(m_data_model.analyze_set_policy(evt, desc, &m_bus_hdl))) == 0) {
+-        printf("set policy failed\n");
++void em_agent_t::apply_pending_policy()
++{
++    if (m_received_policy && !m_received_policy->matches(m_data_model.get_ctl_mac(),
++            m_data_model.get_agent_al_interface_mac())) {
++        m_received_policy.reset();
++        m_policy_apply_pending = false;
++        m_operating_channel_refresh_due = {};
++    }
++    if (!m_policy_apply_pending || m_onewifi_wsc_subdoc_active ||
++            !m_deferred_onewifi_wsc_ruids.empty()) {
++        return;
++    }
++    wifi_bus_desc_t *desc = get_bus_descriptor();
++    if (desc == NULL) {
++        return;
++    }
++    int result = m_data_model.refresh_onewifi_subdoc(desc, &m_bus_hdl,
++        "Policy", webconfig_subdoc_type_em_config, NULL, &m_received_policy->policy);
++    if (result > 0) {
++        m_policy_apply_pending = false;
++        m_operating_channel_refresh_due = {};
++        em_printfout("Received controller policy applied to OneWifi");
++    } else {
++        em_printfout("OneWifi policy apply failed (%d); retaining policy for retry", result);
+     }
+ }
+ 
+@@ -1552,6 +1580,14 @@
+ 
+ void em_agent_t::handle_2s_tick()
+ {
++    em_t *em = static_cast<em_t *>(hash_map_get_first(m_em_map));
++    while (em != NULL) {
++        if (!em->is_al_interface_em() && em->get_service_type() == em_service_type_agent) {
++            em->retry_operating_channel_report();
++        }
++        em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
++    }
++    apply_pending_policy();
+     if (!m_initial_op_channel_report_sent ||
+             std::chrono::steady_clock::now() >= m_operating_channel_refresh_due) {
+         if (publish_initial_operating_channels()) {
+@@ -1578,6 +1614,17 @@
+     }
+ }
+ 
++unsigned short em_agent_t::get_next_msg_id()
++{
++    unsigned short previous = m_agent_msg_id.load(std::memory_order_relaxed);
++    unsigned short next;
++    do {
++        next = previous == 65535 ? 1 : static_cast<unsigned short>(previous + 1);
++    } while (!m_agent_msg_id.compare_exchange_weak(previous, next,
++        std::memory_order_relaxed));
++    return next;
++}
++
+ void em_agent_t::handle_1s_tick()
+ {
+     if (m_onewifi_wsc_subdoc_active && ++m_onewifi_wsc_wait_ticks >= 5) {
+@@ -2450,6 +2497,9 @@
+ 
+             get_all_em_for_al_mac(hdr->dst, em_radios);
+             for (auto &radio_em : em_radios) {
++                if (radio_em->acknowledge_operating_channel_report(data, len)) {
++                    return NULL;
++                }
+                 if ((radio_em->get_state() == em_state_agent_steer_btm_res_pending) &&
+                     (radio_em->get_btm_report_msg_id() == response_msg_id)) {
+                     em = radio_em;
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -38,6 +38,7 @@
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <map>
++#include <algorithm>
+ #include <vector>
+ #include <openssl/rand.h>
+ #include "em.h"
+@@ -1187,6 +1188,7 @@
+ 
+ int em_channel_t::send_operating_channel_report_msg()
+ {
++    std::lock_guard<std::mutex> report_lock(m_operating_channel_report_mutex);
+     unsigned char buff[MAX_EM_BUFF_SZ];
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+     unsigned short  msg_type = em_msg_type_op_channel_rprt;
+@@ -1200,6 +1202,12 @@
+     mac_addr_str_t mac_str;
+ 
+     dm = get_data_model();
++    const mac_address_t zero = {};
++    if (dm == NULL || memcmp(dm->get_ctl_mac(), zero, sizeof(zero)) == 0 ||
++            memcmp(dm->get_agent_al_interface_mac(), zero, sizeof(zero)) == 0) {
++        m_pending_operating_channel_report.clear();
++        return -1;
++    }
+ 
+     memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
+     tmp += sizeof(mac_address_t);
+@@ -1245,6 +1253,10 @@
+         return -1;
+     }
+ 
++    m_pending_operating_channel_report.assign(buff, buff + len);
++    m_operating_channel_retry_interval = 2;
++    m_operating_channel_retry_due = std::chrono::steady_clock::now() +
++        std::chrono::seconds(m_operating_channel_retry_interval);
+     if (send_frame(buff, len)  < 0) {
+         printf("%s:%d:  Operating Channel Report msg failed, error:%d\n", __func__, __LINE__, errno);
+         return -1;
+@@ -1255,6 +1267,61 @@
+ 
+ }
+ 
++bool em_channel_t::operating_channel_report_peer_matches()
++{
++    if (m_pending_operating_channel_report.empty()) {
++        return false;
++    }
++    dm_easy_mesh_t *dm = get_data_model();
++    const auto *report = reinterpret_cast<const em_raw_hdr_t *>(
++        m_pending_operating_channel_report.data());
++    if (dm == NULL || memcmp(report->dst, dm->get_ctl_mac(), sizeof(mac_address_t)) != 0 ||
++            memcmp(report->src, dm->get_agent_al_interface_mac(), sizeof(mac_address_t)) != 0) {
++        m_pending_operating_channel_report.clear();
++        return false;
++    }
++    return true;
++}
++
++bool em_channel_t::acknowledge_operating_channel_report(unsigned char *buff, unsigned int len)
++{
++    if (buff == NULL || len < sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)) {
++        return false;
++    }
++    std::lock_guard<std::mutex> report_lock(m_operating_channel_report_mutex);
++    if (!operating_channel_report_peer_matches()) {
++        return false;
++    }
++    em_raw_hdr_t *ack = reinterpret_cast<em_raw_hdr_t *>(buff);
++    em_cmdu_t *ack_cmdu = reinterpret_cast<em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
++    em_raw_hdr_t *report = reinterpret_cast<em_raw_hdr_t *>(m_pending_operating_channel_report.data());
++    em_cmdu_t *report_cmdu = reinterpret_cast<em_cmdu_t *>(
++        m_pending_operating_channel_report.data() + sizeof(em_raw_hdr_t));
++    if (ack_cmdu->type != htons(em_msg_type_1905_ack) ||
++            ack_cmdu->id != report_cmdu->id ||
++            memcmp(ack->src, report->dst, sizeof(mac_address_t)) != 0 ||
++            memcmp(ack->dst, report->src, sizeof(mac_address_t)) != 0) {
++        return false;
++    }
++    m_pending_operating_channel_report.clear();
++    em_printfout("Operating channel report acknowledged: MID %u", ntohs(ack_cmdu->id));
++    return true;
++}
++
++void em_channel_t::retry_operating_channel_report()
++{
++    std::lock_guard<std::mutex> report_lock(m_operating_channel_report_mutex);
++    if (!operating_channel_report_peer_matches() ||
++            std::chrono::steady_clock::now() < m_operating_channel_retry_due) {
++        return;
++    }
++    m_operating_channel_retry_interval = std::min(30U, m_operating_channel_retry_interval * 2);
++    send_frame(m_pending_operating_channel_report.data(),
++        static_cast<unsigned int>(m_pending_operating_channel_report.size()));
++    m_operating_channel_retry_due = std::chrono::steady_clock::now() +
++        std::chrono::seconds(m_operating_channel_retry_interval);
++}
++
+ int em_channel_t::send_channel_pref_query_msg()
+ {
+     unsigned char buff[MAX_EM_BUFF_SZ];
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -40,6 +40,7 @@
+ #include "em.h"
+ #include "em_msg.h"
+ #include "em_cmd_exec.h"
++#include <mutex>
+ 
+ static const unsigned char em_vendor_oui[EM_VENDOR_OUI_SIZE] = {0xd8, 0x9c, 0x8e};
+ 
+@@ -663,6 +664,19 @@
+ 
+ int em_policy_cfg_t::handle_policy_cfg_req(unsigned char *buff, unsigned int len)
+ {
++    if (buff == NULL || len < sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) + sizeof(em_tlv_t)) {
++        return -1;
++    }
++    const auto *header = reinterpret_cast<const em_raw_hdr_t *>(buff);
++    em_received_policy_t received = {};
++    memcpy(received.controller, header->src, sizeof(mac_address_t));
++    memcpy(received.agent, header->dst, sizeof(mac_address_t));
++    if (get_data_model() == NULL || !received.matches(get_data_model()->get_ctl_mac(),
++            get_data_model()->get_agent_al_interface_mac())) {
++        return -1;
++    }
++    static std::mutex policy_mutex;
++    std::lock_guard<std::mutex> policy_lock(policy_mutex);
+     em_policy_cfg_params_t policy;
+     em_tlv_t    *tlv;
+     unsigned int tlv_len;
+@@ -671,10 +685,9 @@
+     unsigned char *cursor = NULL;
+     em_vendor_data_t *data = NULL;
+ 
+-    // Start from last applied policy so that absent TLVs retain their
+-    // existing values instead of being zeroed out.
+-    static em_policy_cfg_params_t last_policy = {};
+-    policy = last_policy;
++    static em_received_policy_t last_policy = {};
++    policy = last_policy.matches(received.controller, received.agent) ?
++        last_policy.policy : em_policy_cfg_params_t{};
+     policy.num_bh_bss_cfg = 0;
+     policy.num_qos_mgmt = 0;
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+@@ -878,10 +891,11 @@
+         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + ntohs(tlv->len));
+     }
+ 
+-    // Save as baseline for next partial update.
+-    last_policy = policy;
++    received.policy = policy;
++    last_policy = received;
+ 
+-    get_mgr()->io_process(em_bus_event_type_set_policy, reinterpret_cast<unsigned char *> (&policy), sizeof(policy));
++    get_mgr()->io_process(em_bus_event_type_set_policy,
++        reinterpret_cast<unsigned char *>(&received), sizeof(received));
+     send_1905_ack_message(ntohs(cmdu->id));
+ 
+     return 0;

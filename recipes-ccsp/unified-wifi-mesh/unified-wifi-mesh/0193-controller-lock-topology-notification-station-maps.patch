@@ -1,0 +1,75 @@
+From 9d8c333e8efea9de63fd0845c86eaa4f5947c50b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Tue, 15 Sep 2026 16:00:00 -0700
+Subject: [PATCH] controller: lock topology notification station maps
+
+Topology publication serializes raw dm_sta_t pointers from m_sta_map while a
+protocol thread can process a disassociation and delete the same object. ASan
+observed dm_sta_t::encode reading HTCapabilities after
+remove_non_mlo_sta_assoc freed the 5028-byte station allocation.
+
+Use the existing recursive topology mutex around all station-map reads and
+mutations in the client-association Topology Notification path. End the lock
+scope before dispatching the association event so event processing cannot run
+under the topology lock.
+
+This is the narrow recovery fix. A dedicated data-model mutex with immutable
+station snapshots remains the stronger long-term design.
+
+Signed-off-by: Codex <codex@openai.com>
+---
+ src/ctrl/em_network_topo.cpp        | 1 -
+ src/em/config/em_configuration.cpp | 5 +++++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index d936c38..693df31 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -45,6 +45,7 @@
+ #include "em_cmd_exec.h"
+ #include "cjson_util.h"
+ #include "ec_ctrl_configurator.h"
++#include "em_network_topo.h"
+ 
+ #include "wifi_util.h"
+ 
+@@ -51,6 +52,7 @@
+ 
+ // Initialize the static member variables
+ unsigned short em_configuration_t::msg_id = 0;
++std::recursive_mutex g_network_topology_mutex;
+ // OUI value of Comcast
+ static const unsigned char em_vendor_oui[EM_VENDOR_OUI_SIZE] = {0xd8, 0x9c, 0x8e};
+ 
+@@ -2223,6 +2224,8 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+             memcpy(sta_info.radiomac, get_radio_interface_mac(), sizeof(mac_address_t));
+             sta_info.associated = assoc_event;
+ 
++            std::unique_lock<std::recursive_mutex> topology_lock(
++                g_network_topology_mutex);
+             if (assoc_event == false) {
+                 updated_any = false;
+ 
+@@ -2300,6 +2303,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+                         util::mac_to_string(sta_info.id).c_str(),
+                         util::mac_to_string(sta_info.bssid).c_str(), key);
+             }
++            topology_lock.unlock();
+ 
+             memcpy(raw.dev, dev_mac, sizeof(mac_address_t));
+             memcpy(reinterpret_cast<unsigned char *> (&raw.assoc), reinterpret_cast<unsigned char *> (assoc_evt_tlv), sizeof(em_client_assoc_event_t));
+diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
+index e0301e6..6144ca3 100644
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -31,7 +31,6 @@
+ 
+ extern em_network_topo_t *g_network_topology;
+ 
+-std::recursive_mutex g_network_topology_mutex;
+ 
+ void em_network_topo_t::encode(cJSON *parent)
+ {
+-- 
+2.53.0

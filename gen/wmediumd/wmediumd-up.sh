@@ -120,6 +120,11 @@ case "${1:-up}" in
     "$HERE/gen-config.sh" "${SNR:-40}" >/dev/null
     if [ -n "$PRIORITY_FLAG" ]; then
         sudo python3 "$HERE/configurator/wmdcfg/control_priority.py" --stack rdk --enable
+        if [ -f /etc/systemd/system/wmdcfg-control-priority.service ]; then
+            sudo systemctl start wmdcfg-control-priority.service
+        fi
+    elif [ -f /var/lib/wmdcfg-control-priority/rdk.json ]; then
+        sudo python3 "$HERE/configurator/wmdcfg/control_priority.py" --stack rdk --disable
     fi
     stop_running_wmediumd
     # Pool vifs are created administratively UP even while unused.  They are not

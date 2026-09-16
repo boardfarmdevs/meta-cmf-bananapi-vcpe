@@ -19,6 +19,9 @@ apt-get install -y --no-install-recommends \
     docker.io \
     fakeroot \
     git \
+    iperf3 \
+    iproute2 \
+    iptables \
     iputils-ping \
     iw \
     jq \

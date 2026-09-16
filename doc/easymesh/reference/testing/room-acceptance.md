@@ -8,48 +8,327 @@ or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
 
 ## Current RF hardening checks
 
-The September 15 [RF qualification](../radio/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
-supersedes the cooling/native-load blockers below. RDK and prpl complete the
-different-channel UDP/BTM and fresh-settling controls with the identified
-priority profile. The targeted follow-up selects `traffic-low-high-off`,
-`traffic-quieter-ap`, `received-same-band-roam`, `band-upgrade-24-5` and
-`large-room-extender-evacuation`; inspect initial/play/final convergence,
-independent native ownership/traffic, unchanged process identities and restoration.
-This is five of 25 advertised rooms, not full-catalog coverage. Evidence:
-`/home/rev/work/rf-reliability-0913/evidence/` on rev150.
-Physical cooling inspection remains outstanding; the software mitigation does
-not establish hardware repair or intrinsic cross-stack performance.
+[RF qualification](../radio/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
+records non-turbo/priority profiles. Earlier evidence on rev150 remains under
+`/home/rev/work/rf-demand-0913/evidence/` and
+`/home/rev/work/rf-reliability-0913/evidence/`; cooling mitigation is not repair.
+
+The earlier six-room campaigns and four UDP cancellation cases pass, but
+**RDK's historical native qualification is not clean:** two controller exits
+during restoration remain recorded. Symbolized evidence identifies the
+topology/disassociation `dm_sta_t` UAF; patch 0193's contract/build and bounded
+disconnect/reconnect pass. ASan churn was stopped. Neither later repairs nor
+the checks below retroactively qualify those failures.
+
+### RDK threshold and query qualification
+
+September 15, rev140 `rdkeasymesh-0913`: **OneWifi 0029 / EasyMesh 0194**
+pass with unchanged native identities and successful policy/survey restoration.
+UAF patch 0193 remains installed.
+
+| Check | Result |
+| --- | --- |
+| Policy receipt/ACK; periodic isolation | Pass: 120 s interval, 128/255 threshold, six-second quiet control |
+| Rising 32 → 224 / falling 224 → 32 | Pass: 3.568 / 3.119 s; one target-radio event per crossing |
+| AP queries, 2.4 / 5 / 6 GHz | Pass: 10.321 / 6.967 / 11.423 ms; matching MID/BSSID |
+| Periodic interval zero | Crossings pass: 2.677 / 2.922 s; no plateau repeats |
+| Threshold zero; overlapping queries | Unsolicited reporting stops; three queries return fixture value 224 |
+| Controller API, single / three BSSIDs | Native replies: 14.987 / 9.928 ms |
+| Invalid API requests | Four rejected without native transmission |
+| Periodic/restart audit | Five devices report; leaf recovers 1.607 s after restart returns; controller unchanged |
+| Default readiness | Pass: 20 clients, six mesh nodes, 100-client pool; paused/unleased |
+
+Query timings measure agent receipt → controller capture; threshold timings
+include provider restart/delta warm-up. Independent one-second sampling continues
+with reporting off. Fixtures do not measure physical congestion.
+
+Evidence: `/home/rev/work/rf14-0913/evidence/` on rev150:
+`rdk-rf14-implemented-5/`, `rdk-rf14-restart-final/` and retained failures.
+From the RDK guest's `gen/`:
+
+```sh
+sudo env PYTHONPATH=optimizer:wmediumd/configurator python3 tests/rdk-reporting-policy-acceptance.py \
+  --live --extended --root "$PWD" --output /tmp/rdk-rf14-new
+```
+
+POST `/api/v1/ap_metrics_query` accepts `{AlMac, BSSIDs}` (1–24 BSSIDs).
+**HTTP 202 means submitted**, not completed.
+`tests/native-ap-metrics-test.py NATIVE_SOURCE ONEWIFI_SOURCE` checks parser
+bounds, handoff, timer-zero/idempotence, thresholds and RBUS validation.
+Clean native objects after header changes; deploy matching binaries/libraries.
+No full-catalog, soak or ASan claim.
 
 ## Preparation
 
-1. Reserve the lab. Save initial room/service configuration, native/container/
-   medium identities and source revisions. No other operator lease or RF writer
-   may be active. Do not alter native policy, metrics intervals or VM resources.
-2. Copy the **deployed guest's** `gen/wmediumd/configurator/worlds/golden/*.world.json`
-   to the observer evidence directory. Match hashes to the loaded world.
-3. Copy `gen/tests/room-feature-guest-audit.py` and
-   `gen/tests/room-feature-rf-audit.py` into the guest's `/tmp/`, keeping names.
-4. Use an installed Playwright/Chromium and preferably a separate observer.
-   If colocated, restrict only owned browser GPU threads with `--observer-cpus`,
-   using valid CPU IDs. The harness owns an SSH host sampler, requires two
-   samples before lab mutation and retains it through restoration. Samples
-   include CPU/pressure, RAM, temperature and available throttle counters.
-   Its stdin closes on shutdown; sampler failure invalidates host coverage.
-5. Current interactive sessions default to unlimited total actions
-   (`maximum_actions: null`) with rate, oscillation and failure safety guards
-   enabled. Verify these with `tests/room-final-readiness.py`; do not add the
-   obsolete 2000-action override. Save any explicit operator limit and restore
-   it afterward. Any policy-profile change uses a named temporary runtime
-   drop-in and restarts only the room, outside measurement.
-6. Keep host builds, image exports, backups and storage maintenance outside
-   timed runs. In particular, check active `fstrim.service` jobs and host/guest
-   I/O pressure when LXD operations time out: discard on a filesystem containing
-   a loop-backed LXD pool can delay otherwise idle guests. Record any interrupted
-   maintenance and rerun affected cases in a separate evidence directory. Keep
-   normal maintenance timers enabled; do not label host stalls as stack latency.
+### Native retry counters and AP inspection
 
-Do not discard an RF journal or restart native services to make a case pass.
-Keep failures and incomplete runs in separate evidence directories.
+September 15 bounded follow-up, evidence on rev150:
+`/home/rev/work/rf-counters-0915/evidence/`. Four eight-second downlink trials
+per stack pass; 250-ms impairment/recovery pulses avoid prolonged disconnects.
+Compare native 1905 counters with AP `iw` counters and sequenced UDP endpoints.
+
+| Trial | RDK retries / TX failures | prpl retries / TX failures |
+| --- | --- | --- |
+| Strong baseline | 0 / 0 | 0 / 0 |
+| Data loss | 1240 / 63 | 866 / 46 |
+| Reverse ACK loss | 1228 / 63 | 823 / 45 |
+| Recovery | 0 / 0 | 0 / 0 |
+
+Native and driver retry/failure deltas agree exactly. ACK-loss trials deliver
+all 3200 datagrams: TX failure does not prove data loss. RDK uses octets,
+prpl KiB; reset/wrap/malformed and direction checks are deterministic tests.
+RX corruption is not qualified. prpl patch 0022 fixes missing TX/RX mappings.
+The harness drains native sampling for two seconds before comparing reports;
+that wait is not measured convergence. Earlier failures remain retained.
+
+Deploy CMake-installed prpl libraries, not build-tree files: RUNPATH differs.
+After native restarts, verify per-agent reporting intervals and restore the
+client roster before starting the room.
+
+From RDK `gen/` or prpl root, substitute `prpl` for the second stack:
+
+```sh
+sudo env PYTHONPATH=optimizer:wmediumd/configurator python3 tests/native-retry-counter-acceptance.py \
+  --stack rdk --output /tmp/retry-qualification-new --yes-change-lab
+```
+
+AP-inspector tests distinguish local reports from client-heard advertisements,
+per-neighbor age, missing/zero/stale data and world replacement. Local AP load
+still requires an explicit load-policy session; ordinary rooms do not enable
+one. Browser component checks use live observations; full WebGL rendering is
+unavailable on this test host. No new policy, soak or full-catalog claim.
+
+### Demand and lifecycle follow-up
+
+Evidence directory on rev150: `/home/rev/work/rf-demand-0913/evidence/`.
+Run each stack serially; the two hosts may run in parallel.
+
+1. Retain non-turbo/priority profiles, resources and native timers.
+2. Check leaf restart, owned-rule restoration and watcher reconnect outside
+   measured runs; preserve unrelated firewall rules.
+3. Repeat different-channel UDP/BTM three times. Separate submission,
+   association and native evidence timing from the mandatory 20-second
+   post-verification observation window.
+4. Check UDP low/high/off, same-channel no-steer, both endpoints and four
+   cancellation paths; leave no traffic/firewall leftovers.
+5. Check received-link, cross-band and extender-loss rooms with both views and
+   native ownership audits. Restore the paused default twenty-client room
+   and hundred-client pool.
+
+No soak or physical-capacity claim follows from these tests. Retain failures
+and mark unavailable instrumentation explicitly rather than fabricating timings.
+
+### Demand and lifecycle results
+
+Both `*-rooms-udp-and-regressions/report.json` files pass all six rooms,
+initial/play/checkpoint/final gates, independent native audits, unchanged
+native/container/medium identities and default-world restoration. This does
+not erase the separate failed RDK load-control restorations.
+
+| Bounded observation | RDK | prpl |
+| --- | --- | --- |
+| Leaf restart command / rule present after return | 3.017 / 0.269 s | 12.791 / 0.155 s |
+| Watcher kill/reconnect | 5.030 s | 5.030 s |
+| Low/high/off sender actual, Mbit/s | 1.001 / 7.999 | 1.001 / 7.999 |
+| Low/high/off receiver goodput, Mbit/s | 1.001 / 7.998 | 1.001 / 7.974 |
+| Receiver loss in completed low/high phases | 0% | 0% |
+| Pause / source-offline cancellation | 0.291 / 0.597 s | 0.250 / 0.269 s |
+| Lease-release / world-change cancellation | 0.289 / 2.016 s | 0.026 / 1.039 s |
+
+Native load timing uses only the two passing RDK guarded runs and the three
+prpl repeats plus its passing identity-guard follow-up:
+
+| Timing boundary | RDK | prpl |
+| --- | --- | --- |
+| Submission call | 89–108 ms | 437–803 ms |
+| Target association verification after submission | 0.920–2.175 s | 0.225–0.451 s |
+| First fresh target serving sample after verification | 5.491–13.049 s | 1.761–1.945 s |
+| First fresh candidate set | 7.535–10.138 s | 0.667–1.352 s |
+| First fresh target/source load | 4.723–4.748 / 2.236–4.724 s | 0.668–1.353 / 0.668–2.158 s |
+| Complete coherent serving/candidate/load/activity snapshot | 10.139–15.592 s | 2.965–3.215 s |
+| Observer / nested candidate query p95 | 2628 / 2402 ms | 573 / 519 ms |
+| Load enrichment / policy evaluation p95 | 1.946 / 1.161 ms | 0.727 / 0.284 ms |
+
+These are first sampled evidence bounds, not native arrival times. The
+mandatory 20-second observation gate is retained and is not convergence latency.
+Do not add nested candidate time to observer time. Native report cadence,
+load-hold/dwell policy and host profiles differ; this is not a stack-speed ranking.
+RDK post-steer freshness remains variable and requires further diagnosis:
+these results do not establish instant measurement availability.
+
+The third guarded pre-fix RDK trial loses its controller and fails readiness
+with missing channel reports. Preserve that failure despite patch 0193 and
+subsequent successful agent/policy recovery. Both default rooms ultimately
+recover with twenty clients, hundred-client pools and no experiment leftovers;
+priority persistence remains enabled and outer-VM autostart disabled.
+
+Restart classification is eventual, not a pre-network barrier. Disabled
+reconnects do not restore rules; unrelated nftables tables survive. Native
+startup is separate: prpl requires its leaf wrapper; RDK needed its existing
+metrics-policy replay after the direct restart. Neither recovery belongs in
+a steering timing window.
+
+UDP uses existing namespaces and two owned processes. Actual measurement
+windows were about three and eleven seconds, not the full scheduled phases.
+All four cancellation cases leave no owned iperf3 processes. World-change
+latency includes applying the replacement world. Cancelled endpoint JSON was
+unusable and remains explicitly unavailable, not zero traffic/loss. Live lease
+expiry, shutdown cancellation and nonzero-loss accuracy are not demonstrated
+by these cases; their code paths have unit coverage.
+
+Both explicit native-load negative runs pass on unchanged channels, with no
+load-directed action. Sampled serving utilization stays within 0–119/255 RDK
+and 9–117/255 prpl: this proves acceptable-load suppression, not same-channel
+exclusion under overload. Initial signal-directed roams remain allowed.
+The temporary load-policy service override is removed afterward.
+
+Native-to-view probes use exact deployed-binary hashes and instruction/DWARF
+validation; unknown binaries fail closed. Selected upper clock-bound p95:
+
+| Native RCPI store to Chromium presentation | RDK | prpl |
+| --- | --- | --- |
+| Room | 463 ms; two native samples | 599 ms; eight native samples |
+| Topology | 106 ms; eight clients in one frame | 495 ms; ten native samples |
+
+Room captures emit/receive 70/70 RDK and 352/352 prpl native events; topology
+captures 138/138 and 673/673, with zero lost events. Small cohorts, shared
+presentation frames, separate workloads and a colocated headless observer
+preclude a stack ranking or population tail claim. This excludes RF generation,
+complete handovers/animations and a physical display.
+
+Room-campaign host sensors peak at 63°C on non-turbo RDK and 85.5°C on prpl.
+RDK's package throttle counter does not increase; the prpl counter is
+unavailable. RDK takes 96.047 s to regain default-room readiness after the
+negative-control service-profile restoration. This maintenance recovery is
+recorded separately from post-steer freshness and is not instantaneous startup.
+
+### RDK post-steer freshness and early ownership
+
+This investigation separates native cadence, API sampling and collection
+ordering. The early-owner fix has regression coverage and a same-mode measured
+run: complete post-verification evidence improves from **11.715 s to 9.602 s**.
+This does not change the native five-second cadence or retroactively clear the
+two pre-fix failed trials.
+
+#### Same-trial no-hook baseline
+
+The traced recovery baseline passes with **2471 received/emitted events,
+zero lost**. Evidence paths in the outer guest (host mirrors prepend
+`/home/rev`) are:
+
+- Analysis: `/work/rf-recovery-0913/evidence/rdk-freshness-baseline-analysis.json`.
+- Trace/report: `/work/rf-recovery-0913/evidence/rdk-traced-recovery-fresh-baseline-1/`, including `native-events.jsonl`.
+- Acceptance report/cycles: `/work/rf-demand-0913/evidence/rdk-native-positive-recovery-fresh-baseline-1/`.
+
+| Boundary after verification finished | Seconds |
+| --- | ---: |
+| First exact-target native RCPI store | 1.380 |
+| API/collector serving-metric milestone | 3.702 |
+| Complete candidate set | 8.614 |
+| Target activity / complete snapshot | 11.715 |
+
+The native figure joins this trial's trace and verification in the same guest
+monotonic domain; the analyzer's generic native-arrival field remains null.
+API/collector milestones are not native receipt times. Candidate sweep median
+is 1.960 s, observer excluding candidates 0.222 s, and load enrichment 0.885 ms.
+The baseline records target ownership before the first target counter, then
+discards that counter at post-sweep enrichment. It consequently waits for
+another baseline and the following roughly five-second report interval.
+
+These are **blocking native-benchmark** observations. CLI/native acceptance
+currently collect candidates directly; production room collection already
+uses `StreamingCandidateProvider`. A two-second direct sweep is not evidence
+of two-second production blocking. Candidate time is nested within observer
+time, not additive. Earlier activity need not yield earlier completeness
+while native candidate rejections remain.
+
+#### Earlier evidence and source attribution
+
+Earlier guarded trials remain under `/home/rev/work/rf-demand-0913/evidence/`.
+Run 3 fails restoration and is diagnostic evidence, not a qualifying pass.
+Source-AP association rejections persist after steering; HTTP success does not
+prove complete candidates. Native handler residual includes protocol waiting.
+Do not add nested candidate time to observer time.
+
+Independent zero-loss render traces show roughly five-second same-owner report
+cadence and 0.933–11.725 s handoff-to-target-store variability. They use different
+controller identities from the guarded trials and cannot provide their native
+arrival timestamps. Equal RCPI writes count. The newer same-trial baseline,
+not retrospectively joined journals, establishes discarded-counter ordering.
+
+Qualified source is `/home/rev/work/rf-recovery-0913/native-source`:
+`src/em/metrics/em_metrics.cpp` validates association and unassociated-query
+eligibility; `inc/em_metrics_time.h` subtracts wire sample age rounded upward
+to whole seconds. Thus earlier sample timestamps do not establish API delay.
+`src/rdkb-cli/candidate_coordination.go` uses a 100 ms cache and one native
+command at a time; `src/rdkb-cli/main.go` polls at 100 ms, not the historical
+1.5-second cache. Exact RCPI-store `0x89b90` and association-commit
+`0xdf99a`/`0xdf9db` qualifications remain in
+`/home/rev/work/rf-demand-0913/evidence/probe-profile`; requalify rebuilt binaries.
+
+#### Local hook, evidence and rollout boundary
+
+`NativeLoadProvider.observe_owners(clients, raw)` consumes the complete,
+unambiguous controller roster before fallback/publisher/candidate work.
+Register `observer.ownership_observer = provider.observe_owners` after
+provider construction, before measured cycles or client filtering. Existing
+metric publishers remain separate; asynchronous callbacks do not own this
+state. No additional sweeps or native queries are introduced.
+
+The shared provider resets observed source/BSSID ownership once, preserving
+subsequent target baselines, including sources first seen after real ownership.
+It invalidates changed provenance/radio/channel, disappearance and observed
+leave/return; intervals cannot bridge transport changes. Original timestamps
+remain intact. Activity must start strictly after ownership/context floors
+and, for acceptance, verification. Missing/stale data stays unavailable.
+Unobserved intervening associations are not proven by polling.
+
+RDK `collection_timing.py`, `observer.py` and `candidates.py` retain request
+brackets, partial-failure evidence and retry-separated timings.
+`load_observer.py` records early owner floors/discarded receipts in
+`raw.load_collection`, retaining them through enrichment.
+`gen/tests/metric_freshness_analysis.py` analyzes saved trials and qualified
+traces; it distinguishes legacy read bounds, age-adjusted samples, exact
+requests and native writes, rejecting cross-trial attribution. Unattributed
+candidate records from failed reads are excluded from current-cycle statistics.
+
+Offline tests include `test_metric_freshness_analysis.py`,
+`test_collection_timing.py`, `test_load_collection_timing.py`,
+`test_owner_observation.py`, `test_owner_hook_wiring.py` and conductor wiring.
+Coverage includes blocked/failed sweeps, first-source baselines, invalid
+epochs, strict intervals and real single-flight streaming without extra rounds.
+Passing these tests does not itself verify acceptance-main registration.
+
+The same-mode traced control preserves identities and zero trace loss; early
+ownership precedes the retained target baseline. Candidate readiness remains a
+separate milestone. The production controller now includes patch 0193 and no
+ASan runtime override. Do not resume extended UAF churn as RF qualification.
+Any CLI/benchmark streamer reuse is a separately labeled measurement-mode
+change and must preserve one-at-a-time native commands.
+
+### General preparation
+
+1. Reserve the lab; save configuration, native/container/medium identities and
+   revisions. Exclude other leases/RF writers; preserve policy, timers and VM resources.
+2. Copy deployed `gen/wmediumd/configurator/worlds/golden/*.world.json` into
+   evidence and match loaded-world hashes. Copy `gen/tests/room-feature-guest-audit.py`
+   and `gen/tests/room-feature-rf-audit.py` into guest `/tmp/`, retaining names.
+3. Use Playwright/Chromium, preferably on a separate observer. If colocated,
+   `--observer-cpus` restricts only owned GPU threads to valid CPUs. The SSH
+   sampler needs two pre-mutation samples and runs through restoration,
+   recording CPU/pressure, RAM, temperature and available throttling counters.
+   Its stdin closes on shutdown; failure invalidates host coverage.
+4. Verify `maximum_actions: null` and rate/oscillation/failure guards with
+   `tests/room-final-readiness.py`; never restore the obsolete 2000-action override.
+   Preserve explicit operator limits. Profile changes use named temporary
+   drop-ins and room-only restarts outside measurement.
+5. Exclude builds, exports, backups and maintenance from timing. On LXD timeouts,
+   check `fstrim.service` and host/guest I/O pressure: loop-backed discard can
+   stall idle guests. Keep maintenance timers enabled; document interruptions
+   and rerun separately, never labeling host stalls as stack latency.
+
+Retain failed/incomplete evidence and RF journals; no native restart may turn
+a measured failure into a pass.
 
 ## Gates
 
@@ -68,40 +347,33 @@ Keep failures and incomplete runs in separate evidence directories.
 | Integrity | Native/container/medium identities unchanged; no hidden RF assistance, faults, SSE gaps or browser errors |
 | Cleanup | Default twenty-client world, paused, no lease/fault; original service/action cap restored |
 
-A continuously moving target need not be strictly converged every instant.
-At each initial, checkpoint and final settled boundary, the harness reads
-`iw dev wlan0 link` for the complete fixed pool with four bounded workers.
-Every online client must match its native-model BSSID; every offline client
-must be disconnected. Missing observations fail. The independent audit's
-`elapsedMs` is recorded separately from convergence timing; it does not relax
-the 60/45/90-second policy bounds. Earlier reports checked only offline clients
-and selected live probes, not every online client's physical owner.
-Physical audits precede screenshots at all three boundaries. Their model
-timestamp and age at audit start are recorded: screenshot delays must not
-compare a later physical association against an old native snapshot.
-Record one-second target sampling cadence and actual gaps; screenshots can
-slow sampling. Do not infer continuous failure across unobserved intervals.
+Moving targets need not continuously converge. At initial/checkpoint/final
+settling, four bounded workers audit the complete fixed pool with
+`iw dev wlan0 link`: online BSSIDs must match native ownership, offline
+clients must disconnect, and missing observations fail. Record audit
+`elapsedMs` separately without relaxing 60/45/90-second gates. Older reports
+audited only offline clients and selected probes.
 
-For presence worlds, inspect exact MAC sets in both views and kernel links at
-settled boundaries. During fronthaul loss require no clients on the disabled
-role after five seconds while backhaul remains connected. Check directional
-RF gains against the asymmetric golden via the read-only midpoint audit;
-reject samples crossing epochs. Protected startup backhaul need only match
-the connected actual tree, not form geometric branches.
+Audit before screenshots; retain model timestamp/age to avoid stale-owner
+comparisons. Record actual gaps against the one-second sampling target;
+unobserved intervals cannot prove continuous failure. Presence worlds require
+exact MAC sets in both views and kernel links. Fronthaul loss must empty the
+disabled role within five seconds while retaining backhaul. The read-only
+midpoint audit checks directional gains against the asymmetric golden and
+rejects cross-epoch samples. Protected backhaul must match the actual connected
+tree, not geometric branches.
 
 ## Execute
 
-The client-steering harness records geometry-backhaul catalog entries under
-`separateBackhaulRooms` and excludes them from its client-only campaign. An
-explicit request to run one through that harness is rejected rather than
-misclassifying an intended backhaul outage. Existing room gates are unchanged.
+The client-only harness lists geometry-backhaul rooms in `separateBackhaulRooms`
+and rejects explicit requests for them, preserving room gates.
 
-New reports identify `convergenceCriterion=configured-steering-policy`.
-`policyConverged` includes roster, ownership, freshness and completeness checks;
-`optimizerPolicySatisfied` is only the policy's raw verdict. The separate
-`strongestApConverged` and `strongerClientGaps` preserve the stricter diagnostic.
-Missing metrics, incomplete decision coverage or an RF fault cannot pass either
-qualified verdict. Older reports retain their original strongest-AP criterion.
+Reports use `convergenceCriterion=configured-steering-policy`.
+`policyConverged` includes roster/ownership/freshness/completeness;
+`optimizerPolicySatisfied` is the raw policy verdict.
+`strongestApConverged`/`strongerClientGaps` retain stricter diagnostics.
+Missing metrics, incomplete decisions or RF faults fail qualification.
+Older reports retain their strongest-AP criterion.
 
 From this repository on an observer able to SSH to the physical host:
 
@@ -121,19 +393,17 @@ node gen/tests/room-feature-report.js /absolute/path/to/new-results \
   /absolute/path/to/deployed-goldens > audited-summary.json
 ```
 
-Replace deployment arguments as needed. Add `--observer-cpus CPU_LIST` when
-sharing a lab host. Repeat `--world WORLD_ID` only for explicitly targeted
-runs; omit it to enumerate the live catalog. Use independent output directories,
-browsers and host samplers for simultaneous backends. Inspect the harness's
-nonzero exit and report; completing playback alone is not acceptance.
+Adjust deployment arguments; use `--observer-cpus CPU_LIST` on shared hosts.
+Repeat `--world WORLD_ID` for targeted runs; omit for live catalog enumeration.
+Simultaneous backends need separate evidence, browsers and samplers.
+Inspect exit/report: completed playback alone cannot pass.
 
 ## Short backhaul feature test
 
-The RDK-only short suite runs the three 24-second geometry-backhaul rooms,
-using the real viewer's load/Play controls and inspecting Network Topology.
-It samples physical uplink BSSIDs and gateway probes through out-of-band LXD
-access at the pause and return. No native process, parent BSSID or action budget
-is changed by the harness. It requires a healthy, unowned default room first.
+The RDK short suite runs three 24-second geometry-backhaul rooms through real
+load/Play controls and Network Topology. Out-of-band LXD audits uplink BSSIDs
+and gateway probes at pause/return. Start from a healthy, unowned default;
+native processes, parent BSSIDs and action budgets remain unchanged.
 
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core CHROMIUM_PATH=/path/to/chromium \
@@ -144,24 +414,18 @@ node gen/tests/room-backhaul-features.js \
   --output /tmp/new-backhaul-feature-results
 ```
 
-Use a new output directory. The suite records applied RF, room policy/clock,
-controller parents, native link/probe observations and screenshots of both
-views. Native branch/handover observations are reported separately from
-`featureChecksPassed`; correct geometry does not prove native optimization.
-The isolation checkpoint must apply −20 dB mesh links without marking the AP
-absent. Local fronthaul remains strong in the deterministic fixture.
-Isolation also requires a successful initial upstream probe (at most 15 s to
-settle), then a disconnected native uplink and failed traffic at the checkpoint.
-After the scripted return, native recovery is observed for at most 20 s before
-restoring Default. `--room backhaul-isolation-recovery` runs just that scenario
-for a focused retest; omitting `--room` runs all three.
+Use new evidence directories; retain RF, policy/clock, parents, native
+links/probes and both screenshots. Report native branch/handover separately
+from `featureChecksPassed`: geometry is not native optimization.
+Isolation requires −20 dB mesh links with the AP present and strong fronthaul,
+an initial upstream probe within 15 s, then disconnected uplink/failed traffic.
+Observe return recovery for 20 s before Default.
+`--room backhaul-isolation-recovery` selects that case; otherwise run all three.
 
-Playback has a 35-second deadline per half-script. Cleanup restores Default,
-checks exact fixed-RF readback and allows at most 60 seconds for twenty clients,
-six topology nodes and successful gateway probes from all APs. Missing native
-observations or recovery failures are not treated as expected outages. No
-forced parent change or native restart is used to hide a failure. This is a
-bounded functionality check, not a soak or a complete native-policy qualification.
+Each half-script has 35 s. Cleanup checks exact default RF and allows 60 s for
+twenty clients, six nodes and all-AP gateway probes. Missing evidence/recovery
+fails; never hide it with forced parents or native restarts. This is bounded
+functionality, not soak or complete native-policy qualification.
 
 ### Rev140 short results: 2026-09-14
 
@@ -398,31 +662,22 @@ BSSID from the owning model. prpl's qualified Station/BSS layouts are pinned
 by the controller digest. Requalify instruction boundaries and layouts after
 native rebuilds; never disable the digest guard.
 
-The metric path joins the native RCPI transition to `/clients` response
-decode, checks the same owner/raw RCPI and all ten actual SVG segment fills,
-then finds a covering Paint. Changes within one meter level still require
-the correct SVG data, but **do not require a nonexistent visual change**.
-Repeated equal native reports cannot reset the transition clock. Ambiguous
-recurrences, ownership changes predating the HTTP request, stale metrics, supersession,
-timeouts and incomplete traces fail rather than receiving guessed timings.
-An ownership/metric change proven to occur **after request start but before
-decode** is tagged as an in-flight snapshot race, not mistaken for a bad
-native join. The old-owner metric's own commit must still match uniquely;
-clock-overlapping request boundaries remain unqualified.
+Join native RCPI transitions to `/clients` decode, exact owner/raw RCPI,
+all ten SVG fills and covering Paint. Same-level changes require correct data,
+not a nonexistent visual transition; equal reports never reset clocks.
+Ambiguity, pre-request owner changes, stale/superseded metrics, timeouts and
+incomplete traces fail. Proven request-start→decode changes are in-flight races;
+the old-owner commit must still join uniquely, with clock-overlapping
+boundaries unqualified.
 
-Presentation is no longer inferred from two animation callbacks. A covering
-Paint must belong to the exact renderer/thread's main-frame→commit flow;
-that frame's hexadecimal trace identity must match Chrome's presentation
-feedback. Zero-frame feedback and missing/duplicate joins are unqualified.
-The source is Chromium's
+Paint must match exact renderer/thread/main-frame→commit and hexadecimal
+presentation identity, not two animation callbacks. Zero-frame or
+missing/duplicate feedback fails. Sources: Chromium's
 [presentation callback](https://chromium.googlesource.com/chromium/src/+/139.0.7258.5/third_party/blink/renderer/core/frame/animation_frame_timing_monitor.cc)
 and [main-frame pipeline](https://chromium.googlesource.com/chromium/src/+/139.0.7258.5/cc/trees/proxy_main.cc).
-Trace categories are `devtools.timeline,blink.user_timing,benchmark`; avoiding
-the entire `cc` category retains the required commit flows without its
-unrelated scheduler events. Recording is capped at 128 MiB, with loss rejected;
-JSON export has a 512 MiB limit and a separate 30-second completion deadline.
-Export/offline analysis are outside latency and CPU measurement windows and
-use additional memory, not the recording buffer's budget.
+Categories `devtools.timeline,blink.user_timing,benchmark` retain required flows
+without unrelated `cc` scheduling. Recording: 128 MiB, no loss. JSON export:
+512 MiB/30 s, outside latency/CPU windows; its memory is additional.
 
 The following topology figures are retained September 12 baselines, not new
 timings of the post-backport prpl dependency. The room profiles below are from
@@ -455,37 +710,28 @@ Retain raw native events, clock samples and Chrome traces outside the repo.
 
 #### Observer overhead
 
-On a paused, unleased default twenty-client lab, run the same command with
-`--scope overhead --seconds 30 --room-url http://192.168.2.140:48891/` and
-a new output directory. For prpl use room URL `http://192.168.2.150:18891/`.
-This is a **separate qualification**, not a latency pass with zero samples.
-After initializing Chrome's otherwise lazily created tracing service, it
-records 20 seconds before tracing, 30 traced, and 20 after; unchanged
-room epoch/roles/playback, process identities, no RCPI or association changes,
-native metric events and no trace loss are required.
+On paused, unleased default twenty-client labs, use new evidence and
+`--scope overhead --seconds 30 --room-url http://192.168.2.140:48891/`
+(prpl URL `http://192.168.2.150:18891/`). This separately qualifies overhead,
+not zero-sample latency. Initialize Chrome tracing, then capture 20 s
+before/30 s traced/20 s after. Require unchanged room epoch/roles/playback,
+process identities, RCPI/associations, native events and zero loss.
 
-Budgets are fixed before measurement: observer callbacks p95 ≤2 ms and total
-≤1% of wall time, including a conservative 0.2 ms per-callback timer allowance;
-incremental controller CPU ≤5 and browser CPU ≤10 percentage
-points of **one core**. The upper envelope subtracts the lower of the two
-baseline windows, including ±2 native scheduler ticks. It is an observed
-stationary envelope, not a universal or statistical confidence bound.
+Fixed budgets: callbacks p95 ≤2 ms/total ≤1% wall time including 0.2 ms each;
+incremental controller/browser CPU ≤5/10 percentage points of **one core**.
+Subtract the lower baseline, allowing ±2 scheduler ticks: a stationary
+envelope, not a statistical confidence bound.
 
-Final controlled runs pass both stacks: controller upper increments
-**1.45 / 0.00 percentage points**, browser **0.58 / 0.48**, and callback
-upper bounds **0.115% / 0.100%** of elapsed time (RDK/prpl). The zero prpl increment means
-no detectable increase within this envelope, **not zero probe cost**. Moving
-room CPU windows are retained separately and are not controlled A/B evidence.
-The controlled comparison keeps the same topology page open in all windows;
-it bounds instrumentation cost, not the cost of opening a viewer. Catalog
-captures add an observed topology page, so they are not uncontended runs.
+Both pass (RDK/prpl): controller **1.45/0.00**, browser **0.58/0.48**
+percentage points; callbacks **0.115%/0.100%** wall time. Zero means no
+detectable increase, not free probing. All windows keep the topology page open;
+viewer-opening cost is excluded. Moving windows are not A/B controls; catalog
+captures are not uncontended.
 
-Scope is **native association/RCPI model store to topology presentation feedback**
-in a headless compositor. This does not qualify physical display scanout,
-layout-animation completion, the room's WebGL presentation, every native
-counter or an exact server-publication timestamp. Request/decode brackets
-include publication, polling and transport; no zero-external-delay claim is
-made. Profiling cannot turn a failed room convergence gate into a pass.
+Scope is native model-store→headless topology presentation, not scanout,
+completed animations, room WebGL, every counter or exact server publication.
+Request/decode includes publication/polling/transport. Profiling cannot qualify
+failed convergence or prove zero external delay.
 
 ### prpl snapshot coherence and candidate diagnosis
 
@@ -704,36 +950,28 @@ node gen/tests/room-render-latency.js --url http://192.168.2.140:48891/ \
   --native-stack rdk --host rev140 --vm rdkeasymesh-20-0908
 ```
 
-For prpl omit `gen/`, use `http://192.168.2.150:18891/`, and select
-`--native-stack prpl --host rev150 --vm prplmesh-20-0908`.
-Omit the native arguments for decoded-snapshot-only profiling. Run passively while
-a separately controlled room is playing. The tool enters full screen, enables
-`?profile=1` on its own page, and removes its observer before export. The
-default viewer has no observer. No extra RF/API queries, pixel readback or
-synchronous GPU wait is introduced. The profile pins Chromium and SwiftShader,
-with the owned GPU process restricted to CPUs 0–1 and nice 19.
+For prpl omit `gen/`, use `http://192.168.2.150:18891/` and
+`--native-stack prpl --host rev150 --vm prplmesh-20-0908`; omit native arguments
+for decode-only profiling. Observe separately controlled playback in full screen.
+Only the profiler's page enables `?profile=1`; remove it before export.
+Default viewers add no observer, queries, pixel readback or synchronous GPU wait.
+Pin Chromium/SwiftShader; restrict the owned GPU process to CPUs 0–1/nice 19.
 
-The join requires one canvas, correct material colors/line endpoints, actual
-draw calls, an exact renderer/thread/main-frame identity and one
-[`DrawingBuffer::prepareMailbox`](https://chromium.googlesource.com/chromium/src/+/139.0.7258.5/third_party/blink/renderer/platform/graphics/gpu/drawing_buffer.cc)
-before its commit. Missing or duplicate joins, lost traces, SSE gaps, context
-loss and API failures fail qualification. A collapsed asynchronous frame in
-Chrome's JSON export is accepted only with its exact begin-frame ID, unique
-explicit render interval and matching recorded duration; no nearest-frame
-guess is used. Marker start times include observer work rather than subtracting
-it from reported latency. Browser timer precision contributes ±0.2 ms.
+Require one canvas, correct colors/endpoints, actual draws, exact
+renderer/thread/main-frame identity and one pre-commit
+[`DrawingBuffer::prepareMailbox`](https://chromium.googlesource.com/chromium/src/+/139.0.7258.5/third_party/blink/renderer/platform/graphics/gpu/drawing_buffer.cc).
+Missing/duplicate joins, trace/SSE/context loss or API failures fail.
+Collapsed exported frames require exact begin-frame ID, unique render interval
+and matching duration, never nearest-frame guessing. Markers include observer
+work; browser timer uncertainty is ±0.2 ms.
 
-Native mode additionally joins serving-RCPI stores at the digest-qualified
-controller boundary to observed room RCPI transitions and their exact WebGL
-frame. Match station, BSSID and RCPI; reject ambiguous/repeated transitions,
-fallback sources, stale metrics, mismatched RSSI conversion and clock
-uncertainty over five milliseconds. Equal repeated native values do not create
-new transitions. Missing native events or an empty join cannot pass. Native
-capture stops before Chrome export, and its process/clock evidence is retained.
-The bounded search spans thirty seconds, not an assumed event/presentation
-identity. These joins describe observed value publication, not every native
-sample: SSE can coalesce intervening values, and unchanged signal bars may
-represent distinct RCPI values within the same color level.
+Native joins require digest-qualified serving stores and exact STA/BSSID/RCPI
+transitions/frame. Reject ambiguity, repeated transitions, fallback/stale data,
+wrong RSSI conversion, uncertainty >5 ms, missing events and empty joins.
+Stop native capture before export; retain process/clock evidence. Search is
+bounded to 30 s, not assumed identity. SSE may coalesce values, and distinct
+RCPI values may share one bar level: these are publication joins, not every
+native sample.
 
 | Qualified fullscreen band-walk profile | RDK / rev140 | prpl / rev150 |
 | --- | --- | --- |
@@ -751,22 +989,16 @@ represent distinct RCPI values within the same color level.
 | Maximum joined clock uncertainty | 3.12 ms | 3.05 ms |
 | Native events captured / lost | 185 / 0 | 965 / 0 |
 
-The unchanged callback budgets are p95 ≤2 ms and ≤1% of elapsed wall time.
-An initial profiler used layout-forcing canvas bounds reads; removing those
-reduces its measured callback p95 upper from 4.10 ms to the values above.
-Earlier failed/empty captures are retained, not counted as passes.
-Different hosts, native reporting cadence and software GPU scheduling preclude
-an intrinsic stack-speed comparison. These 65-second profiles run alongside
-the respective full catalogs, without changing their gates. Capture receiver CPU is **0.116 / 0.353 s**
-over approximately 67 seconds for RDK/prpl. Native and Chrome traces have no
-lost events. Receiver resource evidence remains in each profile report.
-RDK's retained raw capture also passes the stricter RSSI/RCPI-conversion reaudit.
+Callback budgets remain p95 ≤2 ms/≤1% wall time. Removing layout-forcing
+canvas reads reduces the initial 4.10 ms p95 upper to these values; retain
+failed/empty captures. The 65-second profiles accompany unchanged catalog gates.
+Hosts, native cadence and software GPUs preclude stack-speed ranking.
+Receiver CPU is **0.116/0.353 s** over ~67 s (RDK/prpl), with no native/Chrome
+loss; reports retain resources. RDK raw evidence passes stricter RSSI conversion.
 
-This is native **controller RCPI-store → room presentation**, not RF generation
-or reception → controller timing, physical scanout, pixel-exact framebuffer
-validation, completed animations, or qualification of every mesh/wall effect.
-Do not call it the entire virtual-RF pipeline or zero outside-stack delay.
-The topology native-RCPI profile remains separate.
+Scope is **controller RCPI-store→room presentation**, not RF generation,
+reception→controller, scanout, pixel-exact framebuffer, completed animations,
+every mesh/wall effect or zero external delay. Topology profiling is separate.
 
 ### Opt-in policy outcome
 
@@ -807,44 +1039,34 @@ in the timeout investigation below.
 
 ### Native-load coverage
 
-`tests/native-load-acceptance.py` is a read-only, twenty-second check of the
-default lab. It requires all thirty private/IoT BSS loads, native station
-counts matching controller associations, all twenty client activity records,
-advancing report timestamps and unavailable observations after receiver
-shutdown. RDK prefixes the path with `gen/`.
-
-Run inside the VM with a new output directory:
+`tests/native-load-acceptance.py` checks the default lab read-only for twenty
+seconds: thirty private/IoT BSS loads, association-matching station counts,
+twenty client activities, advancing timestamps, and unavailable data after
+receiver shutdown. Run inside the VM with new evidence:
 
 ```sh
 PYTHONPATH=optimizer python3 tests/native-load-acceptance.py \
   --stack prpl --output /tmp/native-load-new
 ```
 
-For RDK use `PYTHONPATH=gen/optimizer`,
-`gen/tests/native-load-acceptance.py` and `--stack rdk`.
-No retunes, traffic injection, steering or native restarts occur.
+RDK uses `PYTHONPATH=gen/optimizer`, `gen/tests/native-load-acceptance.py`,
+`--stack rdk`. No retunes, injected traffic, steering or restarts.
 
-Both pass on September 12. Complete load/activity coverage first appears in
-**2.155 s prpl / 10.333 s RDK**; the activity calculation needs two native
-counter reports. prpl covers one colocated and four remote APs through one
-owned `uds_broker` subscription to AP Metrics Response CMDUs. RDK retains its
-Ethernet receiver. Snapshot/decision transport provenance distinguishes
-`prpl-local-broker`, `prpl-1905-broker` and `ieee1905-ethernet`.
+September 12 passes: complete coverage **2.155 s prpl/10.333 s RDK**, requiring
+two counters. One owned prpl `uds_broker` AP Metrics Response subscription
+covers colocated/four remote APs; RDK uses Ethernet. Provenance distinguishes
+`prpl-local-broker`, `prpl-1905-broker`, `ieee1905-ethernet`.
 
-The prpl v6 x86_64 little-endian broker envelope is checked against the pinned
-source and live transport layout. Its native publication timestamp has
-**one-second resolution**: retain that conservative timestamp, not the time a
-queued record or cached NBAPI object is read. Reports older than five seconds,
-future timestamps, unsupported envelopes and disconnected receivers fail
-closed. Duplicate/older timestamps cannot refresh observations or activity.
-No extra native requests, agents, services or public ports are introduced.
-The default signal-only room starts no load collector.
+The pinned-source/live-layout-qualified prpl v6 x86_64 little-endian envelope
+retains its **whole-second native publication timestamp**, never queue/NBAPI
+read time. Reject >5-second/future reports, unsupported envelopes, disconnected
+receivers and duplicate/older refreshes. No extra native queries, agents,
+services or ports; signal-only starts no collector.
 
-The prpl recommend-mode room also exposes local-AP evidence and cleans up its
-receiver on return to default. Both post-change UDP/native-BTM checks pass,
-with no further move during twenty seconds of settling. Evidence is under
-`/home/rev/work/steering-local-ap-0912/`: `*native-load*/`,
-`steering-local-ap-prpl-load-1/`, `rdk-load-3/` and
+prpl recommend mode exposes local APs and cleans up its receiver on default.
+Both UDP/native-BTM checks pass with no further move over twenty seconds.
+Evidence: `/home/rev/work/steering-local-ap-0912/` directories `*native-load*/`,
+`steering-local-ap-prpl-load-1/`, `rdk-load-3/`,
 `steering-local-ap-prpl-room-load/`.
 
 ### RDK steering-timeout investigation
@@ -987,33 +1209,24 @@ and process attribution are opt-in, off by default. Unsupported counters stay nu
 | Package throttling time fraction | 0.1103% | Unsupported |
 | Sampler elapsed p95 / max | 3.63 / 5.90 ms | 1.59 / 7.14 ms |
 
-rev140 has limited thermal headroom, not RAM exhaustion or sustained total CPU
-overload. Inspect physical cooling separately; these measurements do not
-justify swapping hosts or increasing resources. No host power policy changes.
+rev140 lacks thermal headroom, not RAM or sustained total CPU capacity;
+do not infer a need for different hosts/resources. Host power policy is unchanged.
 
-The read-only cooling inventory identifies an Intel NUC12WSKi7 with i7-1260P,
-BIOS dated 2022-03-22, `intel_pstate` and the `powersave` governor. No fan-RPM
-or PWM control is exposed through hwmon, so software cannot verify a blocked
-vent, dust, fan condition or the firmware fan profile. A separate 90-second
-paused-default sample averages **10.15%** total CPU, peaks at **13.07% CPU /
-89°C**, with **zero additional milliseconds** between its first and last
-package throttle-counter samples.
-The lab VM uses approximately 1.5 logical CPUs on average, not all sixteen.
-This is not evidence that cooling is repaired, nor a sustained overload.
+Read-only inventory: NUC12WSKi7/i7-1260P, BIOS 2022-03-22, `intel_pstate`,
+`powersave`; hwmon exposes no fan RPM/PWM. Software cannot establish vent,
+dust, fan or firmware-profile condition. A separate 90-second paused-default
+sample averages **10.15% CPU**, peaks **13.07%/89°C**, and adds **0 ms**
+package throttling; the VM averages ~1.5 logical CPUs, not sixteen.
+Neither repaired cooling nor sustained overload follows.
 
-The processor's specified junction limit is **100°C**, not a recommended
-operating target; see [Intel's i7-1260P specifications](https://www.intel.com/content/www/us/en/products/sku/226254/intel-core-i71260p-processor-18m-cache-up-to-4-70-ghz/specifications.html).
-In a separate maintenance window, the operator should:
-
-1. Check enclosure clearance, unobstructed vents and fan operation; follow the
-   manufacturer's cleaning/service guidance rather than changing VM limits.
-2. Inspect the firmware Cooling profile and available model-specific firmware
-   updates. [ASUS's NUC overheating guidance](https://www.asus.com/us/support/faq/1052612/)
-   describes ventilation and BIOS fan controls. Record any change; do not
-   update firmware or reboot a host during room qualification.
-3. Repeat the same bounded catalog with the same workload and power policy,
-   comparing temperature and throttle duration. Persistent limit hits need
-   hardware cooling attention, not an unqualified performance claim.
+The **100°C** junction limit is not an operating target
+([Intel specification](https://www.intel.com/content/www/us/en/products/sku/226254/intel-core-i71260p-processor-18m-cache-up-to-4-70-ghz/specifications.html)).
+In maintenance, inspect clearance/vents/fan per manufacturer guidance,
+firmware Cooling settings and model-specific updates
+([ASUS guidance](https://www.asus.com/us/support/faq/1052612/)).
+Record changes; no firmware update/reboot during qualification and no VM-limit
+workaround. Repeat the same bounded workload/power policy, comparing temperature
+and throttling; persistent limit hits need hardware attention.
 
 The observer runs on rev150, so results are deployment observations, not
 uncontended comparisons. The final prpl catalog follows its dependency repair;
