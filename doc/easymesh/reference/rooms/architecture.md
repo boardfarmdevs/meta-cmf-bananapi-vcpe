@@ -162,7 +162,15 @@ readback uses the bus's bounded string count: RBUS
 excludes the trailing NUL from that count. A local terminated copy supports
 both bus encodings without accepting empty, oversized or embedded-NUL names.
 The interface must still resolve to the exact requested STA MAC. The agent uses
-the existing native OneWifi BSSID setter with the current credentials. Setter acceptance is not a
+the existing native OneWifi BSSID setter with the current credentials. OneWifi
+validates connected-scan results against the current radio and requested target
+before disconnecting. Other-radio results do not cancel its pending timer;
+missing targets, invalid results or allocation/submission failure keep the
+current link. The candidate count covers only initialized matching entries.
+A synchronous connect rejection enters the existing bounded retry state machine
+without waiting for an asynchronous indication timeout. These checks do not
+extend the native protocol deadlines or establish the cause of an earlier
+intermittent handover delay. Setter acceptance is not a
 completed roam. The agent reports success only after connected native readback
 shows the requested BSSID; the native mesh-STA callback triggers an immediate
 check, with one-second fallback polling and a ten-second transaction deadline.

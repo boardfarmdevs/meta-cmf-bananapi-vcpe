@@ -42,6 +42,7 @@ WIFI_NASTA_METADATA_PATCH := "${THISDIR}/${BPN}/0030-nasta-native-query-metadata
 WIFI_NASTA_SAMPLING_PATCH := "${THISDIR}/${BPN}/0031-nasta-native-query-sampling.patch"
 WIFI_EM_REPORT_AGE_PATCH := "${THISDIR}/${BPN}/0032-ap-report-unknown-age-is-not-fresh.patch"
 WIFI_EM_COLD_QUERY_PATCH := "${THISDIR}/${BPN}/0033-ap-query-without-reporting-policy.patch"
+WIFI_STA_SCAN_CANDIDATES_PATCH := "${THISDIR}/${BPN}/0034-validate-native-backhaul-scan-candidates.patch"
 SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no"
 python do_patch_append() {
     import os
@@ -247,7 +248,7 @@ python do_patch_append() {
         apply_layer_patch(f)
     with open(d.getVar('WIFI_EM_REPORTING_POLICY_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
-    for variable in ('WIFI_NASTA_METADATA_PATCH', 'WIFI_NASTA_SAMPLING_PATCH', 'WIFI_EM_REPORT_AGE_PATCH', 'WIFI_EM_COLD_QUERY_PATCH'):
+    for variable in ('WIFI_NASTA_METADATA_PATCH', 'WIFI_NASTA_SAMPLING_PATCH', 'WIFI_EM_REPORT_AGE_PATCH', 'WIFI_EM_COLD_QUERY_PATCH', 'WIFI_STA_SCAN_CANDIDATES_PATCH'):
         with open(d.getVar(variable), 'rb') as stream:
             apply_layer_patch(stream)
 
@@ -320,6 +321,8 @@ do_patch[vardepsexclude] += "WIFI_NASTA_METADATA_PATCH WIFI_NASTA_SAMPLING_PATCH
 do_patch[file-checksums] += "${WIFI_NASTA_METADATA_PATCH}:True ${WIFI_NASTA_SAMPLING_PATCH}:True ${WIFI_EM_REPORT_AGE_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_EM_COLD_QUERY_PATCH"
 do_patch[file-checksums] += "${WIFI_EM_COLD_QUERY_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_STA_SCAN_CANDIDATES_PATCH"
+do_patch[file-checksums] += "${WIFI_STA_SCAN_CANDIDATES_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

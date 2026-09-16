@@ -1,0 +1,176 @@
+Subject: [PATCH] Validate connected-scan candidates before native backhaul handover
+
+Keep the current link when a scan does not contain the requested target. Ignore
+other-radio reports before cancelling the pending timer, publish only initialized
+candidates, and handle allocation and synchronous HAL submission failures. A
+rejected connection uses the existing bounded retry state machine immediately,
+not an asynchronous indication timeout. Protocol deadlines are unchanged.
+
+--- a/source/core/services/vap_svc_mesh_ext.c
++++ b/source/core/services/vap_svc_mesh_ext.c
+@@ -947,20 +947,33 @@
+ 
+     ctrl = svc->ctrl;
+     ext = &svc->u.ext;
+-    unsigned int radio_index = 0;
++    int radio_index;
+     radio_index = get_radio_index_for_vap_index(svc->prop, ext->connected_vap_index);
+     int dwell_time = get_dwell_time();
+ 
+-    if (ext->conn_state == connection_state_connected_scan_list) {
+-        cancel_scan_result_timer(ctrl, ext);
+-        if (ext->candidates_list.scan_list != NULL) {
+-            ext->candidates_list.scan_count = 0;
+-            free(ext->candidates_list.scan_list);
+-            ext->candidates_list.scan_list = NULL;
+-        }
++    if (ext->conn_state != connection_state_connected_scan_list) {
++        return;
++    }
+ 
+-        wifi_util_dbg_print(WIFI_CTRL,"%s:%d start Scan on radio index %d channel %d\n", __func__, __LINE__, radio_index, ext->go_to_channel);
+-        wifi_hal_startScan(radio_index, WIFI_RADIO_SCAN_MODE_OFFCHAN, dwell_time, 1, &ext->go_to_channel); 
++    cancel_scan_result_timer(ctrl, ext);
++    if (radio_index < 0) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d invalid connected radio\n", __func__, __LINE__);
++        ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
++        return;
++    }
++    if (ext->candidates_list.scan_list != NULL) {
++        ext->candidates_list.scan_count = 0;
++        free(ext->candidates_list.scan_list);
++        ext->candidates_list.scan_list = NULL;
++    }
++
++    wifi_util_dbg_print(WIFI_CTRL,"%s:%d start Scan on radio index %d channel %d\n", __func__, __LINE__, radio_index, ext->go_to_channel);
++    if (wifi_hal_startScan(radio_index, WIFI_RADIO_SCAN_MODE_OFFCHAN, dwell_time, 1,
++            &ext->go_to_channel) != RETURN_OK) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d connected scan rejected on radio %u\n",
++            __func__, __LINE__, radio_index);
++        ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
++        return;
+     }
+     
+     scheduler_add_timer_task(ctrl->sched, FALSE, &ext->ext_connected_scan_result_timeout_handler_id,
+@@ -1182,9 +1195,16 @@
+         // Set to disabled in order to detect state change on connection retry
+         reset_sta_state(svc, vap_index);
+         ext->conn_retry++;
+-        if (wifi_hal_connect(vap_index, &candidate->external_ap) == RETURN_ERR) {
++        if (wifi_hal_connect(vap_index, &candidate->external_ap) != RETURN_OK) {
+             wifi_util_error_print(WIFI_CTRL, "%s:%d sta connect failed for vap index: %d, "
+-                "retry after timeout\n", __func__, __LINE__, vap_index);
++                "schedule bounded retry\n", __func__, __LINE__, vap_index);
++            if (ext->ext_conn_status_ind_timeout_handler_id != 0) {
++                scheduler_cancel_timer_task(ctrl->sched,
++                    ext->ext_conn_status_ind_timeout_handler_id);
++                ext->ext_conn_status_ind_timeout_handler_id = 0;
++            }
++            process_ext_connect_event_timeout(svc);
++            return;
+         }
+         if (ext->ext_conn_status_ind_timeout_handler_id != 0) {
+             wifi_util_dbg_print(WIFI_CTRL, "%s:%d connect status timer is in progress, cancel\n",
+@@ -1690,14 +1710,15 @@
+ 
+     wifi_util_dbg_print(WIFI_CTRL, "%s:%d Enter\n", __func__, __LINE__);
+     
+-    unsigned int i = 0, num = 0, band = 0, channel = 0;
++    unsigned int candidate_index, candidate_count = 0, num;
++    int radio_index, band;
++    unsigned char channel;
+     vap_svc_ext_t *ext;
+     wifi_ctrl_t *ctrl;
+     scan_results_t *results;
+     wifi_bss_info_t *bss;
+-    wifi_bss_info_t *tmp_bss;
+     bss_candidate_t *scan_list;
+-    bool found_candidate = false;
++    bool requested_target;
+     
+     results = (scan_results_t*)arg;
+     ctrl = svc->ctrl;
+@@ -1706,6 +1727,12 @@
+     num = results->num;
+     bss = results->bss;
+ 
++    radio_index = get_radio_index_for_vap_index(svc->prop, ext->connected_vap_index);
++    if (ext->conn_state != connection_state_connected_scan_list || radio_index < 0 ||
++        results->radio_index != (unsigned int)radio_index) {
++        return;
++    }
++
+     if (ext->ext_connected_scan_result_timeout_handler_id != 0) {
+         scheduler_cancel_timer_task(ctrl->sched, ext->ext_connected_scan_result_timeout_handler_id);
+         ext->ext_connected_scan_result_timeout_handler_id = 0;
+@@ -1718,36 +1745,50 @@
+         return;
+     }
+     
+-    tmp_bss = bss;
+-    convert_radio_index_to_freq_band(svc->prop, results->radio_index, (int *)&band);
+-    if ((ext->candidates_list.scan_list == NULL) && num) {
+-        ext->candidates_list.scan_list = (bss_candidate_t *) malloc(num * sizeof(bss_candidate_t));
+-        scan_list = ext->candidates_list.scan_list;
+-        ext->candidates_list.scan_count = num;
+-    } else  {
+-        wifi_util_dbg_print(WIFI_CTRL, "%s:%d NULL scan list should not reach this condition\n", __func__, __LINE__);
++    if (convert_radio_index_to_freq_band(svc->prop, results->radio_index, &band) != RETURN_OK ||
++        ext->candidates_list.scan_list != NULL) {
++        ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
++        schedule_connect_sm(svc);
++        return;
++    }
++
++    scan_list = calloc(num, sizeof(*scan_list));
++    if (scan_list == NULL) {
++        wifi_util_error_print(WIFI_CTRL, "%s:%d cannot allocate connected scan candidates\n",
++            __func__, __LINE__);
+         ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
+         schedule_connect_sm(svc);
+         return;
+     }
+ 
+-    for (i = 0; (i < num) && (tmp_bss != NULL) ; i++) {
+-        convert_freq_to_channel(tmp_bss->freq, (unsigned char *) &channel);
+-        if (channel == ext->go_to_channel)
+-        {
+-            found_candidate =  true;
+-            memcpy(&scan_list->external_ap, tmp_bss, sizeof(wifi_bss_info_t));
+-            scan_list->conn_attempt = connection_attempt_wait;
+-            scan_list->conn_retry_attempt = 0;
+-            scan_list->radio_freq_band = band;
+-            scan_list++;
++    requested_target = is_bssid_valid(ext->new_bss.external_ap.bssid);
++    for (candidate_index = 0; candidate_index < num; candidate_index++) {
++        channel = 0;
++        convert_freq_to_channel(bss[candidate_index].freq, &channel);
++        if (channel != ext->go_to_channel ||
++            (requested_target && memcmp(bss[candidate_index].bssid,
++                ext->new_bss.external_ap.bssid, sizeof(bssid_t)) != 0)) {
++            continue;
++        }
++        memcpy(&scan_list[candidate_count].external_ap, &bss[candidate_index],
++            sizeof(wifi_bss_info_t));
++        scan_list[candidate_count].conn_attempt = connection_attempt_wait;
++        scan_list[candidate_count].radio_freq_band = band;
++        candidate_count++;
++        if (requested_target) {
++            break;
+         }
+-        tmp_bss++;
+     }
+      
+-    if (found_candidate) {
++    if (candidate_count != 0) {
++        ext->candidates_list.scan_list = scan_list;
++        ext->candidates_list.scan_count = candidate_count;
+         ext_set_conn_state(ext, connection_state_disconnection_in_progress, __func__, __LINE__);
+     } else {
++        free(scan_list);
++        ext->candidates_list.scan_count = 0;
++        wifi_util_info_print(WIFI_CTRL, "%s:%d requested target/channel absent; keep current link\n",
++            __func__, __LINE__);
+         ext_set_conn_state(ext, connection_state_connected, __func__, __LINE__);
+     }
+     schedule_connect_sm(svc);
