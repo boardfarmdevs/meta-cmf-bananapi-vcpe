@@ -165,7 +165,7 @@ Upstream-Status: Pending
 +            em_refresh_ap_survey(radio_index) != RETURN_OK) return RETURN_ERR;
 +        policy->link_metrics = true;
 +        const radio_metrics_policies_t *configured = &em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies;
-+        for (unsigned int policy_index = 0;
++        for (int policy_index = 0;
 +             policy_index < configured->radio_count && policy_index < MAX_NUM_RADIOS; ++policy_index)
 +            if (memcmp(configured->radio_metrics_policy[policy_index].ruid, policy->ruid, sizeof(mac_addr_t)) == 0)
 +                policy->traffic_stats = configured->radio_metrics_policy[policy_index].traffic_stats;
