@@ -1,0 +1,160 @@
+Subject: [PATCH] Collect on-demand AP link reports without a prior reporting policy
+
+Use the native requested BSS inventory rather than the periodic-policy cache.
+Sample actual HAL associations before encoding and retain collection age;
+failed collections do not publish cached stations as fresh evidence.
+
+Upstream-Status: Pending
+
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -2984,23 +2984,137 @@
+     return radio_chan_stats_response(&response);
+ }
+ 
++static int em_ap_query_bssids(const char *encoded, mac_addr_t *bssids, unsigned int *count)
++{
++    if (encoded == NULL || bssids == NULL || count == NULL) return RETURN_ERR;
++    size_t hex_length = strnlen(encoded, 4097);
++    if (hex_length < 50 || hex_length > 4096 || hex_length % 2 != 0) return RETURN_ERR;
++    unsigned char frame[2048];
++    for (size_t position = 0; position < hex_length; ++position) {
++        unsigned char digit = encoded[position];
++        unsigned int value;
++        if (digit >= '0' && digit <= '9') value = digit - '0';
++        else if (digit >= 'a' && digit <= 'f') value = digit - 'a' + 10;
++        else return RETURN_ERR;
++        if (position % 2 == 0) frame[position / 2] = value << 4;
++        else frame[position / 2] |= value;
++    }
++    size_t length = hex_length / 2;
++    if (frame[12] != 0x89 || frame[13] != 0x3a || frame[14] != 0 ||
++        frame[16] != 0x80 || frame[17] != 0x0b || frame[20] != 0 ||
++        (frame[21] & 0x80) == 0) return RETURN_ERR;
++    bool found = false;
++    *count = 0;
++    for (size_t offset = 22; offset + 3 <= length;) {
++        unsigned int type = frame[offset];
++        size_t size = ((size_t)frame[offset + 1] << 8) | frame[offset + 2];
++        offset += 3;
++        if (size > length - offset) return RETURN_ERR;
++        if (type == 0) return size == 0 && found ? RETURN_OK : RETURN_ERR;
++        if (type == 0x93) {
++            if (found || size < 1 || size != 1 + (size_t)frame[offset] * 6) return RETURN_ERR;
++            *count = frame[offset];
++            memcpy(bssids, frame + offset + 1, *count * sizeof(mac_addr_t));
++            found = true;
++        }
++        offset += size;
++    }
++    return RETURN_ERR;
++}
++
++static int em_refresh_ap_clients(int radio_index)
++{
++    rdk_wifi_radio_t *radio = find_radio_config_by_index(radio_index);
++    if (radio == NULL || radio_index < 0 || radio_index >= MAX_NUM_RADIOS) return RETURN_ERR;
++    for (unsigned int vap_slot = 0;
++         vap_slot < radio->vaps.num_vaps && vap_slot < MAX_NUM_VAP_PER_RADIO; ++vap_slot) {
++        wifi_vap_info_t *vap = &radio->vaps.vap_map.vap_array[vap_slot];
++        if (vap->vap_mode != wifi_vap_mode_ap) continue;
++        ap_metrics_data_t *cached = &em_ap_metrics_report_cache.radio_report[radio_index].ap_data[vap_slot];
++        cached->vap_index = vap->vap_index;
++        if (cached->client_stats_map == NULL) cached->client_stats_map = hash_map_create();
++        if (cached->client_stats_map == NULL ||
++            em_client_stats_clear(radio_index, vap->vap_index) != RETURN_OK) return RETURN_ERR;
++        if (!vap->u.bss_info.enabled) continue;
++        wifi_associated_dev3_t *devices = NULL;
++        unsigned int device_count = 0;
++        struct timespec collected;
++        if (clock_gettime(CLOCK_MONOTONIC, &collected) != 0) return RETURN_ERR;
++        int status = wifi_getApAssociatedDeviceDiagnosticResult3(vap->vap_index, &devices, &device_count);
++        if (status != RETURN_OK || device_count > BSS_MAX_NUM_STATIONS ||
++            (device_count != 0 && devices == NULL)) {
++            free(devices);
++            return RETURN_ERR;
++        }
++        unsigned int active_count = 0;
++        for (unsigned int device_index = 0; device_index < device_count; ++device_index)
++            if (devices[device_index].cli_Active) ++active_count;
++        for (unsigned int device_index = 0; device_index < device_count; ++device_index) {
++            if (!devices[device_index].cli_Active) continue;
++            if (em_client_stats_store(radio_index, vap->vap_index, active_count,
++                &devices[device_index], &collected) != RETURN_OK) {
++                free(devices);
++                em_client_stats_clear(radio_index, vap->vap_index);
++                return RETURN_ERR;
++            }
++        }
++        free(devices);
++    }
++    return RETURN_OK;
++}
++
++static int em_handle_ap_metrics_query(wifi_app_t *app, const char *encoded)
++{
++    mac_addr_t bssids[255];
++    unsigned int bssid_count = 0;
++    if (app == NULL || em_ap_query_bssids(encoded, bssids, &bssid_count) != RETURN_OK) return RETURN_ERR;
++    em_ap_report_callback_arg_t request = {0};
++    request.app = app;
++    request.query = encoded;
++    wifi_mgr_t *manager = get_wifimgr_obj();
++    wifi_platform_property_t *property = &manager->hal_cap.wifi_prop;
++    for (unsigned int radio_index = 0;
++         radio_index < getNumberRadios() && radio_index < MAX_NUM_RADIOS; ++radio_index) {
++        rdk_wifi_radio_t *radio = find_radio_config_by_index(radio_index);
++        if (radio == NULL) continue;
++        bool selected = false;
++        for (unsigned int vap_slot = 0;
++             vap_slot < radio->vaps.num_vaps && vap_slot < MAX_NUM_VAP_PER_RADIO; ++vap_slot) {
++            wifi_vap_info_t *vap = &radio->vaps.vap_map.vap_array[vap_slot];
++            if (vap->vap_mode != wifi_vap_mode_ap || !vap->u.bss_info.enabled) continue;
++            if (bssid_count == 0) selected = true;
++            for (unsigned int bssid_slot = 0; bssid_slot < bssid_count; ++bssid_slot)
++                if (memcmp(vap->u.bss_info.bssid, bssids[bssid_slot], sizeof(mac_addr_t)) == 0)
++                    selected = true;
++        }
++        if (!selected) continue;
++        radio_metrics_policy_t *policy = &request.policy_config.radio_metrics_policies.radio_metrics_policy[
++            request.policy_config.radio_metrics_policies.radio_count];
++        bool mapped = false;
++        for (size_t map_slot = 0;
++             map_slot < sizeof(property->radio_interface_map) / sizeof(property->radio_interface_map[0]); ++map_slot) {
++            radio_interface_mapping_t *mapping = &property->radio_interface_map[map_slot];
++            if (mapping->radio_index != radio_index || mapping->interface_name[0] == '\0') continue;
++            mac_address_from_name(mapping->interface_name, policy->ruid);
++            mapped = em_get_radio_index_from_mac(policy->ruid) == (int)radio_index;
++            break;
++        }
++        if (!mapped || em_refresh_ap_clients(radio_index) != RETURN_OK ||
++            em_refresh_ap_survey(radio_index) != RETURN_OK) return RETURN_ERR;
++        policy->link_metrics = true;
++        ++request.policy_config.radio_metrics_policies.radio_count;
++    }
++    if (request.policy_config.radio_metrics_policies.radio_count == 0) return RETURN_ERR;
++    return ap_report_push_cb(&request);
++}
++
+ void handle_em_command_event(wifi_app_t *app, wifi_event_t *event)
+ {
+     switch (event->sub_type) {
+     case wifi_event_type_em_ap_metrics_query:
+     {
+-        em_ap_report_callback_arg_t request = em_ap_metrics_report_cache.args;
+-        if (request.app == NULL) break;
+-        bool available = true;
+-        for (int index = 0; index < request.policy_config.radio_metrics_policies.radio_count; ++index) {
+-            int radio_index = em_get_radio_index_from_mac(
+-                request.policy_config.radio_metrics_policies.radio_metrics_policy[index].ruid);
+-            if (radio_index < 0 || em_refresh_ap_survey(radio_index) != RETURN_OK) available = false;
+-        }
+-        if (available) {
+-            request.query = event->u.core_data.msg;
+-            ap_report_push_cb(&request);
+-        }
++        if (em_handle_ap_metrics_query(app, event->u.core_data.msg) != RETURN_OK)
++            wifi_util_error_print(WIFI_EM, "%s: AP query collection unavailable\n", __func__);
+         break;
+     }
+     case wifi_event_type_notify_monitor_done:

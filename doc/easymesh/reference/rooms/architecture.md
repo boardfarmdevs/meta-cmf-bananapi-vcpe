@@ -91,7 +91,12 @@ focused native unit tests alone do not establish live convergence.
 
 The controller copies the native parent graph under the topology mutex and
 uses associated-STA RCPI within native AP Metrics reports for each existing
-uplink, requesting those reports from its serving backhaul BSS. Standalone
+uplink, requesting those reports from its serving backhaul BSS. On-demand
+OneWifi queries select radios from the actual requested BSS inventory and collect
+fresh HAL association snapshots even before any reporting policy is installed,
+or when its periodic interval is zero. They neither enable a reporting timer nor
+change threshold policy. Empty samples withdraw cached clients; failed HAL
+collections do not publish cached rows as fresh. Standalone
 Associated STA responses reuse a cached data-model delta and are not accepted
 as fresh policy evidence. AP reports recompute sample age from the native
 provider timestamp and copy the actually reported backhaul rows into an immutable
@@ -99,7 +104,8 @@ event snapshot before model translation. Missing or invalid rows never borrow
 cached station values. The controller accepts only the matching AP-query
 message ID, sender and BSSID, conservatively adding the full query round-trip
 time to provider age. Completed query IDs cannot refresh evidence through
-duplicate responses. The public-header provider and its consumers must use the
+duplicate responses. A changed AP owner, channel or operating class invalidates
+both retained samples and outstanding query evidence. The public-header provider and its consumers must use the
 same enlarged AP-event structure. It queries candidate APs for
 the backhaul STA using native Unassociated STA Link Metrics messages. Candidate
 queries have independent message IDs and run across eligible APs in parallel;

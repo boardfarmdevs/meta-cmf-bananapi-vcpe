@@ -33,7 +33,12 @@ handover assertion remains unresolved: a usable 11 dB parent is retained despite
 a 26 dB relay. The original room observed native choice, not guaranteed
 proactive strongest-parent policy. Native measured backhaul steering is now
 implemented with focused policy, wire, agent-actuation and measurement-ownership
-regressions; synchronized image builds and live qualification are pending.
+regressions. Its first synchronized images built successfully; cold-start
+qualification then exposed OneWifi dropping native AP queries before any
+reporting policy was installed. The policy-independent query fix now passes
+eight focused production-dispatch/report groups, including interval zero,
+inactive rows and failed/empty samples. Updated builds and live qualification
+remain pending.
 Release remains held for both-direction handover and the complete catalog.
 The earlier client-room result does not qualify this new native runtime.
 This is not 25/25 qualification.

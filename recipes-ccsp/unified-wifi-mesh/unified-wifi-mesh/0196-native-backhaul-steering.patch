@@ -191,8 +191,8 @@ Upstream-Status: Pending
 +
 +#endif
 --- a/inc/em_backhaul_policy.h	1969-12-31 16:00:00.000000000 -0800
-+++ b/inc/em_backhaul_policy.h	2026-09-16 08:04:46.778373781 -0700
-@@ -0,0 +1,189 @@
++++ b/inc/em_backhaul_policy.h	2026-09-16 08:46:03.709430484 -0700
+@@ -0,0 +1,195 @@
 +#ifndef EM_BACKHAUL_POLICY_H
 +#define EM_BACKHAUL_POLICY_H
 +
@@ -238,6 +238,12 @@ Upstream-Status: Pending
 +    std::map<std::pair<std::string, std::string>, sample> candidates;
 +    std::map<std::string, std::string> uncertain;
 +};
++
++inline bool same_ap(const access_point &left, const access_point &right)
++{
++    return left.al == right.al && left.bssid == right.bssid &&
++        left.op_class == right.op_class && left.channel == right.channel;
++}
 +
 +struct path {
 +    bool valid = false;
@@ -1338,8 +1344,8 @@ Upstream-Status: Pending
       $(top_srcdir)/src/ctrl/em_dev_test_ctrl.cpp \
       $(top_srcdir)/src/ctrl/tr_181/wfa_data_model/tr_181.cpp \
 --- a/src/ctrl/em_backhaul_ctrl.cpp	1969-12-31 16:00:00.000000000 -0800
-+++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-16 08:18:09.392208874 -0700
-@@ -0,0 +1,347 @@
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-16 08:46:03.709430484 -0700
+@@ -0,0 +1,361 @@
 +#include "em_ctrl.h"
 +#include "em_network_topo.h"
 +#include "em_backhaul_wire.h"
@@ -1432,15 +1438,26 @@ Upstream-Status: Pending
 +    {
 +        std::lock_guard<std::mutex> lock(m_backhaul_mutex);
 +        m_backhaul_controller = controller;
++        std::set<std::string> stable_stations;
 +        for (auto &entry : network.nodes) {
 +            const auto old = m_backhaul_network.nodes.find(entry.first);
++            const auto parent = network.aps.find(entry.second.parent_bssid);
++            const auto old_parent = m_backhaul_network.aps.find(entry.second.parent_bssid);
 +            if (old != m_backhaul_network.nodes.end() &&
 +                old->second.sta == entry.second.sta &&
-+                old->second.parent_bssid == entry.second.parent_bssid)
++                old->second.parent_bssid == entry.second.parent_bssid &&
++                parent != network.aps.end() && old_parent != m_backhaul_network.aps.end() &&
++                em_backhaul::same_ap(parent->second, old_parent->second)) {
 +                entry.second.serving = old->second.serving;
++                stable_stations.insert(entry.second.sta);
++            }
 +        }
 +        for (const auto &entry : m_backhaul_network.candidates) {
-+            if (entry.second.fresh(now) && network.aps.count(entry.first.second))
++            const auto target = network.aps.find(entry.first.second);
++            const auto old_target = m_backhaul_network.aps.find(entry.first.second);
++            if (entry.second.fresh(now) && stable_stations.count(entry.first.first) &&
++                target != network.aps.end() && old_target != m_backhaul_network.aps.end() &&
++                em_backhaul::same_ap(target->second, old_target->second))
 +                network.candidates.insert(entry);
 +        }
 +        for (auto iterator = m_backhaul_uncertain.begin(); iterator != m_backhaul_uncertain.end();) {
@@ -1609,6 +1626,9 @@ Upstream-Status: Pending
 +    if (backhaul_mac(data) != m_backhaul_controller) return false;
 +    const auto found = m_backhaul_queries.find(mid);
 +    const bool owned_query = found != m_backhaul_queries.end() && found->second.ap.al == source;
++    const auto current_ap = owned_query ? m_backhaul_network.aps.find(found->second.ap.bssid) : m_backhaul_network.aps.end();
++    const bool current_query = owned_query && current_ap != m_backhaul_network.aps.end() &&
++        em_backhaul::same_ap(current_ap->second, found->second.ap);
 +    const bool owned_steer = m_backhaul_steer.mid != 0 && m_backhaul_steer.mid == mid &&
 +        m_backhaul_steer.request.al == source;
 +    std::vector<em_backhaul::wire_tlv> tlvs;
@@ -1616,7 +1636,7 @@ Upstream-Status: Pending
 +    if (owned_steer && type == em_msg_type_1905_ack) m_backhaul_steer.acknowledged = true;
 +    for (const auto &tlv : tlvs) {
 +        if (tlv.type == em_tlv_type_assoc_sta_link_metric && type == em_msg_type_ap_metrics_rsp &&
-+            owned_query && found->second.associated && now - found->second.sent <= 6000) {
++            current_query && found->second.associated && now - found->second.sent <= 6000) {
 +            if (tlv.size < 7 || tlv.size != 7 + static_cast<size_t>(tlv.value[6]) * sizeof(em_assoc_link_metrics_t)) continue;
 +            const std::string station = backhaul_mac(tlv.value);
 +            const auto expected = found->second.stations.find(station);
@@ -1637,7 +1657,7 @@ Upstream-Status: Pending
 +                }
 +            }
 +        }
-+        if (type == em_msg_type_unassoc_sta_link_metrics_rsp && owned_query &&
++        if (type == em_msg_type_unassoc_sta_link_metrics_rsp && current_query &&
 +            !found->second.associated && tlv.type == em_tlv_type_unassoc_sta_link_metric_rsp) {
 +            const auto &query = found->second;
 +            if (now - query.sent > 6000 || tlv.size < 2 || tlv.value[0] != query.ap.op_class ||

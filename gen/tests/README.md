@@ -37,6 +37,7 @@ python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
 python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
 python3 gen/tests/ap-report-snapshot-test.py "$NATIVE_SOURCE" "$CJSON_TEST_DEPS" "$HEADER_SOURCE/inc/em_base.h"
 python3 gen/tests/ap-report-provider-age-test.py "$ONEWIFI_SOURCE"
+python3 gen/tests/onewifi-ap-query-dispatch-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
 ```
 
 These exercise the policy, wire bounds, concurrent candidate-query ownership and
@@ -45,6 +46,10 @@ not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
 The OneWifi test needs `cJSON.h` and `libcjson.so` in `CJSON_TEST_DEPS`; it exercises
 the production decoder, encoder and synchronous HAL-loop wrapper with real JSON,
 including delayed callbacks, MID zero, legacy queries and partial/empty results.
+The AP-query dispatch regression also compiles actual RBUS admission, query
+collection and report construction without a prior reporting policy, checking
+inactive/missing rows, empty snapshots, selected radios, failed HAL collection,
+interval zero and conservative provider age.
 
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The

@@ -77,6 +77,16 @@ int main() {
     assert(!send(packet));
     assert(network.nodes[child].serving.rcpi == 62);
     assert(network.nodes[child].serving.observed == 11000);
+    const auto original_parent = network.aps[bssid];
+    network.nodes[child].serving = {};
+    controller.m_backhaul_queries[1] = {true, original_parent, {{station, bssid}}, 11000, 1};
+    network.aps[bssid].channel = 40;
+    assert(!send(packet));
+    assert(network.nodes[child].serving.rcpi == -1);
+    network.aps[bssid] = original_parent;
+    controller.m_backhaul_queries[1] = {true, original_parent, {{station, bssid}}, 11000, 1};
+    assert(!send(packet));
+    assert(network.nodes[child].serving.rcpi == 62);
     controller.m_backhaul_queries[77] = {false, network.aps[target_bssid], {{station, bssid}}, 11000, 7};
     std::vector<unsigned char> candidate{115, 1};
     candidate.insert(candidate.end(), station.begin(), station.end());
@@ -89,6 +99,17 @@ int main() {
     assert(!send(packet));
     assert(network.candidates.at({station, target_bssid}).observed == 12000);
     network.candidates.clear();
+    const auto original_target = network.aps[target_bssid];
+    for (unsigned int variant = 0; variant < 3; ++variant) {
+        network.aps[target_bssid] = original_target;
+        restore_query();
+        if (variant == 0) network.aps[target_bssid].channel = 40;
+        if (variant == 1) network.aps[target_bssid].op_class = 81;
+        if (variant == 2) network.aps[target_bssid].al = child;
+        assert(send(packet));
+        assert(network.candidates.empty());
+    }
+    network.aps[target_bssid] = original_target;
     auto changed = packet;
     changed[19] = 78;
     assert(!send(changed) && network.candidates.empty());
