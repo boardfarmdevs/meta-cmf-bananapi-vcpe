@@ -194,6 +194,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0194-agent-handle-native-ap-metrics-queries.patch \
     file://0195-cli-show-native-ap-load-on-hover.patch \
     file://0196-native-backhaul-steering.patch \
+    file://0197-native-backhaul-counted-interface-name.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

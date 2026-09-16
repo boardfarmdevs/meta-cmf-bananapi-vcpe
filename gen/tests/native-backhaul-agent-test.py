@@ -153,6 +153,7 @@ struct em_agent_t {
     bool get_failure = false;
     bool set_failure = false;
     bool invalid_status_length = false;
+    unsigned int interface_encoding = 0;
     unsigned int writes = 0;
     mac_address written{};
     em_agent_t() {
@@ -162,8 +163,14 @@ struct em_agent_t {
             if (property.find("InterfaceName") != std::string::npos) {
                 const char *name = property.find("STA.2.") != std::string::npos ? "wlan-sta1" : "wlan0";
                 value->data_type = bus_data_type_string;
-                value->raw_data_len = strlen(name) + 1;
-                value->raw_data.bytes = strdup(name);
+                std::string encoded = name;
+                if (interface_encoding == 1) encoded.push_back('\0');
+                if (interface_encoding == 2) encoded.clear();
+                if (interface_encoding == 3) encoded.assign(IFNAMSIZ, 'x');
+                if (interface_encoding == 4) encoded.insert(2, 1, '\0');
+                value->raw_data_len = encoded.size();
+                value->raw_data.bytes = malloc(encoded.size() ? encoded.size() : 1);
+                memcpy(value->raw_data.bytes, encoded.data(), encoded.size());
             } else {
                 assert(property == "Device.WiFi.STA.2.Connection.Status");
                 value->data_type = bus_data_type_bytes;
@@ -304,6 +311,17 @@ int main() {
     issue(agent, conflict);
     assert(agent.writes == 1 && agent.node.sent.size() == 5);
 
+    for (unsigned int encoding = 0; encoding < 5; ++encoding) {
+        em_agent_t encoded;
+        encoded.interface_encoding = encoding;
+        issue(encoded, command);
+        if (encoding <= 1) {
+            assert(encoded.writes == 1 && encoded.m_native_backhaul_transactions.pending() != nullptr);
+        } else {
+            assert(encoded.writes == 0 && encoded.m_native_backhaul_transactions.pending() == nullptr);
+            check_response(encoded.node.sent.back(), command, association_failed);
+        }
+    }
     for (unsigned int case_index = 0; case_index < 8; ++case_index) {
         em_agent_t rejected;
         auto bad = command;

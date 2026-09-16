@@ -1,0 +1,64 @@
+Subject: [PATCH] Honor counted RBUS interface names in native backhaul steering
+
+RBUS GetString reports strlen, excluding the terminator. The bus adapter
+retains that count and separately allocates a terminated copy. Requiring a
+terminator inside the reported span rejects every real InterfaceName reply.
+Copy only the bounded counted span into a local terminated interface name,
+accepting both counted and explicitly terminated native bus representations.
+Reject empty, oversized and embedded-NUL names; retain actual MAC matching.
+Record precise rejection stages without changing protocol outcomes.
+
+Upstream-Status: Pending
+
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -111,12 +111,18 @@
+     bool matches = false;
+     if (descriptor->bus_data_get_fn(&m_bus_hdl, path, &value) == bus_error_success &&
+         value.data_type == bus_data_type_string && value.raw_data.bytes != nullptr &&
+-        value.raw_data_len > 1 && value.raw_data_len <= IFNAMSIZ &&
+-        memchr(value.raw_data.bytes, '\0', value.raw_data_len) != nullptr) {
++        value.raw_data_len > 0 && value.raw_data_len <= IFNAMSIZ) {
++        char interface_name[IFNAMSIZ]{};
++        const char *bytes = static_cast<const char *>(value.raw_data.bytes);
++        size_t length = value.raw_data_len;
++        if (bytes[length - 1] == '\0') --length;
+         mac_address_t actual{};
+-        if (dm_easy_mesh_t::mac_address_from_name(
+-                reinterpret_cast<const char *>(value.raw_data.bytes), actual) == 0) {
+-            matches = memcmp(actual, station.data(), sizeof(actual)) == 0;
++        if (length > 0 && length < sizeof(interface_name) &&
++            memchr(bytes, '\0', length) == nullptr) {
++            memcpy(interface_name, bytes, length);
++            if (dm_easy_mesh_t::mac_address_from_name(interface_name, actual) == 0) {
++                matches = memcmp(actual, station.data(), sizeof(actual)) == 0;
++            }
+         }
+     }
+     free(value.raw_data.bytes);
+@@ -204,6 +210,7 @@
+         if (bss->vap_mode == em_vap_mode_sta && bss->id.haul_type == em_haul_type_backhaul &&
+             memcmp(bss->sta_mac, command.station.data(), 6) == 0) {
+             if (station != nullptr) {
++                em_printfout("Native backhaul request rejected mid=%u: duplicate native STA identity", command.message_id);
+                 complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
+                 return;
+             }
+@@ -236,6 +243,8 @@
+     bool connected = false;
+     if (transaction->radio_instance == 0 ||
+         !read_native_backhaul_link(transaction->radio_instance, parent, connected) || !connected) {
++        em_printfout("Native backhaul request rejected mid=%u: native link validation radio=%u connected=%u",
++            command.message_id, transaction->radio_instance, connected);
+         complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
+         return;
+     }
+@@ -251,6 +260,8 @@
+     value.raw_data.bytes = command.target.data();
+     value.raw_data_len = command.target.size();
+     if (descriptor == nullptr || descriptor->bus_set_fn(&m_bus_hdl, path, &value) != bus_error_success) {
++        em_printfout("Native backhaul request rejected mid=%u: native BSSID setter failed radio=%u",
++            command.message_id, transaction->radio_instance);
+         complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
+         return;
+     }

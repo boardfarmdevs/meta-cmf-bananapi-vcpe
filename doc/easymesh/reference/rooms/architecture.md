@@ -157,8 +157,12 @@ The initial policy is deliberately conservative:
   have one in-flight reservation; measurement collection is not serialized.
 
 The agent validates the controller, destination, exact local backhaul STA,
-target and channel, acknowledges the request, then calls the existing native
-OneWifi BSSID setter with the current credentials. Setter acceptance is not a
+target and channel, then acknowledges the request. OneWifi interface-name
+readback uses the bus's bounded string count: RBUS
+excludes the trailing NUL from that count. A local terminated copy supports
+both bus encodings without accepting empty, oversized or embedded-NUL names.
+The interface must still resolve to the exact requested STA MAC. The agent uses
+the existing native OneWifi BSSID setter with the current credentials. Setter acceptance is not a
 completed roam. The agent reports success only after connected native readback
 shows the requested BSSID; the native mesh-STA callback triggers an immediate
 check, with one-second fallback polling and a ten-second transaction deadline.
