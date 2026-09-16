@@ -1,5 +1,11 @@
 # Room correctness and convergence acceptance
 
+Linux observers with render-device access may use `--renderer vulkan` to
+avoid software-rendering stalls. SwiftShader remains the portable default.
+The harness records the actual WebGL renderer and rejects missing hardware
+or software fallback for Vulkan. Grant render access only to the observer
+process, without changing lab CPU limits or device permissions.
+
 [Testing reference](README.md) · [Expected room features](../rooms/catalog.md)
 
 Run every advertised room sequentially within each lab; independent RDK and
