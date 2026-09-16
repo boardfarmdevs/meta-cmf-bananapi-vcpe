@@ -97,7 +97,9 @@ fresh HAL association snapshots even before any reporting policy is installed,
 or when its periodic interval is zero. They neither enable a reporting timer nor
 change threshold policy. An unrelated fronthaul BSS cannot block or add work to
 a backhaul-only query. Empty samples withdraw cached clients; failed HAL
-collections do not publish cached rows as fresh. Query link reports require
+collections do not publish cached rows as fresh or erase the previous aged
+cache as though the AP were empty. Configured per-radio traffic-stat inclusion
+is preserved. Query link reports require
 the HAL's kernel-backed authorization state; the Banana Pi HAL does not fill
 OneWifi's monitor-only `cli_Active` cache flag. Standalone
 Associated STA responses reuse a cached data-model delta and are not accepted
@@ -110,7 +112,7 @@ time to provider age. Completed query IDs cannot refresh evidence through
 duplicate responses. A changed AP owner, channel or operating class invalidates
 both retained samples and outstanding query evidence. The public-header provider and its consumers must use the
 same enlarged AP-event structure. It queries candidate APs for
-the backhaul STA using native Unassociated STA Link Metrics messages. Candidate
+the backhaul STA using native Unassociated STA Link Metrics messages.
 AP-report polling also includes childless backhaul APs: their genuine native
 responses put traffic on otherwise idle uplinks, refreshing the kernel's
 packet-derived backhaul RSSI without depending on the external client optimizer.

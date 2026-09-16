@@ -41,7 +41,7 @@ Upstream-Status: Pending
                  continue;
              }
              cache_vap_index = -1;
-@@ -2984,23 +2998,135 @@
+@@ -2984,23 +2998,143 @@
      return radio_chan_stats_response(&response);
  }
  
@@ -94,8 +94,7 @@ Upstream-Status: Pending
 +        ap_metrics_data_t *cached = &em_ap_metrics_report_cache.radio_report[radio_index].ap_data[vap_slot];
 +        cached->vap_index = vap->vap_index;
 +        if (cached->client_stats_map == NULL) cached->client_stats_map = hash_map_create();
-+        if (cached->client_stats_map == NULL ||
-+            em_client_stats_clear(radio_index, vap->vap_index) != RETURN_OK) return RETURN_ERR;
++        if (cached->client_stats_map == NULL) return RETURN_ERR;
 +        if (!vap->u.bss_info.enabled) continue;
 +        wifi_associated_dev3_t *devices = NULL;
 +        unsigned int device_count = 0;
@@ -104,6 +103,10 @@ Upstream-Status: Pending
 +        int status = wifi_getApAssociatedDeviceDiagnosticResult3(vap->vap_index, &devices, &device_count);
 +        if (status != RETURN_OK || device_count > BSS_MAX_NUM_STATIONS ||
 +            (device_count != 0 && devices == NULL)) {
++            free(devices);
++            return RETURN_ERR;
++        }
++        if (em_client_stats_clear(radio_index, vap->vap_index) != RETURN_OK) {
 +            free(devices);
 +            return RETURN_ERR;
 +        }
@@ -161,6 +164,11 @@ Upstream-Status: Pending
 +        if (!mapped || em_refresh_ap_clients(radio_index, &request) != RETURN_OK ||
 +            em_refresh_ap_survey(radio_index) != RETURN_OK) return RETURN_ERR;
 +        policy->link_metrics = true;
++        const radio_metrics_policies_t *configured = &em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies;
++        for (unsigned int policy_index = 0;
++             policy_index < configured->radio_count && policy_index < MAX_NUM_RADIOS; ++policy_index)
++            if (memcmp(configured->radio_metrics_policy[policy_index].ruid, policy->ruid, sizeof(mac_addr_t)) == 0)
++                policy->traffic_stats = configured->radio_metrics_policy[policy_index].traffic_stats;
 +        ++request.policy_config.radio_metrics_policies.radio_count;
 +    }
 +    if (request.policy_config.radio_metrics_policies.radio_count == 0) return RETURN_ERR;

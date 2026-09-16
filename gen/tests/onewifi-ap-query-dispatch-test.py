@@ -306,6 +306,7 @@ static int webconfig_encode(void *config, webconfig_subdoc_data_t *data, int typ
             cJSON_AddNumberToObject(encoded_vap, "ap_count", metrics->vap_metrics.num_of_assoc_stas);
             cJSON_AddNumberToObject(encoded_vap, "util", metrics->vap_metrics.channel_util);
             cJSON_AddBoolToObject(encoded_vap, "links", metrics->is_sta_link_metrics_enabled);
+            cJSON_AddBoolToObject(encoded_vap, "traffic", metrics->is_sta_traffic_stats_enabled);
             cJSON *clients = cJSON_AddArrayToObject(encoded_vap, "clients");
             if (metrics->is_sta_link_metrics_enabled) {
                 for (int station = 0; station < metrics->sta_cnt; ++station) {
@@ -494,8 +495,14 @@ int main(int count, char **arguments) {
         query(20);
         assert(publications == 1);
         failed_clients = 4;
+        struct timespec previous_sample = last_sample[4];
         query(21);
         assert(publications == 1 && "client HAL failure cannot publish cached rows as fresh");
+        assert(hash_map_count(em_ap_metrics_report_cache.radio_report[1].ap_data[0].client_stats_map) == 1);
+        wifi_associated_dev3_timestamp_t *retained = hash_map_get_first(
+            em_ap_metrics_report_cache.radio_report[1].ap_data[0].client_stats_map);
+        assert(retained->last_update_time.tv_sec == previous_sample.tv_sec);
+        assert(retained->last_update_time.tv_nsec == previous_sample.tv_nsec);
         failed_clients = -1;
         failed_survey = 0;
         query(22);
@@ -510,13 +517,16 @@ int main(int count, char **arguments) {
         em_ap_metrics_report_cache.args.sched_id = 77;
         em_ap_metrics_report_cache.args.current_interval = 12;
         em_ap_metrics_report_cache.args.policy_config.ap_metric_policy.interval = 12;
-        em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies.radio_count = 1;
+        em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies.radio_count = 2;
         radio_metrics_policy_t *policy = &em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies.radio_metrics_policy[0];
         policy->ruid[0] = 2;
         policy->ruid[5] = 1;
         policy->ap_util_threshold = 99;
         policy->link_metrics = false;
         policy->traffic_stats = true;
+        radio_metrics_policy_t *selected_policy = &em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies.radio_metrics_policy[1];
+        *selected_policy = *policy;
+        selected_policy->ruid[5] = 2;
         em_ap_report_callback_arg_t saved = em_ap_metrics_report_cache.args;
         failed_survey = 0;
         failed_clients = 0;
@@ -536,6 +546,8 @@ int main(int count, char **arguments) {
         assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(published, "radios")) == 1);
         cJSON *reported_radio = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(published, "radios"), 0);
         assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(reported_radio, "vaps")) == 1);
+        cJSON *reported_vap = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(reported_radio, "vaps"), 0);
+        assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reported_vap, "traffic")));
         check_clients(1, 1, 0xb1, -43);
         assert(memcmp(&saved, &em_ap_metrics_report_cache.args, sizeof(saved)) == 0);
         puts("PASS: native requested-BSSID selection ignores unrelated policy/failing radio and preserves periodic configuration");
