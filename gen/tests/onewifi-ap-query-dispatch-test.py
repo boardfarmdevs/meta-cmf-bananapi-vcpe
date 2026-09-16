@@ -44,6 +44,7 @@ query_helpers = "\n".join(function(signature) for signature in (
     "static int em_refresh_ap_clients", "static int em_handle_ap_metrics_query",
 ) if signature + "(" in source)
 production = "\n".join((
+    function("static bool em_ap_query_selects"),
     function("static int em_rssi_to_rcpi"),
     function("static int em_get_radio_index_from_mac"),
     function("int em_client_stats_store"),
@@ -517,10 +518,19 @@ int main(int count, char **arguments) {
         em_ap_report_callback_arg_t saved = em_ap_metrics_report_cache.args;
         failed_survey = 0;
         failed_clients = 0;
+        manager.radio_config[1].vaps.num_vaps = 2;
+        wifi_vap_info_t *unrequested = &manager.radio_config[1].vaps.vap_map.vap_array[1];
+        *unrequested = manager.radio_config[1].vaps.vap_map.vap_array[0];
+        unrequested->vap_index = 5;
+        unrequested->u.bss_info.bssid[5] = 0x15;
         dispatch("020000000002020000000001893a0000800b0101008093000701020000000014000000");
         assert(publications == 1 && "unrequested broken radio must not block selected radio");
         assert(survey_calls[0] == 0 && survey_calls[1] == 1);
         assert(client_calls[0] == 0 && client_calls[4] == 1);
+        assert(client_calls[5] == 0);
+        failed_clients = 5;
+        dispatch("020000000002020000000001893a0000800b0102008093000701020000000014000000");
+        assert(publications == 2 && client_calls[5] == 0);
         assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(published, "radios")) == 1);
         check_clients(1, 1, 0xb1, -43);
         assert(memcmp(&saved, &em_ap_metrics_report_cache.args, sizeof(saved)) == 0);

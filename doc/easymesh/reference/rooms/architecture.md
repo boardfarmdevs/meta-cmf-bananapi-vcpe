@@ -92,10 +92,11 @@ focused native unit tests alone do not establish live convergence.
 The controller copies the native parent graph under the topology mutex and
 uses associated-STA RCPI within native AP Metrics reports for each existing
 uplink, requesting those reports from its serving backhaul BSS. On-demand
-OneWifi queries select radios from the actual requested BSS inventory and collect
+OneWifi queries select only the requested BSSes from actual radio inventory and collect
 fresh HAL association snapshots even before any reporting policy is installed,
 or when its periodic interval is zero. They neither enable a reporting timer nor
-change threshold policy. Empty samples withdraw cached clients; failed HAL
+change threshold policy. An unrelated fronthaul BSS cannot block or add work to
+a backhaul-only query. Empty samples withdraw cached clients; failed HAL
 collections do not publish cached rows as fresh. Standalone
 Associated STA responses reuse a cached data-model delta and are not accepted
 as fresh policy evidence. AP reports recompute sample age from the native
