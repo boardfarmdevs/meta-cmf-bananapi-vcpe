@@ -38,6 +38,7 @@ python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEP
 python3 gen/tests/ap-report-snapshot-test.py "$NATIVE_SOURCE" "$CJSON_TEST_DEPS" "$HEADER_SOURCE/inc/em_base.h"
 python3 gen/tests/ap-report-provider-age-test.py "$ONEWIFI_SOURCE"
 python3 gen/tests/onewifi-ap-query-dispatch-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
+python3 gen/tests/hal-candidate-identity-test.py "$HAL_SOURCE/src/wifi_hal.c"
 ```
 
 These exercise the policy, wire bounds, concurrent candidate-query ownership and
@@ -50,6 +51,11 @@ The AP-query dispatch regression also compiles actual RBUS admission, query
 collection and report construction without a prior reporting policy, checking
 unauthorized/missing rows, monitor-only activity flags, empty snapshots, selected radios, failed HAL collection,
 interval zero and conservative provider age.
+The HAL identity regression executes production `wifi_getNASta` against a real
+Unix packet socket, resolving randomized backhaul and client interface addresses
+before the frequency-qualified lookup. Unknown/departed ownership and malformed
+or mismatched provider replies must remain unavailable; the returned owner must
+not replace the requested candidate AP.
 
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The

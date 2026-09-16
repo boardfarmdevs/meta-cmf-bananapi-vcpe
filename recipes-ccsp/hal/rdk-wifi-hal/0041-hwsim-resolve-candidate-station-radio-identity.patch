@@ -1,0 +1,137 @@
+Subject: [PATCH] hwsim: resolve candidate STA VIFs through native radio ownership
+
+Random backhaul STA VIF addresses are not deterministic hwsim radio identities.
+Resolve the unchanged requested endpoint with GET_ASSOCIATION on the same
+read-only provider connection before requesting frequency-qualified SNR.
+Require positive native association evidence and validate frame boundaries,
+endpoint correlation and canonical identities. The owner is evidence only:
+the receiving AP remains the local passed-through phy, never the ledger owner.
+
+This supports stations connected elsewhere but unassociated to the candidate
+AP. Globally unassociated, never-observed, departed or ambiguously mapped
+stations remain unavailable, not zero RCPI. There is deliberately no guessed
+MAC fallback and no medium ABI change. Physical-radio providers are unchanged.
+MSG_TRUNC rejects oversized SOCK_SEQPACKET replies instead of accepting a valid
+prefix; MSG_NOSIGNAL keeps a disconnected provider from terminating the caller.
+
+Upstream-Status: Inappropriate [hwsim EasyMesh laboratory interface]
+
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -4925,9 +4925,13 @@
+     enum {
+         WMDC_OP_HELLO = 1,
+         WMDC_OP_GET_FREQUENCY = 7,
++        WMDC_OP_GET_ASSOCIATION = 14,
+         WMDC_OK = 0,
+         WMDC_CAP_FREQUENCY_QUALIFIED_SNR = 1U << 4,
+         WMDC_CAP_READ_ONLY = 1U << 5,
++        WMDC_CAP_ASSOCIATION_OWNERSHIP = 1U << 10,
++        WMDC_ASSOCIATION_FROM_RESPONSE = 1U << 0,
++        WMDC_ASSOCIATION_FROM_DATA = 1U << 1,
+     };
+     struct wmdc_header {
+         uint32_t magic;
+@@ -4952,6 +4956,18 @@
+         int16_t snr_db;
+         uint16_t flags;
+     } __attribute__((packed));
++    struct wmdc_association {
++        uint8_t endpoint[6];
++        uint8_t station[6];
++        uint8_t owner[6];
++        uint8_t reserved[2];
++        uint32_t frequency_mhz;
++        uint32_t flags;
++    } __attribute__((packed));
++    struct {
++        struct wmdc_header header;
++        struct wmdc_association association;
++    } association_request;
+     struct {
+         struct wmdc_header header;
+         struct wmdc_frequency_link link;
+@@ -4961,6 +4977,9 @@
+     struct wmdc_info *info = (struct wmdc_info *)(response + sizeof(*header));
+     struct wmdc_frequency_link *link =
+         (struct wmdc_frequency_link *)(response + sizeof(*header));
++    struct wmdc_association *association =
++        (struct wmdc_association *)(response + sizeof(*header));
++    const uint8_t zero_mac[6] = { 0 };
+     struct sockaddr_un address;
+     struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
+     DIR *phys;
+@@ -5044,10 +5063,8 @@
+ 
+     memset(&request, 0, sizeof(request));
+     for (i = 0; i < 6; i++) {
+-        request.link.source[i] = params->sta_mac[i];
+         request.link.destination[i] = (uint8_t)phy_octets[i];
+     }
+-    request.link.source[0] |= 0x40;
+     request.link.destination[0] |= 0x40;
+     request.link.frequency_mhz = htonl(frequency_mhz);
+ 
+@@ -5070,10 +5087,10 @@
+     request.header.magic = htonl(0x574d4443U);
+     request.header.version = htons(1);
+     request.header.opcode = htons(WMDC_OP_HELLO);
+-    if (send(fd, &request.header, sizeof(request.header), 0) !=
++    if (send(fd, &request.header, sizeof(request.header), MSG_NOSIGNAL) !=
+             (ssize_t)sizeof(request.header))
+         goto error;
+-    length = recv(fd, response, sizeof(response), 0);
++    length = recv(fd, response, sizeof(response), MSG_TRUNC);
+     if (length != (int)(sizeof(*header) + sizeof(*info)) ||
+         ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
+         ntohs(header->opcode) != WMDC_OP_HELLO ||
+@@ -5082,15 +5099,45 @@
+         goto error;
+     capabilities = ntohl(info->capabilities);
+     if ((capabilities & (WMDC_CAP_FREQUENCY_QUALIFIED_SNR |
+-            WMDC_CAP_READ_ONLY)) !=
+-            (WMDC_CAP_FREQUENCY_QUALIFIED_SNR | WMDC_CAP_READ_ONLY))
++            WMDC_CAP_READ_ONLY | WMDC_CAP_ASSOCIATION_OWNERSHIP)) !=
++            (WMDC_CAP_FREQUENCY_QUALIFIED_SNR | WMDC_CAP_READ_ONLY |
++             WMDC_CAP_ASSOCIATION_OWNERSHIP))
++        goto error;
++
++    memset(&association_request, 0, sizeof(association_request));
++    association_request.header = request.header;
++    association_request.header.opcode = htons(WMDC_OP_GET_ASSOCIATION);
++    association_request.header.payload_len = htonl(sizeof(association_request.association));
++    memcpy(association_request.association.endpoint, params->sta_mac, sizeof(params->sta_mac));
++    if (send(fd, &association_request, sizeof(association_request), MSG_NOSIGNAL) !=
++            (ssize_t)sizeof(association_request))
++        goto error;
++    length = recv(fd, response, sizeof(response), MSG_TRUNC);
++    if (length != (int)(sizeof(*header) + sizeof(*association)) ||
++        ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
++        ntohs(header->opcode) != WMDC_OP_GET_ASSOCIATION ||
++        ntohl(header->status) != WMDC_OK ||
++        ntohl(header->payload_len) != sizeof(*association) ||
++        memcmp(association->endpoint, params->sta_mac, sizeof(params->sta_mac)) != 0 ||
++        association->reserved[0] != 0 || association->reserved[1] != 0 ||
++        (association->station[0] & 1) != 0 ||
++        memcmp(association->station, zero_mac, sizeof(zero_mac)) == 0 ||
++        (association->owner[0] & 1) != 0 ||
++        memcmp(association->owner, zero_mac, sizeof(zero_mac)) == 0 ||
++        memcmp(association->station, association->owner, sizeof(zero_mac)) == 0 ||
++        ntohl(association->frequency_mhz) == 0 ||
++        (ntohl(association->flags) & (WMDC_ASSOCIATION_FROM_RESPONSE |
++            WMDC_ASSOCIATION_FROM_DATA)) == 0 ||
++        (ntohl(association->flags) & ~(WMDC_ASSOCIATION_FROM_RESPONSE |
++            WMDC_ASSOCIATION_FROM_DATA)) != 0)
+         goto error;
++    memcpy(request.link.source, association->station, sizeof(request.link.source));
+ 
+     request.header.opcode = htons(WMDC_OP_GET_FREQUENCY);
+     request.header.payload_len = htonl(sizeof(request.link));
+-    if (send(fd, &request, sizeof(request), 0) != (ssize_t)sizeof(request))
++    if (send(fd, &request, sizeof(request), MSG_NOSIGNAL) != (ssize_t)sizeof(request))
+         goto error;
+-    length = recv(fd, response, sizeof(response), 0);
++    length = recv(fd, response, sizeof(response), MSG_TRUNC);
+     if (length != (int)(sizeof(*header) + sizeof(*link)) ||
+         ntohl(header->magic) != 0x574d4443U || ntohs(header->version) != 1 ||
+         ntohs(header->opcode) != WMDC_OP_GET_FREQUENCY ||

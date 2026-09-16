@@ -325,6 +325,7 @@ SRC_URI += "file://0027-notify-association-only-on-authorization-edge.patch"
 # SNR from wmediumd's separately mounted read-only metrics endpoint and expose
 # it as candidate-link RCPI.  Physical targets retain their native provider.
 SRC_URI += "file://0024-hwsim-read-candidate-rcpi-from-wmediumd.patch"
+SRC_URI += "file://0041-hwsim-resolve-candidate-station-radio-identity.patch"
 
 # NL80211_STA_INFO_CHAIN_SIGNAL is optional.  Fall back to the standard
 # aggregate signal attribute so EasyMesh associated-STA and backhaul metrics

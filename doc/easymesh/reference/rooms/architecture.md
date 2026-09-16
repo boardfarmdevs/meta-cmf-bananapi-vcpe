@@ -133,6 +133,12 @@ by the first reported station's operating class. Only actually measured rows
 are published as signal evidence.
 In this hwsim lab, same-band candidate RCPI remains HAL/matrix-backed idealized
 availability, not proof that an unassociated AP physically heard a station.
+The HAL first resolves the actual STA interface MAC through the read-only
+association ledger to its provisioned radio identity. This handles randomized
+backhaul interface addresses without guessing a radio MAC. The returned current
+AP owner is evidence only, never the candidate destination. Stations connected
+elsewhere can be measured; globally unassociated, unknown, ambiguous or departed
+endpoints remain unavailable rather than returning zero or a guessed signal.
 
 The initial policy is deliberately conservative:
 
