@@ -109,9 +109,9 @@ Upstream-Status: Pending
 +        }
 +        unsigned int active_count = 0;
 +        for (unsigned int device_index = 0; device_index < device_count; ++device_index)
-+            if (devices[device_index].cli_Active) ++active_count;
++            if (devices[device_index].cli_AuthenticationState) ++active_count;
 +        for (unsigned int device_index = 0; device_index < device_count; ++device_index) {
-+            if (!devices[device_index].cli_Active) continue;
++            if (!devices[device_index].cli_AuthenticationState) continue;
 +            if (em_client_stats_store(radio_index, vap->vap_index, active_count,
 +                &devices[device_index], &collected) != RETURN_OK) {
 +                free(devices);

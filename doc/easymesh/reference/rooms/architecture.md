@@ -97,7 +97,9 @@ fresh HAL association snapshots even before any reporting policy is installed,
 or when its periodic interval is zero. They neither enable a reporting timer nor
 change threshold policy. An unrelated fronthaul BSS cannot block or add work to
 a backhaul-only query. Empty samples withdraw cached clients; failed HAL
-collections do not publish cached rows as fresh. Standalone
+collections do not publish cached rows as fresh. Query link reports require
+the HAL's kernel-backed authorization state; the Banana Pi HAL does not fill
+OneWifi's monitor-only `cli_Active` cache flag. Standalone
 Associated STA responses reuse a cached data-model delta and are not accepted
 as fresh policy evidence. AP reports recompute sample age from the native
 provider timestamp and copy the actually reported backhaul rows into an immutable

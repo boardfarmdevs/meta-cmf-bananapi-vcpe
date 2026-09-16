@@ -126,6 +126,7 @@ typedef struct {
 typedef struct {
     mac_addr_t cli_MACAddress;
     bool cli_Active;
+    bool cli_AuthenticationState;
     int cli_RSSI;
     unsigned int cli_LastDataDownlinkRate, cli_LastDataUplinkRate;
     unsigned long cli_BytesSent, cli_BytesReceived, cli_PacketsSent, cli_PacketsReceived;
@@ -371,12 +372,13 @@ static void setup(void) {
         }
     }
 }
-static void associate(unsigned int vap, unsigned int slot, unsigned int identity, int rssi, bool active) {
+static void associate(unsigned int vap, unsigned int slot, unsigned int identity, int rssi, bool authorized) {
     wifi_associated_dev3_t *row = &hal_clients[vap][slot];
     memset(row, 0, sizeof(*row));
     row->cli_MACAddress[0] = 2;
     row->cli_MACAddress[5] = identity;
-    row->cli_Active = active;
+    row->cli_Active = !authorized;
+    row->cli_AuthenticationState = authorized;
     row->cli_RSSI = rssi;
     row->cli_LastDataDownlinkRate = 54000 + identity;
     row->cli_LastDataUplinkRate = 24000 + identity;
@@ -459,7 +461,7 @@ int main(int count, char **arguments) {
         check_clients(1, 1, 0xb1, -43);
         assert(em_ap_metrics_report_cache.args.app == NULL);
         assert(em_ap_metrics_report_cache.args.policy_config.radio_metrics_policies.radio_count == 0);
-        puts("PASS: cold query MID zero reaches HAL and publishes real BSTA RCPI on both radios without installing policy");
+        puts("PASS: cold query MID zero publishes authorized HAL BSTA rows without policy or monitor-only cli_Active");
     } else if (strcmp(arguments[1], "interval-zero") == 0) {
         em_ap_metrics_report_cache.args.app = &application;
         em_ap_metrics_report_cache.args.sched_id = 0;
@@ -532,6 +534,8 @@ int main(int count, char **arguments) {
         dispatch("020000000002020000000001893a0000800b0102008093000701020000000014000000");
         assert(publications == 2 && client_calls[5] == 0);
         assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(published, "radios")) == 1);
+        cJSON *reported_radio = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(published, "radios"), 0);
+        assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(reported_radio, "vaps")) == 1);
         check_clients(1, 1, 0xb1, -43);
         assert(memcmp(&saved, &em_ap_metrics_report_cache.args, sizeof(saved)) == 0);
         puts("PASS: native requested-BSSID selection ignores unrelated policy/failing radio and preserves periodic configuration");

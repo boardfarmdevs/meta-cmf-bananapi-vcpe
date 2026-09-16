@@ -48,7 +48,7 @@ the production decoder, encoder and synchronous HAL-loop wrapper with real JSON,
 including delayed callbacks, MID zero, legacy queries and partial/empty results.
 The AP-query dispatch regression also compiles actual RBUS admission, query
 collection and report construction without a prior reporting policy, checking
-inactive/missing rows, empty snapshots, selected radios, failed HAL collection,
+unauthorized/missing rows, monitor-only activity flags, empty snapshots, selected radios, failed HAL collection,
 interval zero and conservative provider age.
 
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
