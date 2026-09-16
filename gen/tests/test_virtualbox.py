@@ -60,8 +60,8 @@ class VagrantConfigurationTest(unittest.TestCase):
         forwards = [arguments for method, positional, arguments in calls if method == "network"]
         self.assertEqual({entry["host"] for entry in forwards}, {18889, 18890, 18891, 18892, 18893})
         self.assertTrue(all(entry["host_ip"] == "127.0.0.1" and entry["auto_correct"] is False for entry in forwards))
-        self.assertIn(["cpus=", [6], {}], calls)
-        self.assertIn(["memory=", [8192], {}], calls)
+        self.assertIn(["cpus=", [8], {}], calls)
+        self.assertIn(["memory=", [16384], {}], calls)
         self.assertIn(["insert_key=", [True], {}], calls)
         self.assertIn(["check_guest_additions=", [False], {}], calls)
         urls = [arguments[0] for method, arguments, keywords in calls if method == "box_url="]

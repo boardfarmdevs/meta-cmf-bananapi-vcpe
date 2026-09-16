@@ -19,9 +19,9 @@ check() {
     test "$(easymesh_profile_release_name "$input")" = "$release_name"
 }
 
-check 100 unified 100 128 rdkeasymesh-0913
-check unified unified 100 128 rdkeasymesh-0913
-test "$(easymesh_thin_release_name)" = rdkeasymesh-0913-thin
+check 100 unified 100 128 rdkeasymesh-0916
+check unified unified 100 128 rdkeasymesh-0916
+test "$(easymesh_thin_release_name)" = rdkeasymesh-0916-thin
 test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 100)" = rdkeasymesh-0901
 test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = rdkeasymesh-0901-thin
 for obsolete in 20 50 small medium stress; do

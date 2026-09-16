@@ -41,7 +41,7 @@ newgrp lxd
 EASYMESH_WEBUI_HOST_IP=192.168.2.140 ./import.sh
 ```
 
-0913 uses one appliance with capacity for **100 clients**. There is no import
+0916 uses one appliance with capacity for **100 clients**. There is no import
 size choice and no separate 20/50/100 VM. Rooms control the online subset:
 the default room uses 20 and `fifty-client-counter-roam` uses 50. Loading a room
 applies RF and presence automatically without recreating the pool. All five

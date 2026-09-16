@@ -1,6 +1,6 @@
 # Current RDK lab
 
-Reviewed 14 September 2026. This is the deployment/release summary, not a live
+Reviewed 16 September 2026. This is the deployment/release summary, not a live
 health monitor. Use the browser and service checks in [operations](guide/operations.md)
 to check a machine now.
 
@@ -8,8 +8,8 @@ to check a machine now.
 
 | Item | Current value |
 | --- | --- |
-| Canonical branch | `codex/0913-clean` |
-| Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0913-clean/meta-cmf-bananapi-vcpe` |
+| Canonical branch | `codex/0916-clean` |
+| Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0916-clean/meta-cmf-bananapi-vcpe` |
 | Deployed appliance | `rev140:rdkeasymesh-0913`, accepted from the exact 0913 thin tar |
 | Packaged source | `40a9064`; native images rebuilt from `5d954ad` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
@@ -38,6 +38,10 @@ default-room traffic pass. The obsolete 0908 lab VM and its restricted metrics
 certificate are removed. The stopped 0913 thin builder remains available.
 
 ## Browser addresses
+
+The 0916 release is being rebuilt and qualified from the new canonical checkout.
+The 0913 deployment and historical acceptance below remain the rollback;
+they do not qualify the pending 0916 artifacts.
 
 | View | rev140 RDK |
 | --- | --- |

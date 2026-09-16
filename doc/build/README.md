@@ -5,13 +5,13 @@
 | controller (standard bpi) | `qemux86bpibroadband` | `rdk-generic-broadband-image` |
 | AP extender (bpi-ap) | `qemux86bpiap` | `rdk-generic-ap-extender-image` |
 
-One tree serves both machines, with a build directory per MACHINE. The 0913
+One tree serves both machines, with a build directory per MACHINE. The 0916
 release is based on RDK Central's `kirkstone` manifest family and its
 `rdkb-bpi-nosrc.xml` manifest as captured on 2026-09-02. The RDK OE projects
 were on `rdk-next`, but the build uses the accompanying
 [`rdkb-bpi-nosrc-0908.xml`](rdkb-bpi-nosrc-0908.xml) lock file with immutable
 commit IDs, deliberately retaining the reviewed 0902 upstream revisions.
-The lab layer is canonical on `codex/0913-clean`. Do not build a release
+The lab layer is canonical on `codex/0916-clean`. Do not build a release
 directly from moving upstream branches or reuse an older release's images.
 
 Use an x86-64 Yocto-compatible Linux host (rev140 uses Ubuntu 20.04), Git,
@@ -24,11 +24,11 @@ and access to the pinned Boardfarm repository. A source rebuild is online;
 the resulting thin appliance's normal first boot is offline.
 
 ```text
-mkdir -p $HOME/yocto/rdkb-bpi-nosrc-vcpe-0913-clean
-cd $HOME/yocto/rdkb-bpi-nosrc-vcpe-0913-clean
+mkdir -p $HOME/yocto/rdkb-bpi-nosrc-vcpe-0916-clean
+cd $HOME/yocto/rdkb-bpi-nosrc-vcpe-0916-clean
 
 # must precede setup-environment: MACHINE is resolved from conf/machine here
-git clone --branch codex/0913-clean \
+git clone --branch codex/0916-clean \
   git@github.com:boardfarmdevs/meta-cmf-bananapi-vcpe.git
 
 # Bootstrap from the exact manifest-repository revision used by 0902, then
@@ -78,18 +78,18 @@ Instead of manually running the two role commands, the repository includes
 the same audited build sequence with revision checks and per-attempt logs:
 
 ```sh
-cd "$HOME/yocto/rdkb-bpi-nosrc-vcpe-0913-clean/meta-cmf-bananapi-vcpe"
+cd "$HOME/yocto/rdkb-bpi-nosrc-vcpe-0916-clean/meta-cmf-bananapi-vcpe"
 bash doc/build/build-images.sh
 ```
 
 Run it directly after fresh source synchronization, before creating either
 build directory. It reuses `$HOME/oe/downloads` and `$HOME/oe/sstate-cache`
-by default, as requested for 0913. On rev140 these resolve to
+by default, as requested for 0916. On rev140 these resolve to
 `/home/rev/oe/downloads` and `/home/rev/oe/sstate-cache`. The helper forces
 and verifies the effective BitBake values and records them per attempt.
 `BUILD_THREADS=8`, `BUILD_DOWNLOADS=/path`, and `BUILD_SSTATE=/path`
 provide explicit overrides. Upstream source revisions remain pinned by the
-reviewed 0908 manifest; 0913 does not silently advance vendor dependencies.
+reviewed 0908 manifest; 0916 does not silently advance vendor dependencies.
 This is a fresh workspace build with shared caches, not a cache-empty rebuild.
 An interrupted role can be resumed with the `controller` or `extender` argument.
 The setup script's expected upstream-file edits are distinct from changes to
@@ -126,7 +126,7 @@ configuration, exit status and complete role-image checksums. See the
 [LXD appliance guide](../../gen/vm/lxd/README.md)
 for creating the new VM, exporting the thin tar and importing that exact tar.
 
-A complete 0913 build starts with new `build-qemux86bpibroadband` and
+A complete 0916 build starts with new `build-qemux86bpibroadband` and
 `build-qemux86bpiap` directories. Shared sstate can satisfy unchanged tasks;
 BitBake rebuilds tasks whose inputs changed. Do not copy an older TMPDIR or
 substitute older rootfs archives. Retain both complete build logs, the resolved

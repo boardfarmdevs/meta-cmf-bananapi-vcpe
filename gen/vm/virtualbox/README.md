@@ -1,7 +1,7 @@
 # RDK EasyMesh on Windows with Vagrant and VirtualBox
 
 This is the **RDK-only, up-to-100-client** alternative to the outer LXD VM. It uses
-the same 0913 Ubuntu 24.04/Linux 7 guest, native BPI images, userspace wmediumd,
+the same 0916 Ubuntu 24.04/Linux 7 guest, native BPI images, userspace wmediumd,
 interactive room and EM CLI WebUI. prplMesh is not included or changed.
 
 ```text
@@ -21,16 +21,16 @@ is still required to run the outer VirtualBox VM.
 
 ## 1. What to download
 
-Download `rdkeasymesh-0913-virtualbox.tar` and its adjacent `.tar.sha256` from
+Download `rdkeasymesh-0916-virtualbox.tar` and its adjacent `.tar.sha256` from
 the release host. Windows' built-in `tar` extracts the complete
-`rdkeasymesh-0913-virtualbox` release directory:
+`rdkeasymesh-0916-virtualbox` release directory:
 
 ```text
 Vagrantfile
 README.md
 release.json
-rdkeasymesh-0913-virtualbox.box
-rdkeasymesh-0913-virtualbox.box.sha256
+rdkeasymesh-0916-virtualbox.box
+rdkeasymesh-0916-virtualbox.box.sha256
 SHA256SUMS
 source-release.json
 adapter-files.sha256
@@ -59,7 +59,7 @@ double-click an isolated `.vbox`; use the accompanying `Vagrantfile`.
    is preferable for the 100-client-capacity appliance. Use an
    SSD with about 150 GiB free for the box cache, imported sparse disk and
    future writes. Vagrant and VirtualBox each keep an artifact/disk copy.
-5. Keep the directory on a local NTFS disk, for example `C:\labs\rdk-0913`,
+5. Keep the directory on a local NTFS disk, for example `C:\labs\rdk-0916`,
    outside OneDrive and network shares. Guest Additions, shared folders and
    the VirtualBox Extension Pack are not required for this lab.
 
@@ -75,12 +75,12 @@ Copy the release tar and checksum to `C:\labs`, then in PowerShell:
 
 ```powershell
 cd C:\labs
-$expectedTar = ((Get-Content .\rdkeasymesh-0913-virtualbox.tar.sha256 -Raw).Trim() -split '\s+')[0]
-if ((Get-FileHash .\rdkeasymesh-0913-virtualbox.tar -Algorithm SHA256).Hash -ine $expectedTar) { throw 'Release checksum mismatch' }
-tar -xf .\rdkeasymesh-0913-virtualbox.tar
-cd .\rdkeasymesh-0913-virtualbox
-$expected = ((Get-Content .\rdkeasymesh-0913-virtualbox.box.sha256 -Raw).Trim() -split '\s+')[0]
-$actual = (Get-FileHash .\rdkeasymesh-0913-virtualbox.box -Algorithm SHA256).Hash
+$expectedTar = ((Get-Content .\rdkeasymesh-0916-virtualbox.tar.sha256 -Raw).Trim() -split '\s+')[0]
+if ((Get-FileHash .\rdkeasymesh-0916-virtualbox.tar -Algorithm SHA256).Hash -ine $expectedTar) { throw 'Release checksum mismatch' }
+tar -xf .\rdkeasymesh-0916-virtualbox.tar
+cd .\rdkeasymesh-0916-virtualbox
+$expected = ((Get-Content .\rdkeasymesh-0916-virtualbox.box.sha256 -Raw).Trim() -split '\s+')[0]
+$actual = (Get-FileHash .\rdkeasymesh-0916-virtualbox.box -Algorithm SHA256).Hash
 if ($actual -ine $expected) { throw 'Box checksum mismatch' }
 vagrant up --provider=virtualbox
 ```
@@ -179,7 +179,7 @@ maintenance window, use the existing monitoring installer inside the guest:
 cd /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/lxd/observability
 sudo env LAB_MONITORING_BIND_ADDRESS=10.0.2.15 \
   LAB_MONITORING_PUBLIC_HOST=127.0.0.1 LAB_GRAFANA_PORT=18893 \
-  LAB_MONITORING_ALLOW_RESTART=1 bash setup.sh rdk-virtualbox-0913
+  LAB_MONITORING_ALLOW_RESTART=1 bash setup.sh rdk-virtualbox-0916
 ```
 
 `10.0.2.15` is the default adapter-1 NAT guest address; confirm with
@@ -204,8 +204,8 @@ Windows for this offline disk conversion.
 
 ```sh
 cd gen/vm/virtualbox
-bash build.sh /absolute/path/rdkeasymesh-0913-thin /absolute/path/rdkeasymesh-0913-virtualbox
-cd /absolute/path/rdkeasymesh-0913-virtualbox
+bash build.sh /absolute/path/rdkeasymesh-0916-thin /absolute/path/rdkeasymesh-0916-virtualbox
+cd /absolute/path/rdkeasymesh-0916-virtualbox
 vagrant validate
 vagrant up --provider=virtualbox
 ```
@@ -240,7 +240,7 @@ After recording qualification in optional `acceptance.json`/`ACCEPTANCE.md`,
 create the Windows download with:
 
 ```sh
-bash package-release.sh /absolute/path/rdkeasymesh-0913-virtualbox
+bash package-release.sh /absolute/path/rdkeasymesh-0916-virtualbox
 ```
 
 This packages only the explicit release files, never `.vagrant`, test SSH keys,

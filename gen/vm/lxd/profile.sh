@@ -3,16 +3,16 @@
 easymesh_profile_name() {
     case "${1:-unified}" in
         100|unified) printf 'unified\n' ;;
-        *) echo '0913 uses one appliance with capacity for 100 clients; select the active roster in the room viewer' >&2; return 2 ;;
+        *) echo '0916 uses one appliance with capacity for 100 clients; select the active roster in the room viewer' >&2; return 2 ;;
     esac
 }
 
 easymesh_profile_release_name() {
-    printf 'rdkeasymesh-%s\n' "${EASYMESH_RELEASE_ID:-0913}"
+    printf 'rdkeasymesh-%s\n' "${EASYMESH_RELEASE_ID:-0916}"
 }
 
 easymesh_thin_release_name() {
-    printf 'rdkeasymesh-%s-thin\n' "${EASYMESH_RELEASE_ID:-0913}"
+    printf 'rdkeasymesh-%s-thin\n' "${EASYMESH_RELEASE_ID:-0916}"
 }
 
 easymesh_profile_clients() {

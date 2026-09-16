@@ -6,8 +6,8 @@ temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT
 meta_workspace="$temporary/workspace"
 meta_bundle="$temporary/source.bundle"
-runtime_branch=codex/0913-clean
-grep -Fq 'runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0913-clean}' "$root/gen/vm/scripts/20-prepare-lab-host.sh"
+runtime_branch=codex/0916-clean
+grep -Fq 'runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0916-clean}' "$root/gen/vm/scripts/20-prepare-lab-host.sh"
 mkdir -p "$meta_workspace"
 git init -q "$temporary/source"
 git -C "$temporary/source" symbolic-ref HEAD refs/heads/lxd-appliance-export
