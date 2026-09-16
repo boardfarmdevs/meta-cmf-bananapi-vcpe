@@ -1,7 +1,24 @@
 'use strict';
 
 const assert = require('assert').strict;
-const {interfaceState, summarizeNative} = require('./room-backhaul-features.js');
+const {interfaceState, summarizeNative, stackProfile, ready} = require('./room-backhaul-features.js');
+assert.equal(stackProfile('rdk').gateway, '10.0.0.1');
+assert.equal(stackProfile('prpl').gateway, '192.168.77.1');
+assert.equal(stackProfile('prpl').healthNodes, 5);
+assert.equal(stackProfile('prpl').containers.extender_3, 'prpl-agent-03');
+assert.throws(() => stackProfile('unknown'));
+const healthy = {native: {
+  nodes: Object.fromEntries(['gateway', 'extender_1', 'extender_2', 'extender_3', 'extender_4']
+    .map(role => [role, {pingOk: true, fronthaulAps: 6, apOperating: true}])),
+  parents: {extender_1: 'gateway', extender_2: 'gateway', extender_3: 'extender_1', extender_4: 'extender_2'}},
+  health: {healthy: true, topology_nodes: 5, api_active: 10},
+  optimizer: {fleet: {converged: true}},
+  topology: {nodes: Array(6).fill({}), stations: Array.from({length: 10}, (_, index) => ({mac: String(index)}))}};
+assert.equal(ready(healthy, 5), true);
+assert.equal(ready(healthy, 6), false);
+assert.equal(ready({...healthy, native: {...healthy.native, nodes: {}}}, 5), false);
+assert.equal(ready({...healthy, native: {...healthy.native, parents: {...healthy.native.parents, extender_4: null}}}, 5), false);
+assert.equal(ready({...healthy, optimizer: {fleet: {converged: false}}}, 5), false);
 const inactive = 'Interface wifi1.1\n addr 02:00:00:00:01:01\n type AP\n' +
   'Connected to 02:00:00:00:02:02 (on wifi1.3)\n SSID: mesh_backhaul\n freq: 5180\nPROBE_EXIT=0\n';
 assert.equal(interfaceState(inactive).apOperating, false, 'STA SSID does not prove its backhaul AP is running');

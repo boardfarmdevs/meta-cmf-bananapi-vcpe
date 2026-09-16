@@ -420,7 +420,7 @@ Inspect exit/report: completed playback alone cannot pass.
 
 ## Short backhaul feature test
 
-The RDK short suite runs three 24-second geometry-backhaul rooms through real
+The shared short suite runs three 24-second geometry-backhaul rooms through real
 load/Play controls and Network Topology. Out-of-band LXD audits uplink BSSIDs
 and gateway probes at pause/return. Start from a healthy, unowned default;
 native processes, parent BSSIDs and action budgets remain unchanged.
@@ -428,21 +428,24 @@ native processes, parent BSSIDs and action budgets remain unchanged.
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core CHROMIUM_PATH=/path/to/chromium \
 node gen/tests/room-backhaul-features.js \
-  --yes-act true --host rev140 --vm rdkeasymesh-0913 \
+  --yes-act true --flavor rdk --host rev140 --vm rdkeasymesh-0916 \
   --room-url http://192.168.2.140:48891 \
   --topology-url http://192.168.2.140:48889 \
   --output /tmp/new-backhaul-feature-results
 ```
 
 Use new evidence directories; retain RF, policy/clock, parents, native
-links/probes and both screenshots. Report native branch/handover separately
-from `featureChecksPassed`: geometry is not native optimization.
+links/probes and both screenshots. The 0916 harness requires actual branch
+formation and handover, not only changed geometry. It checks exact native
+process identities and initial/return client kernel ownership. The prpl copy
+uses `--flavor prpl`, its own container/interface names, gateway and five
+physical data-model nodes while still requiring six logical topology nodes.
 Isolation requires −20 dB mesh links with the AP present and strong fronthaul,
 an initial upstream probe within 15 s, then disconnected uplink/failed traffic.
-Observe return recovery for 20 s before Default.
+Require ten-client return convergence within 60 s before Default.
 `--room backhaul-isolation-recovery` selects that case; otherwise run all three.
 
-Each half-script has 35 s. Cleanup checks exact default RF and allows 60 s for
+Each half-script has 35 s; native midpoint checks allow 60 s. Cleanup checks exact default RF and allows 60 s for
 twenty clients, six nodes and all-AP gateway probes. Missing evidence/recovery
 fails; never hide it with forced parents or native restarts. This is bounded
 functionality, not soak or complete native-policy qualification.
