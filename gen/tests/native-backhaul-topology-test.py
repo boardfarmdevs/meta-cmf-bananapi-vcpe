@@ -62,6 +62,13 @@ struct em_bss_info_t {
 };
 struct dm_bss_t {
     em_bss_info_t m_bss_info;
+    dm_bss_t() = default;
+    dm_bss_t(const dm_bss_t &) = default;
+    void operator=(const dm_bss_t &source) {
+        const auto marker = m_bss_info.marker;
+        m_bss_info = source.m_bss_info;
+        m_bss_info.marker = marker;
+    }
     void init() { memset(&m_bss_info, 0, sizeof(m_bss_info)); }
 };
 struct dm_easy_mesh_t {
@@ -115,7 +122,7 @@ void add(dm_easy_mesh_t &model, unsigned char radio, unsigned char bssid,
     info.vap_mode = mode;
     info.id.haul_type = haul;
     info.enabled = enabled;
-    info.marker = 123456;
+    info.marker = 1000 * radio + bssid;
 }
 unsigned int count(const dm_easy_mesh_t &model, unsigned char radio, unsigned char parent) {
     unsigned int found = 0;
@@ -156,12 +163,17 @@ int main(int argc, char **argv) {
         assert(controller.apply(packet) == 0);
         assert(model.m_num_bss == 4 && count(model, 1, 11) == 0);
         assert(count(model, 2, 11) == 1 && count(model, 1, 20) == 1 && count(model, 1, 21) == 1);
-        assert(model.m_bss[0].m_bss_info.marker == 123456);
+        for (unsigned int index = 0; index < model.m_num_bss; ++index) {
+            const auto &info = model.m_bss[index].m_bss_info;
+            if (info.bssid.mac[5] != 12) {
+                assert(info.marker == 1000U * info.ruid.mac[5] + info.bssid.mac[5]);
+            }
+        }
     } else if (scenario == "repeat") {
         packet = report(11);
         for (unsigned int repeat = 0; repeat < 20; ++repeat) assert(controller.apply(packet) == 0);
         assert(model.m_num_bss == 1 && model.m_bss[0].m_bss_info.enabled);
-        assert(model.m_bss[0].m_bss_info.marker == 123456);
+        assert(model.m_bss[0].m_bss_info.marker == 1011);
         assert(model.m_bss[0].m_bss_info.id.dev_mac[5] == 90);
         assert(!strcmp(model.m_bss[0].m_bss_info.id.net_id, "native-network"));
     } else if (scenario == "empty" || scenario == "ap-only") {

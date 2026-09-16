@@ -9,7 +9,9 @@ correlated metrics against the wrong parent epoch.
 Apply the existing single-backhaul-STA-per-radio invariant directly to this
 receive path, before parent selection. Preserve APs, other radios and unrelated
 STA modes. Stage the bounded snapshot so truncated, ambiguous or oversized
-reports do not partially mutate the live model; propagate malformed payloads
+reports do not partially mutate the live model. Copy complete BSS information
+values instead of the legacy partial dm_bss_t assignment operator, preserving
+load and metric fields when records move. Propagate malformed payloads
 and pass the TLV length in host order. No steering deadline is extended and
 success responses do not substitute for observed topology or fresh metrics.
 
@@ -28,7 +30,7 @@ Upstream-Status: Pending
  	/**!
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -1304,46 +1304,79 @@
+@@ -1304,46 +1304,82 @@
  	(void)len;
  }
  
@@ -83,7 +85,10 @@ Upstream-Status: Pending
 +    unsigned int remaining = len - sizeof(*ap);
 +    unsigned int reported_count = 0;
 +    std::set<std::string> reported_radios;
-+    std::vector<dm_bss_t> reconciled(dm->m_bss, dm->m_bss + dm->m_num_bss);
++    std::vector<em_bss_info_t> reconciled;
++    for (unsigned int index = 0; index < dm->m_num_bss; ++index) {
++        reconciled.push_back(dm->m_bss[index].m_bss_info);
++    }
 +    for (unsigned int radio_index = 0; radio_index < ap->radios_num; ++radio_index) {
 +        if (remaining < sizeof(em_ap_vendor_op_bss_radio_t)) return -1;
 +        const auto *radio = reinterpret_cast<const em_ap_vendor_op_bss_radio_t *>(cursor);
@@ -108,8 +113,7 @@ Upstream-Status: Pending
 +                if (backhaul_sta_reported) return -1;
 +                backhaul_sta_reported = true;
 +                reconciled.erase(std::remove_if(reconciled.begin(), reconciled.end(),
-+                    [&](const dm_bss_t &current) {
-+                        const auto &info = current.m_bss_info;
++                    [&](const em_bss_info_t &info) {
 +                        return info.vap_mode == em_vap_mode_sta &&
 +                            info.id.haul_type == em_haul_type_backhaul &&
 +                            memcmp(info.ruid.mac, radio->ruid, sizeof(mac_address_t)) == 0 &&
@@ -117,17 +121,16 @@ Upstream-Status: Pending
 +                    }), reconciled.end());
 +            }
 +            auto existing = std::find_if(reconciled.begin(), reconciled.end(),
-+                [&](const dm_bss_t &current) {
-+                    return memcmp(current.m_bss_info.ruid.mac, radio->ruid, sizeof(mac_address_t)) == 0 &&
-+                        memcmp(current.m_bss_info.bssid.mac, bss->bssid, sizeof(mac_address_t)) == 0;
++                [&](const em_bss_info_t &current) {
++                    return memcmp(current.ruid.mac, radio->ruid, sizeof(mac_address_t)) == 0 &&
++                        memcmp(current.bssid.mac, bss->bssid, sizeof(mac_address_t)) == 0;
 +                });
 +            if (existing == reconciled.end()) {
-+                dm_bss_t added;
-+                added.init();
++                em_bss_info_t added = {};
 +                reconciled.push_back(added);
 +                existing = reconciled.end() - 1;
 +            }
-+            auto &info = existing->m_bss_info;
++            auto &info = *existing;
 +            strncpy(info.id.net_id, dm->m_device.m_device_info.id.net_id, sizeof(em_long_string_t));
 +            memcpy(info.id.dev_mac, dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t));
 +            memcpy(info.id.ruid, radio->ruid, sizeof(mac_address_t));
@@ -141,13 +144,15 @@ Upstream-Status: Pending
 +        remaining -= radio_length;
 +    }
 +    if (remaining != 0 || reconciled.size() > EM_MAX_BSSS) return -1;
-+    std::copy(reconciled.begin(), reconciled.end(), dm->m_bss);
++    for (unsigned int index = 0; index < reconciled.size(); ++index) {
++        dm->m_bss[index].m_bss_info = reconciled[index];
++    }
 +    dm->set_num_bss(static_cast<unsigned int>(reconciled.size()));
 +    return 0;
  }
  
  int em_configuration_t::create_tid_to_link_map_policy_tlv(unsigned char *buff)
-@@ -2922,7 +2955,10 @@
+@@ -2922,7 +2958,10 @@
  			tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
  			continue;
  		} else {
@@ -159,4 +164,3 @@ Upstream-Status: Pending
  			break;
  		}
  	}
-
