@@ -6,6 +6,13 @@ Run every advertised room sequentially within each lab; independent RDK and
 prpl runs may overlap across hosts. This is bounded feature testing, not a soak
 or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
 
+Bring the room to the foreground before using its controls. Capture room and
+topology screenshots sequentially with each page foregrounded, then restore
+room focus; concurrent background captures can stall the headless software
+renderer. Keep physical audits ahead of screenshots and retain observer failures
+separately from native convergence failures. A renderer timeout does not qualify
+an unplayed room.
+
 ## Current RF hardening checks
 
 [RF qualification](../radio/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
