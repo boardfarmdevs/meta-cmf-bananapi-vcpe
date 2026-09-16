@@ -23,6 +23,29 @@ The test directories on `PYTHONPATH` supply shared fixtures and
 Compiled native regressions such as `policy-submission-test.py` additionally
 take the patched Yocto source tree; see their `--help` output.
 
+Native proactive-backhaul checks use the patched EasyMesh source tree, without
+starting a lab or sending steering requests:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -pthread -I "$NATIVE_SOURCE/inc" \
+  gen/tests/native-backhaul-policy-test.cpp -o /tmp/native-backhaul-policy-test
+/tmp/native-backhaul-policy-test
+python3 gen/tests/native-backhaul-controller-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-backhaul-agent-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"
+python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
+python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
+python3 gen/tests/ap-report-snapshot-test.py "$NATIVE_SOURCE" "$CJSON_TEST_DEPS" "$HEADER_SOURCE/inc/em_base.h"
+python3 gen/tests/ap-report-provider-age-test.py "$ONEWIFI_SOURCE"
+```
+
+These exercise the policy, wire bounds, concurrent candidate-query ownership and
+actual controller/agent handler code with stubbed external dependencies. They do
+not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
+The OneWifi test needs `cJSON.h` and `libcjson.so` in `CJSON_TEST_DEPS`; it exercises
+the production decoder, encoder and synchronous HAL-loop wrapper with real JSON,
+including delayed callbacks, MID zero, legacy queries and partial/empty results.
+
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The
 HTTP counterpart in `gen/demo/tests/test_server.py` checks clean root redirects,

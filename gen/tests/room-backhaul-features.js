@@ -294,11 +294,16 @@ async function run(options) {
       currentRoom.returnObservation = await sample('returned', true);
       {
         const deadline = Date.now() + 60000;
-        while (!ready(currentRoom.returnObservation, profile.healthNodes) && Date.now() < deadline) {
+        const returned = entry => ready(entry, profile.healthNodes) &&
+          (id !== 'backhaul-parent-handover' || (entry.native.parents.extender_3 === 'extender_1' &&
+            entry.mesh?.backhaul_edges?.some(edge => edge.child_role === 'extender_3' && edge.parent_role === 'extender_1')));
+        while (!returned(currentRoom.returnObservation) && Date.now() < deadline) {
           await delay(1000);
           currentRoom.returnObservation = await sample('return-recovery', true);
         }
-        currentRoom.nativeOutcome.returnRecoveryObserved = ready(currentRoom.returnObservation, profile.healthNodes);
+        currentRoom.nativeOutcome.returnRecoveryObserved = returned(currentRoom.returnObservation);
+        if (id === 'backhaul-parent-handover')
+          currentRoom.nativeOutcome.upperRelayRestored = currentRoom.returnObservation.native.parents.extender_3 === 'extender_1';
         assert.equal(currentRoom.nativeOutcome.returnRecoveryObserved, true, 'Ten-client native recovery must converge after return');
         currentRoom.returnKernel = await auditClients(currentRoom.returnObservation);
       }

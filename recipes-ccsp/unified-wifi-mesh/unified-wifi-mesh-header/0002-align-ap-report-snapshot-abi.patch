@@ -1,0 +1,37 @@
+Subject: [PATCH] Align installed AP event parameters with the runtime snapshot ABI
+
+Apply to unified-wifi-mesh-header after its existing ABI alignment patch.
+Include the earlier native AP-query fields as well as the report-owned
+backhaul snapshot fields so the installed public definition matches runtime.
+Rebuild the header provider, native mesh, OneWifi and libwebconfig together.
+
+Upstream-Status: Pending
+
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -3344,6 +3344,25 @@
+     bool sta_link_metrics_include;
+     bool sta_traffic_stats_include;
+     bool wifi6_status_report_include;
++    bool query;
++    unsigned short query_id;
++    mac_address_t query_source;
++    int query_bss_count;
++    mac_address_t query_bssids[EM_MAX_BSSS];
++    int query_radio_count;
++    mac_address_t query_radios[EM_MAX_RADIO_PER_AGENT];
++    int report_backhaul_bss_count;
++    mac_address_t report_backhaul_bssids[EM_MAX_BSSS];
++    unsigned int report_backhaul_sta_count;
++    struct {
++        mac_address_t sta_mac;
++        mac_address_t bssid;
++        mac_address_t ruid;
++        unsigned int delta_ms;
++        unsigned int est_dl_rate;
++        unsigned int est_ul_rate;
++        unsigned char rcpi;
++    } __attribute__((__packed__)) report_backhaul_sta[EM_MAX_BSSS * EM_MAX_RADIO_PER_AGENT];
+ } __attribute__((__packed__)) em_cmd_ap_metrics_rprt_params_t;
+ 
+ typedef enum {

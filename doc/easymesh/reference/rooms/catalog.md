@@ -54,7 +54,12 @@ parent selection**. Other rooms still default to protected startup RF.
 
 At the pause compare verified applied bidirectional RF, actual `wifi1.3`
 uplink BSSID, native topology and gateway traffic. Branch/parent changes are
-native observations, not guaranteed script outcomes. The isolation room should
+native observations, not scripted parent writes. The 0916 native policy uses
+fresh measured links, path safeguards and hysteresis; its handover acceptance
+requires role 3 to use the lower relay and return to the upper relay, with
+matching actual associations and topology. See the
+[native policy](architecture.md#native-proactive-backhaul-steering).
+The isolation room should
 show lost upstream service even though the nearby client's fronthaul remains
 strong. A stale parent can remain reported until native timeout; distinguish
 that from actual connectivity. Resume, then verify recovery; changing back to

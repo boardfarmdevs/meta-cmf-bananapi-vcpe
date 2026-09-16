@@ -1,0 +1,2134 @@
+Subject: [PATCH] Add measured native backhaul steering with loop-safe parent policy
+
+Requires matching OneWifi/libwebconfig NaSta metadata and sampling patches,
+AP-report provider-age repair and public-header snapshot ABI alignment.
+
+Upstream-Status: Pending
+
+--- a/inc/em.h	2026-09-15 19:57:25.933822390 -0700
++++ b/inc/em.h	2026-09-16 07:33:51.737883092 -0700
+@@ -217,6 +217,7 @@
+ 	bool initialize_ec_manager();
+ 
+ public:
++    int send_native_backhaul_frame(unsigned char *frame, unsigned int length) { return send_frame(frame, length); }
+     
+ 	/**!
+ 	 * @brief Initializes the system or component.
+--- a/inc/em_agent.h	2026-09-15 19:57:50.113888571 -0700
++++ b/inc/em_agent.h	2026-09-16 07:44:52.947606191 -0700
+@@ -27,6 +27,7 @@
+ #include "em_orch_agent.h"
+ #include "em_simulator.h"
+ #include "bus.h"
++#include "em_native_backhaul_agent.h"
+ 
+ #include <chrono>
+ #include <deque>
+@@ -55,6 +56,19 @@
+     unsigned int m_onewifi_wsc_wait_ticks = 0;
+     std::deque<std::string> m_deferred_onewifi_wsc_ruids;
+     std::unordered_map<std::string, unsigned int> m_orphaned_onewifi_wsc_ticks;
++    em_native_backhaul::transactions m_native_backhaul_transactions;
++
++    void process_native_backhaul_request(const unsigned char *frame, size_t length);
++    bool send_native_backhaul_reply(const em_native_backhaul::request &request,
++        bool acknowledgement, unsigned char error = 0);
++    bool read_native_backhaul_link(unsigned int radio_instance,
++        em_native_backhaul::mac_address &parent, bool &connected);
++    bool native_backhaul_station_matches(unsigned int radio_instance,
++        const em_native_backhaul::mac_address &station);
++    void complete_native_backhaul_request(em_native_backhaul::transaction &transaction,
++        unsigned char error);
++    void poll_native_backhaul_request();
++    void observe_native_backhaul_callback(em_bus_event_t *event);
+ 
+     bool publish_initial_operating_channels();
+     bool rearm_onewifi_wsc_radio(const std::string& ruid, const char *reason);
+@@ -357,7 +371,8 @@
+         * @retval 0 on success.
+         * @retval Non-zero error code on failure.
+         */
+-       int send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_t *bus_hdl, em_unassoc_work_list_t *work);
++       int send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_t *bus_hdl,
++           em_unassoc_work_list_t *work, unsigned short query_id);
+ 
+        /**!
+         * @brief Callback invoked on receiving Unassociated STA Link Metrics results.
+@@ -395,6 +410,8 @@
+ public:
+ 
+     em_orch_t *get_orch() override { return m_orch; }
++    bool handle_native_backhaul_frame(unsigned char *data, unsigned int len,
++        em_t *al_em) override;
+ 
+     bus_handle_t m_bus_hdl;
+     bool do_start_dpp_onboarding = false;
+--- a/inc/em_ap_report_snapshot.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_ap_report_snapshot.h	2026-09-16 08:15:38.214515942 -0700
+@@ -0,0 +1,123 @@
++#ifndef EM_AP_REPORT_SNAPSHOT_H
++#define EM_AP_REPORT_SNAPSHOT_H
++
++#include <cstdint>
++#include <cstring>
++#include <cjson/cJSON.h>
++
++inline bool em_ap_report_mac(const cJSON *object, const char *name, unsigned char *address)
++{
++    const cJSON *value = cJSON_GetObjectItemCaseSensitive(object, name);
++    if (!cJSON_IsString(value) || value->valuestring == nullptr ||
++        strlen(value->valuestring) != 17) return false;
++    bool nonzero = false;
++    for (unsigned int index = 0; index < 6; ++index) {
++        if (index != 5 && value->valuestring[index * 3 + 2] != ':') return false;
++        unsigned int octet = 0;
++        for (unsigned int digit_index = 0; digit_index < 2; ++digit_index) {
++            const char digit = value->valuestring[index * 3 + digit_index];
++            unsigned int decoded;
++            if (digit >= '0' && digit <= '9') decoded = static_cast<unsigned int>(digit - '0');
++            else if (digit >= 'a' && digit <= 'f') decoded = static_cast<unsigned int>(digit - 'a' + 10);
++            else if (digit >= 'A' && digit <= 'F') decoded = static_cast<unsigned int>(digit - 'A' + 10);
++            else return false;
++            octet = octet * 16 + decoded;
++        }
++        address[index] = static_cast<unsigned char>(octet);
++        nonzero = nonzero || octet != 0;
++    }
++    return nonzero && (address[0] & 1) == 0;
++}
++
++inline bool em_ap_report_uint(const cJSON *object, const char *name, unsigned int &result)
++{
++    const cJSON *value = cJSON_GetObjectItemCaseSensitive(object, name);
++    if (!cJSON_IsNumber(value) ||
++        !(value->valuedouble >= 0 && value->valuedouble <= UINT32_MAX) ||
++        value->valuedouble != static_cast<double>(static_cast<unsigned int>(value->valuedouble)))
++        return false;
++    result = static_cast<unsigned int>(value->valuedouble);
++    return true;
++}
++
++inline bool em_collect_ap_report_backhaul(cJSON *reports, dm_easy_mesh_t &model,
++    em_cmd_ap_metrics_rprt_params_t &params)
++{
++    params.report_backhaul_bss_count = 0;
++    params.report_backhaul_sta_count = 0;
++    if (!cJSON_IsArray(reports) || params.num_radios < 0 ||
++        params.num_radios > EM_MAX_RADIO_PER_AGENT ||
++        cJSON_GetArraySize(reports) != params.num_radios) return false;
++    const size_t capacity = sizeof(params.report_backhaul_sta) / sizeof(params.report_backhaul_sta[0]);
++    for (int radio_slot = 0; radio_slot < params.num_radios; ++radio_slot) {
++        cJSON *radio_report = cJSON_GetArrayItem(reports, radio_slot);
++        cJSON *vaps = cJSON_GetObjectItemCaseSensitive(radio_report, "Vap Info");
++        if (!cJSON_IsArray(vaps) || cJSON_GetArraySize(vaps) > EM_MAX_BSSS) return false;
++        cJSON *vap = nullptr;
++        cJSON_ArrayForEach(vap, vaps) {
++            cJSON *ap_metrics = cJSON_GetObjectItemCaseSensitive(vap, "AP Metrics");
++            mac_address_t bssid;
++            if (!em_ap_report_mac(ap_metrics, "BSSID", bssid)) return false;
++            bool backhaul = false;
++            for (unsigned int bss_index = 0; bss_index < model.get_num_bss(); ++bss_index) {
++                const em_bss_info_t *bss = model.get_bss_info(bss_index);
++                if (bss != nullptr && bss->vap_mode == em_vap_mode_ap &&
++                    bss->id.haul_type == em_haul_type_backhaul &&
++                    memcmp(bss->bssid.mac, bssid, 6) == 0 &&
++                    memcmp(bss->ruid.mac, params.ruid[radio_slot], 6) == 0) {
++                    backhaul = true;
++                    break;
++                }
++            }
++            if (!backhaul) continue;
++            for (int seen = 0; seen < params.report_backhaul_bss_count; ++seen)
++                if (memcmp(params.report_backhaul_bssids[seen], bssid, 6) == 0) return false;
++            if (params.report_backhaul_bss_count >= EM_MAX_BSSS) return false;
++            memcpy(params.report_backhaul_bssids[params.report_backhaul_bss_count++], bssid, 6);
++            cJSON *stations = cJSON_GetObjectItemCaseSensitive(vap, "Associated STA Link Metrics Report");
++            if (stations == nullptr) continue;
++            if (!cJSON_IsArray(stations) || static_cast<size_t>(cJSON_GetArraySize(stations)) > capacity)
++                return false;
++            cJSON *station = nullptr;
++            cJSON_ArrayForEach(station, stations) {
++                mac_address_t station_mac;
++                if (!em_ap_report_mac(station, "STA MAC", station_mac)) return false;
++                cJSON *link = cJSON_GetObjectItemCaseSensitive(station, "Associated STA Link Metrics");
++                if (link == nullptr) continue;
++                cJSON *links = cJSON_GetObjectItemCaseSensitive(link, "Per BSSID Metrics");
++                unsigned int link_count;
++                if (!em_ap_report_uint(link, "Number of BSSIDs", link_count) ||
++                    !cJSON_IsArray(links) || link_count != static_cast<unsigned int>(cJSON_GetArraySize(links)) ||
++                    link_count > EM_MAX_BSSS) return false;
++                cJSON *metric = nullptr;
++                cJSON_ArrayForEach(metric, links) {
++                    mac_address_t metric_bssid;
++                    if (!em_ap_report_mac(metric, "BSSID", metric_bssid) || memcmp(bssid, metric_bssid, 6) != 0)
++                        return false;
++                    unsigned int delta_ms, downlink, uplink, rcpi;
++                    if (!em_ap_report_uint(metric, "Time Delta", delta_ms) ||
++                        !em_ap_report_uint(metric, "Estimated Mac Rate Down", downlink) ||
++                        !em_ap_report_uint(metric, "Estimated Mac Rate Up", uplink) ||
++                        !em_ap_report_uint(metric, "RCPI", rcpi) || rcpi > 220) continue;
++                    for (unsigned int seen = 0; seen < params.report_backhaul_sta_count; ++seen) {
++                        const auto &previous = params.report_backhaul_sta[seen];
++                        if (memcmp(previous.sta_mac, station_mac, 6) == 0 &&
++                            memcmp(previous.bssid, bssid, 6) == 0) return false;
++                    }
++                    if (params.report_backhaul_sta_count >= capacity) return false;
++                    auto &sample = params.report_backhaul_sta[params.report_backhaul_sta_count++];
++                    memcpy(sample.sta_mac, station_mac, 6);
++                    memcpy(sample.bssid, bssid, 6);
++                    memcpy(sample.ruid, params.ruid[radio_slot], 6);
++                    sample.delta_ms = delta_ms;
++                    sample.est_dl_rate = downlink;
++                    sample.est_ul_rate = uplink;
++                    sample.rcpi = static_cast<unsigned char>(rcpi);
++                }
++            }
++        }
++    }
++    return true;
++}
++
++#endif
+--- a/inc/em_backhaul_policy.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_backhaul_policy.h	2026-09-16 08:04:46.778373781 -0700
+@@ -0,0 +1,189 @@
++#ifndef EM_BACKHAUL_POLICY_H
++#define EM_BACKHAUL_POLICY_H
++
++#include <algorithm>
++#include <cstdint>
++#include <map>
++#include <set>
++#include <string>
++#include <tuple>
++#include <vector>
++
++namespace em_backhaul {
++
++struct sample {
++    int rcpi = -1;
++    int64_t observed = 0;
++    uint64_t round = 0;
++    bool fresh(int64_t now) const
++    {
++        return rcpi >= 0 && rcpi <= 220 && observed > 0 &&
++            observed <= now && now - observed <= 6000;
++    }
++};
++
++struct node {
++    std::string al;
++    std::string sta;
++    std::string parent_bssid;
++    sample serving;
++};
++
++struct access_point {
++    std::string al;
++    std::string bssid;
++    unsigned char op_class = 0;
++    unsigned char channel = 0;
++};
++
++struct snapshot {
++    std::string root;
++    std::map<std::string, node> nodes;
++    std::map<std::string, access_point> aps;
++    std::map<std::pair<std::string, std::string>, sample> candidates;
++    std::map<std::string, std::string> uncertain;
++};
++
++struct path {
++    bool valid = false;
++    int bottleneck = 220;
++    unsigned int hops = 0;
++};
++
++inline path root_path(const snapshot &network, std::string parent,
++                      const std::string &forbidden, int64_t now)
++{
++    path result;
++    std::set<std::string> seen;
++    while (parent != network.root) {
++        if (parent == forbidden || network.uncertain.count(parent) ||
++            !seen.insert(parent).second || seen.size() > 32) return result;
++        const auto found = network.nodes.find(parent);
++        if (found == network.nodes.end() || !found->second.serving.fresh(now)) return result;
++        const auto upstream = network.aps.find(found->second.parent_bssid);
++        if (upstream == network.aps.end()) return result;
++        result.bottleneck = std::min(result.bottleneck, found->second.serving.rcpi);
++        ++result.hops;
++        parent = upstream->second.al;
++    }
++    result.valid = !network.root.empty() && parent != forbidden;
++    return result;
++}
++
++struct decision {
++    std::string al;
++    std::string sta;
++    std::string previous;
++    std::string target;
++    int serving_rcpi = -1;
++    int candidate_rcpi = -1;
++    int path_rcpi = -1;
++};
++
++class policy {
++    struct history {
++        std::string parent;
++        std::string candidate;
++        int64_t changed = 0;
++        int64_t cooldown = 0;
++        uint64_t round = 0;
++        unsigned int confirmations = 0;
++    };
++    std::map<std::string, history> m_history;
++
++public:
++    void observe(const snapshot &network, int64_t now)
++    {
++        for (auto iterator = m_history.begin(); iterator != m_history.end();) {
++            if (network.nodes.count(iterator->first) == 0) iterator = m_history.erase(iterator);
++            else ++iterator;
++        }
++        for (const auto &entry : network.nodes) {
++            auto &state = m_history[entry.first];
++            if (state.parent != entry.second.parent_bssid || state.changed == 0) {
++                state.parent = entry.second.parent_bssid;
++                state.changed = now;
++                state.candidate.clear();
++                state.confirmations = 0;
++                state.round = 0;
++            }
++        }
++    }
++
++    void attempted(const std::string &al, int64_t now, bool failed)
++    {
++        auto &state = m_history[al];
++        state.cooldown = now + (failed ? 20000 : 10000);
++        state.confirmations = 0;
++        state.candidate.clear();
++    }
++
++    std::vector<decision> evaluate(const snapshot &network, int64_t now)
++    {
++        observe(network, now);
++        std::vector<decision> decisions;
++        for (const auto &entry : network.nodes) {
++            const node &station = entry.second;
++            auto &state = m_history[entry.first];
++            const auto current = network.aps.find(station.parent_bssid);
++            if (station.al == network.root || station.sta.empty() ||
++                !station.serving.fresh(now) || station.serving.observed < state.changed ||
++                current == network.aps.end() || now < state.cooldown || now - state.changed < 10000) {
++                state.confirmations = 0;
++                state.candidate.clear();
++                continue;
++            }
++            const path old_path = root_path(network, current->second.al, station.al, now);
++            if (!old_path.valid) continue;
++            const int old_bottleneck = std::min(station.serving.rcpi, old_path.bottleneck);
++            decision best;
++            std::tuple<int, int, int> best_score(-1, -1, -100);
++            uint64_t best_round = 0;
++            for (const auto &candidate : network.aps) {
++                const access_point &ap = candidate.second;
++                const auto uncertainty = network.uncertain.find(station.al);
++                if (uncertainty != network.uncertain.end() && uncertainty->second != candidate.first) continue;
++                if (candidate.first == station.parent_bssid || ap.al == station.al ||
++                    ap.channel != current->second.channel || ap.op_class != current->second.op_class) continue;
++                const auto measurement = network.candidates.find({station.sta, candidate.first});
++                if (measurement == network.candidates.end()) continue;
++                const sample &metric = measurement->second;
++                if (!metric.fresh(now) || metric.observed < state.changed ||
++                    metric.rcpi < 50 || metric.rcpi - station.serving.rcpi < 12) continue;
++                const path route = root_path(network, ap.al, station.al, now);
++                if (!route.valid) continue;
++                const int bottleneck = std::min(metric.rcpi, route.bottleneck);
++                if (bottleneck < old_bottleneck ||
++                    (route.hops > old_path.hops && bottleneck <= old_bottleneck)) continue;
++                const auto score = std::make_tuple(bottleneck, metric.rcpi, -static_cast<int>(route.hops));
++                if (score > best_score) {
++                    best_score = score;
++                    best = {station.al, station.sta, station.parent_bssid, candidate.first,
++                        station.serving.rcpi, metric.rcpi, bottleneck};
++                    best_round = metric.round;
++                }
++            }
++            if (best.target.empty()) {
++                state.candidate.clear();
++                state.confirmations = 0;
++                state.round = 0;
++                continue;
++            }
++            if (state.candidate != best.target) {
++                state.candidate = best.target;
++                state.confirmations = 0;
++                state.round = 0;
++            }
++            if (best_round != 0 && best_round != state.round) {
++                state.round = best_round;
++                ++state.confirmations;
++            }
++            if (state.confirmations >= 2) decisions.push_back(best);
++        }
++        return decisions;
++    }
++};
++
++}
++
++#endif
+--- a/inc/em_backhaul_wire.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_backhaul_wire.h	2026-09-16 07:29:56.633234138 -0700
+@@ -0,0 +1,69 @@
++#ifndef EM_BACKHAUL_WIRE_H
++#define EM_BACKHAUL_WIRE_H
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <string>
++#include <vector>
++
++namespace em_backhaul {
++
++struct wire_tlv {
++    unsigned char type;
++    const unsigned char *value;
++    size_t size;
++};
++
++inline unsigned int read16(const unsigned char *bytes)
++{
++    return static_cast<unsigned int>(bytes[0]) * 256U + bytes[1];
++}
++
++inline uint32_t read32(const unsigned char *bytes)
++{
++    return (static_cast<uint32_t>(read16(bytes)) << 16) | read16(bytes + 2);
++}
++
++inline bool parse_frame(const unsigned char *data, size_t size, std::vector<wire_tlv> &tlvs)
++{
++    tlvs.clear();
++    if (!data || size < 25 || data[12] != 0x89 || data[13] != 0x3a ||
++        data[14] != 0 || data[15] != 0 || data[20] != 0 || data[21] != 0x80) return false;
++    size_t offset = 22;
++    while (offset + 3 <= size) {
++        const unsigned int length = read16(data + offset + 1);
++        if (length > size - offset - 3) return false;
++        if (data[offset] == 0) return length == 0 && std::all_of(data + offset + 3, data + size,
++            [](unsigned char octet) { return octet == 0; });
++        tlvs.push_back({data[offset], data + offset + 3, length});
++        offset += 3 + length;
++    }
++    return false;
++}
++
++inline std::vector<unsigned char> frame(const std::string &destination,
++    const std::string &source, unsigned int type, unsigned int mid,
++    unsigned char tlv, const std::vector<unsigned char> &payload)
++{
++    if (destination.size() != 6 || source.size() != 6 || payload.size() > 4096) return {};
++    std::vector<unsigned char> result(28 + payload.size(), 0);
++    std::copy(destination.begin(), destination.end(), result.begin());
++    std::copy(source.begin(), source.end(), result.begin() + 6);
++    result[12] = 0x89;
++    result[13] = 0x3a;
++    result[16] = static_cast<unsigned char>(type >> 8);
++    result[17] = static_cast<unsigned char>(type);
++    result[18] = static_cast<unsigned char>(mid >> 8);
++    result[19] = static_cast<unsigned char>(mid);
++    result[21] = 0x80;
++    result[22] = tlv;
++    result[23] = static_cast<unsigned char>(payload.size() >> 8);
++    result[24] = static_cast<unsigned char>(payload.size());
++    std::copy(payload.begin(), payload.end(), result.begin() + 25);
++    return result;
++}
++
++}
++
++#endif
+--- a/inc/em_base.h	2026-09-15 19:57:50.289889054 -0700
++++ b/inc/em_base.h	2026-09-16 08:15:38.214515942 -0700
+@@ -3356,6 +3356,18 @@
+     mac_address_t query_bssids[EM_MAX_BSSS];
+     int query_radio_count;
+     mac_address_t query_radios[EM_MAX_RADIO_PER_AGENT];
++    int report_backhaul_bss_count;
++    mac_address_t report_backhaul_bssids[EM_MAX_BSSS];
++    unsigned int report_backhaul_sta_count;
++    struct {
++        mac_address_t sta_mac;
++        mac_address_t bssid;
++        mac_address_t ruid;
++        unsigned int delta_ms;
++        unsigned int est_dl_rate;
++        unsigned int est_ul_rate;
++        unsigned char rcpi;
++    } __attribute__((__packed__)) report_backhaul_sta[EM_MAX_BSSS * EM_MAX_RADIO_PER_AGENT];
+ } __attribute__((__packed__)) em_cmd_ap_metrics_rprt_params_t;
+ 
+ typedef enum {
+--- a/inc/em_ctrl.h	2026-09-15 19:57:50.289889054 -0700
++++ b/inc/em_ctrl.h	2026-09-16 08:04:46.778373781 -0700
+@@ -29,6 +29,7 @@
+ #include "em_orch_ctrl.h"
+ #include "bus.h"
+ #include "em_dev_test_ctrl.h"
++#include "em_backhaul_policy.h"
+ 
+ #ifdef AL_SAP
+ #define DATA_SOCKET_PATH "/tmp/al_data_socket"
+@@ -57,6 +58,34 @@
+     std::mutex m_autoconfig_mutex;
+     std::map<std::string, agent_liveness_t> m_agent_liveness;
+ 
++    struct backhaul_query_t {
++        bool associated = false;
++        em_backhaul::access_point ap;
++        std::map<std::string, std::string> stations;
++        int64_t sent = 0;
++        uint64_t round = 0;
++    };
++    struct backhaul_steer_t {
++        em_backhaul::decision request;
++        unsigned short mid = 0;
++        int64_t sent = 0;
++        bool response = false;
++        bool acknowledged = false;
++        int64_t last_sent = 0;
++        unsigned int retries = 0;
++        unsigned int failures = 0;
++    };
++    std::mutex m_backhaul_mutex;
++    em_backhaul::snapshot m_backhaul_network;
++    std::string m_backhaul_controller;
++    em_backhaul::policy m_backhaul_policy;
++    std::map<unsigned short, backhaul_query_t> m_backhaul_queries;
++    backhaul_steer_t m_backhaul_steer;
++    std::map<std::string, backhaul_steer_t> m_backhaul_uncertain;
++    int64_t m_backhaul_last_query = 0;
++    uint64_t m_backhaul_round = 0;
++    void handle_native_backhaul_tick();
++
+ 	/**!
+ 	 * @brief Handles a bus event.
+ 	 *
+@@ -80,6 +109,7 @@
+ 	void handle_nb_event(em_nb_event_t *evt);
+ 
+ public:
++    bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em) override;
+ 
+     static em_ctrl_t *get_em_ctrl_instance();
+ 
+--- a/inc/em_metrics.h	2026-09-15 19:57:50.289889054 -0700
++++ b/inc/em_metrics.h	2026-09-16 08:15:38.214515942 -0700
+@@ -21,6 +21,8 @@
+ 
+ #include "em_base.h"
+ #include "dm_easy_mesh.h"
++#include "em_unassoc_query_tracker.h"
++#include <chrono>
+ 
+ class em_mgr_t;
+ 
+@@ -41,6 +43,9 @@
+ } em_unassoc_ack_result_t;
+ 
+ class em_metrics_t {
++    em_unassoc_query_tracker m_unassoc_requests;
++    void send_unassoc_sta_link_metrics_response(em_unassoc_sta_metrics_rsp_t *rsp,
++        unsigned short msg_id, const std::set<unsigned char> &op_classes);
+ 
+     
+ 	/**!
+@@ -385,6 +390,8 @@
+ 	 * @note Ensure that the buffer is large enough to hold the TLV.
+ 	 */
+ 	short create_assoc_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta);
++    short create_ap_report_backhaul_link_metrics_tlv(unsigned char *buff,
++        const em_cmd_ap_metrics_rprt_params_t &params, unsigned int index);
+     
+ 	/**!
+ 	 * @brief Creates an association extension for station link metrics TLV.
+@@ -682,6 +689,12 @@
+         * @note Used for ACK tracking and response correlation.
+         */
+ public:
++    bool owns_native_unassoc_query(unsigned short mid)
++    {
++        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now().time_since_epoch()).count();
++        return m_unassoc_requests.contains(mid, now);
++    }
+     int send_ap_metrics_query(unsigned char *frame, unsigned int length);
+        /**
+         * Parse and classify a 1905 ACK for one Unassociated STA query.
+--- a/inc/em_mgr.h	2026-09-15 19:57:38.429856590 -0700
++++ b/inc/em_mgr.h	2026-09-16 07:21:08.420057549 -0700
+@@ -22,6 +22,7 @@
+ #include "em.h"
+ #include "em_orch.h"
+ #include "ieee80211.h"
++#include <mutex>
+ 
+ class em_mgr_t {
+    
+@@ -30,8 +31,10 @@
+     em_queue_t  m_queue;
+ 	unsigned int m_tick_demultiplex;
+ 	unsigned short m_msg_id;
++    std::mutex m_msg_id_mutex;
+ 
+ public:
++    virtual bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em) { return false; }
+ 	pthread_mutex_t m_mutex;
+     hash_map_t      *m_em_map;
+     unsigned int m_timeout;
+--- a/inc/em_native_backhaul_agent.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_native_backhaul_agent.h	2026-09-16 07:27:40.772065678 -0700
+@@ -0,0 +1,208 @@
++#ifndef EM_NATIVE_BACKHAUL_AGENT_H
++#define EM_NATIVE_BACKHAUL_AGENT_H
++
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <deque>
++#include <vector>
++
++namespace em_native_backhaul {
++
++using mac_address = std::array<unsigned char, 6>;
++using clock = std::chrono::steady_clock;
++
++constexpr unsigned short request_type = 0x8019;
++constexpr unsigned short response_type = 0x801a;
++constexpr unsigned char cannot_operate_on_channel = 4;
++constexpr unsigned char target_not_suitable = 5;
++constexpr unsigned char association_failed = 6;
++constexpr size_t frame_limit = 1024;
++constexpr size_t replay_limit = 16;
++
++struct request {
++    mac_address controller{};
++    mac_address agent{};
++    mac_address station{};
++    mac_address target{};
++    unsigned short message_id = 0;
++    unsigned char operating_class = 0;
++    unsigned char channel = 0;
++
++    bool same_identity(const request &other) const
++    {
++        return controller == other.controller && message_id == other.message_id;
++    }
++
++    bool operator==(const request &other) const
++    {
++        return same_identity(other) && agent == other.agent &&
++            station == other.station && target == other.target &&
++            operating_class == other.operating_class && channel == other.channel;
++    }
++};
++
++inline bool valid_mac(const mac_address &address)
++{
++    return (address[0] & 1) == 0 &&
++        std::any_of(address.begin(), address.end(), [](unsigned char octet) { return octet != 0; });
++}
++
++inline bool is_request(const unsigned char *frame, size_t length)
++{
++    return frame != nullptr && length >= 22 && frame[12] == 0x89 &&
++        frame[13] == 0x3a && frame[16] == 0x80 && frame[17] == 0x19;
++}
++
++inline bool decode_request(const unsigned char *frame, size_t length, request &decoded)
++{
++    if (!is_request(frame, length) || length > frame_limit || frame[14] != 0 ||
++        frame[15] != 0 || frame[20] != 0 || frame[21] != 0x80) return false;
++    request parsed{};
++    std::copy_n(frame, 6, parsed.agent.begin());
++    std::copy_n(frame + 6, 6, parsed.controller.begin());
++    parsed.message_id = static_cast<unsigned short>((frame[18] << 8) | frame[19]);
++    bool found = false;
++    size_t offset = 22;
++    while (offset + 3 <= length) {
++        const unsigned char type = frame[offset];
++        const size_t value_length = (frame[offset + 1] << 8) | frame[offset + 2];
++        offset += 3;
++        if (value_length > length - offset) return false;
++        if (type == 0) {
++            if (value_length != 0 || !found || !valid_mac(parsed.controller) ||
++                !valid_mac(parsed.agent) || !valid_mac(parsed.station) ||
++                !valid_mac(parsed.target)) return false;
++            if (!std::all_of(frame + offset, frame + length,
++                    [](unsigned char octet) { return octet == 0; })) return false;
++            decoded = parsed;
++            return true;
++        }
++        if (type == 0x9e) {
++            if (found || value_length != 14) return false;
++            found = true;
++            std::copy_n(frame + offset, 6, parsed.station.begin());
++            std::copy_n(frame + offset + 6, 6, parsed.target.begin());
++            parsed.operating_class = frame[offset + 12];
++            parsed.channel = frame[offset + 13];
++        }
++        offset += value_length;
++    }
++    return false;
++}
++
++inline std::vector<unsigned char> reply(const request &command, bool acknowledgement,
++    unsigned char error = 0)
++{
++    std::vector<unsigned char> frame(22, 0);
++    std::copy(command.controller.begin(), command.controller.end(), frame.begin());
++    std::copy(command.agent.begin(), command.agent.end(), frame.begin() + 6);
++    frame[12] = 0x89;
++    frame[13] = 0x3a;
++    frame[16] = 0x80;
++    frame[17] = acknowledgement ? 0 : 0x1a;
++    frame[18] = static_cast<unsigned char>(command.message_id >> 8);
++    frame[19] = static_cast<unsigned char>(command.message_id);
++    frame[21] = 0x80;
++    if (!acknowledgement) {
++        frame.insert(frame.end(), {0x9f, 0, 13});
++        frame.insert(frame.end(), command.station.begin(), command.station.end());
++        frame.insert(frame.end(), command.target.begin(), command.target.end());
++        frame.push_back(error == 0 ? 0 : 1);
++        if (error != 0) {
++            frame.insert(frame.end(), {0xa3, 0, 7, error});
++            frame.insert(frame.end(), command.station.begin(), command.station.end());
++        }
++    }
++    frame.insert(frame.end(), {0, 0, 0});
++    return frame;
++}
++
++struct transaction {
++    request command{};
++    unsigned int radio_instance = 0;
++    clock::time_point deadline{};
++    clock::time_point expires{};
++    bool completed = false;
++    unsigned char error = 0;
++};
++
++class transactions {
++    std::deque<transaction> history;
++
++    bool make_room()
++    {
++        while (history.size() >= replay_limit) {
++            const auto oldest = std::find_if(history.begin(), history.end(),
++                [](const transaction &entry) { return entry.completed; });
++            if (oldest == history.end()) return false;
++            history.erase(oldest);
++        }
++        return true;
++    }
++
++public:
++    void prune(clock::time_point now)
++    {
++        history.erase(std::remove_if(history.begin(), history.end(),
++            [now](const transaction &entry) {
++                return entry.completed && now >= entry.expires;
++            }), history.end());
++    }
++
++    transaction *find(const request &command)
++    {
++        for (auto &entry : history) {
++            if (entry.command.same_identity(command)) return &entry;
++        }
++        return nullptr;
++    }
++
++    transaction *pending()
++    {
++        for (auto &entry : history) {
++            if (!entry.completed) return &entry;
++        }
++        return nullptr;
++    }
++
++    transaction *insert(const request &command, unsigned int radio_instance,
++        clock::time_point now)
++    {
++        if (find(command) != nullptr || pending() != nullptr) return nullptr;
++        prune(now);
++        if (!make_room()) return nullptr;
++        history.emplace_back();
++        transaction &entry = history.back();
++        entry.command = command;
++        entry.radio_instance = radio_instance;
++        entry.deadline = now + std::chrono::seconds(10);
++        return &entry;
++    }
++
++    void complete(transaction &entry, unsigned char error, clock::time_point now)
++    {
++        entry.completed = true;
++        entry.error = error;
++        entry.expires = now + std::chrono::seconds(60);
++    }
++
++    void remember_rejection(const request &command, unsigned char error, clock::time_point now)
++    {
++        if (find(command) != nullptr) return;
++        prune(now);
++        if (!make_room()) return;
++        history.emplace_back();
++        history.back().command = command;
++        complete(history.back(), error, now);
++    }
++
++    size_t size() const { return history.size(); }
++};
++
++}
++
++#endif
+--- a/inc/em_unassoc_query_tracker.h	1969-12-31 16:00:00.000000000 -0800
++++ b/inc/em_unassoc_query_tracker.h	2026-09-16 08:00:30.726328119 -0700
+@@ -0,0 +1,86 @@
++#ifndef EM_UNASSOC_QUERY_TRACKER_H
++#define EM_UNASSOC_QUERY_TRACKER_H
++
++#include <cstdint>
++#include <map>
++#include <mutex>
++#include <set>
++#include <string>
++#include <vector>
++
++class em_unassoc_query_tracker {
++public:
++    struct measurement {
++        std::string key;
++        unsigned char rcpi = 255;
++        int64_t observed = 0;
++    };
++    struct response {
++        unsigned short mid;
++        std::vector<measurement> metrics;
++        std::set<unsigned char> op_classes;
++    };
++
++private:
++    struct request {
++        int64_t sent = 0;
++        std::set<std::string> expected;
++    };
++    std::mutex m_mutex;
++    std::map<unsigned short, request> m_requests;
++
++    void expire(int64_t now)
++    {
++        for (auto iterator = m_requests.begin(); iterator != m_requests.end();) {
++            if (now - iterator->second.sent > 30000) iterator = m_requests.erase(iterator);
++            else ++iterator;
++        }
++    }
++
++public:
++    bool insert(unsigned short mid, const std::set<std::string> &expected, int64_t now)
++    {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        expire(now);
++        if (expected.empty() || expected.size() > 256 || m_requests.size() >= 64) return false;
++        const auto existing = m_requests.find(mid);
++        if (existing != m_requests.end()) return existing->second.expected == expected;
++        m_requests[mid] = {now, expected};
++        return true;
++    }
++
++    bool contains(unsigned short mid, int64_t now)
++    {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        expire(now);
++        return m_requests.count(mid) != 0;
++    }
++
++    std::vector<response> accept(unsigned short mid, const std::vector<measurement> &metrics, int64_t now)
++    {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        expire(now);
++        std::vector<response> result;
++        auto iterator = m_requests.find(mid);
++        if (iterator != m_requests.end()) {
++            auto &query = iterator->second;
++            response reply{iterator->first, {}, {}};
++            std::map<std::string, measurement> received;
++            for (const auto &key : query.expected) {
++                if (!key.empty()) reply.op_classes.insert(static_cast<unsigned char>(key[0]));
++            }
++            for (const auto &metric : metrics) {
++                if (query.expected.count(metric.key) == 0 || metric.observed < query.sent ||
++                    metric.observed > now || now - metric.observed > 6000) continue;
++                auto &saved = received[metric.key];
++                if (metric.observed >= saved.observed) saved = metric;
++            }
++            for (const auto &metric : received) reply.metrics.push_back(metric.second);
++            result.push_back(reply);
++            m_requests.erase(iterator);
++        }
++        return result;
++    }
++};
++
++#endif
+--- a/src/agent/dm_easy_mesh_agent.cpp	2026-09-15 19:57:50.289889054 -0700
++++ b/src/agent/dm_easy_mesh_agent.cpp	2026-09-16 08:15:38.215515907 -0700
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <stdio.h>
++#include <chrono>
+ #include <string.h>
+ #include <stdlib.h>
+ #include <errno.h>
+@@ -41,6 +42,7 @@
+ #include <stddef.h>
+ #include "dm_easy_mesh_agent.h"
+ #include "em_ap_metrics_query.h"
++#include "em_ap_report_snapshot.h"
+ #include <cjson/cJSON.h>
+ #include "ieee80211.h"
+ #include "em_cmd_sta_list.h"
+@@ -1072,6 +1074,21 @@
+     }
+ 
+     em_unassoc_sta_metrics_rsp_t *rsp = &m_unassoc_sta_metrics_rsp;
++    cJSON *query_id = cJSON_GetObjectItemCaseSensitive(json, "QueryId");
++    cJSON *collected = cJSON_GetObjectItemCaseSensitive(json, "CollectedMonotonicMs");
++    const int64_t received = std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++    if (!cJSON_IsNumber(query_id) || query_id->valuedouble < 0 || query_id->valuedouble > 65535 ||
++        query_id->valuedouble != query_id->valueint || !cJSON_IsNumber(collected) ||
++        collected->valuedouble <= 0 || collected->valuedouble > static_cast<double>(received) ||
++        collected->valuedouble < static_cast<double>(received - 6000) ||
++        collected->valuedouble != static_cast<double>(static_cast<int64_t>(collected->valuedouble))) {
++        em_printfout("Unassociated metrics missing fresh native query identity/timestamp");
++        cJSON_Delete(json);
++        return 0;
++    }
++    const unsigned short result_id = static_cast<unsigned short>(query_id->valueint);
++    const unsigned int delta_ms = static_cast<unsigned int>(received - static_cast<int64_t>(collected->valuedouble));
+     memset(rsp, 0, sizeof(*rsp));
+     unsigned int entry_idx = 0;
+     cJSON *sta_obj = NULL;
+@@ -1103,7 +1120,7 @@
+             static_cast<unsigned char>(opclass_json->valueint);
+         rsp->entry[entry_idx].rcpi =
+             static_cast<unsigned char>(rcpi_json->valueint);
+-        rsp->entry[entry_idx].time_delta = 0;
++        rsp->entry[entry_idx].time_delta = delta_ms;
+         em_printfout("Parsed STA[%u] opclass=%u channel=%u rcpi=%u",
+             entry_idx, rsp->entry[entry_idx].op_class,
+             rsp->entry[entry_idx].channel, rsp->entry[entry_idx].rcpi);
+@@ -1113,16 +1130,13 @@
+     rsp->num_entries = entry_idx;
+     cJSON_Delete(json);
+ 
+-    if (rsp->num_entries == 0) {
+-        em_printfout("%s:%d No valid STA metrics entries found", __func__, __LINE__);
+-        return 0;
+-    }
+-
+     auto *result_cmd = new em_cmd_unassoc_sta_result_t(evt->params, *this);
+     /* dm_easy_mesh_t::operator= intentionally copies the persistent model,
+      * but not this transient callback result.  Preserve it explicitly in the
+      * immutable command snapshot consumed by the selected radio. */
+     result_cmd->get_data_model()->m_unassoc_sta_metrics_rsp = *rsp;
++    result_cmd->get_data_model()->m_unassoc_sta_metrics_msg_id = result_id;
++    result_cmd->get_data_model()->m_unassoc_sta_metrics_received_ms = static_cast<uint64_t>(received);
+     pcmd[num] = result_cmd;
+     tmp = pcmd[num];
+     num++;
+@@ -1292,11 +1306,12 @@
+             return 0;
+         }
+ 
+-        radio_index = static_cast<unsigned int>(param_obj->valueint);
+-        if (radio_index >= m_num_radios) {
++        if (!(param_obj->valuedouble >= 0 && param_obj->valuedouble < m_num_radios) ||
++            param_obj->valuedouble != param_obj->valueint) {
+             cJSON_Delete(json);
+             return 0;
+         }
++        radio_index = static_cast<unsigned int>(param_obj->valueint);
+         memcpy(evt->params.u.ap_metrics_params.ruid[i], get_radio_by_ref(radio_index).get_radio_interface_mac(), sizeof(mac_addr_t));
+     }
+     evt->params.u.ap_metrics_params.num_radios = cJSON_GetArraySize(emap_metrics_report);
+@@ -1319,6 +1334,12 @@
+         evt->params.u.ap_metrics_params.wifi6_status_report_include = false;
+     }
+ 
++    if (!em_collect_ap_report_backhaul(emap_metrics_report, *this, evt->params.u.ap_metrics_params)) {
++        em_printfout("Invalid or oversized report-owned backhaul metrics snapshot");
++        cJSON_Delete(json);
++        return 0;
++    }
++
+     translate_and_decode_onewifi_subdoc(reinterpret_cast<char *>(evt->u.raw_buff),
+         webconfig_subdoc_type_em_ap_metrics_report, "AP Metrics Report");
+     pcmd[num] = new em_cmd_ap_metrics_report_t(evt->params, *(this));
+--- a/src/agent/em_agent.cpp	2026-09-15 19:57:50.293889064 -0700
++++ b/src/agent/em_agent.cpp	2026-09-16 07:43:54.240568347 -0700
+@@ -18,6 +18,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <strings.h>
+ #include <stdlib.h>
+ #include <errno.h>
+ #include <signal.h>
+@@ -55,6 +56,261 @@
+ MacAddress g_al_mac_sap;
+ #endif
+ 
++bool em_agent_t::handle_native_backhaul_frame(unsigned char *data, unsigned int len,
++    em_t *al_em)
++{
++    (void)al_em;
++    if (!em_native_backhaul::is_request(data, len)) return false;
++    if (!is_data_model_initialized()) return true;
++    em_native_backhaul::request command{};
++    if (!em_native_backhaul::decode_request(data, len, command)) {
++        em_printfout("Native backhaul request rejected: malformed frame");
++        return true;
++    }
++    em_event_t *event = static_cast<em_event_t *>(calloc(1, sizeof(em_event_t)));
++    if (event == nullptr) return true;
++    event->type = em_event_type_frame;
++    event->u.fevt.frame = static_cast<unsigned char *>(malloc(len));
++    if (event->u.fevt.frame == nullptr) {
++        free(event);
++        return true;
++    }
++    memcpy(event->u.fevt.frame, data, len);
++    event->u.fevt.frame_len = len;
++    push_to_queue(event);
++    return true;
++}
++
++bool em_agent_t::send_native_backhaul_reply(const em_native_backhaul::request &command,
++    bool acknowledgement, unsigned char error)
++{
++    static_assert(em_msg_type_bh_steering_req == em_native_backhaul::request_type,
++        "Backhaul request message type differs from wire codec");
++    static_assert(em_msg_type_bh_steering_rsp == em_native_backhaul::response_type,
++        "Backhaul response message type differs from wire codec");
++    static_assert(sizeof(em_bh_steering_req_t) == 14 && sizeof(em_bh_steering_resp_t) == 13,
++        "Backhaul TLV layout differs from wire codec");
++    static_assert(em_tlv_type_bh_steering_req == 0x9e &&
++        em_tlv_type_bh_steering_rsp == 0x9f && em_tlv_type_error_code == 0xa3,
++        "Backhaul TLV identifiers differ from wire codec");
++    em_t *node = get_al_node();
++    if (node == nullptr) return false;
++    std::vector<unsigned char> frame = em_native_backhaul::reply(command, acknowledgement, error);
++    return node->send_native_backhaul_frame(frame.data(), static_cast<unsigned int>(frame.size())) >= 0;
++}
++
++bool em_agent_t::native_backhaul_station_matches(unsigned int radio_instance,
++    const em_native_backhaul::mac_address &station)
++{
++    wifi_bus_desc_t *descriptor = get_bus_descriptor();
++    if (descriptor == nullptr || radio_instance == 0 ||
++        radio_instance > m_data_model.get_num_radios()) return false;
++    char path[80];
++    snprintf(path, sizeof(path), "Device.WiFi.STA.%u.InterfaceName", radio_instance);
++    raw_data_t value{};
++    bool matches = false;
++    if (descriptor->bus_data_get_fn(&m_bus_hdl, path, &value) == bus_error_success &&
++        value.data_type == bus_data_type_string && value.raw_data.bytes != nullptr &&
++        value.raw_data_len > 1 && value.raw_data_len <= IFNAMSIZ &&
++        memchr(value.raw_data.bytes, '\0', value.raw_data_len) != nullptr) {
++        mac_address_t actual{};
++        if (dm_easy_mesh_t::mac_address_from_name(
++                reinterpret_cast<const char *>(value.raw_data.bytes), actual) == 0) {
++            matches = memcmp(actual, station.data(), sizeof(actual)) == 0;
++        }
++    }
++    free(value.raw_data.bytes);
++    return matches;
++}
++
++bool em_agent_t::read_native_backhaul_link(unsigned int radio_instance,
++    em_native_backhaul::mac_address &parent, bool &connected)
++{
++    connected = false;
++    parent.fill(0);
++    wifi_bus_desc_t *descriptor = get_bus_descriptor();
++    if (descriptor == nullptr || radio_instance == 0 ||
++        radio_instance > m_data_model.get_num_radios()) return false;
++    char path[80];
++    snprintf(path, sizeof(path), "Device.WiFi.STA.%u.Connection.Status", radio_instance);
++    raw_data_t value{};
++    bool valid = false;
++    if (descriptor->bus_data_get_fn(&m_bus_hdl, path, &value) == bus_error_success &&
++        value.data_type == bus_data_type_bytes && value.raw_data.bytes != nullptr &&
++        value.raw_data_len == sizeof(wifi_connection_status_t) + parent.size()) {
++        wifi_connection_status_t status;
++        memcpy(&status, value.raw_data.bytes, sizeof(status));
++        const unsigned char *bytes = reinterpret_cast<const unsigned char *>(value.raw_data.bytes);
++        std::copy_n(bytes + sizeof(status), parent.size(), parent.begin());
++        connected = status == wifi_connection_status_connected;
++        valid = !connected || em_native_backhaul::valid_mac(parent);
++    }
++    free(value.raw_data.bytes);
++    return valid;
++}
++
++void em_agent_t::complete_native_backhaul_request(em_native_backhaul::transaction &transaction,
++    unsigned char error)
++{
++    m_native_backhaul_transactions.complete(transaction, error, em_native_backhaul::clock::now());
++    const bool sent = send_native_backhaul_reply(transaction.command, false, error);
++    em_printfout("Native backhaul response mid=%u station=%s target=%s result=%s error=%u sent=%u",
++        transaction.command.message_id,
++        util::mac_to_string(transaction.command.station.data()).c_str(),
++        util::mac_to_string(transaction.command.target.data()).c_str(),
++        error == 0 ? "connected" : "failed", error, sent);
++}
++
++void em_agent_t::process_native_backhaul_request(const unsigned char *frame, size_t length)
++{
++    em_native_backhaul::request command{};
++    if (!em_native_backhaul::decode_request(frame, length, command)) return;
++    if (memcmp(command.controller.data(), m_data_model.get_ctrl_al_interface_mac(), 6) != 0 ||
++        memcmp(command.agent.data(), m_data_model.get_agent_al_interface_mac(), 6) != 0 ||
++        command.agent == command.controller || m_data_model.get_colocated()) {
++        em_printfout("Native backhaul request rejected: wrong controller or destination");
++        return;
++    }
++    const auto now = em_native_backhaul::clock::now();
++    m_native_backhaul_transactions.prune(now);
++    auto *previous = m_native_backhaul_transactions.find(command);
++    if (previous != nullptr && !(previous->command == command)) {
++        em_printfout("Native backhaul request rejected: MID reused with a different payload");
++        return;
++    }
++    if (!send_native_backhaul_reply(command, true)) return;
++    if (previous != nullptr) {
++        if (previous->completed) send_native_backhaul_reply(command, false, previous->error);
++        return;
++    }
++    if (m_native_backhaul_transactions.pending() != nullptr) {
++        m_native_backhaul_transactions.remember_rejection(command,
++            em_native_backhaul::association_failed, now);
++        send_native_backhaul_reply(command, false, em_native_backhaul::association_failed);
++        em_printfout("Native backhaul request rejected: another handover is pending");
++        return;
++    }
++    auto *transaction = m_native_backhaul_transactions.insert(command, 0, now);
++    if (transaction == nullptr) return;
++    em_bss_info_t *station = nullptr;
++    for (unsigned int index = 0; index < m_data_model.get_num_bss(); ++index) {
++        em_bss_info_t *bss = m_data_model.get_bss_info(index);
++        if (bss == nullptr) continue;
++        if (bss->vap_mode == em_vap_mode_ap &&
++            memcmp(bss->bssid.mac, command.target.data(), 6) == 0) {
++            complete_native_backhaul_request(*transaction, em_native_backhaul::target_not_suitable);
++            return;
++        }
++        if (bss->vap_mode == em_vap_mode_sta && bss->id.haul_type == em_haul_type_backhaul &&
++            memcmp(bss->sta_mac, command.station.data(), 6) == 0) {
++            if (station != nullptr) {
++                complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
++                return;
++            }
++            station = bss;
++        }
++    }
++    if (station == nullptr || command.station == command.target) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::target_not_suitable);
++        return;
++    }
++    bool current_channel = false;
++    for (unsigned int index = 0; index < m_data_model.get_num_op_class(); ++index) {
++        em_op_class_info_t *operating = m_data_model.get_op_class_info(index);
++        if (operating != nullptr && operating->id.type == em_op_class_type_current &&
++            memcmp(operating->id.ruid, station->ruid.mac, 6) == 0 &&
++            operating->op_class == command.operating_class && operating->channel == command.channel &&
++            command.operating_class != 0 && command.channel != 0) current_channel = true;
++    }
++    if (!current_channel) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::cannot_operate_on_channel);
++        return;
++    }
++    for (unsigned int index = 0; index < m_data_model.get_num_radios(); ++index) {
++        if (native_backhaul_station_matches(index + 1, command.station)) {
++            transaction->radio_instance = index + 1;
++            break;
++        }
++    }
++    em_native_backhaul::mac_address parent{};
++    bool connected = false;
++    if (transaction->radio_instance == 0 ||
++        !read_native_backhaul_link(transaction->radio_instance, parent, connected) || !connected) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
++        return;
++    }
++    if (parent == command.target) {
++        complete_native_backhaul_request(*transaction, 0);
++        return;
++    }
++    wifi_bus_desc_t *descriptor = get_bus_descriptor();
++    char path[80];
++    snprintf(path, sizeof(path), "Device.WiFi.STA.%u.Bssid", transaction->radio_instance);
++    raw_data_t value{};
++    value.data_type = bus_data_type_bytes;
++    value.raw_data.bytes = command.target.data();
++    value.raw_data_len = command.target.size();
++    if (descriptor == nullptr || descriptor->bus_set_fn(&m_bus_hdl, path, &value) != bus_error_success) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
++        return;
++    }
++    em_printfout("Native backhaul accepted mid=%u station=%s old_parent=%s target=%s radio=%u",
++        command.message_id, util::mac_to_string(command.station.data()).c_str(),
++        util::mac_to_string(parent.data()).c_str(), util::mac_to_string(command.target.data()).c_str(),
++        transaction->radio_instance);
++}
++
++void em_agent_t::poll_native_backhaul_request()
++{
++    const auto now = em_native_backhaul::clock::now();
++    m_native_backhaul_transactions.prune(now);
++    auto *transaction = m_native_backhaul_transactions.pending();
++    if (transaction == nullptr) return;
++    if (memcmp(transaction->command.controller.data(), m_data_model.get_ctrl_al_interface_mac(), 6) != 0) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::association_failed);
++        return;
++    }
++    if (now >= transaction->deadline) {
++        complete_native_backhaul_request(*transaction, em_native_backhaul::target_not_suitable);
++        return;
++    }
++    em_native_backhaul::mac_address parent{};
++    bool connected = false;
++    if (native_backhaul_station_matches(transaction->radio_instance, transaction->command.station) &&
++        read_native_backhaul_link(transaction->radio_instance, parent, connected) && connected &&
++        parent == transaction->command.target) complete_native_backhaul_request(*transaction, 0);
++}
++
++void em_agent_t::observe_native_backhaul_callback(em_bus_event_t *event)
++{
++    const auto *transaction = m_native_backhaul_transactions.pending();
++    if (transaction == nullptr || event == nullptr || event->data_len == 0 ||
++        event->data_len > EM_MAX_EVENT_DATA_LEN) return;
++    const std::string encoded(reinterpret_cast<const char *>(event->u.raw_buff), event->data_len);
++    cJSON *document = cJSON_Parse(encoded.c_str());
++    if (document == nullptr) return;
++    cJSON *vaps = cJSON_GetObjectItemCaseSensitive(document, "WifiVapConfig");
++    cJSON *vap = nullptr;
++    bool matched = false;
++    cJSON_ArrayForEach(vap, vaps) {
++        cJSON *radio = cJSON_GetObjectItemCaseSensitive(vap, "RadioIndex");
++        cJSON *station = cJSON_GetObjectItemCaseSensitive(vap, "MAC");
++        cJSON *parent = cJSON_GetObjectItemCaseSensitive(vap, "BSSID");
++        cJSON *connected = cJSON_GetObjectItemCaseSensitive(vap, "ConnectStatus");
++        if (cJSON_IsNumber(radio) && radio->valuedouble == transaction->radio_instance - 1 &&
++            cJSON_IsString(station) && cJSON_IsString(parent) && cJSON_IsTrue(connected) &&
++            strcasecmp(station->valuestring,
++                util::mac_to_string(transaction->command.station.data()).c_str()) == 0 &&
++            strcasecmp(parent->valuestring,
++                util::mac_to_string(transaction->command.target.data()).c_str()) == 0) {
++            matched = true;
++            break;
++        }
++    }
++    cJSON_Delete(document);
++    if (matched) poll_native_backhaul_request();
++}
++
+ void em_agent_t::handle_sta_list(em_bus_event_t *evt)
+ {
+     em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+@@ -363,6 +619,7 @@
+ 
+ void em_agent_t::handle_onewifi_mesh_sta_cb(em_bus_event_t *evt)
+ {
++    observe_native_backhaul_callback(evt);
+     em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+     unsigned int num;
+     wifi_bus_desc_t *desc;
+@@ -434,6 +691,12 @@
+ 
+ void em_agent_t::handle_frame_event(em_frame_event_t *evt)
+ {
++    if (em_native_backhaul::is_request(evt->frame, evt->frame_len)) {
++        process_native_backhaul_request(evt->frame, evt->frame_len);
++        free(evt->frame);
++        evt->frame = nullptr;
++        return;
++    }
+     struct ieee80211_frame *frame;
+ 
+     frame = reinterpret_cast<struct ieee80211_frame *>(evt->frame);
+@@ -917,7 +1180,8 @@
+     }
+ }
+ 
+-int em_agent_t::send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_t *bus_hdl, em_unassoc_work_list_t *work)
++int em_agent_t::send_unassoc_sta_query_subdoc(wifi_bus_desc_t *desc, bus_handle_t *bus_hdl, em_unassoc_work_list_t *work,
++    unsigned short query_id)
+ {
+     if ((desc == NULL) || (bus_hdl == NULL) || (work == NULL)) {
+         em_printfout("%s:%d Invalid input params desc=%p bus_hdl=%p work=%p",
+@@ -970,6 +1234,7 @@
+ 
+     cJSON_AddStringToObject(root, "Version", "1.0");
+     cJSON_AddStringToObject(root, "SubDocName", "UnassocStaQuery");
++    cJSON_AddNumberToObject(root, "QueryId", query_id);
+ 
+     cJSON *query_list = cJSON_AddArrayToObject(root, "UnassocStaQueryList");
+ 
+@@ -1138,7 +1403,9 @@
+ 
+     unsigned char *buff = reinterpret_cast<unsigned char *>(evt->u.raw_buff);
+     unsigned int len = evt->data_len;
+-    int pos = 0;
++    if (len < 2) return;
++    const unsigned short query_id = static_cast<unsigned short>((buff[0] << 8) | buff[1]);
++    int pos = 2;
+ 
+     em_unassoc_work_list_t work;
+     memset(&work, 0, sizeof(work));
+@@ -1188,7 +1455,7 @@
+ 
+     work.num_opclass = op_idx;
+ 
+-    int rc = this->send_unassoc_sta_query_subdoc(desc, &m_bus_hdl, &work);
++    int rc = this->send_unassoc_sta_query_subdoc(desc, &m_bus_hdl, &work, query_id);
+ 
+     if (rc < 0) {
+         em_printfout("%s:%d Failed send subdoc rc=%d", __func__, __LINE__, rc);
+@@ -1593,6 +1860,7 @@
+ 
+ void em_agent_t::handle_1s_tick()
+ {
++    poll_native_backhaul_request();
+     if (m_onewifi_wsc_subdoc_active && ++m_onewifi_wsc_wait_ticks >= 5) {
+         std::string ruid = m_onewifi_wsc_ruid;
+         m_onewifi_wsc_subdoc_active = false;
+--- a/src/ctrl/Makefile.am	2026-09-15 19:57:35.437848401 -0700
++++ b/src/ctrl/Makefile.am	2026-09-16 07:21:08.422057477 -0700
+@@ -99,6 +99,7 @@
+      $(top_srcdir)/src/ctrl/dm_easy_mesh_ctrl.cpp \
+      $(top_srcdir)/src/ctrl/em_cmd_ctrl.cpp \
+      $(top_srcdir)/src/ctrl/em_ctrl.cpp \
++     $(top_srcdir)/src/ctrl/em_backhaul_ctrl.cpp \
+      $(top_srcdir)/src/ctrl/em_network_topo.cpp \
+      $(top_srcdir)/src/ctrl/em_dev_test_ctrl.cpp \
+      $(top_srcdir)/src/ctrl/tr_181/wfa_data_model/tr_181.cpp \
+--- a/src/ctrl/em_backhaul_ctrl.cpp	1969-12-31 16:00:00.000000000 -0800
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-16 08:18:09.392208874 -0700
+@@ -0,0 +1,347 @@
++#include "em_ctrl.h"
++#include "em_network_topo.h"
++#include "em_backhaul_wire.h"
++
++namespace {
++
++int64_t backhaul_now()
++{
++    return std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++}
++
++std::string backhaul_mac(const unsigned char *address)
++{
++    return std::string(reinterpret_cast<const char *>(address), 6);
++}
++
++bool backhaul_unicast(const std::string &address)
++{
++    return address.size() == 6 && (address[0] & 1) == 0 && address != std::string(6, '\0');
++}
++
++std::string backhaul_label(const std::string &address)
++{
++    if (address.size() != 6) return "unknown";
++    char label[18];
++    const auto *bytes = reinterpret_cast<const unsigned char *>(address.data());
++    snprintf(label, sizeof(label), "%02x:%02x:%02x:%02x:%02x:%02x",
++        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
++    return label;
++}
++
++}
++
++void em_ctrl_t::handle_native_backhaul_tick()
++{
++    em_backhaul::snapshot network;
++    std::string controller;
++    std::set<std::string> ambiguous_bssids;
++    em_t *transport = nullptr;
++    {
++        std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++        dm_network_t *native_network = m_data_model.get_first_network();
++        if (native_network == nullptr) return;
++        network.root = backhaul_mac(native_network->get_colocated_agent_interface_mac());
++        controller = backhaul_mac(native_network->get_controller_interface_mac());
++        if (!backhaul_unicast(network.root) || !backhaul_unicast(controller)) return;
++        transport = get_al_node();
++        if (transport == nullptr) return;
++        for (dm_easy_mesh_t *model = m_data_model.get_first_dm(); model != nullptr;
++             model = m_data_model.get_next_dm(model)) {
++            if (network.nodes.size() >= 32) return;
++            const std::string owner = backhaul_mac(model->get_agent_al_interface_mac());
++            if (!backhaul_unicast(owner) || owner == controller ||
++                backhaul_mac(model->get_ctrl_al_interface_mac()) != controller) continue;
++            em_backhaul::node station;
++            station.al = owner;
++            station.sta = backhaul_mac(model->get_device_info()->backhaul_sta);
++            station.parent_bssid = backhaul_mac(model->get_device_info()->backhaul_mac.mac);
++            if (!backhaul_unicast(station.sta)) station.sta.clear();
++            network.nodes[owner] = station;
++            for (unsigned int index = 0; index < model->m_num_bss; ++index) {
++                const em_bss_info_t *bss = model->get_bss_info(index);
++                if (!bss->enabled || bss->vap_mode != em_vap_mode_ap ||
++                    bss->id.haul_type != em_haul_type_backhaul) continue;
++                em_backhaul::access_point ap;
++                ap.al = owner;
++                ap.bssid = backhaul_mac(bss->bssid.mac);
++                for (unsigned int op_index = 0; op_index < model->m_num_opclass; ++op_index) {
++                    const em_op_class_info_t *op = model->m_op_class[op_index].get_op_class_info();
++                    if (op->id.type == em_op_class_type_current &&
++                        memcmp(op->id.ruid, bss->ruid.mac, 6) == 0) {
++                        ap.op_class = static_cast<unsigned char>(op->op_class);
++                        ap.channel = static_cast<unsigned char>(op->channel);
++                        break;
++                    }
++                }
++                if (ap.op_class == 0 || ap.channel == 0 || !backhaul_unicast(ap.bssid) ||
++                    ambiguous_bssids.count(ap.bssid)) continue;
++                const auto duplicate = network.aps.find(ap.bssid);
++                if (duplicate != network.aps.end() && duplicate->second.al != ap.al) {
++                    ambiguous_bssids.insert(ap.bssid);
++                    network.aps.erase(duplicate);
++                } else network.aps[ap.bssid] = ap;
++            }
++        }
++    }
++    const int64_t now = backhaul_now();
++    std::vector<std::vector<unsigned char>> outgoing;
++    {
++        std::lock_guard<std::mutex> lock(m_backhaul_mutex);
++        m_backhaul_controller = controller;
++        for (auto &entry : network.nodes) {
++            const auto old = m_backhaul_network.nodes.find(entry.first);
++            if (old != m_backhaul_network.nodes.end() &&
++                old->second.sta == entry.second.sta &&
++                old->second.parent_bssid == entry.second.parent_bssid)
++                entry.second.serving = old->second.serving;
++        }
++        for (const auto &entry : m_backhaul_network.candidates) {
++            if (entry.second.fresh(now) && network.aps.count(entry.first.second))
++                network.candidates.insert(entry);
++        }
++        for (auto iterator = m_backhaul_uncertain.begin(); iterator != m_backhaul_uncertain.end();) {
++            const auto current = network.nodes.find(iterator->first);
++            if (current != network.nodes.end() && current->second.parent_bssid == iterator->second.request.target &&
++                current->second.serving.fresh(now) && current->second.serving.observed >= iterator->second.sent) {
++                em_printfout("Native backhaul late outcome observed agent=%s target=%s elapsed_ms=%lld",
++                    backhaul_label(iterator->first).c_str(), backhaul_label(iterator->second.request.target).c_str(),
++                    static_cast<long long>(now - iterator->second.sent));
++                m_backhaul_policy.attempted(iterator->first, now, false);
++                iterator = m_backhaul_uncertain.erase(iterator);
++            } else ++iterator;
++        }
++        for (const auto &uncertain : m_backhaul_uncertain)
++            network.uncertain[uncertain.first] = uncertain.second.failures < 3 ? uncertain.second.request.target : "";
++        m_backhaul_network = network;
++        m_backhaul_policy.observe(network, now);
++        for (auto iterator = m_backhaul_queries.begin(); iterator != m_backhaul_queries.end();) {
++            if (now - iterator->second.sent > 15000) iterator = m_backhaul_queries.erase(iterator);
++            else ++iterator;
++        }
++        if (m_backhaul_steer.mid != 0) {
++            const auto current = network.nodes.find(m_backhaul_steer.request.al);
++            const bool verified = current != network.nodes.end() &&
++                current->second.parent_bssid == m_backhaul_steer.request.target &&
++                current->second.serving.fresh(now) &&
++                current->second.serving.observed >= m_backhaul_steer.sent;
++            if (verified || now - m_backhaul_steer.sent >= 15000) {
++                em_printfout("Native backhaul %s sta=%s previous=%s target=%s response=%d elapsed_ms=%lld",
++                    verified ? "verified" : "timeout", backhaul_label(m_backhaul_steer.request.sta).c_str(),
++                    backhaul_label(m_backhaul_steer.request.previous).c_str(),
++                    backhaul_label(m_backhaul_steer.request.target).c_str(),
++                    m_backhaul_steer.response, static_cast<long long>(now - m_backhaul_steer.sent));
++                m_backhaul_policy.attempted(m_backhaul_steer.request.al, now, !verified);
++                if (verified) m_backhaul_uncertain.erase(m_backhaul_steer.request.al);
++                else {
++                    ++m_backhaul_steer.failures;
++                    m_backhaul_uncertain[m_backhaul_steer.request.al] = m_backhaul_steer;
++                }
++                m_backhaul_steer = {};
++            } else if (!m_backhaul_steer.acknowledged && m_backhaul_steer.retries < 2 &&
++                now - m_backhaul_steer.last_sent >= 2000) {
++                const auto target = network.aps.find(m_backhaul_steer.request.target);
++                if (target != network.aps.end() && current != network.nodes.end() &&
++                    current->second.parent_bssid == m_backhaul_steer.request.previous && em_backhaul::root_path(network,
++                        target->second.al, m_backhaul_steer.request.al, now).valid) {
++                    std::vector<unsigned char> payload(m_backhaul_steer.request.sta.begin(),
++                        m_backhaul_steer.request.sta.end());
++                    payload.insert(payload.end(), m_backhaul_steer.request.target.begin(),
++                        m_backhaul_steer.request.target.end());
++                    payload.push_back(target->second.op_class);
++                    payload.push_back(target->second.channel);
++                    outgoing.push_back(em_backhaul::frame(m_backhaul_steer.request.al, controller,
++                        em_msg_type_bh_steering_req, m_backhaul_steer.mid, em_tlv_type_bh_steering_req, payload));
++                    m_backhaul_steer.last_sent = now;
++                    ++m_backhaul_steer.retries;
++                    em_printfout("Native backhaul retry mid=%u retry=%u", m_backhaul_steer.mid, m_backhaul_steer.retries);
++                }
++            }
++        }
++        for (const auto &uncertain : m_backhaul_uncertain)
++            network.uncertain[uncertain.first] = uncertain.second.failures < 3 ? uncertain.second.request.target : "";
++        m_backhaul_network.uncertain = network.uncertain;
++        if (m_backhaul_steer.mid == 0) {
++            const auto decisions = m_backhaul_policy.evaluate(network, now);
++            if (!decisions.empty()) {
++                const auto &choice = decisions.front();
++                const auto &ap = network.aps.at(choice.target);
++                const unsigned short mid = get_next_msg_id();
++                std::vector<unsigned char> payload(choice.sta.begin(), choice.sta.end());
++                payload.insert(payload.end(), choice.target.begin(), choice.target.end());
++                payload.push_back(ap.op_class);
++                payload.push_back(ap.channel);
++                outgoing.push_back(em_backhaul::frame(choice.al, controller, em_msg_type_bh_steering_req,
++                    mid, em_tlv_type_bh_steering_req, payload));
++                m_backhaul_steer = {choice, mid, now, false, false, now, 0};
++                const auto uncertain = m_backhaul_uncertain.find(choice.al);
++                if (uncertain != m_backhaul_uncertain.end()) m_backhaul_steer.failures = uncertain->second.failures;
++                m_backhaul_policy.attempted(choice.al, now, false);
++                em_printfout("Native backhaul request mid=%u sta=%s previous=%s target=%s serving_rcpi=%d candidate_rcpi=%d path_rcpi=%d",
++                    mid, backhaul_label(choice.sta).c_str(), backhaul_label(choice.previous).c_str(),
++                    backhaul_label(choice.target).c_str(), choice.serving_rcpi, choice.candidate_rcpi, choice.path_rcpi);
++            }
++        }
++        if (now - m_backhaul_last_query >= 4000) {
++            m_backhaul_last_query = now;
++            ++m_backhaul_round;
++            std::set<std::string> queried_parents;
++            for (const auto &entry : network.nodes) {
++                const auto &station = entry.second;
++                const auto parent = network.aps.find(station.parent_bssid);
++                if (station.al != network.root && !station.sta.empty()) {
++                    int strongest_rcpi = -1;
++                    std::string strongest;
++                    for (const auto &candidate : network.candidates) {
++                        if (candidate.first.first == station.sta && candidate.second.fresh(now) &&
++                            candidate.second.rcpi > strongest_rcpi) {
++                            strongest_rcpi = candidate.second.rcpi;
++                            strongest = candidate.first.second;
++                        }
++                    }
++                    em_printfout("Native backhaul observation agent=%s parent=%s serving_rcpi=%d age_ms=%lld candidate=%s candidate_rcpi=%d",
++                        backhaul_label(station.al).c_str(), backhaul_label(station.parent_bssid).c_str(),
++                        station.serving.rcpi, static_cast<long long>(station.serving.observed ? now - station.serving.observed : -1),
++                        backhaul_label(strongest).c_str(), strongest_rcpi);
++                }
++                if (station.al == network.root || station.sta.empty() || parent == network.aps.end() ||
++                    !queried_parents.insert(station.parent_bssid).second) continue;
++                const unsigned short mid = get_next_msg_id();
++                backhaul_query_t serving_query{true, parent->second, {}, now, m_backhaul_round};
++                for (const auto &peer : network.nodes) {
++                    if (!peer.second.sta.empty() && peer.second.parent_bssid == station.parent_bssid)
++                        serving_query.stations[peer.second.sta] = peer.second.parent_bssid;
++                }
++                m_backhaul_queries[mid] = serving_query;
++                std::vector<unsigned char> payload{1};
++                payload.insert(payload.end(), station.parent_bssid.begin(), station.parent_bssid.end());
++                outgoing.push_back(em_backhaul::frame(parent->second.al, controller,
++                    em_msg_type_ap_metrics_query, mid, em_tlv_type_ap_metrics_query, payload));
++            }
++            for (const auto &entry : network.aps) {
++                const auto &ap = entry.second;
++                backhaul_query_t query;
++                query.ap = ap;
++                query.sent = now;
++                query.round = m_backhaul_round;
++                std::vector<unsigned char> payload{ap.op_class, 1, ap.channel, 0};
++                for (const auto &candidate : network.nodes) {
++                    const auto &station = candidate.second;
++                    const auto parent = network.aps.find(station.parent_bssid);
++                    if (station.al == network.root || station.al == ap.al || station.sta.empty() ||
++                        parent == network.aps.end() || parent->second.al == ap.al ||
++                        parent->second.channel != ap.channel || parent->second.op_class != ap.op_class ||
++                        !station.serving.fresh(now) || station.serving.rcpi >= 100) continue;
++                    const auto route = em_backhaul::root_path(network, ap.al, station.al, now);
++                    if (!route.valid) continue;
++                    query.stations[station.sta] = station.parent_bssid;
++                    payload.insert(payload.end(), station.sta.begin(), station.sta.end());
++                }
++                if (query.stations.empty()) continue;
++                payload[3] = static_cast<unsigned char>(query.stations.size());
++                const unsigned short mid = get_next_msg_id();
++                m_backhaul_queries[mid] = query;
++                outgoing.push_back(em_backhaul::frame(ap.al, controller, em_msg_type_unassoc_sta_link_metrics_query,
++                    mid, em_tlv_type_unassoc_sta_link_metric_query, payload));
++            }
++        }
++    }
++    for (auto &packet : outgoing) {
++        if (transport->send_native_backhaul_frame(packet.data(), static_cast<unsigned int>(packet.size())) < 0)
++            em_printfout("Native backhaul send failed mid=%u", em_backhaul::read16(packet.data() + 18));
++    }
++}
++
++bool em_ctrl_t::handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em)
++{
++    if (data == nullptr || len < 25) return false;
++    const unsigned int type = em_backhaul::read16(data + 16);
++    if (type != em_msg_type_ap_metrics_rsp &&
++        type != em_msg_type_unassoc_sta_link_metrics_rsp && type != em_msg_type_1905_ack &&
++        type != em_msg_type_bh_steering_rsp) return false;
++    const unsigned short mid = static_cast<unsigned short>(em_backhaul::read16(data + 18));
++    const std::string source = backhaul_mac(data + 6);
++    const int64_t now = backhaul_now();
++    std::lock_guard<std::mutex> lock(m_backhaul_mutex);
++    if (backhaul_mac(data) != m_backhaul_controller) return false;
++    const auto found = m_backhaul_queries.find(mid);
++    const bool owned_query = found != m_backhaul_queries.end() && found->second.ap.al == source;
++    const bool owned_steer = m_backhaul_steer.mid != 0 && m_backhaul_steer.mid == mid &&
++        m_backhaul_steer.request.al == source;
++    std::vector<em_backhaul::wire_tlv> tlvs;
++    if (!em_backhaul::parse_frame(data, len, tlvs)) return owned_query || owned_steer;
++    if (owned_steer && type == em_msg_type_1905_ack) m_backhaul_steer.acknowledged = true;
++    for (const auto &tlv : tlvs) {
++        if (tlv.type == em_tlv_type_assoc_sta_link_metric && type == em_msg_type_ap_metrics_rsp &&
++            owned_query && found->second.associated && now - found->second.sent <= 6000) {
++            if (tlv.size < 7 || tlv.size != 7 + static_cast<size_t>(tlv.value[6]) * sizeof(em_assoc_link_metrics_t)) continue;
++            const std::string station = backhaul_mac(tlv.value);
++            const auto expected = found->second.stations.find(station);
++            if (expected == found->second.stations.end()) continue;
++            for (auto &entry : m_backhaul_network.nodes) {
++                if (entry.second.sta != station || entry.second.parent_bssid != expected->second ||
++                    entry.second.parent_bssid != found->second.ap.bssid) continue;
++                const auto parent = m_backhaul_network.aps.find(entry.second.parent_bssid);
++                if (parent == m_backhaul_network.aps.end() || parent->second.al != source) continue;
++                for (unsigned int index = 0; index < tlv.value[6]; ++index) {
++                    const unsigned char *metric = tlv.value + 7 + index * sizeof(em_assoc_link_metrics_t);
++                    const unsigned int age = em_backhaul::read32(metric + 6);
++                    const int rcpi = metric[sizeof(em_assoc_link_metrics_t) - 1];
++                    if (backhaul_mac(metric) == entry.second.parent_bssid && age <= 6000 && rcpi <= 220) {
++                        const em_backhaul::sample sample{rcpi, found->second.sent - age, 0};
++                        if (sample.observed >= entry.second.serving.observed) entry.second.serving = sample;
++                    }
++                }
++            }
++        }
++        if (type == em_msg_type_unassoc_sta_link_metrics_rsp && owned_query &&
++            !found->second.associated && tlv.type == em_tlv_type_unassoc_sta_link_metric_rsp) {
++            const auto &query = found->second;
++            if (now - query.sent > 6000 || tlv.size < 2 || tlv.value[0] != query.ap.op_class ||
++                tlv.size != 2 + static_cast<size_t>(tlv.value[1]) * sizeof(em_unassoc_sta_metric_t)) continue;
++            for (const auto &expected : query.stations) {
++                const auto cached = m_backhaul_network.candidates.find({expected.first, query.ap.bssid});
++                if (cached != m_backhaul_network.candidates.end() && cached->second.round <= query.round)
++                    m_backhaul_network.candidates.erase(cached);
++            }
++            for (unsigned int index = 0; index < tlv.value[1]; ++index) {
++                const unsigned char *metric = tlv.value + 2 + index * sizeof(em_unassoc_sta_metric_t);
++                const std::string station = backhaul_mac(metric);
++                const auto expected = query.stations.find(station);
++                const unsigned int age = em_backhaul::read32(metric + 7);
++                if (expected == query.stations.end() || metric[6] != query.ap.channel ||
++                    age > 6000 || metric[11] > 220 || now - age < query.sent) continue;
++                for (const auto &entry : m_backhaul_network.nodes) {
++                    if (entry.second.sta != station || entry.second.parent_bssid != expected->second) continue;
++                    auto &sample = m_backhaul_network.candidates[{station, query.ap.bssid}];
++                    if (now - age >= sample.observed && query.round >= sample.round)
++                        sample = {metric[11], now - age, query.round};
++                }
++            }
++        }
++        if (type == em_msg_type_bh_steering_rsp && owned_steer && tlv.type == em_tlv_type_bh_steering_rsp &&
++            tlv.size == sizeof(em_bh_steering_resp_t) &&
++            backhaul_mac(tlv.value) == m_backhaul_steer.request.sta &&
++            backhaul_mac(tlv.value + 6) == m_backhaul_steer.request.target) {
++            m_backhaul_steer.response = tlv.value[12] == 0;
++            m_backhaul_steer.acknowledged = true;
++            em_printfout("Native backhaul response mid=%u result=%u sta=%s", mid, tlv.value[12],
++                backhaul_label(m_backhaul_steer.request.sta).c_str());
++            if (tlv.value[12] != 0) {
++                m_backhaul_policy.attempted(m_backhaul_steer.request.al, now, true);
++                ++m_backhaul_steer.failures;
++                m_backhaul_uncertain[m_backhaul_steer.request.al] = m_backhaul_steer;
++                em_printfout("Native backhaul unresolved agent=%s target=%s failures=%u; excluding unsafe ancestry",
++                    backhaul_label(m_backhaul_steer.request.al).c_str(),
++                    backhaul_label(m_backhaul_steer.request.target).c_str(), m_backhaul_steer.failures);
++                m_backhaul_steer = {};
++            }
++        }
++    }
++    if (owned_query && ((type == em_msg_type_ap_metrics_rsp && found->second.associated) ||
++        (type == em_msg_type_unassoc_sta_link_metrics_rsp && !found->second.associated)))
++        m_backhaul_queries.erase(found);
++    return (owned_query && (type == em_msg_type_unassoc_sta_link_metrics_rsp || type == em_msg_type_1905_ack)) ||
++        (owned_steer && (type == em_msg_type_bh_steering_rsp || type == em_msg_type_1905_ack));
++}
+--- a/src/ctrl/em_ctrl.cpp	2026-09-15 19:57:50.293889064 -0700
++++ b/src/ctrl/em_ctrl.cpp	2026-09-16 07:21:08.422057477 -0700
+@@ -742,6 +742,7 @@
+ 
+ void em_ctrl_t::handle_1s_tick()
+ {
++    handle_native_backhaul_tick();
+     std::vector<std::string> expired;
+     const auto now = std::chrono::steady_clock::now();
+ 
+--- a/src/dm/dm_easy_mesh_list.cpp	2026-09-15 19:57:39.769860258 -0700
++++ b/src/dm/dm_easy_mesh_list.cpp	2026-09-16 08:15:10.228499175 -0700
+@@ -44,6 +44,7 @@
+ #include "em_cmd_sta_list.h"
+ #include "em_cmd_ap_cap.h"
+ #include "tr_181.h"
++#include "em_network_topo.h"
+ 
+ dm_network_t *dm_easy_mesh_list_t::get_first_network()
+ {
+@@ -128,6 +129,7 @@
+ 
+ void dm_easy_mesh_list_t::put_network(const char *key, const dm_network_t *net)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_easy_mesh_t *dm = NULL;
+     dm_network_t *pnet;
+     mac_addr_str_t	mac_str;
+@@ -214,6 +216,7 @@
+ 
+ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_easy_mesh_t *dm;
+     dm_device_t *pdev;
+     mac_addr_str_t mac_str;
+@@ -361,6 +364,7 @@
+ 
+ void dm_easy_mesh_list_t::put_radio(const char *key, const dm_radio_t *radio)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_radio_t *pradio = NULL;
+     dm_easy_mesh_t	*dm = NULL;
+     em_t *em = NULL;
+@@ -606,6 +610,7 @@
+ 
+ void dm_easy_mesh_list_t::put_bss(const char *key, const dm_bss_t *bss)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 	em_bss_id_t id;
+ 	mac_addr_str_t	dev_mac_str, radio_mac_str, bssid_str;
+ 	dm_easy_mesh_t *dm;
+@@ -1162,6 +1167,7 @@
+ 
+ void dm_easy_mesh_list_t::put_op_class(const char *key, const dm_op_class_t *op_class)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 	em_op_class_id_t id;
+ 	mac_addr_str_t mac_str;
+ 	dm_easy_mesh_t *dm;
+@@ -1569,6 +1575,7 @@
+ 
+ void dm_easy_mesh_list_t::delete_all_data_models()
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 	dm_easy_mesh_t *dm = NULL, *tmp;
+ 	dm_device_t *dev;
+ 	mac_addr_str_t mac_str;
+@@ -1595,6 +1602,7 @@
+ 
+ void dm_easy_mesh_list_t::delete_data_model(const char *net_id, const unsigned char *al_mac)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_easy_mesh_t *dm = NULL;
+     mac_addr_str_t mac_str;
+     em_long_string_t	key;
+@@ -1612,6 +1620,7 @@
+ 
+ dm_easy_mesh_t *dm_easy_mesh_list_t::create_data_model(const char *net_id, const em_interface_t *al_intf, em_profile_type_t profile, bool controller)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_easy_mesh_t *dm = NULL, *ref_dm, *ctrl_dm;
+     mac_addr_str_t mac_str;
+     em_short_string_t	key;
+--- a/src/em/capability/em_capability.cpp	2026-09-15 19:57:49.141885911 -0700
++++ b/src/em/capability/em_capability.cpp	2026-09-16 08:15:10.227499211 -0700
+@@ -39,6 +39,7 @@
+ #include <openssl/rand.h>
+ #include "em.h"
+ #include "em_capability.h"
++#include "em_network_topo.h"
+ #include "em_cmd.h"
+ #include "em_msg.h"
+ #include "dm_easy_mesh.h"
+@@ -1000,6 +1001,7 @@
+ 
+ int em_capability_t::handle_bsta_radio_cap(unsigned char *tlv_buff, unsigned int tlv_len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     if (!tlv_buff)
+     {
+         return -1;
+@@ -1058,6 +1060,7 @@
+ 
+ int em_capability_t::handle_client_info(unsigned char *tlv_buff, unsigned int tlv_len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     if (!tlv_buff) {
+         return -1;
+     }
+@@ -1170,6 +1173,7 @@
+ 
+ int em_capability_t::handle_ap_radio_basic_cap(unsigned char *buff, unsigned int len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 	dm_radio_t * radio;
+ 	mac_address_t	ruid;
+ 	unsigned int i, j;
+--- a/src/em/channel/em_channel.cpp	2026-09-15 19:57:49.141885911 -0700
++++ b/src/em/channel/em_channel.cpp	2026-09-16 08:15:10.226499246 -0700
+@@ -42,6 +42,7 @@
+ #include <openssl/rand.h>
+ #include "em.h"
+ #include "em_msg.h"
++#include "em_network_topo.h"
+ #include "em_cmd_exec.h"
+ #include "util.h"
+ 
+@@ -1637,6 +1638,7 @@
+ 
+ int em_channel_t::handle_op_channel_report(unsigned char *buff, unsigned int len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     dm_easy_mesh_t *dm;
+     unsigned int i = 0, found = 0;
+     em_op_class_info_t  *op_class_info;
+@@ -1713,6 +1715,7 @@
+ 
+ int em_channel_t::handle_channel_pref_tlv_ctrl(unsigned char *buff, unsigned int len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     em_channel_pref_t *pref = reinterpret_cast<em_channel_pref_t *>(buff);
+     unsigned int i = 0, j = 0;
+     bool match_found = false;
+--- a/src/em/config/em_configuration.cpp	2026-09-15 19:57:50.189888779 -0700
++++ b/src/em/config/em_configuration.cpp	2026-09-16 08:15:10.225499281 -0700
+@@ -2651,6 +2651,7 @@
+ 
+ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+     em_tlv_t *tlv;
+     unsigned int tmp_len;
+     int ret = 0;
+@@ -6272,6 +6273,7 @@
+ 
+ int em_configuration_t::handle_ap_radio_basic_cap(unsigned char *buff, unsigned int len)
+ {
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 	dm_radio_t * radio;
+ 	mac_address_t	ruid;
+ 	unsigned int i, j;
+--- a/src/em/em_mgr.cpp	2026-09-15 19:57:39.005858167 -0700
++++ b/src/em/em_mgr.cpp	2026-09-16 07:21:08.420057549 -0700
+@@ -131,6 +131,7 @@
+ 
+ void em_mgr_t::proto_process(unsigned char *data, unsigned int len, em_t *al_em)
+ {
++    if (handle_native_backhaul_frame(data, len, al_em)) return;
+     em_event_t	*evt;
+     em_t *em = NULL;
+ 
+@@ -525,6 +526,7 @@
+ 
+ unsigned short em_mgr_t::get_next_msg_id()
+ {
++    std::lock_guard<std::mutex> lock(m_msg_id_mutex);
+     m_msg_id++;
+     if (m_msg_id == 0) {
+         m_msg_id = 1;
+--- a/src/em/metrics/em_metrics.cpp	2026-09-15 19:57:50.293889064 -0700
++++ b/src/em/metrics/em_metrics.cpp	2026-09-16 08:15:38.216515872 -0700
+@@ -309,7 +309,6 @@
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+ 
+     send_associated_link_metrics_response(sta, ntohs(cmdu->id));
+-    set_state(em_state_agent_configured);
+ 
+     return 0;
+ }
+@@ -1453,7 +1452,10 @@
+ 
+ int em_metrics_t::send_ap_metrics_response(const em_cmd_ap_metrics_rprt_params_t &params)
+ {
+-    if (params.num_radios < 0 || params.num_radios > EM_MAX_RADIO_PER_AGENT) {
++    const size_t backhaul_capacity = sizeof(params.report_backhaul_sta) / sizeof(params.report_backhaul_sta[0]);
++    if (params.num_radios < 0 || params.num_radios > EM_MAX_RADIO_PER_AGENT ||
++        params.report_backhaul_bss_count < 0 || params.report_backhaul_bss_count > EM_MAX_BSSS ||
++        params.report_backhaul_sta_count > backhaul_capacity) {
+         return -1;
+     }
+     dm_easy_mesh_t *dm = get_data_model();
+@@ -1470,7 +1472,8 @@
+     /* Reserve one vendor TLV for the reporting CPE uptime in addition to EOM. */
+     const size_t max_tlv_count = num_bss_tlvs + num_sta_tlvs + num_radio_tlvs + 1U;
+     const size_t buff_capacity = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) +
+-        ((max_tlv_count + 1U) * (sizeof(em_tlv_t) + max_tlv_value_size));
++        ((max_tlv_count + 1U) * (sizeof(em_tlv_t) + max_tlv_value_size)) +
++        params.report_backhaul_sta_count * (sizeof(em_tlv_t) + 7U + sizeof(em_assoc_link_metrics_t));
+     std::vector<unsigned char> buff(buff_capacity, 0);
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+     unsigned short  msg_type = em_msg_type_ap_metrics_rsp;
+@@ -1554,6 +1557,24 @@
+             len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+         }
+ 
++        const bool backhaul_bss = dm->m_bss[bss_index].m_bss_info.id.haul_type == em_haul_type_backhaul ||
++            em_ap_metrics_query_contains(params.report_backhaul_bssids, params.report_backhaul_bss_count,
++                dm->m_bss[bss_index].m_bss_info.bssid.mac);
++        if (backhaul_bss) {
++            for (unsigned int sample_index = 0; sample_index < params.report_backhaul_sta_count; ++sample_index) {
++                const auto &sample = params.report_backhaul_sta[sample_index];
++                if (memcmp(sample.bssid, dm->m_bss[bss_index].m_bss_info.bssid.mac, 6) != 0 ||
++                    memcmp(sample.ruid, dm->m_bss[bss_index].m_bss_info.ruid.mac, 6) != 0) continue;
++                tlv = reinterpret_cast<em_tlv_t *>(tmp);
++                tlv->type = em_tlv_type_assoc_sta_link_metric;
++                sz = create_ap_report_backhaul_link_metrics_tlv(tlv->value, params, sample_index);
++                if (!valid_tlv_size(sz, "Report-owned Backhaul STA Link Metrics")) return -1;
++                tlv->len = htons(static_cast<unsigned short>(sz));
++                tmp += sizeof(em_tlv_t) + static_cast<size_t>(sz);
++                len += sizeof(em_tlv_t) + static_cast<size_t>(sz);
++            }
++        }
++
+         //now search if this sta is associated to this
+         sta = reinterpret_cast<dm_sta_t *> (hash_map_get_first(dm->m_sta_map));
+         while(sta != NULL) {
+@@ -1572,14 +1593,16 @@
+             len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+ 
+             //Associated STA Link Metrics TLV (17.2.24).
+-            tlv = reinterpret_cast<em_tlv_t *> (tmp);
+-            tlv->type = em_tlv_type_assoc_sta_link_metric;
+-            sz = create_assoc_sta_link_metrics_tlv(tlv->value, sta->m_sta_info.id, sta);
+-            if (!valid_tlv_size(sz, "Associated STA Link Metrics")) return -1;
+-            tlv->len =  htons(static_cast<unsigned short> (sz));
++            if (!backhaul_bss) {
++                tlv = reinterpret_cast<em_tlv_t *> (tmp);
++                tlv->type = em_tlv_type_assoc_sta_link_metric;
++                sz = create_assoc_sta_link_metrics_tlv(tlv->value, sta->m_sta_info.id, sta);
++                if (!valid_tlv_size(sz, "Associated STA Link Metrics")) return -1;
++                tlv->len =  htons(static_cast<unsigned short> (sz));
+ 
+-            tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
+-            len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
++                tmp += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
++                len += (sizeof(em_tlv_t) + static_cast<size_t> (sz));
++            }
+ 
+             //Associated STA Extended Link Metrics TLV (17.2.62)
+             if (get_profile_type() > em_profile_type_1) {
+@@ -1673,6 +1696,25 @@
+     return static_cast<int> (len);
+ }
+ 
++short em_metrics_t::create_ap_report_backhaul_link_metrics_tlv(unsigned char *buff,
++    const em_cmd_ap_metrics_rprt_params_t &params, unsigned int index)
++{
++    if (index >= params.report_backhaul_sta_count ||
++        index >= sizeof(params.report_backhaul_sta) / sizeof(params.report_backhaul_sta[0])) return -1;
++    const auto &sample = params.report_backhaul_sta[index];
++    if (sample.rcpi > 220) return -1;
++    auto *report = reinterpret_cast<em_assoc_sta_link_metrics_t *>(buff);
++    memcpy(report->sta_mac, sample.sta_mac, 6);
++    report->num_bssids = 1;
++    auto &metric = report->assoc_link_metrics[0];
++    memcpy(metric.bssid, sample.bssid, 6);
++    metric.time_delta_ms = htonl(sample.delta_ms);
++    metric.est_mac_data_rate_dl = htonl(sample.est_dl_rate);
++    metric.est_mac_data_rate_ul = htonl(sample.est_ul_rate);
++    metric.rcpi = sample.rcpi;
++    return static_cast<short>(7U + sizeof(em_assoc_link_metrics_t));
++}
++
+ short em_metrics_t::create_assoc_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta)
+ {
+     size_t len = 0;
+@@ -2592,8 +2634,6 @@
+     uint16_t msg_id = ntohs(cmdu->id);
+ 
+     dm_easy_mesh_t *dm = get_data_model();
+-    dm->set_msg_id(msg_id);
+-
+     mac_address_t error_sta_list[EM_MAX_STA_PER_AGENT];
+     int error_sta_count = 0;
+ 
+@@ -2748,7 +2788,34 @@
+ 
+     if (work_ptr > work_buff) {
+         uint16_t work_len = static_cast<uint16_t>(work_ptr - work_buff);
+-        get_mgr()->io_process(em_bus_event_type_unassoc_sta_link_metrics_query, work_buff, work_len);
++        std::set<std::string> expected;
++        const unsigned char *cursor = work_buff;
++        while (cursor + 2 <= work_ptr) {
++            const unsigned char op_class = *cursor++;
++            const unsigned int channels = *cursor++;
++            for (unsigned int channel_index = 0; channel_index < channels; ++channel_index) {
++                if (cursor + 2 > work_ptr) return -1;
++                const unsigned char channel = *cursor++;
++                const unsigned int stations = *cursor++;
++                for (unsigned int station_index = 0; station_index < stations; ++station_index) {
++                    if (cursor + 6 > work_ptr) return -1;
++                    std::string key{static_cast<char>(op_class), static_cast<char>(channel)};
++                    key.append(reinterpret_cast<const char *>(cursor), 6);
++                    expected.insert(key);
++                    cursor += 6;
++                }
++            }
++        }
++        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now().time_since_epoch()).count();
++        if (!m_unassoc_requests.insert(msg_id, expected, now)) {
++            em_printfout("Unassociated metrics request registry full or conflicting MID=%u", msg_id);
++            return -1;
++        }
++        std::vector<unsigned char> envelope{static_cast<unsigned char>(msg_id >> 8), static_cast<unsigned char>(msg_id)};
++        envelope.insert(envelope.end(), work_buff, work_buff + work_len);
++        get_mgr()->io_process(em_bus_event_type_unassoc_sta_link_metrics_query, envelope.data(),
++            static_cast<unsigned int>(envelope.size()));
+         em_printfout("%s:%d Sent Unassoc STA Query to Agent len=%u", __func__, __LINE__, work_len);
+     }
+     return 0;
+@@ -2994,6 +3061,42 @@
+  */
+ void em_metrics_t::send_unassoc_sta_link_metrics_resp_msg()	
+ {
++    dm_easy_mesh_t *dm = get_data_model();
++    em_cmd_t *cmd = get_current_cmd();
++    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
++    if (cmd == nullptr || cmd->get_type() != em_cmd_type_unassoc_sta_result) return;
++    const dm_easy_mesh_t *result = cmd->get_data_model();
++    rsp = &cmd->get_data_model()->m_unassoc_sta_metrics_rsp;
++    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++    std::vector<em_unassoc_query_tracker::measurement> metrics;
++    for (unsigned int index = 0; index < rsp->num_entries && index < EM_MAX_UNASSOC_STA; ++index) {
++        const auto &entry = rsp->entry[index];
++        std::string key{static_cast<char>(entry.op_class), static_cast<char>(entry.channel)};
++        key.append(reinterpret_cast<const char *>(entry.sta_mac), 6);
++        metrics.push_back({key, entry.rcpi,
++            static_cast<int64_t>(result->m_unassoc_sta_metrics_received_ms) - entry.time_delta});
++    }
++    for (const auto &reply : m_unassoc_requests.accept(result->m_unassoc_sta_metrics_msg_id, metrics, now)) {
++        em_unassoc_sta_metrics_rsp_t response = {};
++        for (const auto &metric : reply.metrics) {
++            if (response.num_entries >= EM_MAX_UNASSOC_STA) break;
++            auto &entry = response.entry[response.num_entries++];
++            entry.op_class = static_cast<unsigned char>(metric.key[0]);
++            entry.channel = static_cast<unsigned char>(metric.key[1]);
++            memcpy(entry.sta_mac, metric.key.data() + 2, 6);
++            entry.rcpi = metric.rcpi;
++            entry.time_delta = static_cast<unsigned int>(now - metric.observed);
++        }
++        send_unassoc_sta_link_metrics_response(&response, reply.mid, reply.op_classes);
++    }
++    rsp->num_entries = 0;
++    set_state(em_state_agent_configured);
++}
++
++void em_metrics_t::send_unassoc_sta_link_metrics_response(em_unassoc_sta_metrics_rsp_t *rsp,
++    unsigned short msg_id, const std::set<unsigned char> &op_classes)
++{
+     unsigned char buff[MAX_EM_BUFF_SZ];
+     unsigned char *tmp = buff;
+ 
+@@ -3007,14 +3110,6 @@
+     unsigned short msg_type = em_msg_type_unassoc_sta_link_metrics_rsp;
+ 
+     dm_easy_mesh_t *dm = get_data_model();
+-    unsigned short msg_id = dm->get_msg_id();
+-    em_cmd_t *cmd = get_current_cmd();
+-    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
+-    if (cmd != NULL && cmd->get_type() == em_cmd_type_unassoc_sta_result) {
+-        /* analyze_unassoc_sta_result() populates the immutable command
+-         * snapshot, not the selected radio's persistent data model. */
+-        rsp = &cmd->get_data_model()->m_unassoc_sta_metrics_rsp;
+-    }
+ 
+     em_printfout("Sending %u candidate metrics with query MID %u",
+         rsp->num_entries, msg_id);
+@@ -3039,10 +3134,7 @@
+     tmp += sizeof(em_cmdu_t);
+     len +=  static_cast<unsigned int>(sizeof(em_cmdu_t)); 
+ 
+-    for (unsigned int i = 0; i < rsp->num_entries; i++) {
+-
+-        unsigned char op_class = rsp->entry[i].op_class;
+-
++    for (unsigned char op_class : op_classes) {
+         if (sent_opclass[op_class]) {
+             continue;
+         }
+--- a/src/orch/em_orch_agent.cpp	2026-09-15 19:57:49.809887740 -0700
++++ b/src/orch/em_orch_agent.cpp	2026-09-16 08:00:30.729328015 -0700
+@@ -805,34 +805,13 @@
+                 break;
+ 
+             case em_cmd_type_unassoc_sta_result:
+-                if (!em->is_al_interface_em() && count == 0) {
+-                    em_unassoc_sta_metrics_rsp_t *rsp =
+-                        &pcmd->get_data_model()->m_unassoc_sta_metrics_rsp;
+-                    dm_easy_mesh_t *radio_dm = em->get_data_model();
+-                    bool radio_matches_result = false;
+-
+-                    for (unsigned int result_idx = 0;
+-                         result_idx < rsp->num_entries && !radio_matches_result;
+-                         result_idx++) {
+-                        for (unsigned int op_idx = 0;
+-                             op_idx < radio_dm->get_num_op_class(); op_idx++) {
+-                            em_op_class_info_t *op = radio_dm->get_op_class_info(op_idx);
+-                            if (op != NULL &&
+-                                op->op_class == rsp->entry[result_idx].op_class &&
+-                                memcmp(op->id.ruid, em->get_radio_interface_mac(),
+-                                    sizeof(mac_address_t)) == 0) {
+-                                radio_matches_result = true;
+-                                break;
+-                            }
+-                        }
+-                    }
+-
+-                    if (radio_matches_result) {
+-                        queue_push(pcmd->m_em_candidates, em);
+-                        count++;
+-                        em_printfout("Candidate metrics result selected radio %s",
+-                            util::mac_to_string(em->get_radio_interface_mac()).c_str());
+-                    }
++                if (!em->is_al_interface_em() && count == 0 && em->owns_native_unassoc_query(
++                        pcmd->get_data_model()->m_unassoc_sta_metrics_msg_id)) {
++                    queue_push(pcmd->m_em_candidates, em);
++                    count++;
++                    em_printfout("Candidate metrics result MID %u selected owner radio %s",
++                        pcmd->get_data_model()->m_unassoc_sta_metrics_msg_id,
++                        util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                 }
+                 break;

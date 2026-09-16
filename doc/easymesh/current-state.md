@@ -31,7 +31,12 @@ report validation, unchanged native identities and default twenty restoration.
 Geometry branch and isolation/recovery also pass. The new stronger-parent
 handover assertion remains unresolved: a usable 11 dB parent is retained despite
 a 26 dB relay. The original room observed native choice, not guaranteed
-proactive strongest-parent policy. This is not 25/25 qualification.
+proactive strongest-parent policy. Native measured backhaul steering is now
+implemented with focused policy, wire, agent-actuation and measurement-ownership
+regressions; synchronized image builds and live qualification are pending.
+Release remains held for both-direction handover and the complete catalog.
+The earlier client-room result does not qualify this new native runtime.
+This is not 25/25 qualification.
 Evidence remains under `/home/rev/work/release-0916/evidence/` on rev150.
 
 ## Browser addresses

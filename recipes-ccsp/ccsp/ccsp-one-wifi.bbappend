@@ -38,6 +38,10 @@ WIFI_EM_METRICS_SNAPSHOT_PATCH := "${THISDIR}/${BPN}/0026-ap-metrics-replace-pro
 WIFI_SCHEDULER_STATUS_API_PATCH := "${THISDIR}/${BPN}/0027-declare-radio-scheduler-status-functions.patch"
 WIFI_ASSOCIATION_PUBLICATION_PATCH := "${THISDIR}/${BPN}/0028-publish-association-deltas-on-control-events.patch"
 WIFI_EM_REPORTING_POLICY_PATCH := "${THISDIR}/${BPN}/0029-native-utilization-threshold-and-ap-query.patch"
+WIFI_NASTA_METADATA_PATCH := "${THISDIR}/${BPN}/0030-nasta-native-query-metadata.patch"
+WIFI_NASTA_SAMPLING_PATCH := "${THISDIR}/${BPN}/0031-nasta-native-query-sampling.patch"
+WIFI_EM_REPORT_AGE_PATCH := "${THISDIR}/${BPN}/0032-ap-report-unknown-age-is-not-fresh.patch"
+SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no"
 python do_patch_append() {
     import os
     import subprocess
@@ -242,6 +246,9 @@ python do_patch_append() {
         apply_layer_patch(f)
     with open(d.getVar('WIFI_EM_REPORTING_POLICY_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
+    for variable in ('WIFI_NASTA_METADATA_PATCH', 'WIFI_NASTA_SAMPLING_PATCH', 'WIFI_EM_REPORT_AGE_PATCH'):
+        with open(d.getVar(variable), 'rb') as stream:
+            apply_layer_patch(stream)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -308,6 +315,8 @@ do_patch[vardepsexclude] += "WIFI_ASSOCIATION_PUBLICATION_PATCH"
 do_patch[file-checksums] += "${WIFI_ASSOCIATION_PUBLICATION_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_EM_REPORTING_POLICY_PATCH"
 do_patch[file-checksums] += "${WIFI_EM_REPORTING_POLICY_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_NASTA_METADATA_PATCH WIFI_NASTA_SAMPLING_PATCH WIFI_EM_REPORT_AGE_PATCH"
+do_patch[file-checksums] += "${WIFI_NASTA_METADATA_PATCH}:True ${WIFI_NASTA_SAMPLING_PATCH}:True ${WIFI_EM_REPORT_AGE_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

@@ -80,6 +80,87 @@ isolation room instead weakens real AP-to-AP RF while preserving nearby client
 RF. Geometry .world.json playback needs the interactive room engine: legacy
 `.wmd` exports remain explicitly labeled fronthaul-only projections.
 
+### Native proactive backhaul steering
+
+The 0916 native patch adds a controller policy and an agent-side IEEE 1905
+Backhaul Steering transaction. This is separate from the external client
+optimizer and from `--adaptive-backhaul`. It does not read the world, positions,
+simulator's strongest-link overlay, or room convergence result. Release acceptance
+still requires the bounded branch, parent-handover and isolation room tests;
+focused native unit tests alone do not establish live convergence.
+
+The controller copies the native parent graph under the topology mutex and
+uses associated-STA RCPI within native AP Metrics reports for each existing
+uplink, requesting those reports from its serving backhaul BSS. Standalone
+Associated STA responses reuse a cached data-model delta and are not accepted
+as fresh policy evidence. AP reports recompute sample age from the native
+provider timestamp and copy the actually reported backhaul rows into an immutable
+event snapshot before model translation. Missing or invalid rows never borrow
+cached station values. The controller accepts only the matching AP-query
+message ID, sender and BSSID, conservatively adding the full query round-trip
+time to provider age. Completed query IDs cannot refresh evidence through
+duplicate responses. The public-header provider and its consumers must use the
+same enlarged AP-event structure. It queries candidate APs for
+the backhaul STA using native Unassociated STA Link Metrics messages. Candidate
+queries have independent message IDs and run across eligible APs in parallel;
+they do not overwrite the external client's command ownership. The native
+agent retains each query's message ID, operating class, channel, STA set and
+request time. OneWifi echoes `QueryId` and a monotonic collection timestamp
+captured before its synchronous HAL batch; the agent preserves these in the
+immutable result command and ages the sample through queueing. Only that exact
+transaction can consume the result. Shared or overlapping station queries never
+borrow an unrelated latest message ID or satisfy a newer round with an old
+callback. This requires matching EasyMesh, OneWifi and libwebconfig builds;
+untagged or stale native results fail closed rather than becoming fresh evidence.
+Partial and empty HAL batches complete their exact native transaction, including
+an empty operating-class TLV where required; they are not suppressed or routed
+by the first reported station's operating class. Only actually measured rows
+are published as signal evidence.
+In this hwsim lab, same-band candidate RCPI remains HAL/matrix-backed idealized
+availability, not proof that an unassociated AP physically heard a station.
+
+The initial policy is deliberately conservative:
+
+- Same operating class/channel and enabled backhaul APs only; no channel change
+  or credential replacement during reparenting.
+- Query weak uplinks below RCPI 100 (-60 dBm) on a four-second cadence. Existing
+  associated-link reports remain the source of current-parent measurements.
+- Require measurements no older than six seconds, at least 12 RCPI (6 dB)
+  local-link improvement, and target RCPI at least 50 (-85 dBm).
+- Reject self, descendants, cycles, unknown/disconnected ancestry and a weaker
+  root-path bottleneck. An extra hop must improve the path bottleneck, rather
+  than merely give a stronger local signal. This is a signal-based guard, not
+  a measured end-to-end capacity calculation.
+- Require two distinct candidate rounds and ten seconds on the observed parent;
+  failed handovers have a twenty-second cooldown. Conflicting tree mutations
+  have one in-flight reservation; measurement collection is not serialized.
+
+The agent validates the controller, destination, exact local backhaul STA,
+target and channel, acknowledges the request, then calls the existing native
+OneWifi BSSID setter with the current credentials. Setter acceptance is not a
+completed roam. The agent reports success only after connected native readback
+shows the requested BSSID; the native mesh-STA callback triggers an immediate
+check, with one-second fallback polling and a ten-second transaction deadline.
+Duplicate requests replay the original result without reapplying the change.
+The controller retries an unacknowledged request at most twice, two seconds
+apart, with the same message ID and without extending its deadline.
+The controller separately requires the actual new topology parent and a fresh
+serving measurement before logging `Native backhaul verified`; a response alone
+does not rewrite the topology. Its verification deadline is fifteen seconds.
+Failure does not prove OneWifi stopped its asynchronous connection attempt.
+An unresolved handover therefore remains recorded: its node cannot become a
+new target's ancestor, and that node can retry only the same requested parent,
+at most three attempts in total. Other safe branches can continue. Fresh native
+observation of the requested parent clears the uncertainty; late outcomes are
+logged separately rather than counted as an on-time successful transaction.
+
+Observe native controller/agent journals for `Native backhaul request`,
+`response`, `verified` and `timeout`, including message ID, STA, old/new BSSID,
+RCPI and elapsed time where applicable. Fixed-RF rooms remain fixed-RF: this
+native policy does not make their extender positions affect RF. Geometry rooms
+can now exercise a stronger-parent handover without first breaking the old
+link, subject to the native safety and stability guards.
+
 ## Read-only topology positioning
 
 The room exposes `GET /api/demo/mesh-layout`: five or fewer mapped mesh device

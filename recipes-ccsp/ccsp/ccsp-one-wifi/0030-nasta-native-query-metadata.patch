@@ -1,0 +1,69 @@
+Subject: [PATCH] Preserve optional native NaSta query identity and collection time
+
+Apply to both ccsp-one-wifi and ccsp-one-wifi-libwebconfig.
+QueryId is optional; zero is valid and distinguished from absence.
+Tagged responses carry top-level QueryId and CollectedMonotonicMs.
+Reject malformed IDs and timestamps that JSON cannot represent exactly.
+Untagged response envelopes remain unchanged.
+
+Upstream-Status: Pending
+
+--- a/include/wifi_base.h
++++ b/include/wifi_base.h
+@@ -546,6 +546,9 @@
+ typedef struct {
+     unsigned int num_sta;
+     wifi_na_sta_info_t sta_list[MAX_NASTA_RESPONSE_STAS];
++    bool has_query_id;
++    uint16_t query_id;
++    uint64_t collected_monotonic_ms;
+ } nasta_response_t;
+ 
+ typedef struct {
+@@ -564,6 +567,8 @@
+     unsigned int vap_index;
+     unsigned int num_opclass;
+     nasta_opclass_entry_t opclass_list[MAX_NASTA_OPCLASS_ENTRIES];
++    bool has_query_id;
++    uint16_t query_id;
+ } nasta_query_t;
+ 
+ typedef struct {
+--- a/source/webconfig/wifi_webconfig_nasta.c
++++ b/source/webconfig/wifi_webconfig_nasta.c
+@@ -120,6 +120,16 @@
+     cJSON_AddStringToObject(json, "SubDocName",
+         "UnassociatedSTALinkMetricsResponse");
+ 
++    if (resp->has_query_id &&
++        (resp->collected_monotonic_ms == 0 ||
++         resp->collected_monotonic_ms > UINT64_C(9007199254740991) ||
++         cJSON_AddNumberToObject(json, "QueryId", resp->query_id) == NULL ||
++         cJSON_AddNumberToObject(json, "CollectedMonotonicMs",
++             (double)resp->collected_monotonic_ms) == NULL)) {
++        cJSON_Delete(json);
++        return webconfig_error_encode;
++    }
++
+     resp_obj = cJSON_CreateObject();
+     if (resp_obj == NULL) {
+         cJSON_Delete(json);
+@@ -213,6 +223,18 @@
+     query = &params->nasta_query;
+     memset(query, 0, sizeof(nasta_query_t));
+ 
++    cJSON *query_id_obj = cJSON_GetObjectItemCaseSensitive(json, "QueryId");
++    if (query_id_obj != NULL) {
++        if (!cJSON_IsNumber(query_id_obj) ||
++            !(query_id_obj->valuedouble >= 0 && query_id_obj->valuedouble <= UINT16_MAX) ||
++            (double)(uint16_t)query_id_obj->valuedouble != query_id_obj->valuedouble) {
++            cJSON_Delete(json);
++            return webconfig_error_decode;
++        }
++        query->has_query_id = true;
++        query->query_id = (uint16_t)query_id_obj->valuedouble;
++    }
++
+     /* Extract VapIndex (injected by RBUS handler) */
+     cJSON *vap_idx_obj = cJSON_GetObjectItem(json, "VapIndex");
+     if (vap_idx_obj && cJSON_IsNumber(vap_idx_obj)) {

@@ -573,6 +573,10 @@ Evidence: `/home/rev/work/release-0916/evidence/rdk-clients-final/` on rev150.
 Branch and isolation/recovery also pass; the new stronger-parent handover gate
 remains unresolved. Retaining a usable old parent is not proof of proactive
 strongest-parent steering. No 25/25 or artifact acceptance is claimed.
+The new native-backhaul implementation must repeat this catalog on its rebuilt
+runtime. Its handover gate also requires role 3 to return to the upper relay
+within the original sixty-second return deadline, verified in the native
+association and room topology with ten-client traffic/ownership convergence.
 See [deployment status](../../current-state.md) for candidate ports and holds.
 
 ### Pre-band RF baseline
