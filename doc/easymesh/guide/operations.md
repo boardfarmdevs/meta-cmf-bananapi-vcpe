@@ -24,6 +24,17 @@ mirrors disabled. It records the effective BitBake configuration in build
 evidence. This is a fresh workspace build, not a cache-empty rebuild.
 The build guide owns cache overrides and reproducibility requirements.
 
+## Topology RF hover
+
+Hover an extender or Agent-1 to see native AP-reported BSS load: utilization
+as percent and raw 0–255, associated stations per BSS, band/channel and report
+receipt age. Interactive rooms collect reports passively; load-aware steering
+remains opt-in. No hover-triggered measurement or policy change occurs.
+Values older than five seconds, missing reports and collection errors show
+unavailable, never fabricated zero. Shared-radio utilization is not additive
+or calibrated physical capacity. Client-heard beacon BSS Load remains separate
+in the room RF inspector. Both work without enabling Follow room layout.
+
 ## Everyday lifecycle
 
 On the physical LXD host, replace VM with the name from `lxc list`:
