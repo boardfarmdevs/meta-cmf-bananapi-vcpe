@@ -157,7 +157,14 @@ The initial policy is deliberately conservative:
   have one in-flight reservation; measurement collection is not serialized.
 
 The agent validates the controller, destination, exact local backhaul STA,
-target and channel, then acknowledges the request. OneWifi interface-name
+target and channel, then acknowledges the request. Native OneWifi client
+collectors use the requesting policy's validated radio identities, rather than
+an unrelated cached configuration. Every radio receives its immediate-start
+flag; queue/configuration failures propagate instead of appearing successful.
+AP client sampling retains its five-second cap, while standalone RCPI
+monitoring uses its existing ten-second interval. Cached provider delivery
+alone does not establish that a complete fresh HAL collection succeeded.
+OneWifi interface-name
 readback uses the bus's bounded string count: RBUS
 excludes the trailing NUL from that count. A local terminated copy supports
 both bus encodings without accepting empty, oversized or embedded-NUL names.

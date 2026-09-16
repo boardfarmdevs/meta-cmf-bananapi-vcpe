@@ -1,0 +1,274 @@
+Subject: [PATCH] OneWifi: configure client collectors from their typed radio policy
+
+The client collector passed (wifi_app_t *, wifi_monitor_data_t *) to a helper
+expecting (wifi_monitor_data_t *, em_config_t *). Even successful cached
+provider callbacks therefore did not prove that the requested native radio
+collector had been configured. Standalone link requests also lacked explicit
+radio indices and a nonzero sampling interval.
+
+Use the caller's actual policy for AP and standalone link collection. Validate
+counts and mapped identities before writing monitor requests, initialize every
+radio's immediate-start flag, bound VAP access/masks, and propagate admission
+and configuration failures. Keep the existing AP five-second cap and standalone
+ten-second sampling constant; no steering/verification deadline changes.
+
+This fixes proven source defects, not a claim that a particular old cached
+association was caused by them. Native getter/kernel membership and room
+convergence still require qualification after deployment.
+
+Upstream-Status: Pending
+
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -242,18 +242,28 @@
+ 
+ int em_common_config_to_monitor_queue(wifi_monitor_data_t *data, em_config_t *em_config)
+ {
+-    int index = RETURN_ERR;
++    int radio_indices[MAX_NUM_RADIOS];
++    mac_addr_t zero_mac = { 0 };
++    if (data == NULL || em_config == NULL) return RETURN_ERR;
+     int radio_count = em_config->radio_metrics_policies.radio_count;
++    if (radio_count < 0 || radio_count > MAX_NUM_RADIOS ||
++        radio_count > EM_MAX_RADIO_POLICY) return RETURN_ERR;
+ 
+-    for (int i = 0; i < radio_count; i++) {
+-        data[i].u.mon_stats_config.inst = wifi_app_inst_easymesh;
+-
+-        index = em_get_radio_index_from_mac(
+-            em_config->radio_metrics_policies.radio_metrics_policy[i].ruid);
+-
+-        if (index == RETURN_ERR) {
++    for (int policy_index = 0; policy_index < radio_count; ++policy_index) {
++        unsigned char *ruid = em_config->radio_metrics_policies.radio_metrics_policy[policy_index].ruid;
++        if ((ruid[0] & 1) != 0 || memcmp(ruid, zero_mac, sizeof(zero_mac)) == 0)
+             return RETURN_ERR;
+-        }
++        int radio_index = em_get_radio_index_from_mac(ruid);
++        if (radio_index < 0 || radio_index >= MAX_NUM_RADIOS ||
++            (unsigned int)radio_index >= getNumberRadios()) return RETURN_ERR;
++        for (int previous = 0; previous < policy_index; ++previous) {
++            if (radio_indices[previous] == radio_index) return RETURN_ERR;
++        }
++        radio_indices[policy_index] = radio_index;
++    }
++    for (int policy_index = 0; policy_index < radio_count; ++policy_index) {
++        data[policy_index].u.mon_stats_config.inst = wifi_app_inst_easymesh;
++        data[policy_index].u.mon_stats_config.args.radio_index = radio_indices[policy_index];
+     }
+     return RETURN_OK;
+ }
+@@ -1889,24 +1899,29 @@
+ {
+     rdk_wifi_vap_map_t *rdk_vap_map = NULL;
+     unsigned int count = 0;
++    if (radio_index >= MAX_NUM_RADIOS || radio_index >= getNumberRadios()) return RETURN_ERR;
+     rdk_vap_map = getRdkWifiVap(radio_index);
+     if (rdk_vap_map == NULL) {
+         wifi_util_error_print(WIFI_EM, "%s:%d: getRdkWifiVap failed for radio_index : %d\r\n",
+             __func__, __LINE__, radio_index);
+         return RETURN_ERR;
+     }
++    if (rdk_vap_map->num_vaps > MAX_NUM_VAP_PER_RADIO) return RETURN_ERR;
++    unsigned int mask = 0;
+     for (count = 0; count < rdk_vap_map->num_vaps; count++) {
+         if (!isVapSTAMesh(rdk_vap_map->rdk_vap_array[count].vap_index)) {
+-            client_assoc_stats[radio_index].req_stats_vap_mask |= (1
+-                << rdk_vap_map->rdk_vap_array[count].vap_index);
++            unsigned int vap_index = rdk_vap_map->rdk_vap_array[count].vap_index;
++            if (vap_index >= sizeof(mask) * 8) return RETURN_ERR;
++            mask |= (1U << vap_index);
+         }
+     }
++    client_assoc_stats[radio_index].req_stats_vap_mask |= mask;
+ 
+     return RETURN_OK;
+ }
+ 
+ int client_diag_config_to_monitor_queue(wifi_app_t *app, wifi_monitor_data_t *data,
+-    em_app_event_type_t app_etype)
++    em_app_event_type_t app_etype, em_config_t *em_config)
+ {
+     unsigned int vapArrayIndex = 0;
+     wifi_mgr_t *wifi_mgr = get_wifimgr_obj();
+@@ -1914,14 +1929,21 @@
+     int radio_count = -1;
+     unsigned int i = 0;
+ 
++    if (app == NULL || wifi_mgr == NULL ||
++        (app_etype != em_app_event_type_assoc_stats_rcpi_monitor &&
++         app_etype != em_app_event_type_assoc_dev_stats_periodic)) return RETURN_ERR;
+     em_route(&route);
+-    if (em_common_config_to_monitor_queue(app, data) != RETURN_OK) {
++    if (em_common_config_to_monitor_queue(data, em_config) != RETURN_OK) {
+         wifi_util_error_print(WIFI_EM, "%s:%d em Config creation failed %d\r\n", __func__, __LINE__,
+             stats_type_client);
+         return RETURN_ERR;
+     }
+ 
+-    radio_count = app->data.u.em_data.em_config.radio_metrics_policies.radio_count;
++    radio_count = em_config->radio_metrics_policies.radio_count;
++    for (int policy_index = 0; policy_index < radio_count; ++policy_index) {
++        unsigned int radio_index = data[policy_index].u.mon_stats_config.args.radio_index;
++        if (getNumberVAPsPerRadio(radio_index) > MAX_NUM_VAP_PER_RADIO) return RETURN_ERR;
++    }
+ 
+     for (i = 0; i < radio_count; i++) {
+         data[i].u.mon_stats_config.data_type = mon_stats_type_associated_device_stats;
+@@ -1942,17 +1964,18 @@
+             // for rcpi based link metrics sending, dont bother interval. Just sample every 10s and
+             // if crosses, send report to agent
+             data[i].u.mon_stats_config.args.app_info = em_app_event_type_assoc_stats_rcpi_monitor;
+-            data->u.mon_stats_config.start_immediately = true;
++            data[i].u.mon_stats_config.interval_ms = EM_DEF_LINK_METRICS_COLLECT_INTERVAL_MSEC;
++            data[i].u.mon_stats_config.start_immediately = true;
+ 
+             break;
+ 
+         case em_app_event_type_assoc_dev_stats_periodic:
+             data[i].u.mon_stats_config.args.app_info = em_app_event_type_assoc_dev_stats_periodic;
+             data[i].u.mon_stats_config.interval_ms =
+-                (app->data.u.em_data.em_config.ap_metric_policy.interval > 0 &&
+-                 app->data.u.em_data.em_config.ap_metric_policy.interval < 5 ?
+-                 app->data.u.em_data.em_config.ap_metric_policy.interval : 5) * 1000;
+-            data->u.mon_stats_config.start_immediately = true;
++                (em_config->ap_metric_policy.interval > 0 &&
++                 em_config->ap_metric_policy.interval < 5 ?
++                 em_config->ap_metric_policy.interval : 5) * 1000;
++            data[i].u.mon_stats_config.start_immediately = true;
+             break;
+ 
+         default:
+@@ -1968,8 +1991,8 @@
+                     .vaps.rdk_vap_array[vapArrayIndex]
+                     .vap_index;
+             if (!isVapSTAMesh(data[i].u.mon_stats_config.args.vap_index)) {
+-                push_event_to_monitor_queue(data + i, wifi_event_monitor_data_collection_config,
+-                    &route);
++                if (push_event_to_monitor_queue(data + i, wifi_event_monitor_data_collection_config,
++                    &route) != RETURN_OK) return RETURN_ERR;
+             }
+         }
+     }
+@@ -2322,7 +2345,12 @@
+ {
+     wifi_event_route_t route;
+     wifi_mgr_t *manager = get_wifimgr_obj();
+-    if (manager == NULL || em_common_config_to_monitor_queue(data, em_config) != RETURN_OK) return RETURN_ERR;
++    if (app == NULL || manager == NULL ||
++        em_common_config_to_monitor_queue(data, em_config) != RETURN_OK) return RETURN_ERR;
++    for (int index = 0; index < em_config->radio_metrics_policies.radio_count; ++index) {
++        if (getNumberVAPsPerRadio(data[index].u.mon_stats_config.args.radio_index) >
++            MAX_NUM_VAP_PER_RADIO) return RETURN_ERR;
++    }
+     em_route(&route);
+     for (int index = 0; index < em_config->radio_metrics_policies.radio_count; ++index) {
+         int radio_index = em_get_radio_index_from_mac(em_config->radio_metrics_policies.radio_metrics_policy[index].ruid);
+@@ -2333,14 +2361,16 @@
+         data[index].u.mon_stats_config.args.scan_mode = WIFI_RADIO_SCAN_MODE_NONE;
+         data[index].u.mon_stats_config.interval_ms = 1000;
+         data[index].u.mon_stats_config.start_immediately = true;
+-        push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config, &route);
++        if (push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config,
++            &route) != RETURN_OK) return RETURN_ERR;
+         data[index].u.mon_stats_config.data_type = mon_stats_type_vap_stats;
+         data[index].u.mon_stats_config.args.app_info = em_app_event_type_vap_stats_periodic;
+         data[index].u.mon_stats_config.interval_ms = 5000;
+         for (unsigned int vap_index = 0; vap_index < getNumberVAPsPerRadio(radio_index); ++vap_index) {
+             data[index].u.mon_stats_config.args.vap_index =
+                 manager->radio_config[radio_index].vaps.rdk_vap_array[vap_index].vap_index;
+-            push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config, &route);
++            if (push_event_to_monitor_queue(data + index, wifi_event_monitor_data_collection_config,
++                &route) != RETURN_OK) return RETURN_ERR;
+         }
+     }
+     return em_ap_report_config_task(app, em_config, state, 0, policy_type);
+@@ -2349,6 +2379,8 @@
+ int ap_metrics_config_to_monitor_queue(wifi_app_t *app, wifi_monitor_data_t *data,
+     wifi_mon_stats_request_state_t state, em_config_t *em_config)
+ {
++    if (app == NULL || em_common_config_to_monitor_queue(data, em_config) != RETURN_OK)
++        return RETURN_ERR;
+     int interval = em_config->ap_metric_policy.interval;
+     radio_metrics_policy_t *metrics_pol = NULL;
+     em_policy_req_type_t ap_metrics_inclusion = em_ap_metrics_none;
+@@ -2389,7 +2421,8 @@
+     case em_ap_metrics_link:
+     case em_ap_metrics_traffic:
+     case em_ap_metrics_link_and_traffic:
+-        client_diag_config_to_monitor_queue(app, data, em_app_event_type_assoc_dev_stats_periodic);
++        if (client_diag_config_to_monitor_queue(app, data,
++            em_app_event_type_assoc_dev_stats_periodic, em_config) != RETURN_OK) return RETURN_ERR;
+ 
+         wifi_util_dbg_print(WIFI_EM, "%s:%d collect link/trafic/both as part of AP Metrics\r\n",
+             __func__, __LINE__);
+@@ -2407,17 +2440,23 @@
+ {
+     wifi_monitor_data_t *data = NULL;
+     int ret = RETURN_ERR;
++    if (app == NULL || em_config == NULL ||
++        (policy != em_policy_req_type_link_metrics && policy != em_policy_req_type_ap_metrics))
++        return RETURN_ERR;
+     int radio_count = em_config->radio_metrics_policies.radio_count;
++    if (radio_count < 0 || radio_count > MAX_NUM_RADIOS ||
++        radio_count > EM_MAX_RADIO_POLICY) return RETURN_ERR;
+     int i = 0;
+ 
+     wifi_util_dbg_print(WIFI_EM, "%s:%d radio_count %d\r\n", __func__, __LINE__, radio_count);
+ 
+-    data = (wifi_monitor_data_t *)malloc(radio_count * sizeof(wifi_monitor_data_t));
++    size_t data_size = (radio_count > 0 ? radio_count : 1) * sizeof(wifi_monitor_data_t);
++    data = (wifi_monitor_data_t *)malloc(data_size);
+     if (data == NULL) {
+         wifi_util_error_print(WIFI_EM, "%s:%d data allocation failed\r\n", __func__, __LINE__);
+         return RETURN_ERR;
+     }
+-    memset(data, 0, radio_count * sizeof(wifi_monitor_data_t));
++    memset(data, 0, data_size);
+ 
+     for (i = 0; i < radio_count; i++) {
+         data[i].u.mon_stats_config.req_state = state;
+@@ -2427,7 +2466,7 @@
+     case em_policy_req_type_link_metrics:
+         wifi_util_dbg_print(WIFI_EM, "%s:%d em_policy_req_type_link_metrics\n", __func__, __LINE__);
+         ret = client_diag_config_to_monitor_queue(app, data,
+-            em_app_event_type_assoc_stats_rcpi_monitor);
++            em_app_event_type_assoc_stats_rcpi_monitor, em_config);
+         break;
+ 
+     case em_policy_req_type_ap_metrics:
+@@ -2439,7 +2478,7 @@
+         break;
+     }
+ 
+-    if (ret == RETURN_ERR) {
++    if (ret != RETURN_OK) {
+         wifi_util_error_print(WIFI_EM, "%s:%d Event trigger failed for %d\r\n", __func__, __LINE__,
+             stats_type_client);
+         free(data);
+@@ -2489,6 +2528,7 @@
+ 
+ int handle_em_webconfig_event(wifi_app_t *app, wifi_event_t *event)
+ {
++    if (app == NULL) return RETURN_ERR;
+     em_config_t *current_policy_cfg = &app->data.u.em_data.em_config;
+     int temp_count = 0;
+     bool size_change;
+@@ -2541,12 +2581,12 @@
+                     temp_count * sizeof(radio_metrics_policy_t));
+             }
+ 
+-            push_em_config_event_to_monitor_queue(app, mon_stats_request_state_start,
+-                em_policy_req_type_link_metrics, current_policy_cfg);
++            if (push_em_config_event_to_monitor_queue(app, mon_stats_request_state_start,
++                em_policy_req_type_link_metrics, current_policy_cfg) != RETURN_OK) return RETURN_ERR;
+         } else {
+             // stop monitoring if 0
+-            push_em_config_event_to_monitor_queue(app, mon_stats_request_state_stop,
+-                em_policy_req_type_link_metrics, current_policy_cfg);
++            if (push_em_config_event_to_monitor_queue(app, mon_stats_request_state_stop,
++                em_policy_req_type_link_metrics, current_policy_cfg) != RETURN_OK) return RETURN_ERR;
+         }
+     }
+ #if 0
+
