@@ -44,6 +44,9 @@ python3 gen/tests/hal-candidate-identity-test.py "$HAL_SOURCE/src/wifi_hal.c"
 These exercise the policy, wire bounds, concurrent candidate-query ownership and
 actual controller/agent handler code with stubbed external dependencies. They do
 not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
+The controller fixture checks bounded post-success topology queries and immediate
+fresh-serving collection after an observed parent change, without treating a
+successful response as authoritative topology or fabricated link evidence.
 The agent bus fixture uses RBUS's real counted-string convention (length excludes
 the terminator), also checks explicitly terminated replies, and rejects empty,
 oversized and embedded-NUL interface names before any steering write.

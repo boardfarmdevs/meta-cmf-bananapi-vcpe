@@ -172,6 +172,12 @@ apart, with the same message ID and without extending its deadline.
 The controller separately requires the actual new topology parent and a fresh
 serving measurement before logging `Native backhaul verified`; a response alone
 does not rewrite the topology. Its verification deadline is fifteen seconds.
+After a correlated success, the next native tick requests topology directly
+from the moved agent, at most three times two seconds apart. Once that native
+observation confirms the new parent, it requests fresh serving AP metrics
+without waiting for the periodic cadence. A successful response cannot invent
+a parent or measurement; the bounded refresh avoids false timeouts caused by
+waiting for unrelated periodic topology discovery.
 Failure does not prove OneWifi stopped its asynchronous connection attempt.
 An unresolved handover therefore remains recorded: its node cannot become a
 new target's ancestor, and that node can retry only the same requested parent,

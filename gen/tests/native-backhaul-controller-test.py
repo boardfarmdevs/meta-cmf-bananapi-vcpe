@@ -7,6 +7,7 @@ import tempfile
 root = Path(sys.argv[1])
 source = (root / "src/ctrl/em_backhaul_ctrl.cpp").read_text()
 handler = source[source.index("bool em_ctrl_t::handle_native_backhaul_frame"):]
+refresh = source[source.index("void em_ctrl_t::collect_native_backhaul_refresh"):source.index("void em_ctrl_t::handle_native_backhaul_tick")]
 header = (root / "inc/em_ctrl.h").read_text()
 state = header[header.index("    struct backhaul_query_t"):header.index("    void handle_native_backhaul_tick();")]
 serving_marker = source.index("backhaul_query_t serving_query")
@@ -26,6 +27,9 @@ struct __attribute__((packed)) em_assoc_link_metrics_t { unsigned char bytes[19]
 struct __attribute__((packed)) em_unassoc_sta_metric_t { unsigned char bytes[12]; };
 struct __attribute__((packed)) em_bh_steering_resp_t { unsigned char bytes[13]; };
 enum {
+    em_msg_type_topo_query = 0x0002,
+    em_tlv_type_profile = 0xb3,
+    em_profile_type_3 = 3,
     em_msg_type_1905_ack = 0x8000,
     em_msg_type_ap_metrics_query = 0x800b,
     em_msg_type_ap_metrics_rsp = 0x800c,
@@ -53,7 +57,10 @@ STATE
 AP_QUERIES
     }
     bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em);
+    void collect_native_backhaul_refresh(const em_backhaul::snapshot &network, int64_t now,
+        std::vector<std::vector<unsigned char>> &outgoing);
 };
+REFRESH
 HANDLER
 int main() {
     em_ctrl_t controller;
@@ -179,11 +186,51 @@ int main() {
     assert(send(em_backhaul::frame(control, child, 0x801a, 80, 0x9f, reply)));
     assert(controller.m_backhaul_steer.response);
     assert(network.nodes[child].parent_bssid == bssid);
+    std::vector<std::vector<unsigned char>> refreshes;
+    controller.m_backhaul_last_query = 11900;
+    controller.collect_native_backhaul_refresh(network, 12000, refreshes);
+    assert(refreshes.size() == 1);
+    const auto &refresh = refreshes.front();
+    assert(backhaul_mac(refresh.data()) == child);
+    assert(backhaul_mac(refresh.data() + 6) == control);
+    assert(em_backhaul::read16(refresh.data() + 16) == em_msg_type_topo_query);
+    assert(refresh[22] == em_tlv_type_profile && refresh[25] == em_profile_type_3);
+    assert(network.nodes[child].parent_bssid == bssid);
+    assert(controller.m_backhaul_last_query == 11900);
+    assert(!controller.m_backhaul_steer.parent_observed);
+    assert(send(em_backhaul::frame(control, child, 0x801a, 80, 0x9f, reply)));
+    controller.collect_native_backhaul_refresh(network, 13999, refreshes);
+    assert(refreshes.size() == 1);
+    controller.collect_native_backhaul_refresh(network, 14000, refreshes);
+    controller.collect_native_backhaul_refresh(network, 16000, refreshes);
+    controller.collect_native_backhaul_refresh(network, 18000, refreshes);
+    assert(refreshes.size() == 3);
+    network.nodes[child].parent_bssid = target_bssid;
+    controller.collect_native_backhaul_refresh(network, 18001, refreshes);
+    assert(controller.m_backhaul_steer.parent_observed);
+    assert(controller.m_backhaul_last_query == 0);
+    assert(network.nodes[child].serving.observed == 11000);
+    controller.m_backhaul_last_query = 18001;
+    controller.collect_native_backhaul_refresh(network, 18002, refreshes);
+    assert(controller.m_backhaul_last_query == 18001);
+    assert(refreshes.size() == 3);
+    network.nodes[child].parent_bssid = bssid;
     reply.back() = 1;
     assert(send(em_backhaul::frame(control, child, 0x801a, 80, 0x9f, reply)));
     assert(controller.m_backhaul_steer.mid == 0);
     assert(controller.m_backhaul_uncertain.at(child).failures == 1);
     assert(controller.m_backhaul_uncertain.at(child).request.target == target_bssid);
+    controller.collect_native_backhaul_refresh(network, 18003, refreshes);
+    assert(refreshes.size() == 3);
+    for (unsigned int variant = 0; variant < 4; ++variant) {
+        controller.m_backhaul_steer = {{child, station, bssid, target_bssid, 62, 92, 66}, 80, 11000, true};
+        if (variant == 0) controller.m_backhaul_steer.response = false;
+        if (variant == 1) controller.m_backhaul_steer.mid = 0;
+        if (variant == 2) controller.m_backhaul_steer.sent = -3000;
+        if (variant == 3) controller.m_backhaul_steer.request.sta = parent;
+        controller.collect_native_backhaul_refresh(network, 12000, refreshes);
+        assert(refreshes.size() == 3);
+    }
     em_ctrl_t poller;
     poller.m_backhaul_controller = control;
     poller.m_backhaul_network = network;
@@ -211,10 +258,11 @@ int main() {
         }
     }
     assert(leaf_queried);
+    std::cout << "PASS: correlated handover success triggers bounded targeted topology refresh; observed parent changes trigger fresh metrics without inventing evidence\n";
     std::cout << "PASS: production polling includes childless APs; their native replies exercise idle uplinks without inventing serving samples\n";
     std::cout << "PASS: production controller wire handler enforces MID, sender, destination, STA, parent epoch, channel, freshness, RCPI and native completion ownership\n";
 }
-'''.replace("STATE", state).replace("HANDLER", handler).replace("AP_QUERIES", ap_queries)
+'''.replace("STATE", state).replace("HANDLER", handler).replace("AP_QUERIES", ap_queries).replace("REFRESH", refresh)
 with tempfile.TemporaryDirectory(prefix="native-backhaul-controller-") as temporary:
     executable = Path(temporary) / "test"
     subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
