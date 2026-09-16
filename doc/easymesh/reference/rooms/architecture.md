@@ -194,6 +194,13 @@ link, subject to the native safety and stability guards.
 
 ## Read-only topology positioning
 
+Station persistence shares the topology-notification mutex while traversing and
+committing association, departure and metrics records (native patch0199). This
+closes a lookup-to-update race that produced a null station write during0916
+startup; it complements the earlier topology-encoding lifetime fix0193. Missing
+direct updates are ignored rather than resurrecting a departed station. The
+lock is released before unrelated tables and topology publication.
+
 The room exposes `GET /api/demo/mesh-layout`: five or fewer mapped mesh device
 IDs, stable room roles and committed positions, plus run/world/sequence and
 observation timestamps. It projects cached event state under its existing lock;

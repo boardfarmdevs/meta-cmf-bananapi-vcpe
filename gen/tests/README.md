@@ -32,6 +32,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -pthread -I "$NATIVE_SOURCE/inc" \
 /tmp/native-backhaul-policy-test
 python3 gen/tests/native-backhaul-controller-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-backhaul-agent-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-station-persistence-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"
 python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
 python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
@@ -44,6 +45,9 @@ python3 gen/tests/hal-candidate-identity-test.py "$HAL_SOURCE/src/wifi_hal.c"
 These exercise the policy, wire bounds, concurrent candidate-query ownership and
 actual controller/agent handler code with stubbed external dependencies. They do
 not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
+The station-persistence fixture compiles the actual native persistence block and
+station update methods. A deterministic concurrent departure cannot invalidate
+the lookup/DB/map transaction; an absent direct update cannot recreate a client.
 The controller fixture checks bounded post-success topology queries and immediate
 fresh-serving collection after an observed parent change, without treating a
 successful response as authoritative topology or fabricated link evidence.
