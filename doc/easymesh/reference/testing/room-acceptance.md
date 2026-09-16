@@ -1,5 +1,12 @@
 # Room correctness and convergence acceptance
 
+The 0916 release retry batches received-band status checks and native scan
+dump in one namespace worker, removing three redundant LXD exec round trips.
+The client's own iw/mount namespace supplies the dump. Two-second freshness,
+world/association guards, correlated passive scan completion and steering
+exclusion remain unchanged. Retain the earlier band-counter-roam freshness
+failure and compare duration/publication telemetry in the live retry.
+
 Linux observers with render-device access may use `--renderer vulkan` to
 avoid software-rendering stalls. SwiftShader remains the portable default.
 The harness records the actual WebGL renderer and rejects missing hardware
