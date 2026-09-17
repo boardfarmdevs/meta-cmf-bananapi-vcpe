@@ -27,6 +27,22 @@ Whole-second prpl candidate timestamps can require a recorded wait until the
 baseline second ends. RDK native command admission and response timeouts remain
 a real constraint. Neither backend has a zero-outside-stack-latency guarantee.
 
+### RDK client membership
+
+OneWifi's existing HAL collector reconciles the associated-client cache after
+a successful complete VAP collection, including an empty result. A connection
+event counts as connection history even before the first diagnostic sample
+has accumulated connected time. Omitted clients become inactive through the
+normal departure path; cached providers and full-list getters must not retain
+them merely because their accumulated counter is still zero.
+
+Connection timestamps and collection ordering use the monotonic clock.
+Association-request-only expiry uses wall time, matching the stored frame
+timestamp. A connection event newer than the collection's start is not
+withdrawn by that older observation. Failed HAL calls, invalid result pointers
+and incomplete allocation do not authorize an absent-client sweep. This uses
+the existing collector cadence, not another poller or a controller-side filter.
+
 ## Select one authority
 
 | Room CLI mode | Client steering | Backhaul |

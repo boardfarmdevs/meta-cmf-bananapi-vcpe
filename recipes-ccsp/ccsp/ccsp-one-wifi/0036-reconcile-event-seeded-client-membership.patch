@@ -1,0 +1,104 @@
+From: EasyMesh lab maintainers
+Subject: [PATCH] Reconcile event-seeded clients after complete HAL collections
+
+A connection event records a monotonic last_connected_time before any
+collected uptime exists. Classifying it by total_connected_time instead
+leaves active cache rows in the request-only branch. That branch also
+compared monotonic uptime against the wall-clock association frame time.
+
+Use connection history for departures and the matching wall clock for
+request expiry. Do not withdraw a newer connection using an older HAL
+collection, or interpret failed/incomplete collection as absence.
+
+--- a/source/stats/wifi_stats_assoc_client.c
++++ b/source/stats/wifi_stats_assoc_client.c
+@@ -164,7 +164,8 @@
+     int mld_mac_present = 0;
+     mac_address_t zero_mac = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+     wifi_platform_property_t *wifi_prop = get_wifi_hal_cap_prop();
+-    struct timespec tv_now, t_diff, t_tmp;
++    struct timespec tv_now, t_diff, t_tmp, collection_started;
++    time_t wall_now;
+     unsigned int disconnected_time;
+     bool link_quality_measurement = false;
+     bool rf_down_mesh_sta = false;
+@@ -173,7 +174,7 @@
+     
+     wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
+ 
+-    if (c_elem == NULL) {
++    if (c_elem == NULL || mon_data == NULL) {
+         wifi_util_error_print(WIFI_MON, "%s:%d input arguments are NULL args : %p\n", __func__,
+             __LINE__, c_elem);
+         return RETURN_ERR;
+@@ -239,8 +240,11 @@
+             __LINE__, link_quality_measurement, rf_down_mesh_sta);
+     }
+ 
++    if (clock_gettime(CLOCK_MONOTONIC, &collection_started) != 0) {
++        return RETURN_ERR;
++    }
+     ret = wifi_getApAssociatedDeviceDiagnosticResult3(args->vap_index, &dev_array, &num_devs);
+-    if (ret != RETURN_OK) {
++    if (ret != RETURN_OK || (num_devs > 0 && dev_array == NULL)) {
+         wifi_util_error_print(WIFI_MON,
+             "%s : %d  Failed to get AP Associated Devices statistics for vap index %d \r\n",
+             __func__, __LINE__, args->vap_index);
+@@ -326,8 +330,18 @@
+         }
+     }
+ 
+-    clock_gettime(CLOCK_MONOTONIC, &tv_now);
++    if (clock_gettime(CLOCK_MONOTONIC, &tv_now) != 0) {
++        free(dev_array);
++        pthread_mutex_unlock(&mon_data->data_lock);
++        return RETURN_ERR;
++    }
++    wall_now = time(NULL);
+     sta_map = mon_data->bssid_data[vap_array_index].sta_map;
++    sta = hash_map_get_first(sta_map);
++    while (sta != NULL) {
++        sta->updated = false;
++        sta = hash_map_get_next(sta_map, sta);
++    }
+ 
+     if (num_devs != 0) {
+         wifi_util_dbg_print(WIFI_MON, "%s:%d ap_index:%d num_devs:%d\r\n", __func__, __LINE__,
+@@ -442,6 +456,11 @@
+             }
+         }
+     }
++    if (i != num_devs) {
++        free(dev_array);
++        pthread_mutex_unlock(&mon_data->data_lock);
++        return RETURN_ERR;
++    }
+     disconnect_event_queue = queue_create();
+     if (disconnect_event_queue == NULL) {
+         wifi_util_error_print(WIFI_MON, "%s:%d Failed to create queue\n", __func__, __LINE__);
+@@ -458,8 +477,12 @@
+         if (sta->updated == true) {
+             sta->updated = false;
+         } else {
+-
+-            if (timespecisset(&(sta->total_connected_time))) {
++            if (timespeccmp(&(sta->last_connected_time), &collection_started, >)) {
++                sta = hash_map_get_next(sta_map, sta);
++                continue;
++            }
++            if (timespecisset(&(sta->last_connected_time)) ||
++                timespecisset(&(sta->total_connected_time))) {
+                 if (sta->dev_stats.cli_Active == true) {
+                     sta->last_disconnected_time.tv_sec = tv_now.tv_sec;
+                     sta->last_disconnected_time.tv_nsec = tv_now.tv_nsec;
+@@ -528,7 +551,9 @@
+                 }
+             } else {
+                 // client never connected, only storing the assoc request.
+-                if (tv_now.tv_sec - sta->assoc_frame_data.frame_timestamp > 5) {
++                if (wall_now != (time_t)-1 &&
++                    wall_now >= sta->assoc_frame_data.frame_timestamp &&
++                    wall_now - sta->assoc_frame_data.frame_timestamp > 5) {
+                     // remove this entry after 5 seconds, should not trigger a disconnect event.
+                     send_disconnect_event = 0;
+                     tmp_sta = sta;
