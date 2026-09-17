@@ -1,52 +1,70 @@
 # Current RDK lab
 
-Reviewed 16 September 2026. This is a deployment summary, not a live health
+Reviewed 17 September 2026. This is a deployment summary, not a live health
 monitor; use [operations](guide/operations.md) for current service checks.
 
-## Source and deployments
+## Identity and release status
 
 | Item | Current value |
 | --- | --- |
 | Canonical branch | `codex/0916-clean` |
 | Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0916-clean/meta-cmf-bananapi-vcpe` |
-| Running qualification appliance | `rev140:rdkeasymesh-0916`; fresh Yocto build, not released |
-| Qualified room/runtime source | `0e1dce8` |
+| Candidate appliance | `rev140:rdkeasymesh-0916` |
+| Packaged runtime/source origin | `294dd6d394663d08edf2cd68f31d496ad4b7b6cc` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
 | Fixed pool | 100 clients; five mesh containers / six displayed roles |
-| Rollback | `rdkeasymesh-0913` stopped; previous downloads retained |
-| prplMesh peer | Independent repository and appliance on rev150 |
+| Release classification | 0916 candidate with known issues; not fully room-qualified |
+| prplMesh peer | Separate repository and appliance on rev150 |
 
 Controller and Agent-1 share the root container; four extenders complete the
 mesh. Default selects ten private and ten IoT clients. Loading a room does not
-resize the permanent container/radio pool. VM autostart is disabled; manually
-starting the VM starts its lab.
+resize the permanent container/radio pool. Outer VM autostart is disabled.
 
-Both fresh 0916 Yocto images build using `/home/rev/oe/downloads` and
-`/home/rev/oe/sstate-cache`. The patched controller retains the station-lifetime
-repair and native AP threshold/query handling.
+Both final Yocto images build using `/home/rev/oe/downloads` and
+`/home/rev/oe/sstate-cache`. The station-lifetime repair, native AP threshold/query
+handling and proactive native backhaul steering remain included. Documentation
+updates after the runtime commit do not imply rebuilt native binaries.
 
-The 100-client baseline and **22/22 client rooms** pass, with independent
-report validation, unchanged native identities and default twenty restoration.
-Geometry branch and isolation/recovery also pass. The new stronger-parent
-handover assertion remains unresolved: a usable 11 dB parent is retained despite
-a 26 dB relay. The original room observed native choice, not guaranteed
-proactive strongest-parent policy. Native measured backhaul steering is now
-implemented with focused policy, wire, agent-actuation and measurement-ownership
-regressions. Its first synchronized images built successfully; cold-start
-qualification then exposed OneWifi dropping native AP queries before any
-reporting policy was installed. The policy-independent query fix now passes
-eight focused production-dispatch/report groups, including interval zero,
-inactive rows and failed/empty samples. Updated builds and live qualification
-remain pending.
-Release remains held for both-direction handover and the complete catalog.
-The earlier client-room result does not qualify this new native runtime.
-This is not 25/25 qualification.
-Evidence remains under `/home/rev/work/release-0916/evidence/` on rev150.
+## Qualification and remaining failures
 
-## Browser addresses
+The latest normal lifecycle passes all 105 containers, 100 client identities and
+an independent audit covering exactly 100 unique clients with zero packet loss.
+Final-image/runtime alignment, retained assets, initial Default-20 restoration
+and the bounded zero-additional-medium-receive-drop observation also pass.
 
-These temporary ports serve the running qualification VM:
+**The subsequent geometry branch room fails complete convergence and its bounded
+Default recovery check.** It does form valid rooted branches:
+ext3→ext1→agent-1 and ext4→ext2→agent-1. The combined uplink/client/traffic/two-view
+predicate fails; a visible branch is not full-room acceptance. Samples include
+missing fresh candidate metrics, incomplete model associations and HTTP 503
+candidate-query responses. These are symptoms, not an established root cause.
+
+That focused failure stopped the latest full 22-client-room + 3-geometry-room
+campaign and later pool qualification. Older room passes do not qualify this
+exact runtime. Current-source handover and outage acceptance remain incomplete.
+Live medium replacement is not qualified; use the normal lab stop/start lifecycle.
+
+The later export prerequisite again passed all 100 traffic probes but failed
+the expected 5-device/15-radio/50-BSS/104-STA topology-model counts. Its failed
+audit is retained. A private, explicitly recorded candidate-packaging wrapper
+skips that qualification call; tracked acceptance gates and native code remain
+unchanged. Packaging is not a topology-audit pass.
+
+The owner requested packaging with these limitations on 17 September, without
+further debugging. This supersedes the earlier hold for complete room acceptance;
+it does not turn failed or unexecuted tests into passes.
+
+Evidence on rev150 is under `/home/rev/work/release-0916/`, particularly:
+
+- `evidence/rdk-native-reconstruction-294dd6d-medium-01/`
+- `evidence/rdk-image-runtime-alignment-294dd6d-medium-01/`
+- `evidence/rdk-native-geometry-294dd6d-medium-01/rdk-native-geometry-20260917T155634Z/results/report.json`
+
+## Access and distribution
+
+Candidate forwarding is configured for these addresses. Packaging temporarily
+stops services; an address is not a promise of current health.
 
 | View | rev140 RDK |
 | --- | --- |
@@ -54,48 +72,40 @@ These temporary ports serve the running qualification VM:
 | Network topology | <http://192.168.2.140:49889/> |
 | wmediumd console | <http://192.168.2.140:49890/> |
 
-Normal 48889/48890/48891 and monitoring 48892/48893 ports still target the stopped
-rollback, not the candidate. Monitoring follows accepted sanitized export so
-enrollment credentials cannot enter release images; it is not installed on
-0916 yet. The supported setup covers all 105 nested containers and the outer VM;
-see [monitoring](reference/observability/monitoring.md).
+Packaging alone does not promote production ports 48889/48890/48891 or enroll
+monitoring on 48892/48893. Use the [monitoring guide](reference/observability/monitoring.md)
+for nested-container and outer-VM metrics. No `?mode=` is needed. Proxy devices
+survive reboot; management interfaces require a trusted LAN/VPN.
 
-No `?mode=` is needed. Proxy devices survive reboot; wait for guest services
-rather than recreating forwarding. Management requires a trusted LAN/VPN.
+0916 artifacts belong under `/home/rev/releases/0916/`: RDK thin tar, RDK
+VirtualBox box and its Windows/Vagrant wrapper. Adjacent SHA-256 files,
+`release.json`, `KNOWN-ISSUES-0916.md` and packaging receipts identify actual
+inputs and completed checks. Archive integrity, exact-archive fresh import,
+Linux VirtualBox boot and Windows testing are separate claims. Unrecorded
+checks are not passed. See [release information](release-notes.md).
 
-## Distribution artifacts
+The 0916 box builds and passes archive checks. Its bounded rev120 Vagrant smoke
+stopped before boot because querying a pre-existing inaccessible VirtualBox
+registration returned `E_ACCESSDENIED`. Boot/login, native pool provisioning and
+Windows operation remain unverified. `CANDIDATE-BOOT.json` and `BOOT-LOG.txt`
+inside the VirtualBox wrapper record the attempt; no unrelated VM was modified
+to work around the failure.
 
-**No 0916 thin tar or VirtualBox box has been published.** Exact-tar import,
-monitoring promotion and old-download cleanup remain pending acceptance.
-See [release information](release-notes.md).
+Verified older downloads and rollback material remain on rev140. Redundant
+rev150 copies were removed only after full hash verification, recovering
+77.17 GiB; shared OE caches and unique evidence were preserved.
 
-Recorded rollback artifacts are mirrored under `/home/rev/releases/0913/`:
+## Supported behavior and boundaries
 
-- `rdkeasymesh-0913-thin.tar`: universal LXD import.
-- `rdkeasymesh-0913-virtualbox.tar`: Windows/Vagrant wrapper.
-- `rdkeasymesh-0913-virtualbox/rdkeasymesh-0913-virtualbox.box`: actual box.
-
-Adjacent SHA-256 files, bundle `release.json` and `rdk-0913-acceptance.json`
-record exact source/image/archive identities. Historical acceptance does not
-qualify the current candidate. The previous box is artifact-validated but
-boot-unverified; rev120 remains unreachable, so no new actual VirtualBox or
-Windows boot is claimed.
-
-## Supported behavior and limits
-
-- Loading applies a world immediately. Play, drag, presence, traffic probes,
-  shared signal colors, fullscreen and room-following topology are implemented.
-- The reference optimizer supplies client policy through unassisted native BTM;
-  this does not assert native autonomous optimization.
+- Loading immediately applies a world. Play, drag, presence, traffic probes,
+  shared signal colors, fullscreen and room-following topology remain supported.
+- The external reference optimizer supplies client policy through native BTM;
+  this is not a claim of native autonomous client optimization.
 - Most rooms protect startup backhaul; three geometry rooms change AP-to-AP RF
-  without selecting parents. Recovery and proactive parent optimization differ.
-- RF/association-scoped caches, generation guards and native band/ownership
-  audits remain required. No stale measurement may become fresh by retrying.
-- Strict convergence includes membership, physical/native ownership, fresh
-  eligible candidates and traffic, not just a green badge or accepted request.
-- Keep host cooling, observer load and native performance separately attributed.
-  Monitoring guest resources is not measuring physical-host totals or
-  subsecond steering latency.
+  without externally choosing parents. Loss recovery and proactive steering differ.
+- Convergence requires membership, native ownership, fresh eligible candidates
+  and traffic, not just a green badge or an accepted steering request.
+- Keep host cooling and observer load separately attributed. Grafana guest
+  resource metrics do not measure physical-host totals or subsecond roam latency.
 - [Neighbor-network rooms](reference/proposals/neighbor-rooms/design.md) remain
-  proposed; use [room acceptance](reference/testing/room-acceptance.md) for
-  bounded test contracts and retained evidence.
+  proposed; [room acceptance](reference/testing/room-acceptance.md) defines tests.
