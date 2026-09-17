@@ -77,6 +77,17 @@ monitoring on 48892/48893. Use the [monitoring guide](reference/observability/mo
 for nested-container and outer-VM metrics. No `?mode=` is needed. Proxy devices
 survive reboot; management interfaces require a trusted LAN/VPN.
 
+### Post-export appliance state
+
+The 0916 export thinned the running qualification appliance and started its
+normal 100-client reconstruction. At the final packaging check, the bounded
+outer restoration wrapper had ended while `easymesh-thin-firstboot.service` was
+still active. `easymesh-lab.service` and `easymesh-room-demo.service` were
+inactive, so the RDK room URL must be treated as unavailable until that normal
+first-boot service completes. This is an operational recovery limitation; it was
+recorded without debugging or forcing the service. See the release-side
+`PACKAGING-STATUS.md` for the timestamp and evidence location.
+
 0916 artifacts belong under `/home/rev/releases/0916/`: RDK thin tar, RDK
 VirtualBox box and its Windows/Vagrant wrapper. Adjacent SHA-256 files,
 `release.json`, `KNOWN-ISSUES-0916.md` and packaging receipts identify actual
