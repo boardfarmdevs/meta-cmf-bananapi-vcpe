@@ -135,17 +135,19 @@ configuration, native steering and measurement deadlines are unchanged.
  #define SCORE_TIE_THRESHOLD 1
  #define WIFI_VARIANT_BE 7
  #define WIFI_VARIANT_AX 6
-@@ -2119,6 +2121,9 @@
-     if (sta_data->stats.connect_status == wifi_connection_status_connected) {
-         int radio_freq_band = 0;
+@@ -2112,6 +2114,11 @@
+     }
  
-+        if (wifi_hal_backhaul_root_loss(sta_data->stats.vap_index) != RETURN_OK)
-+            wifi_util_error_print(WIFI_CTRL, "Backhaul admission: downstream quiesce failed\n");
++    if (temp_vap_info != NULL &&
++        sta_data->stats.connect_status == wifi_connection_status_connected &&
++        wifi_hal_backhaul_root_loss(sta_data->stats.vap_index) != RETURN_OK)
++        wifi_util_error_print(WIFI_CTRL, "Backhaul admission: downstream quiesce failed\n");
 +
-         /* A connected event is authoritative even when this is a live
-          * reparent and the service state was already connected. */
-         memset(&ext->last_connected_bss, 0, sizeof(bss_candidate_t));
-@@ -2278,6 +2283,9 @@
+     if (temp_vap_info == NULL) {
+         wifi_util_error_print(WIFI_CTRL, "%s:%d: temp_vap_info is NULL \n", __func__, __LINE__);
+         return RETURN_ERR;
+     }
+@@ -2278,6 +2285,9 @@
              return 0;
          }
  

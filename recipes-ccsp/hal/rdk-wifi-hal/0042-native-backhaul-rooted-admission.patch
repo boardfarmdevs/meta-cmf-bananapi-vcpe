@@ -4,8 +4,8 @@ Quiesce downstream backhaul BSSs and verify kernel link-down before every STA
 reconnect. Keep configured enable separate from operational admission. Reopen
 only with current-generation root proof from the native EasyMesh agent.
 
---- a/src/wifi_hal.c
-+++ b/src/wifi_hal.c
+--- a/wifi_hal.c
++++ b/wifi_hal.c
 @@ -30,6 +30,7 @@
  #include <sys/time.h>
  #include <sys/un.h>
@@ -253,8 +253,8 @@ only with current-generation root proof from the native EasyMesh agent.
                      wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__,
                          __LINE__, interface_name);
                      interface->beacon_set = 0;
---- a/src/wifi_hal_priv.h
-+++ b/src/wifi_hal_priv.h
+--- a/wifi_hal_priv.h
++++ b/wifi_hal_priv.h
 @@ -930,6 +930,13 @@
  INT wifi_hal_startScan(wifi_radio_index_t index, wifi_neighborScanMode_t scan_mode, INT dwell_time, UINT num, UINT *chan_list);
  INT wifi_hal_disconnect(INT ap_index);
@@ -277,8 +277,8 @@ only with current-generation root proof from the native EasyMesh agent.
  int     nl80211_kick_device(wifi_interface_info_t *interface, mac_address_t mac);
  int     nl80211_create_bridge(const char *if_name, const char *br_name);
  int     nl80211_set_iface_operstate(const char *ifname, unsigned char operstate);
---- a/src/wifi_hal_hostapd.c
-+++ b/src/wifi_hal_hostapd.c
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
 @@ -2446,6 +2446,9 @@
      interface->u.sta.state = state;
      vap = &interface->vap_info;
@@ -297,8 +297,8 @@ only with current-generation root proof from the native EasyMesh agent.
      int ret;
      struct hostapd_data *hapd = NULL;
      struct hostapd_bss_config *conf = NULL;
---- a/src/wifi_hal_nl80211.c
-+++ b/src/wifi_hal_nl80211.c
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
 @@ -4601,6 +4601,8 @@
      int fd, res;
      short flags;
@@ -317,8 +317,8 @@ only with current-generation root proof from the native EasyMesh agent.
          wifi_hal_dbg_print("%s:%d: Interface %s is in reconfiguration, skip set_ap\n", __func__,
              __LINE__, interface->name);
          return 0;
---- a/src/wifi_hal_nl80211_events.c
-+++ b/src/wifi_hal_nl80211_events.c
+--- a/wifi_hal_nl80211_events.c
++++ b/wifi_hal_nl80211_events.c
 @@ -843,6 +843,7 @@
  
      vap = &interface->vap_info;
@@ -327,8 +327,8 @@ only with current-generation root proof from the native EasyMesh agent.
      callbacks = get_hal_device_callbacks();
  
      if (callbacks->sta_conn_status_callback) {
---- a/src/wifi_hal_nl80211_utils.c
-+++ b/src/wifi_hal_nl80211_utils.c
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
 @@ -6354,7 +6354,8 @@
  
      interface->in_reconf = false;
