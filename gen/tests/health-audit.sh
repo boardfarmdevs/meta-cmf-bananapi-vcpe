@@ -157,14 +157,36 @@ status_section "End-to-end traffic"
 status_wait "Sending $ping_count packets from every client in parallel; maximum allowed loss is ${ping_max_loss}%."
 echo CONNECTIVITY
 traffic_fail=0
+[[ "$expected_clients" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "HEALTH_EXPECT_CLIENTS must be a positive integer" >&2; exit 2; }
+if ! traffic_inventory=$(lxc list -c n --format csv </dev/null); then
+    echo "FAIL: unable to enumerate clients for traffic audit" >&2
+    exit 1
+fi
+mapfile -t traffic_clients < <(printf '%s\n' "$traffic_inventory" \
+    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
+if [ "${#traffic_clients[@]}" -ne "$expected_clients" ]; then
+    echo "FAIL: traffic roster has ${#traffic_clients[@]} clients; expected $expected_clients" >&2
+    exit 1
+fi
+for ((client_index = 0; client_index < expected_clients; client_index++)); do
+    expected_client=wlan-client
+    if [ "$client_index" -gt 0 ]; then
+        printf -v expected_client 'wlan-client-%03d' "$client_index"
+    fi
+    if [ "${traffic_clients[$client_index]}" != "$expected_client" ]; then
+        echo "FAIL: traffic roster expected $expected_client; found ${traffic_clients[$client_index]}" >&2
+        exit 1
+    fi
+done
 declare -a traffic_pids=()
-while read -r client; do
+for client in "${traffic_clients[@]}"; do
     (
         ping_output=
         for ((attempt = 1; attempt <= ping_exec_attempts; attempt++)); do
             if ping_output=$(timeout "$ping_exec_timeout" \
                 lxc exec "$client" -- ping -q -c "$ping_count" \
-                -i "$ping_interval" -W 2 10.0.0.1 2>/dev/null); then
+                -i "$ping_interval" -W 2 10.0.0.1 </dev/null 2>/dev/null); then
                 break
             fi
             ping_output=
@@ -176,11 +198,16 @@ while read -r client; do
             && [ "$loss_value" -le "$ping_max_loss" ]
     ) &
     traffic_pids+=("$!")
-done < <(lxc list -c n --format csv \
-    | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
+done
+traffic_completed=0
 for pid in "${traffic_pids[@]}"; do
     wait "$pid" || traffic_fail=1
+    traffic_completed=$((traffic_completed + 1))
 done
+printf 'TRAFFIC_COVERAGE expected=%s scheduled=%s completed=%s\n' \
+    "$expected_clients" "${#traffic_pids[@]}" "$traffic_completed"
+[ "${#traffic_pids[@]}" -eq "$expected_clients" ] \
+    && [ "$traffic_completed" -eq "$expected_clients" ] || traffic_fail=1
 
 if [ -s "$results" ]; then
     echo MATRIX

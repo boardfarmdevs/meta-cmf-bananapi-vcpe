@@ -3,6 +3,14 @@
 Documentation-only check (no lab access): `python3 gen/tests/test_documentation.py`.
 This checks local files/anchors, navigation, guide sizes and packaged manual inputs.
 
+The asymmetric RF audit retries at most three complete read-only snapshots if
+playback changes the environment epoch or native generation during collection.
+Discarded samples remain in the evidence; run/world/daemon changes and query
+errors fail immediately. Its 10-second collection budget and 20-second process
+bound fit the existing 30-second caller timeout without pausing playback or
+changing RF settings or room deadlines. No coherent sample means failure.
+Offline check: `python3 -m pytest -q gen/tests/test_room_feature_rf_audit.py`.
+
 Phase 0 RF contract/provenance tests and the short read-only live audit are in
 the [RF assessment](../../doc/easymesh/reference/radio/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
 
@@ -1034,3 +1042,14 @@ normalized thin first-boot start/finish time, cumulative lifecycle milestones,
 relevant process details, and PSS/RSS, private memory, swap, threads and
 file-descriptor totals by functional group. Use the same profile and label in
 the prplMesh lab for direct comparison.
+
+## Native traffic coverage
+
+`health-audit.sh` snapshots and validates the complete expected client roster
+before launching parallel traffic probes. Probe stdin is disconnected from the
+roster, and every scheduled child must finish; short or duplicate rosters fail.
+The output includes `TRAFFIC_COVERAGE` counts. Packet counts, retry bounds and
+the zero-loss default are unchanged.
+
+Run the bounded production-section regression without a lab:
+`python3 gen/tests/health-audit-traffic-test.py gen/tests/health-audit.sh --output /tmp/health-traffic.json`.
