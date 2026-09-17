@@ -64,6 +64,7 @@ static int socket_failure, initial_read_failure = -1, readback_failure = -1, sti
 static int reload_failure = -1, restart_failure = -1, reopen_up_failure = -1;
 static int rng_mode, connect_failure, disconnect_during_reopen = -1;
 static int connect_calls, unsafe_connect, kernel_calls_while_locked;
+static int disconnect_calls, disconnect_failure, reconnect_during_reload = -1;
 static int stops[13], downs[13], reads[13], reloads[13], starts[13], ups[13];
 static int ordering[256], order_count;
 static const int station_index = 7;
@@ -84,6 +85,8 @@ static int nl80211_interface_enable(const char *ifname, bool enable);
 static int reload_interface(wifi_interface_info_t *interface);
 static int restart_interface(wifi_interface_info_t *interface);
 static int nl80211_connect_sta(wifi_interface_info_t *interface);
+static int nl80211_disconnect_sta(wifi_interface_info_t *interface);
+INT wifi_hal_disconnect(INT ap_index);
 static void *hash_map_get_first(hash_map_t *map);
 static void *hash_map_get_next(hash_map_t *map, void *current);
 static const char *get_vap_ssid(wifi_vap_info_t *vap);
@@ -214,7 +217,20 @@ static int reload_interface(wifi_interface_info_t *interface)
     int index = (int)interface->vap_info.vap_index;
     ++reloads[index];
     event(300 + index);
+    if (reconnect_during_reload == index) {
+        reconnect_during_reload = -1;
+        interfaces[station_index].u.sta.backhaul.bssid[5] ^= 1;
+        wifi_hal_backhaul_root_link(&interfaces[station_index], true);
+    }
     return reload_failure == index ? -1 : 0;
+}
+
+static int nl80211_disconnect_sta(wifi_interface_info_t *interface)
+{
+    if ((int)interface->vap_info.vap_index != station_index) return -1;
+    event(1100);
+    ++disconnect_calls;
+    return disconnect_failure ? -1 : 0;
 }
 
 static int restart_interface(wifi_interface_info_t *interface)
@@ -360,7 +376,12 @@ static const char *cases[] = {
     "duplicate-connected-callback", "secondary-sta-callback-isolation", "loss-closes-downstream",
     "loss-other-vap-nochange", "no-controller-proof-no-reopen", "peer-model-no-local-proof-shortcut",
     "name-gate-fronthaul-sta-excluded", "name-gate-blocks-real-iffup", "generation-all-eight-bytes",
-    "zero-radio-quiesce", "zero-radio-connect", "zero-radio-admit"
+    "zero-radio-quiesce", "zero-radio-connect", "zero-radio-admit",
+    "reload-before-stop-and-down", "revoke-current", "revoke-unadmitted",
+    "revoke-stale-generation", "revoke-stale-parent", "revoke-stale-station",
+    "revoke-disconnected", "revoke-other-vap", "revoke-null", "revoke-repeat",
+    "revoke-quiesce-failure-still-disconnects", "revoke-disconnect-failure-stays-closed",
+    "revoke-reconnect-during-quiesce"
 };
 
 static int run_case(const char *name)
@@ -368,6 +389,69 @@ static int run_case(const char *name)
     wifi_bss_info_t selected = target();
     unsigned char state[22], newer[22];
     memset(state, 0xa5, sizeof(state));
+    if (strcmp(name, "reload-before-stop-and-down") == 0) {
+        REQUIRE(wifi_hal_connect(station_index, &selected) == RETURN_OK);
+        for (int index = 0; index <= 8; index += 4) {
+            int reload_position = -1, stop_position = -1, down_position = -1;
+            for (int position = 0; position < order_count; ++position) {
+                if (ordering[position] == 300 + index && reload_position < 0) reload_position = position;
+                if (ordering[position] == index && stop_position < 0) stop_position = position;
+                if (ordering[position] == 100 + index && down_position < 0) down_position = position;
+            }
+            REQUIRE(reload_position >= 0 && reload_position < stop_position && stop_position < down_position);
+        }
+        return 0;
+    }
+    if (strncmp(name, "revoke-", 7) == 0) {
+#if HAVE_ROOT_REVOKE
+        REQUIRE(connect_and_snapshot(state));
+        if (strcmp(name, "revoke-unadmitted") != 0)
+            REQUIRE(wifi_hal_backhaul_root_admit(station_index, state) == RETURN_OK);
+        REQUIRE(wifi_hal_backhaul_root_state(station_index, state) == RETURN_OK);
+        state[21] = 2;
+        int expected_vap = station_index;
+        const unsigned char *request = state;
+        bool invalid = false;
+        if (strcmp(name, "revoke-stale-generation") == 0) { state[7] ^= 1; invalid = true; }
+        if (strcmp(name, "revoke-stale-parent") == 0) { state[19] ^= 1; invalid = true; }
+        if (strcmp(name, "revoke-stale-station") == 0) { state[13] ^= 1; invalid = true; }
+        if (strcmp(name, "revoke-other-vap") == 0) { expected_vap = 3; invalid = true; }
+        if (strcmp(name, "revoke-null") == 0) { request = NULL; invalid = true; }
+        if (strcmp(name, "revoke-disconnected") == 0) {
+            wifi_hal_backhaul_root_link(&interfaces[station_index], false);
+            invalid = true;
+        }
+        if (invalid) {
+            int prior_events = order_count;
+            REQUIRE(wifi_hal_backhaul_root_revoke(expected_vap, request) == RETURN_ERR);
+            REQUIRE(disconnect_calls == 0 && order_count == prior_events);
+            return 0;
+        }
+        if (strcmp(name, "revoke-quiesce-failure-still-disconnects") == 0) down_failure = 4;
+        if (strcmp(name, "revoke-disconnect-failure-stays-closed") == 0) disconnect_failure = 1;
+        if (strcmp(name, "revoke-reconnect-during-quiesce") == 0) {
+            reconnect_during_reload = 4;
+            REQUIRE(wifi_hal_backhaul_root_revoke(station_index, request) == RETURN_ERR);
+            REQUIRE(disconnect_calls == 0 && !backhaul_root_admitted);
+            return 0;
+        }
+        REQUIRE(wifi_hal_backhaul_root_revoke(station_index, request) ==
+            ((down_failure >= 0 || disconnect_failure) ? RETURN_ERR : RETURN_OK));
+        REQUIRE(disconnect_calls == 1 && !backhaul_root_admitted && !kernel_calls_while_locked);
+        REQUIRE(ordering[order_count - 1] == 1100 && untouched_other_vaps());
+        REQUIRE(wifi_hal_backhaul_root_state(station_index, newer) == RETURN_OK);
+        REQUIRE(generation(newer) != generation(state));
+        REQUIRE(wifi_hal_backhaul_root_admit(station_index, state) == RETURN_ERR);
+        if (down_failure < 0) REQUIRE(all_down());
+        if (strcmp(name, "revoke-repeat") == 0) {
+            REQUIRE(wifi_hal_backhaul_root_revoke(station_index, request) == RETURN_ERR);
+            REQUIRE(disconnect_calls == 1);
+        }
+        return 0;
+#else
+        REQUIRE(false);
+#endif
+    }
     if (strcmp(name, "zero-radio-connect") == 0) {
         g_wifi_hal.num_radios = 0;
         REQUIRE(wifi_hal_connect(station_index, &selected) == RETURN_ERR && connect_calls == 0);

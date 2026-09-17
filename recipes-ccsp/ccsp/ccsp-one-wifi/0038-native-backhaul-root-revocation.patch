@@ -1,0 +1,36 @@
+Subject: [PATCH] Queue generation-bound native root revocation on the OneWifi control thread
+
+--- a/source/core/wifi_ctrl_rbus_handlers.c
++++ b/source/core/wifi_ctrl_rbus_handlers.c
+@@ -79,6 +79,7 @@
+         sscanf(name, "Device.WiFi.STA.%u.X_RDK_BackhaulRoot%n", &instance, &consumed) != 1 ||
+         consumed == 0 || name[consumed] != '\0' || instance == 0 || instance > getNumberRadios())
+         return bus_error_invalid_input;
++    if (((unsigned char *)value->raw_data.bytes)[21] > 2) return bus_error_invalid_input;
+     const unsigned int vap_index = get_sta_vap_index_for_radio(&mgr->hal_cap.wifi_prop, instance - 1);
+     queued[0] = vap_index >> 24;
+     queued[1] = vap_index >> 16;
+--- a/source/core/wifi_ctrl_queue_handlers.c
++++ b/source/core/wifi_ctrl_queue_handlers.c
+@@ -4440,6 +4440,7 @@
+ }
+ 
+ extern INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state);
++extern INT wifi_hal_backhaul_root_revoke(INT vap_index, const unsigned char *state);
+ 
+ static void process_backhaul_root_admission(void *data, unsigned int len)
+ {
+@@ -4447,6 +4448,13 @@
+     const unsigned char *request = data;
+     const unsigned int vap_index = (unsigned int)request[0] << 24 |
+         (unsigned int)request[1] << 16 | (unsigned int)request[2] << 8 | request[3];
++    if (request[25] == 2) {
++        if (vap_index >= getNumberRadios() * MAX_NUM_VAP_PER_RADIO ||
++            wifi_hal_backhaul_root_revoke(vap_index, request + 4) != RETURN_OK)
++            wifi_util_error_print(WIFI_CTRL, "Backhaul admission: stale or failed revoke vap=%u\n", vap_index);
++        return;
++    }
++    if (request[25] > 1) return;
+     if (vap_index < getNumberRadios() * MAX_NUM_VAP_PER_RADIO &&
+         wifi_hal_backhaul_root_admit(vap_index, request + 4) == RETURN_OK)
+         wifi_util_info_print(WIFI_CTRL, "Backhaul admission: rooted vap=%u\n", vap_index);

@@ -327,6 +327,7 @@ SRC_URI += "file://0027-notify-association-only-on-authorization-edge.patch"
 SRC_URI += "file://0024-hwsim-read-candidate-rcpi-from-wmediumd.patch"
 SRC_URI += "file://0041-hwsim-resolve-candidate-station-radio-identity.patch"
 SRC_URI += "file://0042-native-backhaul-rooted-admission.patch"
+SRC_URI += "file://0043-renew-native-backhaul-root-admission.patch"
 
 # NL80211_STA_INFO_CHAIN_SIGNAL is optional.  Fall back to the standard
 # aggregate signal attribute so EasyMesh associated-STA and backhaul metrics

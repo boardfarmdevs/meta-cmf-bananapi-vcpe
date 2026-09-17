@@ -1,0 +1,144 @@
+Subject: [PATCH] Renew native root proof and recover stale associated backhaul links
+
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -59,6 +59,9 @@
+     std::unordered_map<std::string, unsigned int> m_orphaned_onewifi_wsc_ticks;
+     em_native_backhaul::transactions m_native_backhaul_transactions;
+     em_rooted_admission::transaction_matcher m_root_admission;
++    em_rooted_admission::link_context m_root_context{};
++    uint64_t m_root_context_since = 0;
++    uint64_t m_root_next_probe = 0;
+ 
+     bool read_native_root_context(em_rooted_admission::link_context &context,
+         unsigned int &radio_instance, std::array<unsigned char, 22> &state);
+--- a/inc/em_rooted_admission_probe.h
++++ b/inc/em_rooted_admission_probe.h
+@@ -19,6 +19,9 @@
+ constexpr std::size_t vendor_payload_size = 43;
+ constexpr std::size_t frame_size = 71;
+ constexpr std::uint64_t proof_window_ms = 2000;
++constexpr std::uint64_t renewal_interval_ms = 500;
++constexpr std::uint64_t retry_interval_ms = 250;
++constexpr std::uint64_t initial_admission_ms = 10000;
+ 
+ using wire_frame = std::array<unsigned char, frame_size>;
+ 
+@@ -75,6 +78,13 @@
+         value.parent == current.parent && value.generation == current.generation;
+ }
+ 
++inline bool same_context(const link_context &first, const link_context &second)
++{
++    return first.connected && second.connected && first.agent == second.agent &&
++        first.controller == second.controller && first.station == second.station &&
++        first.parent == second.parent && first.generation == second.generation;
++}
++
+ inline std::uint16_t read_u16(const unsigned char *bytes)
+ {
+     return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[0]) << 8) |
+@@ -157,6 +167,7 @@
+     message m_pending{};
+     nonce_value m_last_nonce{};
+     std::uint64_t m_sent_ms = 0;
++    std::uint64_t m_last_transmit_ms = 0;
+     bool m_active = false;
+     bool m_have_last_nonce = false;
+ 
+@@ -184,10 +195,26 @@
+         m_last_nonce = nonce;
+         m_have_last_nonce = true;
+         m_sent_ms = now_ms;
++        m_last_transmit_ms = now_ms;
+         m_active = true;
+         return true;
+     }
+ 
++    bool expired(const link_context &current, std::uint64_t now_ms) const
++    {
++        return m_active && same_link(m_pending, current) && now_ms >= m_sent_ms &&
++            now_ms - m_sent_ms > proof_window_ms;
++    }
++
++    bool retry(std::uint64_t now_ms, wire_frame &output)
++    {
++        if (!m_active || now_ms < m_last_transmit_ms ||
++            now_ms - m_last_transmit_ms < retry_interval_ms || now_ms < m_sent_ms ||
++            now_ms - m_sent_ms > proof_window_ms || !encode(m_pending, output)) return false;
++        m_last_transmit_ms = now_ms;
++        return true;
++    }
++
+     bool observe(const link_context &current, std::uint64_t now_ms)
+     {
+         if (m_active && (!same_link(m_pending, current) || now_ms < m_sent_ms ||
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -129,18 +129,50 @@
+     std::array<unsigned char, 22> state{};
+     const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+-    if (!read_native_root_context(context, radio_instance, state) || !context.connected || state[21]) {
++    if (!read_native_root_context(context, radio_instance, state) || !context.connected) {
+         m_root_admission.cancel();
++        m_root_context = {};
++        m_root_next_probe = 0;
+         return;
+     }
+-    if (m_root_admission.observe(context, now)) return;
++    if (!em_rooted_admission::same_context(context, m_root_context)) {
++        m_root_admission.cancel();
++        m_root_context = context;
++        m_root_context_since = now;
++        m_root_next_probe = 0;
++    }
++    if (m_root_admission.expired(context, now) && (state[21] ||
++        (now >= m_root_context_since && now - m_root_context_since >= em_rooted_admission::initial_admission_ms))) {
++        char path[80];
++        snprintf(path, sizeof(path), "Device.WiFi.STA.%u.X_RDK_BackhaulRoot", radio_instance);
++        state[21] = 2;
++        raw_data_t value{};
++        value.data_type = bus_data_type_bytes;
++        value.raw_data.bytes = state.data();
++        value.raw_data_len = state.size();
++        if (get_bus_descriptor()->bus_set_fn(&m_bus_hdl, path, &value) == bus_error_success) {
++            m_root_admission.cancel();
++            m_root_next_probe = now + em_rooted_admission::retry_interval_ms;
++            em_printfout("Native root proof expired radio=%u parent=%s generation=%llu; recovery queued",
++                radio_instance, util::mac_to_string(context.parent.data()).c_str(),
++                static_cast<unsigned long long>(context.generation));
++        }
++        return;
++    }
++    const bool pending = m_root_admission.observe(context, now);
+     em_t *transport = get_al_node();
+     if (transport == nullptr) return;
++    em_rooted_admission::wire_frame frame{};
++    if (pending) {
++        if (m_root_admission.retry(now, frame))
++            transport->send_native_backhaul_frame(frame.data(), frame.size());
++        return;
++    }
++    if (now < m_root_next_probe) return;
+     em_rooted_admission::nonce_value nonce{};
+     if (getrandom(nonce.data(), nonce.size(), 0) != static_cast<ssize_t>(nonce.size())) return;
+-    em_rooted_admission::wire_frame frame{};
+-    if (m_root_admission.begin(context, get_next_msg_id(), nonce, now, frame) &&
+-        transport->send_native_backhaul_frame(frame.data(), frame.size()) < 0) m_root_admission.cancel();
++    if (m_root_admission.begin(context, get_next_msg_id(), nonce, now, frame))
++        transport->send_native_backhaul_frame(frame.data(), frame.size());
+ }
+ 
+ void em_agent_t::process_native_root_reply(const unsigned char *frame, size_t length)
+@@ -151,7 +183,10 @@
+     const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+     if (!read_native_root_context(context, radio_instance, state) ||
++        m_root_admission.expired(context, now) ||
+         !m_root_admission.accept(frame, length, context, now)) return;
++    m_root_next_probe = now + em_rooted_admission::renewal_interval_ms;
++    if (state[21]) return;
+     wifi_bus_desc_t *descriptor = get_bus_descriptor();
+     if (descriptor == nullptr) return;
+     char path[80];

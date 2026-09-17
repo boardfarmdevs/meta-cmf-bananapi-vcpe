@@ -11,11 +11,11 @@ ROOT_EXPORTS = {
     "wifi_hal_backhaul_root_admit", "wifi_hal_backhaul_root_blocked",
     "wifi_hal_backhaul_root_close", "wifi_hal_backhaul_root_link",
     "wifi_hal_backhaul_root_loss", "wifi_hal_backhaul_root_name_blocked",
-    "wifi_hal_backhaul_root_state",
+    "wifi_hal_backhaul_root_state", "wifi_hal_backhaul_root_revoke",
 }
 ROOT_IMPORTS = {
     "wifi_hal_backhaul_root_admit", "wifi_hal_backhaul_root_loss",
-    "wifi_hal_backhaul_root_state",
+    "wifi_hal_backhaul_root_state", "wifi_hal_backhaul_root_revoke",
 }
 
 
@@ -73,11 +73,11 @@ def self_test():
             validate(valid_hal, valid_onewifi, invalid_hostap)
         except ValueError:
             rejected += 1
-    assert rejected == 16
+    assert rejected == 18
     assert symbols("  42: 00000000 0 FUNC GLOBAL DEFAULT UND getrandom@GLIBC_2.25 (2)\n"
                    "  43: 00001234 44 FUNC GLOBAL DEFAULT 12 get_radio_by_rdk_index\n") == (
                        {"get_radio_by_rdk_index"}, {"getrandom"})
-    return {"passed": True, "cases": 18, "scope": "ELF symbol validation fixtures"}
+    return {"passed": True, "cases": 20, "scope": "ELF symbol validation fixtures"}
 
 
 def main():

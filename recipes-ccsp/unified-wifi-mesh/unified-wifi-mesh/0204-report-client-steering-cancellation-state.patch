@@ -1,0 +1,19 @@
+Subject: [PATCH] Report native client steering cancellation state and command owner
+
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -451,6 +451,14 @@
+         case em_cmd_type_sta_steer:
+         {
+             em_state_t previous = em->get_client_steering_prev_state();
++            mac_addr_str_t radio;
++            dm_easy_mesh_t::macbytes_to_string(em->get_radio_interface_mac(), radio);
++            em_printfout("Client steering cancelled radio=%s state=%s previous=%s orch=%u tx=%u mid=%u owner=%s",
++                radio,
++                em_t::state_2_str(em->get_state()), em_t::state_2_str(previous),
++                static_cast<unsigned int>(em->get_orch_state()),
++                em->get_client_steering_req_tx_count(), em->get_client_steering_req_msg_id(),
++                em->get_current_cmd() == nullptr ? "none" : em->get_current_cmd()->get_cmd_name());
+             em->set_client_steering_req_tx_count(0);
+             em->set_client_steering_req_msg_id(0);
+             if ((previous == em_state_ctrl_configured) ||

@@ -87,6 +87,12 @@ def guards(sources):
                            "source": filename, "line": sources[filename].count("\n", 0, start) + 1,
                            "function_sha256": sha(body.encode()), "guard_count": found_count,
                            "scope": "static guard presence only, not dynamic domination or concurrency proof"})
+    start, _, body = function(sources["wifi_hal_nl80211_utils.c"], "reload_interface")
+    checks.append({"name": "static.reload-hostapd-before-stop", "passed":
+                   0 <= body.find("hostapd_reload_config(") < body.find("nl80211_enable_ap(interface, false)"),
+                   "source": "wifi_hal_nl80211_utils.c", "function_sha256": sha(body.encode()),
+                   "line": sources["wifi_hal_nl80211_utils.c"].count("\n", 0, start) + 1,
+                   "scope": "actual reload invokes hostapd reload before STOP_AP; over-air deauthentication not proven"})
     return checks
 
 
@@ -99,9 +105,12 @@ def callback_guard(source):
         branch_end = matching(body, branch.end() - 1)
         guarded = re.search(r"wifi_hal_backhaul_root_loss\s*\(\s*sta_data->stats\.vap_index\s*\)",
                             body[branch.end():branch_end]) is not None
+    guarded = guarded or re.search(
+        r"sta_data->stats\.connect_status\s*==\s*wifi_connection_status_connected\s*&&\s*"
+        r"wifi_hal_backhaul_root_loss\s*\(\s*sta_data->stats\.vap_index\s*\)", body) is not None
     return {"name": "static.onewifi.connected-callback-quiesce", "passed": guarded,
             "line": text.count("\n", 0, start) + 1, "function_sha256": sha(body.encode()),
-            "scope": "static call inside connected-status branch, not full callback execution or error-propagation proof"}
+            "scope": "static connected-status conditional call, not full callback execution or error-propagation proof"}
 
 
 def main():
@@ -121,13 +130,15 @@ def main():
     if not names:
         raise ValueError("No actual rooted-admission production functions")
     metadata = []
-    for name in names + ["wifi_hal_connect"]:
+    for name in names + ["wifi_hal_connect", "wifi_hal_disconnect"]:
         start, end, body = function(core, name)
         metadata.append({"name": name, "source": str(source_dir / "wifi_hal.c"),
                          "line": core.count("\n", 0, start) + 1, "sha256": sha(body.encode())})
     block_start = core.index("static pthread_mutex_t backhaul_root_lock")
     _, block_end, _ = function(core, "wifi_hal_connect")
-    production = core[block_start:block_end]
+    production = core[block_start:block_end] + "\n\n" + function(core, "wifi_hal_disconnect")[2]
+    production = ("#define HAVE_ROOT_REVOKE " + str(int("wifi_hal_backhaul_root_revoke" in names))
+                  + "\n" + production)
     interface_start, _, interface_function = function(sources["wifi_hal_nl80211.c"], "nl80211_interface_enable")
     metadata.append({"name": "nl80211_interface_enable", "source": str(source_dir / "wifi_hal_nl80211.c"),
                      "line": sources["wifi_hal_nl80211.c"].count("\n", 0, interface_start) + 1,
