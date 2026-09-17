@@ -23,7 +23,7 @@ def symbols(text):
     defined, undefined = set(), set()
     for line in text.splitlines():
         fields = line.split()
-        if len(fields) < 8 or not fields[0].removesuffix(":").isdigit():
+        if len(fields) < 8 or not fields[0].rstrip(":").isdigit():
             continue
         name = fields[7].split("@", 1)[0]
         (undefined if fields[6] == "UND" else defined).add(name)
