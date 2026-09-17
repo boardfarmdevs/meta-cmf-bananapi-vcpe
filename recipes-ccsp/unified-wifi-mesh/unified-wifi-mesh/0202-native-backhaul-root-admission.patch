@@ -1,0 +1,418 @@
+Subject: [PATCH] Prove current backhaul reaches the native controller before admitting children
+
+Use a bounded RDK vendor-specific 1905 nonce roundtrip on the existing native
+backhaul transport. Bind replies to controller, agent, STA, parent and HAL
+association generation before asking OneWifi to open downstream backhaul BSSs.
+This is native admission, not a host-side BSSID override or a steering timeout
+change. Both native controller and agent must implement this extension.
+
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -28,6 +28,7 @@
+ #include "em_simulator.h"
+ #include "bus.h"
+ #include "em_native_backhaul_agent.h"
++#include "em_rooted_admission_probe.h"
+ 
+ #include <chrono>
+ #include <deque>
+@@ -57,6 +58,12 @@
+     std::deque<std::string> m_deferred_onewifi_wsc_ruids;
+     std::unordered_map<std::string, unsigned int> m_orphaned_onewifi_wsc_ticks;
+     em_native_backhaul::transactions m_native_backhaul_transactions;
++    em_rooted_admission::transaction_matcher m_root_admission;
++
++    bool read_native_root_context(em_rooted_admission::link_context &context,
++        unsigned int &radio_instance, std::array<unsigned char, 22> &state);
++    void poll_native_root_admission();
++    void process_native_root_reply(const unsigned char *frame, size_t length);
+ 
+     void process_native_backhaul_request(const unsigned char *frame, size_t length);
+     bool send_native_backhaul_reply(const em_native_backhaul::request &request,
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -44,6 +44,7 @@
+ 
+ #include <string>
+ #include <vector>
++#include <sys/random.h>
+ #ifdef AL_SAP
+ #include "al_service_access_point.h"
+ #endif
+@@ -60,10 +61,13 @@
+     em_t *al_em)
+ {
+     (void)al_em;
+-    if (!em_native_backhaul::is_request(data, len)) return false;
++    em_rooted_admission::message root_message{};
++    const bool root_reply = em_rooted_admission::decode(data, len, root_message) &&
++        root_message.opcode == em_rooted_admission::operation::reply;
++    if (!root_reply && !em_native_backhaul::is_request(data, len)) return false;
+     if (!is_data_model_initialized()) return true;
+     em_native_backhaul::request command{};
+-    if (!em_native_backhaul::decode_request(data, len, command)) {
++    if (!root_reply && !em_native_backhaul::decode_request(data, len, command)) {
+         em_printfout("Native backhaul request rejected: malformed frame");
+         return true;
+     }
+@@ -81,6 +85,87 @@
+     return true;
+ }
+ 
++bool em_agent_t::read_native_root_context(em_rooted_admission::link_context &context,
++    unsigned int &radio_instance, std::array<unsigned char, 22> &state)
++{
++    if (!is_data_model_initialized() || m_data_model.get_colocated()) return false;
++    wifi_bus_desc_t *descriptor = get_bus_descriptor();
++    if (descriptor == nullptr) return false;
++    bool found = false;
++    for (unsigned int index = 0; index < m_data_model.get_num_radios(); ++index) {
++        char path[80];
++        snprintf(path, sizeof(path), "Device.WiFi.STA.%u.X_RDK_BackhaulRoot", index + 1);
++        raw_data_t value{};
++        const bool valid = descriptor->bus_data_get_fn(&m_bus_hdl, path, &value) == bus_error_success &&
++            value.data_type == bus_data_type_bytes && value.raw_data.bytes != nullptr &&
++            value.raw_data_len == state.size();
++        if (valid) {
++            if (found) {
++                free(value.raw_data.bytes);
++                return false;
++            }
++            memcpy(state.data(), value.raw_data.bytes, state.size());
++            radio_instance = index + 1;
++            found = true;
++        }
++        free(value.raw_data.bytes);
++    }
++    if (!found || state[20] > 1 || state[21] > 1) return false;
++    context = {};
++    std::copy_n(m_data_model.get_agent_al_interface_mac(), 6, context.agent.begin());
++    std::copy_n(m_data_model.get_ctrl_al_interface_mac(), 6, context.controller.begin());
++    std::copy_n(state.data() + 8, 6, context.station.begin());
++    std::copy_n(state.data() + 14, 6, context.parent.begin());
++    for (unsigned int index = 0; index < 8; ++index)
++        context.generation = (context.generation << 8) | state[index];
++    context.connected = state[20] != 0;
++    return context.generation != 0;
++}
++
++void em_agent_t::poll_native_root_admission()
++{
++    em_rooted_admission::link_context context{};
++    unsigned int radio_instance = 0;
++    std::array<unsigned char, 22> state{};
++    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++    if (!read_native_root_context(context, radio_instance, state) || !context.connected || state[21]) {
++        m_root_admission.cancel();
++        return;
++    }
++    if (m_root_admission.observe(context, now)) return;
++    em_t *transport = get_al_node();
++    if (transport == nullptr) return;
++    em_rooted_admission::nonce_value nonce{};
++    if (getrandom(nonce.data(), nonce.size(), 0) != static_cast<ssize_t>(nonce.size())) return;
++    em_rooted_admission::wire_frame frame{};
++    if (m_root_admission.begin(context, get_next_msg_id(), nonce, now, frame) &&
++        transport->send_native_backhaul_frame(frame.data(), frame.size()) < 0) m_root_admission.cancel();
++}
++
++void em_agent_t::process_native_root_reply(const unsigned char *frame, size_t length)
++{
++    em_rooted_admission::link_context context{};
++    unsigned int radio_instance = 0;
++    std::array<unsigned char, 22> state{};
++    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++    if (!read_native_root_context(context, radio_instance, state) ||
++        !m_root_admission.accept(frame, length, context, now)) return;
++    wifi_bus_desc_t *descriptor = get_bus_descriptor();
++    if (descriptor == nullptr) return;
++    char path[80];
++    snprintf(path, sizeof(path), "Device.WiFi.STA.%u.X_RDK_BackhaulRoot", radio_instance);
++    raw_data_t value{};
++    value.data_type = bus_data_type_bytes;
++    value.raw_data.bytes = state.data();
++    value.raw_data_len = state.size();
++    const bool queued = descriptor->bus_set_fn(&m_bus_hdl, path, &value) == bus_error_success;
++    em_printfout("Native rooted admission proof radio=%u parent=%s queued=%u generation=%llu",
++        radio_instance, util::mac_to_string(context.parent.data()).c_str(), queued,
++        static_cast<unsigned long long>(context.generation));
++}
++
+ bool em_agent_t::send_native_backhaul_reply(const em_native_backhaul::request &command,
+     bool acknowledgement, unsigned char error)
+ {
+@@ -702,6 +787,14 @@
+ 
+ void em_agent_t::handle_frame_event(em_frame_event_t *evt)
+ {
++    em_rooted_admission::message root_message{};
++    if (em_rooted_admission::decode(evt->frame, evt->frame_len, root_message) &&
++        root_message.opcode == em_rooted_admission::operation::reply) {
++        process_native_root_reply(evt->frame, evt->frame_len);
++        free(evt->frame);
++        evt->frame = nullptr;
++        return;
++    }
+     if (em_native_backhaul::is_request(evt->frame, evt->frame_len)) {
+         process_native_backhaul_request(evt->frame, evt->frame_len);
+         free(evt->frame);
+@@ -1889,6 +1982,7 @@
+ 
+ void em_agent_t::handle_250ms_tick()
+ {
++    poll_native_root_admission();
+     m_orch->handle_timeout();
+ }
+ 
+--- a/src/ctrl/em_backhaul_ctrl.cpp
++++ b/src/ctrl/em_backhaul_ctrl.cpp
+@@ -1,6 +1,7 @@
+ #include "em_ctrl.h"
+ #include "em_network_topo.h"
+ #include "em_backhaul_wire.h"
++#include "em_rooted_admission_probe.h"
+ 
+ namespace {
+ 
+@@ -293,6 +294,23 @@
+ 
+ bool em_ctrl_t::handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em)
+ {
++    em_rooted_admission::message probe{};
++    if (em_rooted_admission::decode(data, len, probe) &&
++        probe.opcode == em_rooted_admission::operation::request) {
++        em_rooted_admission::mac_address controller{};
++        {
++            std::lock_guard<std::mutex> lock(m_backhaul_mutex);
++            const auto node = m_backhaul_network.nodes.find(backhaul_mac(probe.agent.data()));
++            if (m_backhaul_controller.size() != controller.size() ||
++                node == m_backhaul_network.nodes.end() ||
++                node->second.sta != backhaul_mac(probe.station.data())) return true;
++            std::copy_n(m_backhaul_controller.begin(), controller.size(), controller.begin());
++        }
++        em_rooted_admission::wire_frame response{};
++        if (al_em != nullptr && em_rooted_admission::controller_reply(data, len, controller, response))
++            al_em->send_native_backhaul_frame(response.data(), response.size());
++        return true;
++    }
+     if (data == nullptr || len < 25) return false;
+     const unsigned int type = em_backhaul::read16(data + 16);
+     if (type != em_msg_type_ap_metrics_rsp &&
+--- a/inc/em_rooted_admission_probe.h
++++ b/inc/em_rooted_admission_probe.h
+@@ -0,0 +1,213 @@
++#ifndef EM_ROOTED_ADMISSION_PROBE_H
++#define EM_ROOTED_ADMISSION_PROBE_H
++
++#include <algorithm>
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace em_rooted_admission {
++
++using mac_address = std::array<unsigned char, 6>;
++using nonce_value = std::array<unsigned char, 16>;
++
++constexpr std::uint16_t message_type = 0x0004;
++constexpr unsigned char vendor_tlv_type = 0x0b;
++constexpr std::array<unsigned char, 3> vendor_oui{{0xd8, 0x9c, 0x8e}};
++constexpr std::uint16_t protocol_subtype = 0x5250;
++constexpr unsigned char protocol_version = 1;
++constexpr std::size_t vendor_payload_size = 43;
++constexpr std::size_t frame_size = 71;
++constexpr std::uint64_t proof_window_ms = 2000;
++
++using wire_frame = std::array<unsigned char, frame_size>;
++
++enum class operation : unsigned char {
++    request = 1,
++    reply = 2
++};
++
++struct message {
++    operation opcode = operation::request;
++    mac_address agent{};
++    mac_address controller{};
++    mac_address station{};
++    mac_address parent{};
++    nonce_value nonce{};
++    std::uint64_t generation = 0;
++    std::uint16_t mid = 0;
++};
++
++struct link_context {
++    mac_address agent{};
++    mac_address controller{};
++    mac_address station{};
++    mac_address parent{};
++    std::uint64_t generation = 0;
++    bool connected = false;
++};
++
++inline bool valid_mac(const mac_address &address)
++{
++    return (address[0] & 1) == 0 && std::any_of(address.begin(), address.end(),
++        [](unsigned char octet) { return octet != 0; });
++}
++
++inline bool valid_nonce(const nonce_value &nonce)
++{
++    return std::any_of(nonce.begin(), nonce.end(),
++        [](unsigned char octet) { return octet != 0; });
++}
++
++inline bool valid_message(const message &value)
++{
++    return (value.opcode == operation::request || value.opcode == operation::reply) &&
++        valid_mac(value.agent) && valid_mac(value.controller) &&
++        valid_mac(value.station) && valid_mac(value.parent) &&
++        value.agent != value.controller && value.station != value.parent &&
++        valid_nonce(value.nonce);
++}
++
++inline bool same_link(const message &value, const link_context &current)
++{
++    return current.connected && value.agent == current.agent &&
++        value.controller == current.controller && value.station == current.station &&
++        value.parent == current.parent && value.generation == current.generation;
++}
++
++inline std::uint16_t read_u16(const unsigned char *bytes)
++{
++    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[0]) << 8) |
++        bytes[1]);
++}
++
++inline void write_u16(unsigned char *bytes, std::uint16_t value)
++{
++    bytes[0] = static_cast<unsigned char>(value >> 8);
++    bytes[1] = static_cast<unsigned char>(value);
++}
++
++inline bool encode(const message &value, wire_frame &output)
++{
++    if (!valid_message(value)) return false;
++    wire_frame frame{};
++    const auto &destination = value.opcode == operation::request ? value.controller : value.agent;
++    const auto &source = value.opcode == operation::request ? value.agent : value.controller;
++    std::copy(destination.begin(), destination.end(), frame.begin());
++    std::copy(source.begin(), source.end(), frame.begin() + 6);
++    write_u16(frame.data() + 12, 0x893a);
++    write_u16(frame.data() + 16, message_type);
++    write_u16(frame.data() + 18, value.mid);
++    frame[21] = 0x80;
++    frame[22] = vendor_tlv_type;
++    write_u16(frame.data() + 23, static_cast<std::uint16_t>(vendor_payload_size));
++    std::copy(vendor_oui.begin(), vendor_oui.end(), frame.begin() + 25);
++    write_u16(frame.data() + 28, protocol_subtype);
++    frame[30] = protocol_version;
++    frame[31] = static_cast<unsigned char>(value.opcode);
++    std::copy(value.nonce.begin(), value.nonce.end(), frame.begin() + 32);
++    std::copy(value.station.begin(), value.station.end(), frame.begin() + 48);
++    std::copy(value.parent.begin(), value.parent.end(), frame.begin() + 54);
++    for (std::size_t index = 0; index < 8; ++index) {
++        frame[60 + index] = static_cast<unsigned char>(value.generation >> (56 - 8 * index));
++    }
++    output = frame;
++    return true;
++}
++
++inline bool decode(const unsigned char *frame, std::size_t length, message &output)
++{
++    if (frame == nullptr || length != frame_size || read_u16(frame + 12) != 0x893a ||
++        frame[14] != 0 || frame[15] != 0 || read_u16(frame + 16) != message_type ||
++        frame[20] != 0 || frame[21] != 0x80 || frame[22] != vendor_tlv_type ||
++        read_u16(frame + 23) != vendor_payload_size ||
++        !std::equal(vendor_oui.begin(), vendor_oui.end(), frame + 25) ||
++        read_u16(frame + 28) != protocol_subtype || frame[30] != protocol_version ||
++        (frame[31] != static_cast<unsigned char>(operation::request) &&
++            frame[31] != static_cast<unsigned char>(operation::reply)) ||
++        frame[68] != 0 || frame[69] != 0 || frame[70] != 0) return false;
++    message parsed{};
++    parsed.opcode = static_cast<operation>(frame[31]);
++    const bool request = parsed.opcode == operation::request;
++    std::copy_n(frame + (request ? 6 : 0), 6, parsed.agent.begin());
++    std::copy_n(frame + (request ? 0 : 6), 6, parsed.controller.begin());
++    std::copy_n(frame + 32, 16, parsed.nonce.begin());
++    std::copy_n(frame + 48, 6, parsed.station.begin());
++    std::copy_n(frame + 54, 6, parsed.parent.begin());
++    for (std::size_t index = 0; index < 8; ++index) {
++        parsed.generation = (parsed.generation << 8) | frame[60 + index];
++    }
++    parsed.mid = read_u16(frame + 18);
++    if (!valid_message(parsed)) return false;
++    output = parsed;
++    return true;
++}
++
++inline bool controller_reply(const unsigned char *frame, std::size_t length,
++    const mac_address &local_controller, wire_frame &output)
++{
++    message request{};
++    if (!valid_mac(local_controller) || !decode(frame, length, request) ||
++        request.opcode != operation::request || request.controller != local_controller) return false;
++    request.opcode = operation::reply;
++    return encode(request, output);
++}
++
++class transaction_matcher {
++    message m_pending{};
++    nonce_value m_last_nonce{};
++    std::uint64_t m_sent_ms = 0;
++    bool m_active = false;
++    bool m_have_last_nonce = false;
++
++public:
++    bool pending() const { return m_active; }
++
++    const message *pending_message() const { return m_active ? &m_pending : nullptr; }
++
++    void cancel() { m_active = false; }
++
++    bool begin(const link_context &current, std::uint16_t mid, const nonce_value &nonce,
++        std::uint64_t now_ms, wire_frame &output)
++    {
++        if (m_active || !current.connected || (m_have_last_nonce && nonce == m_last_nonce)) return false;
++        message request{};
++        request.agent = current.agent;
++        request.controller = current.controller;
++        request.station = current.station;
++        request.parent = current.parent;
++        request.generation = current.generation;
++        request.mid = mid;
++        request.nonce = nonce;
++        if (!encode(request, output)) return false;
++        m_pending = request;
++        m_last_nonce = nonce;
++        m_have_last_nonce = true;
++        m_sent_ms = now_ms;
++        m_active = true;
++        return true;
++    }
++
++    bool observe(const link_context &current, std::uint64_t now_ms)
++    {
++        if (m_active && (!same_link(m_pending, current) || now_ms < m_sent_ms ||
++            now_ms - m_sent_ms > proof_window_ms)) cancel();
++        return m_active;
++    }
++
++    bool accept(const unsigned char *frame, std::size_t length,
++        const link_context &current, std::uint64_t now_ms)
++    {
++        if (!observe(current, now_ms)) return false;
++        message response{};
++        if (!decode(frame, length, response) || response.opcode != operation::reply ||
++            !same_link(response, current) || response.mid != m_pending.mid ||
++            response.nonce != m_pending.nonce) return false;
++        cancel();
++        return true;
++    }
++};
++
++}
++
++#endif

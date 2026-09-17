@@ -2,12 +2,38 @@
 
 ## Current truth
 
-Commanded EasyMesh steering works. An autonomous steering policy is not yet
-proven.
+Commanded EasyMesh client steering works. The room's client candidate-selection
+policy runs in the external optimizer; native backhaul steering is separate.
 
-The optimizer is a completely external host-side component. No BPI
-EasyMesh, agent, OneWifi or WebUI process performs candidate selection or makes
-the steering decision. See [optimizer](optimizer.md).
+The client optimizer is a completely external host-side component. The WebUI
+does not make steering decisions. The native controller independently selects
+backhaul parents from reported measurements. See [optimizer](optimizer.md).
+
+## Native backhaul recovery
+
+Controller-directed backhaul moves use standard IEEE 1905 Backhaul Steering
+Request/Response, native candidate measurements and rooted-path eligibility.
+OneWifi also reconnects a disconnected backhaul STA autonomously. These two
+paths must coordinate: a disconnected parent must not attach to its child and
+create a root-disconnected cycle.
+
+Before connecting a STA, the HAL inhibits local backhaul APs and verifies their
+kernel interfaces are down. Fronthaul and STA configuration remain intact.
+Radio/VAP updates cannot bypass this operational inhibit. Failed teardown
+prevents connection; existing bounded retries remain in charge.
+
+After association, the native agent obtains a fresh controller roundtrip over
+the existing backhaul transport. An RDK vendor-specific IEEE 1905 probe carries
+a random nonce, STA, parent and HAL association generation. Only a matching
+reply within two seconds permits a control-queue request to reopen backhaul APs;
+the HAL revalidates the association before acting. Link loss invalidates old
+proofs. Unknown, disconnected and stale contexts remain inhibited. No fixed
+parent, MAC ordering, room coordinates or management-IP fallback supplies proof.
+
+Matching controller, agent, OneWifi and HAL versions are required; third-party
+support is not established. Reparenting can interrupt the downstream subtree.
+Qualification checks native rooted paths, traffic, both views and client
+convergence—not merely association or a successful response.
 
 The commanded crossover baseline uses an independent RF gradient and an
 explicit `steer.sh` call. A passive run with the same gradient is the control.

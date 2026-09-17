@@ -1,0 +1,340 @@
+Subject: [PATCH] Keep autonomous backhaul recovery rooted with native admission
+
+Quiesce downstream backhaul BSSs and verify kernel link-down before every STA
+reconnect. Keep configured enable separate from operational admission. Reopen
+only with current-generation root proof from the native EasyMesh agent.
+
+--- a/src/wifi_hal.c
++++ b/src/wifi_hal.c
+@@ -30,6 +30,7 @@
+ #include <sys/time.h>
+ #include <sys/un.h>
+ #include <sys/ioctl.h>
++#include <sys/random.h>
+ #include <arpa/inet.h>
+ #include <net/if.h>
+ #include <linux/rtnetlink.h>
+@@ -844,7 +845,8 @@
+                     interface->vap_initialized, interface->bss_started,
+                     interface->vap_info.u.bss_info.enabled, radio->configured,
+                     radio->oper_param.enable);
+-                if (radio->oper_param.enable && interface->vap_info.u.bss_info.enabled) {
++                if (radio->oper_param.enable && interface->vap_info.u.bss_info.enabled &&
++                    !wifi_hal_backhaul_root_blocked(interface)) {
+                     if (nl80211_interface_enable(interface_name, true) != 0) {
+                         ret = nl80211_retry_interface_enable(interface, true);
+                         if (ret != 0) {
+@@ -1156,6 +1158,198 @@
+     return RETURN_OK;
+ }
+ 
++static pthread_mutex_t backhaul_root_lock = PTHREAD_MUTEX_INITIALIZER;
++static int backhaul_root_vap = -1;
++static uint64_t backhaul_root_generation;
++static bool backhaul_root_connected;
++static bool backhaul_root_admitted;
++static mac_address_t backhaul_root_parent;
++
++bool wifi_hal_backhaul_root_blocked(wifi_interface_info_t *interface)
++{
++    return interface != NULL && interface->vap_info.vap_mode == wifi_vap_mode_ap &&
++        is_backhaul_interface(interface) &&
++        __atomic_load_n(&backhaul_root_vap, __ATOMIC_ACQUIRE) >= 0 &&
++        !__atomic_load_n(&backhaul_root_admitted, __ATOMIC_ACQUIRE);
++}
++
++bool wifi_hal_backhaul_root_name_blocked(const char *name)
++{
++    unsigned int radio_index;
++    wifi_radio_info_t *radio;
++    wifi_interface_info_t *interface;
++
++    if (__atomic_load_n(&backhaul_root_vap, __ATOMIC_ACQUIRE) < 0) return false;
++    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
++        radio = get_radio_by_index(radio_index);
++        if (radio == NULL) continue;
++        hash_map_foreach(radio->interface_map, interface) {
++            if (strcmp(interface->name, name) == 0)
++                return wifi_hal_backhaul_root_blocked(interface);
++        }
++    }
++    return false;
++}
++
++void wifi_hal_backhaul_root_link(wifi_interface_info_t *interface, bool connected)
++{
++    pthread_mutex_lock(&backhaul_root_lock);
++    if (backhaul_root_vap == (int)interface->vap_info.vap_index) {
++        if (!connected || (backhaul_root_connected &&
++                memcmp(backhaul_root_parent, interface->u.sta.backhaul.bssid, 6) != 0)) {
++            ++backhaul_root_generation;
++            __atomic_store_n(&backhaul_root_admitted, false, __ATOMIC_RELEASE);
++        }
++        backhaul_root_connected = connected;
++        if (connected) memcpy(backhaul_root_parent, interface->u.sta.backhaul.bssid, 6);
++        else memset(backhaul_root_parent, 0, 6);
++    }
++    pthread_mutex_unlock(&backhaul_root_lock);
++}
++
++static int backhaul_root_quiesce(void)
++{
++    unsigned int radio_index;
++    wifi_radio_info_t *radio;
++    wifi_interface_info_t *interface;
++    int result = RETURN_OK;
++    short flags;
++
++    if (g_wifi_hal.num_radios == 0) return RETURN_ERR;
++    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
++        radio = get_radio_by_index(radio_index);
++        if (radio == NULL) {
++            result = RETURN_ERR;
++            continue;
++        }
++        hash_map_foreach(radio->interface_map, interface) {
++            if (!wifi_hal_backhaul_root_blocked(interface)) continue;
++            nl80211_enable_ap(interface, false);
++            if (nl80211_interface_enable(interface->name, false) != 0 ||
++                get_vap_state(interface->name, &flags) != 0 || (flags & IFF_UP)) {
++                wifi_hal_error_print("Backhaul admission: cannot quiesce %s\n", interface->name);
++                result = RETURN_ERR;
++                continue;
++            }
++            if (interface->bss_started && interface->u.ap.hapd.conf != NULL) {
++                if (reload_interface(interface) != 0) result = RETURN_ERR;
++            }
++            interface->bss_started = false;
++            interface->beacon_set = 0;
++        }
++    }
++    return result;
++}
++
++INT wifi_hal_backhaul_root_loss(INT vap_index)
++{
++    if (__atomic_load_n(&backhaul_root_vap, __ATOMIC_ACQUIRE) != vap_index) return RETURN_OK;
++    return backhaul_root_quiesce();
++}
++
++INT wifi_hal_backhaul_root_close(INT vap_index)
++{
++    wifi_interface_info_t *interface = get_interface_by_vap_index(vap_index);
++    uint64_t initial;
++
++    if (interface == NULL || interface->vap_info.vap_mode != wifi_vap_mode_sta ||
++        !is_wifi_hal_vap_mesh_sta(vap_index)) return RETURN_ERR;
++    pthread_mutex_lock(&backhaul_root_lock);
++    if (backhaul_root_generation == 0) {
++        if (getrandom(&initial, sizeof(initial), 0) != (ssize_t)sizeof(initial) || initial == 0) {
++            __atomic_store_n(&backhaul_root_admitted, false, __ATOMIC_RELEASE);
++            __atomic_store_n(&backhaul_root_vap, vap_index, __ATOMIC_RELEASE);
++            pthread_mutex_unlock(&backhaul_root_lock);
++            backhaul_root_quiesce();
++            return RETURN_ERR;
++        }
++        backhaul_root_generation = initial >> 1;
++    }
++    ++backhaul_root_generation;
++    backhaul_root_connected = false;
++    memset(backhaul_root_parent, 0, 6);
++    __atomic_store_n(&backhaul_root_admitted, false, __ATOMIC_RELEASE);
++    __atomic_store_n(&backhaul_root_vap, vap_index, __ATOMIC_RELEASE);
++    pthread_mutex_unlock(&backhaul_root_lock);
++    return backhaul_root_quiesce();
++}
++
++static void backhaul_root_encode(wifi_interface_info_t *interface, unsigned char *state)
++{
++    unsigned int byte_index;
++    for (byte_index = 0; byte_index < 8; byte_index++)
++        state[byte_index] = backhaul_root_generation >> (56 - 8 * byte_index);
++    memcpy(state + 8, interface->vap_info.u.sta_info.mac, 6);
++    memcpy(state + 14, backhaul_root_parent, 6);
++    state[20] = backhaul_root_connected;
++    state[21] = backhaul_root_admitted;
++}
++
++INT wifi_hal_backhaul_root_state(INT vap_index, unsigned char *state)
++{
++    wifi_interface_info_t *interface = get_interface_by_vap_index(vap_index);
++    int result = RETURN_ERR;
++
++    if (interface == NULL || state == NULL || interface->vap_info.vap_mode != wifi_vap_mode_sta)
++        return RETURN_ERR;
++    pthread_mutex_lock(&backhaul_root_lock);
++    if (backhaul_root_vap == vap_index && backhaul_root_generation != 0) {
++        backhaul_root_encode(interface, state);
++        result = RETURN_OK;
++    }
++    pthread_mutex_unlock(&backhaul_root_lock);
++    return result;
++}
++
++INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state)
++{
++    wifi_interface_info_t *station = get_interface_by_vap_index(vap_index);
++    wifi_radio_info_t *radio;
++    wifi_interface_info_t *interface;
++    unsigned char current[22];
++    unsigned int radio_index;
++    int result = RETURN_OK;
++
++    if (station == NULL || state == NULL || station->vap_info.vap_mode != wifi_vap_mode_sta)
++        return RETURN_ERR;
++    pthread_mutex_lock(&backhaul_root_lock);
++    backhaul_root_encode(station, current);
++    if (backhaul_root_vap != vap_index || !backhaul_root_connected ||
++        memcmp(current, state, 21) != 0) {
++        pthread_mutex_unlock(&backhaul_root_lock);
++        return RETURN_ERR;
++    }
++    if (backhaul_root_admitted) {
++        pthread_mutex_unlock(&backhaul_root_lock);
++        return RETURN_OK;
++    }
++    __atomic_store_n(&backhaul_root_admitted, true, __ATOMIC_RELEASE);
++    pthread_mutex_unlock(&backhaul_root_lock);
++    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
++        radio = get_radio_by_index(radio_index);
++        if (radio == NULL) {
++            result = RETURN_ERR;
++            continue;
++        }
++        if (!radio->configured || !radio->oper_param.enable) continue;
++        hash_map_foreach(radio->interface_map, interface) {
++            if (interface->vap_info.vap_mode != wifi_vap_mode_ap ||
++                !is_backhaul_interface(interface) || !interface->vap_initialized ||
++                !interface->vap_info.u.bss_info.enabled) continue;
++            if (wifi_hal_backhaul_root_blocked(interface) ||
++                nl80211_interface_enable(interface->name, true) != 0 ||
++                restart_interface(interface) != 0) result = RETURN_ERR;
++        }
++    }
++    if (wifi_hal_backhaul_root_state(vap_index, current) != RETURN_OK ||
++        memcmp(current, state, 21) != 0 || current[21] != 1) result = RETURN_ERR;
++    if (result != RETURN_OK) {
++        __atomic_store_n(&backhaul_root_admitted, false, __ATOMIC_RELEASE);
++        backhaul_root_quiesce();
++    }
++    return result;
++}
++
+ INT wifi_hal_connect(INT ap_index, wifi_bss_info_t *bss)
+ {
+     wifi_interface_info_t *interface;
+@@ -1177,6 +1371,9 @@
+         return WIFI_HAL_INVALID_ARGUMENTS;    // RDKB-45724 - Returns -4 when the ap index is not suitable for station mode
+     }
+ 
++    if (is_wifi_hal_vap_mesh_sta(ap_index) &&
++        wifi_hal_backhaul_root_close(ap_index) != RETURN_OK) return RETURN_ERR;
++
+     backhaul = &interface->u.sta.backhaul;
+ 
+     if ((bss != NULL) && (memcmp(null_mac, bss->bssid, sizeof(bssid_t)) != 0)) {
+@@ -1593,7 +1790,8 @@
+                 wifi_hal_info_print("%s:%d: interface:%s bss_started:%d\n", __func__, __LINE__,
+                     interface_name, interface->bss_started);
+                 if (!(interface->bss_started)) {
+-                    if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable) {
++                    if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
++                        !wifi_hal_backhaul_root_blocked(interface)) {
+                         wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__,
+                             __LINE__, interface_name);
+                         interface->beacon_set = 0;
+@@ -1612,7 +1810,8 @@
+                         "interfaces\n", __func__, __LINE__, radio->index);
+                     return RETURN_ERR;
+                 }
+-                if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable) {
++                if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
++                    !wifi_hal_backhaul_root_blocked(interface)) {
+                     wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__,
+                         __LINE__, interface_name);
+                     interface->beacon_set = 0;
+--- a/src/wifi_hal_priv.h
++++ b/src/wifi_hal_priv.h
+@@ -930,6 +930,13 @@
+ INT wifi_hal_startScan(wifi_radio_index_t index, wifi_neighborScanMode_t scan_mode, INT dwell_time, UINT num, UINT *chan_list);
+ INT wifi_hal_disconnect(INT ap_index);
+ INT wifi_hal_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map);
++bool wifi_hal_backhaul_root_blocked(wifi_interface_info_t *interface);
++bool wifi_hal_backhaul_root_name_blocked(const char *name);
++void wifi_hal_backhaul_root_link(wifi_interface_info_t *interface, bool connected);
++INT wifi_hal_backhaul_root_close(INT vap_index);
++INT wifi_hal_backhaul_root_loss(INT vap_index);
++INT wifi_hal_backhaul_root_state(INT vap_index, unsigned char *state);
++INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state);
+ INT wifi_hal_setApWpsButtonPush(INT apIndex);
+ INT wifi_hal_setApWpsPin(INT ap_index, char *wps_pin);
+ INT wifi_hal_setApWpsCancel(INT ap_index);
+@@ -1026,6 +1033,7 @@
+ int     handle_public_action_frame(INT ap_index, mac_address_t sta_mac, wifi_publicActionFrameHdr_t *ppublic_hdr, UINT len);
+ int     nl80211_create_interface(wifi_radio_info_t *radio, wifi_vap_info_t *vap, wifi_interface_info_t **interface);
+ int     nl80211_enable_ap(wifi_interface_info_t *interface, bool enable);
++int get_vap_state(const char *ifname, short *flags);
+ int     nl80211_kick_device(wifi_interface_info_t *interface, mac_address_t mac);
+ int     nl80211_create_bridge(const char *if_name, const char *br_name);
+ int     nl80211_set_iface_operstate(const char *ifname, unsigned char operstate);
+--- a/src/wifi_hal_hostapd.c
++++ b/src/wifi_hal_hostapd.c
+@@ -2446,6 +2446,9 @@
+     interface->u.sta.state = state;
+     vap = &interface->vap_info;
+ 
++    if (state == WPA_COMPLETED || state == WPA_DISCONNECTED)
++        wifi_hal_backhaul_root_link(interface, state == WPA_COMPLETED);
++
+     if (state == WPA_COMPLETED) {
+         nl80211_get_channel_bw_conn(interface);
+         wifi_hal_configure_sta_4addr_to_bridge(interface, 1);
+@@ -3367,6 +3370,7 @@
+ 
+ int start_bss(wifi_interface_info_t *interface)
+ {
++    if (wifi_hal_backhaul_root_blocked(interface)) return RETURN_ERR;
+     int ret;
+     struct hostapd_data *hapd = NULL;
+     struct hostapd_bss_config *conf = NULL;
+--- a/src/wifi_hal_nl80211.c
++++ b/src/wifi_hal_nl80211.c
+@@ -4601,6 +4601,8 @@
+     int fd, res;
+     short flags;
+ 
++    if (enable && wifi_hal_backhaul_root_name_blocked(ifname)) return 0;
++
+     if (get_vap_state(ifname, &flags) < 0) {
+         wifi_hal_error_print("%s:%d could not get state of interface %s\n", __func__, __LINE__, ifname);
+         return -1;
+@@ -17522,7 +17524,7 @@
+     int link_id = -1;
+ 
+     interface = (wifi_interface_info_t *)priv;
+-    if (interface->in_reconf) {
++    if (interface->in_reconf || wifi_hal_backhaul_root_blocked(interface)) {
+         wifi_hal_dbg_print("%s:%d: Interface %s is in reconfiguration, skip set_ap\n", __func__,
+             __LINE__, interface->name);
+         return 0;
+--- a/src/wifi_hal_nl80211_events.c
++++ b/src/wifi_hal_nl80211_events.c
+@@ -843,6 +843,7 @@
+ 
+     vap = &interface->vap_info;
+     interface->u.sta.state = WPA_DISCONNECTED;
++    wifi_hal_backhaul_root_link(interface, false);
+     callbacks = get_hal_device_callbacks();
+ 
+     if (callbacks->sta_conn_status_callback) {
+--- a/src/wifi_hal_nl80211_utils.c
++++ b/src/wifi_hal_nl80211_utils.c
+@@ -6354,7 +6354,8 @@
+ 
+     interface->in_reconf = false;
+ 
+-    if (interface->vap_info.u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
++    if (!wifi_hal_backhaul_root_blocked(interface) &&
++        interface->vap_info.u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
+         interface->vap_initialized == true) {
+         wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__, __LINE__, interface_name);

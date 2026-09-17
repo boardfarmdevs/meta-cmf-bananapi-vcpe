@@ -32,6 +32,9 @@ g++ -std=c++17 -Wall -Wextra -Werror -pthread -I "$NATIVE_SOURCE/inc" \
 /tmp/native-backhaul-policy-test
 python3 gen/tests/native-backhaul-controller-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-backhaul-agent-test.py "$NATIVE_SOURCE"
+python3 gen/tests/onewifi-root-admission-test.py "$ONEWIFI_SOURCE"
+python3 gen/tests/native-root-admission-probe-test.py --header "$NATIVE_SOURCE/inc/em_rooted_admission_probe.h"
+python3 gen/tests/hal-rooted-admission-test.py --source-dir "$HAL_SOURCE" --output /tmp/hal-rooted-admission.json
 python3 gen/tests/native-station-persistence-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-sta-link-metrics-test.py "$NATIVE_SOURCE" --output /tmp/native-sta-link-metrics.json
 python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"

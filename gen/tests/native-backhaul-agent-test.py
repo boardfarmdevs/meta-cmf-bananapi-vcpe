@@ -11,6 +11,9 @@ native = Path(sys.argv[1])
 source = (native / "src/agent/em_agent.cpp").read_text()
 signatures = [
     "bool em_agent_t::handle_native_backhaul_frame",
+    "bool em_agent_t::read_native_root_context",
+    "void em_agent_t::poll_native_root_admission",
+    "void em_agent_t::process_native_root_reply",
     "bool em_agent_t::send_native_backhaul_reply",
     "bool em_agent_t::native_backhaul_station_matches",
     "bool em_agent_t::read_native_backhaul_link",
@@ -30,7 +33,9 @@ program = r"""
 #include <string>
 #include <functional>
 #include <net/if.h>
+#include <sys/random.h>
 #include "em_native_backhaul_agent.h"
+#include "em_rooted_admission_probe.h"
 using mac_address_t = unsigned char[6];
 using namespace em_native_backhaul;
 constexpr int em_msg_type_bh_steering_req = 0x8019;
@@ -143,6 +148,15 @@ bool cJSON_IsTrue(cJSON *item) { return item != nullptr && item->type == 3; }
 #define cJSON_ArrayForEach(element, array) for (element = array ? array->child : nullptr; element; element = element->next)
 struct em_agent_t {
     transactions m_native_backhaul_transactions;
+    em_rooted_admission::transaction_matcher m_root_admission;
+    bool root_enabled = false;
+    bool root_admitted = false;
+    bool root_ambiguous = false;
+    bool root_short = false;
+    uint64_t root_generation = 1;
+    unsigned int root_writes = 0;
+    unsigned short next_mid = 200;
+    std::array<unsigned char, 22> root_written{};
     dm_easy_mesh_t m_data_model;
     int m_bus_hdl = 0;
     wifi_bus_desc_t descriptor;
@@ -160,7 +174,19 @@ struct em_agent_t {
         descriptor.bus_data_get_fn = [this](void *, const char *path, raw_data_t *value) {
             if (get_failure) return -1;
             const std::string property(path);
-            if (property.find("InterfaceName") != std::string::npos) {
+            if (property.find("X_RDK_BackhaulRoot") != std::string::npos) {
+                if (!root_enabled || (!root_ambiguous && property.find("STA.2.") == std::string::npos)) return -1;
+                value->data_type = bus_data_type_bytes;
+                value->raw_data_len = root_short ? 21 : 22;
+                auto *bytes = static_cast<unsigned char *>(calloc(22, 1));
+                value->raw_data.bytes = bytes;
+                for (unsigned int index = 0; index < 8; ++index)
+                    bytes[index] = root_generation >> (56 - 8 * index);
+                memcpy(bytes + 8, station_mac.data(), 6);
+                memcpy(bytes + 14, actual_parent.data(), 6);
+                bytes[20] = connected;
+                bytes[21] = root_admitted;
+            } else if (property.find("InterfaceName") != std::string::npos) {
                 const char *name = property.find("STA.2.") != std::string::npos ? "wlan-sta1" : "wlan0";
                 value->data_type = bus_data_type_string;
                 std::string encoded = name;
@@ -184,6 +210,12 @@ struct em_agent_t {
             return static_cast<int>(bus_error_success);
         };
         descriptor.bus_set_fn = [this](void *, const char *path, raw_data_t *value) {
+            if (std::string(path) == "Device.WiFi.STA.2.X_RDK_BackhaulRoot") {
+                assert(value->data_type == bus_data_type_bytes && value->raw_data_len == 22);
+                memcpy(root_written.data(), value->raw_data.bytes, 22);
+                ++root_writes;
+                return set_failure ? -1 : static_cast<int>(bus_error_success);
+            }
             assert(std::string(path) == "Device.WiFi.STA.2.Bssid");
             assert(value->data_type == bus_data_type_bytes && value->raw_data_len == 6);
             ++writes;
@@ -194,6 +226,11 @@ struct em_agent_t {
     ~em_agent_t() { for (auto *event : queued) { free(event->u.fevt.frame); free(event); } }
     wifi_bus_desc_t *get_bus_descriptor() { return &descriptor; }
     bool is_data_model_initialized() { return true; }
+    unsigned short get_next_msg_id() { return ++next_mid; }
+    bool read_native_root_context(em_rooted_admission::link_context &, unsigned int &,
+        std::array<unsigned char, 22> &);
+    void poll_native_root_admission();
+    void process_native_root_reply(const unsigned char *, size_t);
     em_t *get_al_node() { return &node; }
     void push_to_queue(em_event_t *event) { queued.push_back(event); }
     bool handle_native_backhaul_frame(unsigned char *, unsigned int, em_t *);
@@ -284,6 +321,41 @@ int main() {
     assert(!queued.handle_native_backhaul_frame(foreign_type.data(), foreign_type.size(), nullptr));
 
     em_agent_t agent;
+    {
+        em_agent_t rooted;
+        rooted.root_enabled = true;
+        rooted.poll_native_root_admission();
+        assert(rooted.node.sent.size() == 1 && rooted.writes == 0);
+        rooted.poll_native_root_admission();
+        assert(rooted.node.sent.size() == 1);
+        em_rooted_admission::wire_frame root_reply{};
+        assert(em_rooted_admission::controller_reply(rooted.node.sent[0].data(),
+            rooted.node.sent[0].size(), rooted.m_data_model.controller, root_reply));
+        assert(rooted.handle_native_backhaul_frame(root_reply.data(), root_reply.size(), nullptr));
+        assert(rooted.queued.size() == 1 && rooted.root_writes == 0);
+        rooted.process_native_root_reply(root_reply.data(), root_reply.size());
+        assert(rooted.root_writes == 1 && rooted.root_written[7] == 1 && rooted.writes == 0);
+        rooted.process_native_root_reply(root_reply.data(), root_reply.size());
+        assert(rooted.root_writes == 1);
+        rooted.poll_native_root_admission();
+        assert(em_rooted_admission::controller_reply(rooted.node.sent.back().data(),
+            rooted.node.sent.back().size(), rooted.m_data_model.controller, root_reply));
+        ++rooted.root_generation;
+        rooted.process_native_root_reply(root_reply.data(), root_reply.size());
+        assert(rooted.root_writes == 1 && !rooted.m_root_admission.pending());
+        for (unsigned int failure = 0; failure < 5; ++failure) {
+            em_agent_t unavailable;
+            unavailable.root_enabled = true;
+            if (failure == 0) unavailable.connected = false;
+            if (failure == 1) unavailable.root_admitted = true;
+            if (failure == 2) unavailable.root_ambiguous = true;
+            if (failure == 3) unavailable.root_short = true;
+            if (failure == 4) unavailable.m_data_model.colocated = true;
+            unavailable.poll_native_root_admission();
+            assert(unavailable.node.sent.empty() && !unavailable.m_root_admission.pending());
+        }
+        puts("PASS: native root probe uses fresh association identity, queue isolation, replay rejection and fail-closed bus state");
+    }
     issue(agent, command);
     assert(agent.writes == 1 && agent.written == command.target);
     assert(agent.node.sent.size() == 1 && agent.node.sent.back() == reply(command, true));

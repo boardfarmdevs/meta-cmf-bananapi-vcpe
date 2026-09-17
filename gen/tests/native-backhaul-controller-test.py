@@ -17,12 +17,19 @@ ap_queries = source[query_start:query_end]
 program = r'''
 #include "em_backhaul_policy.h"
 #include "em_backhaul_wire.h"
+#include "em_rooted_admission_probe.h"
 #include <cassert>
 #include <chrono>
 #include <mutex>
 #include <iostream>
 #define em_printfout(...) (void)0
-struct em_t {};
+struct em_t {
+    std::vector<unsigned char> sent;
+    int send_native_backhaul_frame(unsigned char *data, unsigned int length) {
+        sent.assign(data, data + length);
+        return length;
+    }
+};
 struct __attribute__((packed)) em_assoc_link_metrics_t { unsigned char bytes[19]; };
 struct __attribute__((packed)) em_unassoc_sta_metric_t { unsigned char bytes[12]; };
 struct __attribute__((packed)) em_bh_steering_resp_t { unsigned char bytes[13]; };
@@ -77,6 +84,35 @@ int main() {
     network.nodes[child] = {child, station, bssid, {}};
     network.aps[bssid] = {parent, bssid, 115, 36};
     network.aps[target_bssid] = {target, target_bssid, 115, 36};
+    {
+        em_rooted_admission::message request{};
+        std::copy(child.begin(), child.end(), request.agent.begin());
+        std::copy(control.begin(), control.end(), request.controller.begin());
+        std::copy(station.begin(), station.end(), request.station.begin());
+        std::copy(bssid.begin(), bssid.end(), request.parent.begin());
+        request.nonce[0] = 1;
+        request.generation = 2;
+        request.mid = 123;
+        em_rooted_admission::wire_frame probe{};
+        assert(em_rooted_admission::encode(request, probe));
+        em_t transport;
+        assert(controller.handle_native_backhaul_frame(probe.data(), probe.size(), &transport));
+        em_rooted_admission::message response{};
+        assert(em_rooted_admission::decode(transport.sent.data(), transport.sent.size(), response));
+        assert(response.opcode == em_rooted_admission::operation::reply && response.nonce == request.nonce);
+        assert(controller.m_backhaul_queries.empty() && controller.m_backhaul_steer.mid == 0);
+        for (unsigned int failure = 0; failure < 3; ++failure) {
+            auto invalid = request;
+            if (failure == 0) invalid.agent[5] ^= 0x40;
+            if (failure == 1) invalid.station[5] ^= 0x40;
+            if (failure == 2) invalid.controller[5] ^= 0x40;
+            assert(em_rooted_admission::encode(invalid, probe));
+            transport.sent.clear();
+            assert(controller.handle_native_backhaul_frame(probe.data(), probe.size(), &transport));
+            assert(transport.sent.empty());
+        }
+        puts("PASS: native root responder binds controller, registered agent and STA without altering steering state");
+    }
     auto restore_query = [&]() {
         controller.m_backhaul_queries[77] = {false, network.aps[target_bssid], {{station, bssid}}, 11000, 7};
     };

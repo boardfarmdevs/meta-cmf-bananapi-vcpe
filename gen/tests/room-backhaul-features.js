@@ -19,9 +19,23 @@ function stackProfile(flavor) {
       ap: 'wlan2.1', station: 'wlan3', bridge: 'br-lan', gateway: '192.168.77.1', healthNodes: 5};
 }
 
+function parentPaths(parents) {
+  return Object.fromEntries(Object.keys(parents).sort().map(role => {
+    const chain = [];
+    let current = role;
+    while (current && current !== 'gateway' && !chain.includes(current)) {
+      chain.push(current);
+      current = parents[current];
+    }
+    chain.push(current || null);
+    return [role, chain];
+  }));
+}
+
 function ready(entry, healthNodes, clients = 10) {
   return Object.keys(entry.native.nodes).length === 5 && Object.keys(entry.native.parents).length === 4 &&
     Object.values(entry.native.parents).every(Boolean) &&
+    Object.values(parentPaths(entry.native.parents)).every(chain => chain.at(-1) === 'gateway') &&
     Object.values(entry.native.nodes).every(node => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
     entry.health?.healthy && entry.health.topology_nodes === healthNodes && entry.health.api_active === clients &&
     entry.optimizer?.fleet?.converged === true && entry.topology.nodes.length === 6 &&
@@ -111,8 +125,9 @@ async function run(options) {
     }));
     const nodes = Object.fromEntries(readings);
     const owners = Object.fromEntries(readings.filter(([, value]) => value.apBssid).map(([role, value]) => [value.apBssid, role]));
-    return {nodes, parents: Object.fromEntries(readings.filter(([role]) => role !== 'gateway')
-      .map(([role, value]) => [role, owners[value.parentBssid] || null]))};
+    const parents = Object.fromEntries(readings.filter(([role]) => role !== 'gateway')
+      .map(([role, value]) => [role, owners[value.parentBssid] || null]));
+    return {nodes, parents, paths: parentPaths(parents)};
   }
 
   async function auditClients(observation) {
@@ -266,7 +281,8 @@ async function run(options) {
         }
         currentRoom.nativeOutcome = {...summarizeNative([observation], id), convergenceVerified: converged(observation)};
         assert.equal(currentRoom.nativeOutcome.convergenceVerified, true,
-          'Branch must recover native uplinks, traffic, both topology views and all ten client decisions');
+          'Branch must recover native uplinks, traffic, both topology views and all ten client decisions; parent paths: ' +
+          JSON.stringify(observation.native.paths));
       }
       if (id !== 'backhaul-branch-formation') {
         const deadline = Date.now() + 60000;
@@ -354,7 +370,7 @@ async function run(options) {
   return report;
 }
 
-module.exports = {summarizeNative, interfaceState, stackProfile, ready};
+module.exports = {summarizeNative, interfaceState, stackProfile, ready, parentPaths};
 if (require.main === module) {
   const options = {};
   for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];

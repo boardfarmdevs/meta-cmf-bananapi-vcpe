@@ -1,0 +1,157 @@
+Subject: [PATCH] Bridge generation-bound native root proof onto the OneWifi control queue
+
+Publish HAL association identity and queue root admission on the native control
+thread. Link loss quiesces only downstream backhaul APs; radio and fronthaul
+configuration, native steering and measurement deadlines are unchanged.
+
+--- a/include/wifi_events.h
++++ b/include/wifi_events.h
+@@ -187,6 +187,7 @@
+     wifi_event_type_link_quality_rfc,
+     wifi_event_type_send_btm_req,
+     wifi_event_type_em_ap_metrics_query,
++    wifi_event_type_backhaul_root_admit,
+     wifi_event_command_max,
+ 
+     wifi_event_monitor_diagnostics = wifi_event_type_base
+--- a/source/core/wifi_ctrl_rbus_handlers.c
++++ b/source/core/wifi_ctrl_rbus_handlers.c
+@@ -41,6 +41,56 @@
+ #define MAX_STATUS_LEN 5
+ #define STA_STATUS_DISCONNECTED 1
+ 
++extern INT wifi_hal_backhaul_root_state(INT vap_index, unsigned char *state);
++
++static bus_error_t get_backhaul_root(char *name, raw_data_t *value, bus_user_data_t *user_data)
++{
++    unsigned int instance;
++    int consumed = 0;
++    unsigned char state[22];
++    wifi_mgr_t *mgr = get_wifimgr_obj();
++    (void)user_data;
++
++    if (name == NULL || value == NULL ||
++        sscanf(name, "Device.WiFi.STA.%u.X_RDK_BackhaulRoot%n", &instance, &consumed) != 1 ||
++        consumed == 0 || name[consumed] != '\0' || instance == 0 || instance > getNumberRadios())
++        return bus_error_invalid_input;
++    const unsigned int vap_index = get_sta_vap_index_for_radio(&mgr->hal_cap.wifi_prop, instance - 1);
++    if (wifi_hal_backhaul_root_state(vap_index, state) != RETURN_OK)
++        return bus_error_invalid_operation;
++    value->raw_data.bytes = malloc(sizeof(state));
++    if (value->raw_data.bytes == NULL) return bus_error_out_of_resources;
++    memcpy(value->raw_data.bytes, state, sizeof(state));
++    value->raw_data_len = sizeof(state);
++    value->data_type = bus_data_type_bytes;
++    return bus_error_success;
++}
++
++static bus_error_t set_backhaul_root(char *name, raw_data_t *value, bus_user_data_t *user_data)
++{
++    unsigned int instance;
++    int consumed = 0;
++    unsigned char queued[26];
++    wifi_mgr_t *mgr = get_wifimgr_obj();
++    (void)user_data;
++
++    if (name == NULL || value == NULL || value->data_type != bus_data_type_bytes ||
++        value->raw_data.bytes == NULL || value->raw_data_len != 22 ||
++        sscanf(name, "Device.WiFi.STA.%u.X_RDK_BackhaulRoot%n", &instance, &consumed) != 1 ||
++        consumed == 0 || name[consumed] != '\0' || instance == 0 || instance > getNumberRadios())
++        return bus_error_invalid_input;
++    const unsigned int vap_index = get_sta_vap_index_for_radio(&mgr->hal_cap.wifi_prop, instance - 1);
++    queued[0] = vap_index >> 24;
++    queued[1] = vap_index >> 16;
++    queued[2] = vap_index >> 8;
++    queued[3] = vap_index;
++    memcpy(queued + 4, value->raw_data.bytes, 22);
++    if (push_event_to_ctrl_queue(queued, sizeof(queued), wifi_event_type_command,
++            wifi_event_type_backhaul_root_admit, NULL) != RETURN_OK)
++        return bus_error_out_of_resources;
++    return bus_error_success;
++}
++
+ hotspot_timing_t g_hotspot_timing;
+ apply_ignite_config_t g_apply_ignite_config;
+ 
+@@ -4641,6 +4691,9 @@
+                                 { WIFI_STA_CONNECTED_GW_BSSID, bus_element_type_property,
+                                     { get_sta_attribs, set_sta_attribs, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                     { bus_data_type_bytes, true, 0, 0, 0, NULL } },
++                                { "Device.WiFi.STA.{i}.X_RDK_BackhaulRoot", bus_element_type_property,
++                                    { get_backhaul_root, set_backhaul_root, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
++                                    { bus_data_type_bytes, true, 0, 0, 0, NULL } },
+                                 { WIFI_BUS_WIFIAPI_COMMAND, bus_element_type_method,
+                                     { NULL, set_wifiapi_command, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
+                                     { bus_data_type_string, true, 0, 0, 0, NULL } },
+--- a/source/core/wifi_ctrl_queue_handlers.c
++++ b/source/core/wifi_ctrl_queue_handlers.c
+@@ -4439,10 +4439,28 @@
+     tgt_vap_map = NULL;
+ }
+ 
++extern INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state);
++
++static void process_backhaul_root_admission(void *data, unsigned int len)
++{
++    if (data == NULL || len != 26) return;
++    const unsigned char *request = data;
++    const unsigned int vap_index = (unsigned int)request[0] << 24 |
++        (unsigned int)request[1] << 16 | (unsigned int)request[2] << 8 | request[3];
++    if (vap_index < getNumberRadios() * MAX_NUM_VAP_PER_RADIO &&
++        wifi_hal_backhaul_root_admit(vap_index, request + 4) == RETURN_OK)
++        wifi_util_info_print(WIFI_CTRL, "Backhaul admission: rooted vap=%u\n", vap_index);
++    else
++        wifi_util_error_print(WIFI_CTRL, "Backhaul admission: stale or failed vap=%u\n", vap_index);
++}
++
+ void handle_command_event(wifi_ctrl_t *ctrl, void *data, unsigned int len,
+     wifi_event_subtype_t subtype)
+ {
+     switch (subtype) {
++    case wifi_event_type_backhaul_root_admit:
++        process_backhaul_root_admission(data, len);
++        break;
+     case wifi_event_type_active_gw_check:
+         process_active_gw_check_command(*(bool *)data);
+         break;
+--- a/source/core/wifi_events.c
++++ b/source/core/wifi_events.c
+@@ -228,6 +228,7 @@
+     case wifi_event_exec_stop:
+     case wifi_event_exec_timeout:
+     case wifi_event_type_send_action_frame:
++    case wifi_event_type_backhaul_root_admit:
+         return true;
+     default:
+         return false;
+--- a/source/core/services/vap_svc_mesh_ext.c
++++ b/source/core/services/vap_svc_mesh_ext.c
+@@ -37,6 +37,8 @@
+ #include "wifi_stubs.h"
+ #include "wifi_multiap.h"
+ 
++extern INT wifi_hal_backhaul_root_loss(INT vap_index);
++
+ #define SCORE_TIE_THRESHOLD 1
+ #define WIFI_VARIANT_BE 7
+ #define WIFI_VARIANT_AX 6
+@@ -2119,6 +2121,9 @@
+     if (sta_data->stats.connect_status == wifi_connection_status_connected) {
+         int radio_freq_band = 0;
+ 
++        if (wifi_hal_backhaul_root_loss(sta_data->stats.vap_index) != RETURN_OK)
++            wifi_util_error_print(WIFI_CTRL, "Backhaul admission: downstream quiesce failed\n");
++
+         /* A connected event is authoritative even when this is a live
+          * reparent and the service state was already connected. */
+         memset(&ext->last_connected_bss, 0, sizeof(bss_candidate_t));
+@@ -2278,6 +2283,9 @@
+             return 0;
+         }
+ 
++        if (wifi_hal_backhaul_root_loss(sta_data->stats.vap_index) != RETURN_OK)
++            wifi_util_error_print(WIFI_CTRL, "Backhaul admission: downstream quiesce failed\n");
++
+         if (ext->ext_udhcp_ip_check_id != 0) {
+             scheduler_cancel_timer_task(ctrl->sched, ext->ext_udhcp_ip_check_id);
+             ext->ext_udhcp_ip_check_id = 0;
