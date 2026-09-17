@@ -1,6 +1,8 @@
 import datetime as dt
 import copy
 import importlib.util
+import io
+import json
 from pathlib import Path
 import pytest
 
@@ -110,3 +112,48 @@ def test_default_room_has_twenty_online_and_eighty_dormant(fault):
     elif fault == "wrong_room":
         state["selected_world"] = "home-five-agent--stationary"
     assert readiness().default_roster({"api_total": 20}, clients, state) == (not fault)
+
+
+@pytest.mark.parametrize("timestamp", [None, 3, "", "invalid", "2026-09-17T00:00:00"])
+def test_invalid_metric_timestamp_is_explicitly_not_fresh(timestamp):
+    module = readiness()
+    now = dt.datetime(2026, 9, 17, tzinfo=dt.timezone.utc)
+    clients = [{"sta_mac": str(ordinal), "rcpi": 100, "metric_observed_at": now.isoformat()}
+               for ordinal in range(20)]
+    clients[3]["metric_observed_at"] = timestamp
+    result = module.freshness_state({"evaluated_at": now.isoformat()}, clients, now)
+    assert result["fresh"] is False
+    assert result["timestamp_errors"][0]["field"] == "client[3].metric_observed_at"
+
+
+@pytest.mark.parametrize("age,expected", [(-1, False), (0, True), (30, True), (31, False)])
+def test_freshness_boundaries_are_unchanged(age, expected):
+    module = readiness()
+    now = dt.datetime(2026, 9, 17, tzinfo=dt.timezone.utc)
+    timestamp = (now - dt.timedelta(seconds=age)).isoformat()
+    clients = [{"rcpi": 100, "metric_observed_at": timestamp} for ordinal in range(20)]
+    assert module.freshness_state({"evaluated_at": timestamp}, clients, now)["fresh"] is expected
+    assert module.freshness_state({"evaluated_at": timestamp}, clients[:-1], now)["fresh"] is False
+
+
+def test_failed_timestamp_sample_still_preserves_fetched_states(tmp_path, monkeypatch):
+    module = readiness()
+    current = {"environment_epoch": 1, "optimizer": {},
+               "network": {"clients": [{"sta_mac": "aa", "metric_observed_at": None}]}}
+    interactions = {"environment_epoch": 1, "playback": {"status": "paused", "time_ms": 0},
+                    "lease": {"held": False}, "fault": None}
+    responses = iter([current, interactions])
+    monkeypatch.setattr(module.urllib.request, "urlopen", lambda *args, **kwargs: io.StringIO(json.dumps(next(responses))))
+    monotonic = iter([0, 0.5, 2, 3])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(module.time, "sleep", lambda duration: None)
+    output = tmp_path / "failed"
+    monkeypatch.setattr("sys.argv", ["readiness", "--room-url", "http://example.invalid/",
+                                     "--output", str(output), "--timeout", "1"])
+    assert module.main() == 1
+    assert json.loads((output / "current.json").read_text()) == current
+    assert json.loads((output / "interactions.json").read_text()) == interactions
+    sample = json.loads((output / "samples.jsonl").read_text())
+    assert sample["checks"]["fresh"] is False
+    assert {error["field"] for error in sample["timestamp_errors"]} == {
+        "optimizer.evaluated_at", "client[aa].metric_observed_at"}

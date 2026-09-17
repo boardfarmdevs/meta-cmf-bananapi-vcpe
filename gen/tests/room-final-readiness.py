@@ -12,7 +12,29 @@ import urllib.request
 
 
 def parse_timestamp(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp is missing or is not a string")
     return dt.datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", value).replace("Z", "+00:00"))
+
+
+def freshness_state(optimizer, clients, now):
+    errors = []
+
+    def age(value, field):
+        try:
+            return (now - parse_timestamp(value)).total_seconds()
+        except (ValueError, TypeError) as error:
+            errors.append({"field": field, "error": str(error)})
+            return None
+
+    ages = [age(optimizer.get("evaluated_at"), "optimizer.evaluated_at")]
+    ages.extend(age(client.get("metric_observed_at"),
+                    f"client[{client.get('sta_mac', 'unknown')}].metric_observed_at")
+                for client in clients)
+    fresh = len(clients) == 20 and all(value is not None and 0 <= value <= 30 for value in ages) and all(
+        isinstance(client.get("rcpi"), (int, float)) and not isinstance(client["rcpi"], bool)
+        and math.isfinite(client["rcpi"]) and client["rcpi"] > 0 for client in clients)
+    return {"fresh": fresh, "timestamp_errors": errors}
 
 
 def convergence_state(optimizer, clients):
@@ -81,14 +103,15 @@ def main():
                 for endpoint in ("current", "interactions"):
                     with urllib.request.urlopen(args.room_url.rstrip("/") + "/api/demo/" + endpoint, timeout=10) as response:
                         states[endpoint] = json.load(response)
+                    (args.output / (endpoint + ".json")).write_text(json.dumps(states[endpoint], indent=2) + "\n")
                 current, state = states["current"], states["interactions"]
                 health = current.get("health") or {}
                 optimizer = current.get("optimizer") or {}
                 fleet = optimizer.get("fleet") or {}
                 clients = current.get("network", {}).get("clients", [])
-                evaluated = parse_timestamp(optimizer["evaluated_at"])
                 now = dt.datetime.now(dt.timezone.utc)
-                ages = [(now - parse_timestamp(client["metric_observed_at"])).total_seconds() for client in clients]
+                freshness = freshness_state(optimizer, clients, now)
+                sample["timestamp_errors"] = freshness["timestamp_errors"]
                 convergence = convergence_state(optimizer, clients)
                 sample["convergence"] = convergence
                 checks = {
@@ -99,7 +122,7 @@ def main():
                     "current_epoch": current["environment_epoch"] == state["environment_epoch"] == optimizer.get("environment_epoch"),
                     "complete": bool(fleet.get("measurement_complete")) and fleet.get("clients_checked") == 20 and fleet.get("clients_evaluated") == 20,
                     "converged": convergence[criterion],
-                    "fresh": 0 <= (now - evaluated).total_seconds() <= 30 and len(ages) == 20 and all(0 <= age <= 30 for age in ages) and all((client.get("rcpi") or 0) > 0 for client in clients),
+                    "fresh": freshness["fresh"],
                 }
                 sample["checks"] = checks
                 if all(checks.values()):
@@ -108,8 +131,6 @@ def main():
                         report["passed"] = True
                 else:
                     stable_since = None
-                for endpoint, value in states.items():
-                    (args.output / (endpoint + ".json")).write_text(json.dumps(value, indent=2) + "\n")
             except (OSError, ValueError, KeyError, TypeError) as error:
                 stable_since = None
                 sample["error"] = str(error)

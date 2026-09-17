@@ -1,0 +1,44 @@
+Subject: [PATCH] Stamp tagged NaSta batches before synchronous native HAL sampling
+
+Apply to ccsp-one-wifi after the shared NaSta metadata patch.
+Capture CLOCK_MONOTONIC once before the batch, conservatively dating all
+samples before their synchronous HAL calls. Echo the request identity for
+partial and empty results. Fail closed on an unavailable or invalid clock.
+No fixed freshness window, cache policy, or steering behavior is imposed.
+
+Upstream-Status: Pending
+
+--- a/source/core/wifi_ctrl_webconfig.c
++++ b/source/core/wifi_ctrl_webconfig.c
+@@ -21,6 +21,7 @@
+ #include <stdbool.h>
+ #include <string.h> /* strdup() */
+ #include <stdlib.h>
++#include <time.h>
+ #include "const.h"
+ #include "wifi_hal.h"
+ #include "wifi_ctrl.h"
+@@ -1636,6 +1637,23 @@
+     config = &ctrl->webconfig;
+     memset(&response, 0, sizeof(nasta_response_t));
+ 
++    response.has_query_id = query->has_query_id;
++    response.query_id = query->query_id;
++    if (query->has_query_id) {
++        struct timespec collected;
++        if (clock_gettime(CLOCK_MONOTONIC, &collected) != 0 || collected.tv_sec < 0 ||
++            collected.tv_nsec < 0 || collected.tv_nsec >= 1000000000L ||
++            (uint64_t)collected.tv_sec > UINT64_C(9007199254740)) {
++            return RETURN_ERR;
++        }
++        response.collected_monotonic_ms = (uint64_t)collected.tv_sec * 1000 +
++            (uint64_t)collected.tv_nsec / 1000000;
++        if (response.collected_monotonic_ms == 0 ||
++            response.collected_monotonic_ms > UINT64_C(9007199254740991)) {
++            return RETURN_ERR;
++        }
++    }
++
+     wifi_util_dbg_print(WIFI_CTRL, "%s:%d: Processing NaSta query: vap=%u, %u opclass entries\n",
+         __func__, __LINE__, query->vap_index, query->num_opclass);
+ 

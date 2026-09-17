@@ -6,7 +6,7 @@ const path = require('path');
 const harness = fs.readFileSync(path.join(__dirname, 'room-backhaul-features.js'), 'utf8');
 assert.ok(harness.includes("document.fullscreenElement ? '#fullscreenPlay' : '#play'"));
 assert.match(harness, /async function load\(id\)[\s\S]*?fullscreenElement[\s\S]*?#roomFullscreen[\s\S]*?changed = true/);
-const {interfaceState, summarizeNative, stackProfile, ready} = require('./room-backhaul-features.js');
+const {interfaceState, summarizeNative, stackProfile, ready, parentPaths} = require('./room-backhaul-features.js');
 assert.equal(stackProfile('rdk').gateway, '10.0.0.1');
 assert.equal(stackProfile('prpl').gateway, '192.168.77.1');
 assert.equal(stackProfile('prpl').healthNodes, 5);
@@ -24,6 +24,22 @@ assert.equal(ready(healthy, 6), false);
 assert.equal(ready({...healthy, native: {...healthy.native, nodes: {}}}, 5), false);
 assert.equal(ready({...healthy, native: {...healthy.native, parents: {...healthy.native.parents, extender_4: null}}}, 5), false);
 assert.equal(ready({...healthy, optimizer: {fleet: {converged: false}}}, 5), false);
+assert.deepEqual(parentPaths(healthy.native.parents).extender_3, ['extender_3', 'extender_1', 'gateway']);
+for (const parents of [
+  {...healthy.native.parents, extender_1: 'extender_1'},
+  {...healthy.native.parents, extender_1: 'extender_3', extender_2: 'extender_4'},
+  {extender_1: 'extender_2', extender_2: 'extender_3', extender_3: 'extender_1', extender_4: 'extender_1'},
+  {...healthy.native.parents, extender_1: 'unknown'},
+]) {
+  assert.equal(ready({...healthy, native: {...healthy.native, parents}}, 5), false,
+    'Connected parent observations and cached successful pings cannot qualify a disconnected or cyclic path');
+}
+assert.deepEqual(parentPaths({extender_1: 'extender_3', extender_3: 'extender_1'}).extender_1,
+  ['extender_1', 'extender_3', 'extender_1']);
+assert.deepEqual(parentPaths({extender_1: null}).extender_1, ['extender_1', null]);
+assert.deepEqual(parentPaths({}), {});
+assert.equal(ready({...healthy, native: {...healthy.native,
+  parents: {extender_1: 'gateway', extender_2: 'extender_1', extender_3: 'extender_2', extender_4: 'extender_3'}}}, 5), true);
 const inactive = 'Interface wifi1.1\n addr 02:00:00:00:01:01\n type AP\n' +
   'Connected to 02:00:00:00:02:02 (on wifi1.3)\n SSID: mesh_backhaul\n freq: 5180\nPROBE_EXIT=0\n';
 assert.equal(interfaceState(inactive).apOperating, false, 'STA SSID does not prove its backhaul AP is running');

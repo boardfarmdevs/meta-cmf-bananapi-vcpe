@@ -1,0 +1,96 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Subject: [PATCH] verify native backhaul handovers with targeted topology refresh
+
+A successful native handover response arrives while the controller can still
+name the old parent until its periodic topology query. Serving AP queries are
+correctly scoped to that old parent, so verification times out despite an
+actual successful roam. Request authoritative topology promptly after a
+correlated success, with at most three queries two seconds apart. Once that
+observation changes parent, request fresh serving metrics without waiting for
+the regular cadence. Neither the response nor the requested BSSID substitutes
+for native topology or measured link evidence; deadlines remain unchanged.
+Include the transaction MID in the verification outcome for wire correlation.
+
+Upstream-Status: Pending
+
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -74,6 +74,9 @@
+         int64_t last_sent = 0;
+         unsigned int retries = 0;
+         unsigned int failures = 0;
++        int64_t topology_queried = 0;
++        unsigned int topology_queries = 0;
++        bool parent_observed = false;
+     };
+     std::mutex m_backhaul_mutex;
+     em_backhaul::snapshot m_backhaul_network;
+@@ -85,6 +88,8 @@
+     int64_t m_backhaul_last_query = 0;
+     uint64_t m_backhaul_round = 0;
+     void handle_native_backhaul_tick();
++    void collect_native_backhaul_refresh(const em_backhaul::snapshot &network, int64_t now,
++        std::vector<std::vector<unsigned char>> &outgoing);
+ 
+ 	/**!
+ 	 * @brief Handles a bus event.
+--- a/src/ctrl/em_backhaul_ctrl.cpp
++++ b/src/ctrl/em_backhaul_ctrl.cpp
+@@ -32,6 +32,31 @@
+ 
+ }
+ 
++void em_ctrl_t::collect_native_backhaul_refresh(const em_backhaul::snapshot &network,
++    int64_t now, std::vector<std::vector<unsigned char>> &outgoing)
++{
++    auto &steer = m_backhaul_steer;
++    if (steer.mid == 0 || !steer.response || now - steer.sent >= 15000) return;
++    const auto current = network.nodes.find(steer.request.al);
++    if (current == network.nodes.end() || current->second.sta != steer.request.sta) return;
++    if (current->second.parent_bssid == steer.request.target) {
++        if (!steer.parent_observed) {
++            steer.parent_observed = true;
++            m_backhaul_last_query = 0;
++        }
++        return;
++    }
++    if (steer.topology_queries >= 3 ||
++        (steer.topology_queries != 0 && now - steer.topology_queried < 2000)) return;
++    const unsigned short mid = get_next_msg_id();
++    outgoing.push_back(em_backhaul::frame(steer.request.al, m_backhaul_controller,
++        em_msg_type_topo_query, mid, em_tlv_type_profile, {em_profile_type_3}));
++    steer.topology_queried = now;
++    ++steer.topology_queries;
++    em_printfout("Native backhaul topology refresh steer_mid=%u query_mid=%u attempt=%u",
++        steer.mid, mid, steer.topology_queries);
++}
++
+ void em_ctrl_t::handle_native_backhaul_tick()
+ {
+     em_backhaul::snapshot network;
+@@ -127,6 +152,7 @@
+             network.uncertain[uncertain.first] = uncertain.second.failures < 3 ? uncertain.second.request.target : "";
+         m_backhaul_network = network;
+         m_backhaul_policy.observe(network, now);
++        collect_native_backhaul_refresh(network, now, outgoing);
+         for (auto iterator = m_backhaul_queries.begin(); iterator != m_backhaul_queries.end();) {
+             if (now - iterator->second.sent > 15000) iterator = m_backhaul_queries.erase(iterator);
+             else ++iterator;
+@@ -134,12 +160,14 @@
+         if (m_backhaul_steer.mid != 0) {
+             const auto current = network.nodes.find(m_backhaul_steer.request.al);
+             const bool verified = current != network.nodes.end() &&
++                current->second.sta == m_backhaul_steer.request.sta &&
+                 current->second.parent_bssid == m_backhaul_steer.request.target &&
+                 current->second.serving.fresh(now) &&
+                 current->second.serving.observed >= m_backhaul_steer.sent;
+             if (verified || now - m_backhaul_steer.sent >= 15000) {
+-                em_printfout("Native backhaul %s sta=%s previous=%s target=%s response=%d elapsed_ms=%lld",
+-                    verified ? "verified" : "timeout", backhaul_label(m_backhaul_steer.request.sta).c_str(),
++                em_printfout("Native backhaul %s mid=%u sta=%s previous=%s target=%s response=%d elapsed_ms=%lld",
++                    verified ? "verified" : "timeout", m_backhaul_steer.mid,
++                    backhaul_label(m_backhaul_steer.request.sta).c_str(),
+                     backhaul_label(m_backhaul_steer.request.previous).c_str(),
+                     backhaul_label(m_backhaul_steer.request.target).c_str(),
+                     m_backhaul_steer.response, static_cast<long long>(now - m_backhaul_steer.sent));
+

@@ -1,0 +1,33 @@
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -211,8 +211,15 @@
+             break;
+ 
+         case em_cmd_type_sta_link_metrics:
+-            m_sm.set_state((m_service_type == em_service_type_agent) ?
+-                em_state_agent_sta_link_metrics_pending:em_state_ctrl_sta_link_metrics_pending);
++            if (m_service_type == em_service_type_agent) {
++                em_state_t saved_state = m_sm.get_state();
++                m_sm.set_state(em_state_agent_sta_link_metrics_pending);
++                em_metrics_t::process_agent_state();
++                m_sm.set_state(saved_state);
++                m_orch_state = em_orch_state_fini;
++            } else {
++                m_sm.set_state(em_state_ctrl_sta_link_metrics_pending);
++            }
+             break;
+ 
+         case em_cmd_type_set_channel:
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -359,7 +359,9 @@
+ 		 * delaying here only lets the one-shot command expire after 10 seconds. */
+ 		return true;
+     } else if (pcmd->m_type == em_cmd_type_sta_link_metrics) {
+-		if (em->get_state() == em_state_agent_configured) {
++		if ((em->get_state() == em_state_agent_configured) ||
++			(em->get_state() == em_state_agent_topo_synchronized) ||
++			(em->get_state() == em_state_agent_ap_cap_report)) {
+ 			return true;
+ 		}
+     } else if (pcmd->m_type == em_cmd_type_scan_result) {

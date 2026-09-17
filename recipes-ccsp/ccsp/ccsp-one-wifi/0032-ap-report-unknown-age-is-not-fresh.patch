@@ -1,0 +1,46 @@
+Subject: [PATCH] Keep unknown and overflowing provider sample ages out of fresh AP evidence
+
+Apply to ccsp-one-wifi only. Missing, future or invalid provider timestamps
+and clock failures produce saturated age rather than fabricated age zero.
+Saturate elapsed time instead of wrapping old samples back into freshness.
+Valid provider samples retain their actual elapsed monotonic age.
+
+Upstream-Status: Pending
+
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -364,7 +364,7 @@
+     wifi_vap_info_t *vap_info = NULL;
+     struct timespec now;
+     struct timespec diff;
+-    uint32_t delta_ms = 0;
++    uint32_t delta_ms = UINT32_MAX;
+ 
+     if ((data == NULL) || (stats == NULL)) {
+         wifi_util_error_print(WIFI_EM, "%s:%d Invalid args for encode stats\n",
+@@ -378,8 +378,11 @@
+         return RETURN_ERR;
+     }
+ 
+-    if (stats->last_update_time.tv_sec != 0) {
+-        clock_gettime(CLOCK_MONOTONIC, &now);
++    if (stats->last_update_time.tv_sec > 0 && stats->last_update_time.tv_nsec >= 0 &&
++        stats->last_update_time.tv_nsec < 1000000000L &&
++        clock_gettime(CLOCK_MONOTONIC, &now) == 0 && now.tv_nsec >= 0 &&
++        now.tv_nsec < 1000000000L && now.tv_sec >= stats->last_update_time.tv_sec &&
++        (now.tv_sec != stats->last_update_time.tv_sec || now.tv_nsec >= stats->last_update_time.tv_nsec)) {
+         if (((long)now.tv_nsec - (long)stats->last_update_time.tv_nsec) < 0) {
+                 diff.tv_sec = now.tv_sec - stats->last_update_time.tv_sec - 1;
+                 diff.tv_nsec = now.tv_nsec - stats->last_update_time.tv_nsec + 1000000000L;
+@@ -387,9 +390,8 @@
+             diff.tv_sec = now.tv_sec - stats->last_update_time.tv_sec;
+             diff.tv_nsec = now.tv_nsec - stats->last_update_time.tv_nsec;
+         }
+-        delta_ms = ((uint64_t)diff.tv_sec * 1000) + (diff.tv_nsec / 1000000);
+-    } else {
+-        delta_ms = 0;
++        uint64_t elapsed_ms = ((uint64_t)diff.tv_sec * 1000) + (diff.tv_nsec / 1000000);
++        delta_ms = elapsed_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed_ms;
+     }
+ 
+     // Associated STA Link Metrics

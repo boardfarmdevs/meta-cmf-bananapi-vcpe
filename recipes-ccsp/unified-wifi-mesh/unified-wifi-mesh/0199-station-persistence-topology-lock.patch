@@ -1,0 +1,47 @@
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Subject: [PATCH] serialize station persistence with native topology departures
+
+The native controller crashed writing address4 in update_list's memcpy after
+get_sta returned null. Station persistence chose a database update before the
+lookup, without sharing the topology-notification mutex. A station can depart
+during the database call; the metrics iterator also retains raw station pointers.
+
+Protect association/departure/metrics persistence and map iteration with the
+existing recursive topology mutex, releasing it before other tables and
+publication. An absent direct update is ignored, never reinserted as a ghost.
+This complements0193 without adding an ASan requirement or a new lock order.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4808,6 +4808,7 @@
+         }
+     } 
+ 
++    std::unique_lock<std::recursive_mutex> station_lock(g_network_topology_mutex);
+     if (dm->db_cfg_type_is_set(db_cfg_type_sta_list_update)) {
+         sta = static_cast<dm_sta_t *> (hash_map_get_first(dm->m_sta_assoc_map));
+         while (sta != NULL) {
+@@ -4899,6 +4900,8 @@
+ 		dm->reset_db_cfg_type(db_cfg_type_sta_metrics_update);
+     }
+ 
++    station_lock.unlock();
++
+     if (dm->db_cfg_type_is_set(db_cfg_type_network_ssid_list_update)) {
+         for (i = 0; i < dm->get_num_network_ssid(); i++) {
+             net_ssid = dm->get_network_ssid_by_ref(i);
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -246,6 +246,10 @@
+ 
+         case dm_orch_type_db_update:
+ 			psta = get_sta(key);
++            if (psta == NULL) {
++                em_printfout("Skipping update for absent STA row %s", key);
++                break;
++            }
+             memcpy(&psta->m_sta_info, &sta.m_sta_info, sizeof(em_sta_info_t));
+             break;
+

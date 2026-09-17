@@ -23,6 +23,54 @@ The test directories on `PYTHONPATH` supply shared fixtures and
 Compiled native regressions such as `policy-submission-test.py` additionally
 take the patched Yocto source tree; see their `--help` output.
 
+Native proactive-backhaul checks use the patched EasyMesh source tree, without
+starting a lab or sending steering requests:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -pthread -I "$NATIVE_SOURCE/inc" \
+  gen/tests/native-backhaul-policy-test.cpp -o /tmp/native-backhaul-policy-test
+/tmp/native-backhaul-policy-test
+python3 gen/tests/native-backhaul-controller-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-backhaul-agent-test.py "$NATIVE_SOURCE"
+python3 gen/tests/onewifi-root-admission-test.py "$ONEWIFI_SOURCE"
+python3 gen/tests/native-root-admission-probe-test.py --header "$NATIVE_SOURCE/inc/em_rooted_admission_probe.h"
+python3 gen/tests/hal-rooted-admission-test.py --source-dir "$HAL_SOURCE" --output /tmp/hal-rooted-admission.json
+python3 gen/tests/native-station-persistence-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-sta-link-metrics-test.py "$NATIVE_SOURCE" --output /tmp/native-sta-link-metrics.json
+python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"
+python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
+python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
+python3 gen/tests/ap-report-snapshot-test.py "$NATIVE_SOURCE" "$CJSON_TEST_DEPS" "$HEADER_SOURCE/inc/em_base.h"
+python3 gen/tests/ap-report-provider-age-test.py "$ONEWIFI_SOURCE"
+python3 gen/tests/onewifi-ap-query-dispatch-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
+python3 gen/tests/hal-candidate-identity-test.py "$HAL_SOURCE/src/wifi_hal.c"
+```
+
+These exercise the policy, wire bounds, concurrent candidate-query ownership and
+actual controller/agent handler code with stubbed external dependencies. They do
+not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
+The station-persistence fixture compiles the actual native persistence block and
+station update methods. A deterministic concurrent departure cannot invalidate
+the lookup/DB/map transaction; an absent direct update cannot recreate a client.
+The controller fixture checks bounded post-success topology queries and immediate
+fresh-serving collection after an observed parent change, without treating a
+successful response as authoritative topology or fabricated link evidence.
+The agent bus fixture uses RBUS's real counted-string convention (length excludes
+the terminator), also checks explicitly terminated replies, and rejects empty,
+oversized and embedded-NUL interface names before any steering write.
+The OneWifi test needs `cJSON.h` and `libcjson.so` in `CJSON_TEST_DEPS`; it exercises
+the production decoder, encoder and synchronous HAL-loop wrapper with real JSON,
+including delayed callbacks, MID zero, legacy queries and partial/empty results.
+The AP-query dispatch regression also compiles actual RBUS admission, query
+collection and report construction without a prior reporting policy, checking
+unauthorized/missing rows, monitor-only activity flags, empty snapshots, selected radios, failed HAL collection,
+interval zero and conservative provider age.
+The HAL identity regression executes production `wifi_getNASta` against a real
+Unix packet socket, resolving randomized backhaul and client interface addresses
+before the frequency-qualified lookup. Unknown/departed ownership and malformed
+or mismatched provider replies must remain unavailable; the returned owner must
+not replace the requested candidate AP.
+
 `node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The
 HTTP counterpart in `gen/demo/tests/test_server.py` checks clean root redirects,
