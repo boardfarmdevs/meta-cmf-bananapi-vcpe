@@ -198,6 +198,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0198-native-backhaul-targeted-verification.patch \
     file://0199-station-persistence-topology-lock.patch \
     file://0200-topology-reconcile-native-backhaul-sta-vap.patch \
+    file://0201-agent-complete-station-metrics-without-radio-stalls.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

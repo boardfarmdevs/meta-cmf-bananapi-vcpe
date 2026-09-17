@@ -147,6 +147,14 @@ Partial and empty HAL batches complete their exact native transaction, including
 an empty operating-class TLV where required; they are not suppressed or routed
 by the first reported station's operating class. Only actually measured rows
 are published as signal evidence.
+Native associated-station metrics callbacks complete once from their immutable
+command snapshot, preserving configured, topology-synchronized or
+capability-reported radio state. Transitional onboarding states remain gated;
+the controller query lifecycle is unchanged. This prevents a reporting-only
+command from reserving all three radios until its ten-second cancellation and
+aging queued candidate samples beyond their unchanged six-second freshness
+limit. Empty snapshots and send failures release command ownership without
+inventing successful delivery or adding retries.
 In this hwsim lab, same-band candidate RCPI remains HAL/matrix-backed idealized
 availability, not proof that an unassociated AP physically heard a station.
 The HAL first resolves the actual STA interface MAC through the read-only

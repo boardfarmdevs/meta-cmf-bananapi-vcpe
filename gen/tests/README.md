@@ -33,6 +33,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -pthread -I "$NATIVE_SOURCE/inc" \
 python3 gen/tests/native-backhaul-controller-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-backhaul-agent-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-station-persistence-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-sta-link-metrics-test.py "$NATIVE_SOURCE" --output /tmp/native-sta-link-metrics.json
 python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"
 python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
 python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
