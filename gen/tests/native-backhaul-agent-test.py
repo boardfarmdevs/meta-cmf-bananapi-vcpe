@@ -1,14 +1,22 @@
 """Compile isolated production agent methods against fake native bus/model endpoints."""
 
 from pathlib import Path
+import argparse
+import hashlib
+import json
 import re
 import subprocess
-import sys
 import tempfile
 
 
-native = Path(sys.argv[1])
-source = (native / "src/agent/em_agent.cpp").read_text()
+parser = argparse.ArgumentParser()
+parser.add_argument("source", type=Path)
+parser.add_argument("--output", type=Path)
+args = parser.parse_args()
+native = args.source
+snapshots = {relative: (native / relative).read_bytes() for relative in (
+    "src/agent/em_agent.cpp", "inc/em_native_backhaul_agent.h", "inc/em_rooted_admission_probe.h")}
+source = snapshots["src/agent/em_agent.cpp"].decode()
 signatures = [
     "bool em_agent_t::handle_native_backhaul_frame",
     "bool em_agent_t::read_native_root_context",
@@ -36,6 +44,12 @@ program = r"""
 #include <sys/random.h>
 #include "em_native_backhaul_agent.h"
 #include "em_rooted_admission_probe.h"
+static uint64_t fixture_now_ms = 100000;
+namespace std { namespace chrono {
+steady_clock::time_point steady_clock::now() noexcept {
+    return steady_clock::time_point(milliseconds(fixture_now_ms));
+}
+} }
 using mac_address_t = unsigned char[6];
 using namespace em_native_backhaul;
 constexpr int em_msg_type_bh_steering_req = 0x8019;
@@ -149,6 +163,9 @@ bool cJSON_IsTrue(cJSON *item) { return item != nullptr && item->type == 3; }
 struct em_agent_t {
     transactions m_native_backhaul_transactions;
     em_rooted_admission::transaction_matcher m_root_admission;
+    em_rooted_admission::link_context m_root_context{};
+    uint64_t m_root_context_since = 0;
+    uint64_t m_root_next_probe = 0;
     bool root_enabled = false;
     bool root_admitted = false;
     bool root_ambiguous = false;
@@ -243,6 +260,136 @@ struct em_agent_t {
     void observe_native_backhaul_callback(em_bus_event_t *);
 };
 METHODS
+
+void root_case(const std::string &name) {
+    em_agent_t agent;
+    agent.root_enabled = true;
+    if (name == "admitted-renews") agent.root_admitted = true;
+    if (name == "send-failure-retry") agent.node.fail = true;
+    const uint64_t initial = fixture_now_ms;
+    agent.poll_native_root_admission();
+    if (name == "send-failure-retry") {
+        assert(agent.node.sent.empty() && agent.m_root_admission.pending());
+        agent.node.fail = false;
+        fixture_now_ms += 250;
+        agent.poll_native_root_admission();
+        assert(agent.node.sent.size() == 1 && agent.root_writes == 0);
+        return;
+    }
+    assert(agent.node.sent.size() == 1 && agent.root_writes == 0);
+    if (name == "initial-grace") {
+        for (unsigned int elapsed = 250; elapsed < 10000; elapsed += 250) {
+            fixture_now_ms = initial + elapsed;
+            agent.poll_native_root_admission();
+            assert(agent.root_writes == 0);
+        }
+        for (unsigned int elapsed = 10000; elapsed <= 12250 && !agent.root_writes; elapsed += 250) {
+            fixture_now_ms = initial + elapsed;
+            agent.poll_native_root_admission();
+        }
+        assert(agent.root_writes == 1 && agent.root_written[21] == 2 && agent.writes == 0);
+        return;
+    }
+    if (name == "retry-250") {
+        fixture_now_ms = initial + 249;
+        agent.poll_native_root_admission();
+        assert(agent.node.sent.size() == 1);
+        fixture_now_ms = initial + 250;
+        agent.poll_native_root_admission();
+        assert(agent.node.sent.size() == 2 && agent.node.sent[0] == agent.node.sent[1]);
+        return;
+    }
+    em_rooted_admission::wire_frame response{};
+    assert(em_rooted_admission::controller_reply(agent.node.sent[0].data(),
+        agent.node.sent[0].size(), agent.m_data_model.controller, response));
+    if (name == "stale-generation-reply") ++agent.root_generation;
+    if (name == "stale-parent-reply") agent.actual_parent = target_mac;
+    if (name == "disconnected-reply") agent.connected = false;
+    if (name == "late-reply") fixture_now_ms = initial + 2001;
+    if (name == "admit-queue-failure") agent.set_failure = true;
+    agent.process_native_root_reply(response.data(), response.size());
+    if (name == "late-reply") {
+        em_rooted_admission::link_context context{};
+        unsigned int radio_instance = 0;
+        std::array<unsigned char, 22> state{};
+        assert(agent.read_native_root_context(context, radio_instance, state));
+        assert(agent.root_writes == 0 && agent.m_root_admission.pending() &&
+            agent.m_root_admission.expired(context, fixture_now_ms));
+        agent.poll_native_root_admission();
+        assert(agent.root_writes == 0 && agent.writes == 0 && agent.node.sent.size() == 2 &&
+            agent.node.sent[0] != agent.node.sent[1] && agent.m_root_admission.pending() &&
+            !agent.m_root_admission.expired(context, fixture_now_ms));
+        em_rooted_admission::message previous{}, renewed{};
+        assert(em_rooted_admission::decode(agent.node.sent[0].data(), agent.node.sent[0].size(), previous));
+        assert(em_rooted_admission::decode(agent.node.sent[1].data(), agent.node.sent[1].size(), renewed));
+        assert(previous.nonce != renewed.nonce);
+        return;
+    }
+    if (name == "stale-generation-reply" || name == "stale-parent-reply" ||
+        name == "disconnected-reply") {
+        assert(agent.root_writes == 0 && !agent.m_root_admission.pending());
+        return;
+    }
+    assert(agent.root_writes == (agent.root_admitted ? 0U : 1U));
+    agent.process_native_root_reply(response.data(), response.size());
+    assert(agent.root_writes == (agent.root_admitted ? 0U : 1U));
+    const auto first_query = agent.node.sent[0];
+    if (name != "admit-queue-failure") agent.root_admitted = true;
+    fixture_now_ms = initial + 499;
+    agent.poll_native_root_admission();
+    assert(agent.node.sent.size() == 1);
+    fixture_now_ms = initial + 500;
+    agent.poll_native_root_admission();
+    assert(agent.node.sent.size() == 2 && agent.node.sent.back() != first_query);
+    if (name == "renewal-500" || name == "admitted-renews") return;
+    if (name == "admit-queue-failure") {
+        agent.set_failure = false;
+        assert(em_rooted_admission::controller_reply(agent.node.sent.back().data(),
+            agent.node.sent.back().size(), agent.m_data_model.controller, response));
+        agent.process_native_root_reply(response.data(), response.size());
+        assert(agent.root_writes == 2 && agent.root_written[21] == 0);
+        return;
+    }
+    if (name == "changed-context-not-revoked") {
+        ++agent.root_generation;
+        agent.actual_parent = target_mac;
+        fixture_now_ms = initial + 2750;
+        agent.poll_native_root_admission();
+        assert(agent.root_writes == 1 && agent.m_root_admission.pending());
+        return;
+    }
+    if (name == "renewal-replay") {
+        agent.process_native_root_reply(response.data(), response.size());
+        assert(agent.root_writes == 1 && agent.m_root_admission.pending());
+        return;
+    }
+    if (name == "late-renewal-reply-cannot-suppress-revoke") {
+        assert(em_rooted_admission::controller_reply(agent.node.sent.back().data(),
+            agent.node.sent.back().size(), agent.m_data_model.controller, response));
+        fixture_now_ms = initial + 2501;
+        agent.process_native_root_reply(response.data(), response.size());
+        fixture_now_ms = initial + 2750;
+        agent.poll_native_root_admission();
+        assert(agent.root_writes == 2 && agent.root_written[21] == 2 && agent.writes == 0);
+        return;
+    }
+    fixture_now_ms = initial + 2500;
+    agent.poll_native_root_admission();
+    assert(agent.root_writes == 1);
+    if (name == "revoke-queue-failure") agent.set_failure = true;
+    fixture_now_ms = initial + 2750;
+    agent.poll_native_root_admission();
+    assert(agent.root_writes == 2 && agent.root_written[21] == 2 && agent.writes == 0);
+    assert(agent.root_written[7] == 1 &&
+        memcmp(agent.root_written.data() + 14, old_parent.data(), 6) == 0);
+    if (name == "revoke-queue-failure") {
+        assert(agent.m_root_admission.pending());
+        agent.set_failure = false;
+        fixture_now_ms += 250;
+        agent.poll_native_root_admission();
+        assert(agent.root_writes == 3 && agent.root_written[21] == 2 && !agent.m_root_admission.pending());
+    }
+}
 std::vector<unsigned char> request_bytes(const request &command) {
     auto frame = reply(command, true);
     frame.resize(22);
@@ -276,7 +423,12 @@ void check_response(const std::vector<unsigned char> &frame, const request &comm
     assert(frame.size() == (error ? 51 : 41));
     if (error) assert(frame[38] == 0xa3 && frame[40] == 7 && frame[41] == error);
 }
-int main() {
+int main(int argc, char **argv) {
+    if (argc == 2) {
+        root_case(argv[1]);
+        printf("PASS: root renewal %s\n", argv[1]);
+        return 0;
+    }
     const auto command = make_command();
     const auto frame = request_bytes(command);
     request decoded{};
@@ -337,6 +489,7 @@ int main() {
         assert(rooted.root_writes == 1 && rooted.root_written[7] == 1 && rooted.writes == 0);
         rooted.process_native_root_reply(root_reply.data(), root_reply.size());
         assert(rooted.root_writes == 1);
+        fixture_now_ms += 500;
         rooted.poll_native_root_admission();
         assert(em_rooted_admission::controller_reply(rooted.node.sent.back().data(),
             rooted.node.sent.back().size(), rooted.m_data_model.controller, root_reply));
@@ -347,7 +500,7 @@ int main() {
             em_agent_t unavailable;
             unavailable.root_enabled = true;
             if (failure == 0) unavailable.connected = false;
-            if (failure == 1) unavailable.root_admitted = true;
+            if (failure == 1) unavailable.get_failure = true;
             if (failure == 2) unavailable.root_ambiguous = true;
             if (failure == 3) unavailable.root_short = true;
             if (failure == 4) unavailable.m_data_model.colocated = true;
@@ -511,15 +664,47 @@ int main() {
 
 with tempfile.TemporaryDirectory(prefix="native-backhaul-agent-") as temporary:
     executable = Path(temporary) / "test"
-    subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-x", "c++", "-",
-                    "-I", str(native / "inc"), "-o", str(executable)],
-                   input=program, text=True, check=True)
-    subprocess.run([str(executable)], check=True)
+    compiled = subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-x", "c++", "-",
+                               "-I", str(native / "inc"), "-o", str(executable)],
+                              input=program, text=True, capture_output=True, timeout=60)
+    result = {"source": str(native.resolve()), "source_sha256": {
+        relative: hashlib.sha256(content).hexdigest() for relative, content in snapshots.items()},
+        "test_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "functions": signatures, "scope": "actual agent methods; deterministic monotonic clock, stub bus/model/transport",
+        "compile_exit": compiled.returncode, "compile_stderr": compiled.stderr, "cases": []}
+    if compiled.returncode == 0:
+        for case in ("existing-backhaul", "initial-grace", "retry-250", "renewal-500", "admitted-renews",
+                     "stale-generation-reply", "stale-parent-reply", "disconnected-reply", "late-reply",
+                     "admit-queue-failure", "changed-context-not-revoked", "renewal-replay",
+                     "revoke-queue-failure", "expiry-revokes", "send-failure-retry",
+                     "late-renewal-reply-cannot-suppress-revoke"):
+            executed = subprocess.run([str(executable)] + ([] if case == "existing-backhaul" else [case]),
+                                      text=True, capture_output=True, timeout=15)
+            result["cases"].append({"name": case, "exit_code": executed.returncode,
+                                    "passed": executed.returncode == 0, "stdout": executed.stdout,
+                                    "stderr": executed.stderr})
+            print(executed.stdout or executed.stderr, end="")
+    else:
+        print(compiled.stderr, end="")
+    mesh_callback = re.search(r"void em_agent_t::handle_onewifi_mesh_sta_cb\(.*?\n\}", source, re.S).group()
+    tick = re.search(r"void em_agent_t::handle_1s_tick\(.*?\n\}", source, re.S).group()
+    root_tick = re.search(r"void em_agent_t::handle_250ms_tick\(.*?\n\}", source, re.S).group()
+    result["static_checks"] = {
+        "callback-before-orchestration": mesh_callback.index("observe_native_backhaul_callback(evt)") <
+            mesh_callback.index("is_cmd_type_in_progress"),
+        "backhaul-tick": "poll_native_backhaul_request();" in tick,
+        "root-250ms-tick": "poll_native_root_admission();" in root_tick,
+        "no-external-forcing": all(forbidden not in methods for forbidden in (
+            "set_msg_id", "get_msg_id", "system(", "popen(", "iw ", "wpa_cli", "commit_config")),
+    }
+    result["sources_unchanged"] = all((native / path).read_bytes() == content for path, content in snapshots.items())
+    result["passed"] = (compiled.returncode == 0 and all(case["passed"] for case in result["cases"])
+                        and all(result["static_checks"].values()) and result["sources_unchanged"])
+    if args.output:
+        with args.output.open("x") as stream:
+            json.dump(result, stream, indent=2)
+            stream.write("\n")
+    if not result["passed"]:
+        raise SystemExit(1)
 
-mesh_callback = re.search(r"void em_agent_t::handle_onewifi_mesh_sta_cb\(.*?\n\}", source, re.S).group()
-assert mesh_callback.index("observe_native_backhaul_callback(evt)") < mesh_callback.index("is_cmd_type_in_progress")
-tick = re.search(r"void em_agent_t::handle_1s_tick\(.*?\n\}", source, re.S).group()
-assert "poll_native_backhaul_request();" in tick
-for forbidden in ("set_msg_id", "get_msg_id", "system(", "popen(", "iw ", "wpa_cli", "commit_config"):
-    assert forbidden not in methods, forbidden
 print("PASS: callback precedes orchestration; independent MID state; no external reparent/topology forcing")

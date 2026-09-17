@@ -29,7 +29,8 @@ def main():
         "runner_sha256": digest(Path(__file__)),
         "scope": "production codec and transaction matcher only; no AP enforcement or live qualification",
         "functions": ["encode", "decode", "controller_reply", "transaction_matcher::begin",
-                      "transaction_matcher::observe", "transaction_matcher::accept"],
+                      "transaction_matcher::observe", "transaction_matcher::accept",
+                      "transaction_matcher::retry", "transaction_matcher::expired"],
         "cases": [],
     }
     with tempfile.TemporaryDirectory(prefix="rooted-admission-probe-") as temporary:

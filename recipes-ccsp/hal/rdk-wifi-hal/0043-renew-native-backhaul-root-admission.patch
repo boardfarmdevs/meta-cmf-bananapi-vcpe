@@ -1,0 +1,71 @@
+Subject: [PATCH] Expire stale native root admission and quiesce children before AP shutdown
+
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -1224,6 +1224,9 @@
+         }
+         hash_map_foreach(radio->interface_map, interface) {
+             if (!wifi_hal_backhaul_root_blocked(interface)) continue;
++            if (interface->bss_started && interface->u.ap.hapd.conf != NULL) {
++                if (reload_interface(interface) != 0) result = RETURN_ERR;
++            }
+             nl80211_enable_ap(interface, false);
+             if (nl80211_interface_enable(interface->name, false) != 0 ||
+                 get_vap_state(interface->name, &flags) != 0 || (flags & IFF_UP)) {
+@@ -1231,9 +1234,6 @@
+                 result = RETURN_ERR;
+                 continue;
+             }
+-            if (interface->bss_started && interface->u.ap.hapd.conf != NULL) {
+-                if (reload_interface(interface) != 0) result = RETURN_ERR;
+-            }
+             interface->bss_started = false;
+             interface->beacon_set = 0;
+         }
+@@ -1301,6 +1301,36 @@
+     return result;
+ }
+ 
++INT wifi_hal_backhaul_root_revoke(INT vap_index, const unsigned char *state)
++{
++    wifi_interface_info_t *station = get_interface_by_vap_index(vap_index);
++    unsigned char current[22];
++    unsigned char checked[22];
++    int quiesced;
++    int disconnected;
++
++    if (station == NULL || state == NULL || station->vap_info.vap_mode != wifi_vap_mode_sta)
++        return RETURN_ERR;
++    pthread_mutex_lock(&backhaul_root_lock);
++    backhaul_root_encode(station, current);
++    if (backhaul_root_vap != vap_index || !backhaul_root_connected ||
++        memcmp(current, state, 21) != 0) {
++        pthread_mutex_unlock(&backhaul_root_lock);
++        return RETURN_ERR;
++    }
++    ++backhaul_root_generation;
++    __atomic_store_n(&backhaul_root_admitted, false, __ATOMIC_RELEASE);
++    backhaul_root_encode(station, current);
++    pthread_mutex_unlock(&backhaul_root_lock);
++    quiesced = backhaul_root_quiesce();
++    if (wifi_hal_backhaul_root_state(vap_index, checked) != RETURN_OK ||
++        memcmp(checked, current, 21) != 0) return RETURN_ERR;
++    disconnected = wifi_hal_disconnect(vap_index);
++    wifi_hal_info_print("Backhaul admission: expired vap=%d quiesced=%d disconnected=%d\n",
++        vap_index, quiesced, disconnected);
++    return quiesced == RETURN_OK && disconnected == RETURN_OK ? RETURN_OK : RETURN_ERR;
++}
++
+ INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state)
+ {
+     wifi_interface_info_t *station = get_interface_by_vap_index(vap_index);
+--- a/wifi_hal_priv.h
++++ b/wifi_hal_priv.h
+@@ -937,6 +937,7 @@
+ INT wifi_hal_backhaul_root_loss(INT vap_index);
+ INT wifi_hal_backhaul_root_state(INT vap_index, unsigned char *state);
+ INT wifi_hal_backhaul_root_admit(INT vap_index, const unsigned char *state);
++INT wifi_hal_backhaul_root_revoke(INT vap_index, const unsigned char *state);
+ INT wifi_hal_setApWpsButtonPush(INT apIndex);
+ INT wifi_hal_setApWpsPin(INT ap_index, char *wps_pin);
+ INT wifi_hal_setApWpsCancel(INT ap_index);

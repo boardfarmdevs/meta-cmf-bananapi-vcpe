@@ -43,7 +43,8 @@ enum { bus_error_success, bus_error_invalid_input, bus_error_invalid_operation,
 #define wifi_util_info_print(...) ((void)0)
 #define wifi_util_error_print(...) ((void)0)
 static wifi_mgr_t manager;
-static int get_error, queue_error, admitted, queued;
+static int get_error, queue_error, admitted, queued, revoked, hal_error, stale;
+static int admission_calls, revoke_calls;
 static unsigned char request[26], supplied[22];
 wifi_mgr_t *get_wifimgr_obj(void) { return &manager; }
 unsigned int getNumberRadios(void) { return 2; }
@@ -54,7 +55,14 @@ int wifi_hal_backhaul_root_state(int vap_index, unsigned char *state) {
     assert(vap_index == 19); memcpy(state, supplied, 22); return get_error;
 }
 int wifi_hal_backhaul_root_admit(int vap_index, const unsigned char *state) {
-    assert(vap_index == 19 && memcmp(state, supplied, 22) == 0); ++admitted; return 0;
+    assert(vap_index == 19); ++admission_calls;
+    if (hal_error || memcmp(state, supplied, 21) != 0) { ++stale; return -1; }
+    ++admitted; return 0;
+}
+int wifi_hal_backhaul_root_revoke(int vap_index, const unsigned char *state) {
+    assert(vap_index == 19 && state[21] == 2); ++revoke_calls;
+    if (hal_error || memcmp(state, supplied, 21) != 0) { ++stale; return -1; }
+    ++revoked; return 0;
 }
 int push_event_to_ctrl_queue(void *data, unsigned int length, int type, int subtype, void *extra) {
     assert(length == 26 && type == wifi_event_type_command &&
@@ -78,6 +86,33 @@ int main(void) {
     assert(set_backhaul_root(valid, &value, NULL) == bus_error_success && queued == 1 && admitted == 0);
     process_backhaul_root_admission(request, sizeof(request));
     assert(admitted == 1);
+    supplied[21] = 2;
+    assert(set_backhaul_root(valid, &value, NULL) == bus_error_success);
+    assert(request[25] == 2 && revoked == 0 && admitted == 1);
+    supplied[21] = 0;
+    process_backhaul_root_admission(request, sizeof(request));
+    assert(revoked == 1 && admitted == 1 && revoke_calls == 1);
+    request[11] ^= 1;
+    process_backhaul_root_admission(request, sizeof(request));
+    assert(revoked == 1 && stale == 1 && admitted == 1);
+    request[11] ^= 1;
+    hal_error = 1;
+    process_backhaul_root_admission(request, sizeof(request));
+    assert(revoked == 1 && stale == 2 && admitted == 1);
+    hal_error = 0;
+    request[25] = 0; request[11] ^= 1;
+    process_backhaul_root_admission(request, sizeof(request));
+    assert(admitted == 1 && stale == 3);
+    request[11] ^= 1;
+    int prior_calls = admission_calls + revoke_calls;
+    for (unsigned int opcode = 3; opcode <= 255; ++opcode) {
+        supplied[21] = opcode;
+        assert(set_backhaul_root(valid, &value, NULL) == bus_error_invalid_input);
+        request[25] = opcode;
+        process_backhaul_root_admission(request, sizeof(request));
+    }
+    assert(admission_calls + revoke_calls == prior_calls);
+    supplied[21] = 0;
     const char *invalid[] = {NULL, "", "Device.WiFi.STA.0.X_RDK_BackhaulRoot",
         "Device.WiFi.STA.3.X_RDK_BackhaulRoot", "Device.WiFi.STA.2.Bssid",
         "Device.WiFi.STA.2.X_RDK_BackhaulRoot.extra", "Device.WiFi.STA.-1.X_RDK_BackhaulRoot"};
@@ -98,12 +133,16 @@ int main(void) {
     assert(set_backhaul_root(valid, &value, NULL) == bus_error_invalid_input);
     value.raw_data.bytes = supplied; queue_error = -1;
     assert(set_backhaul_root(valid, &value, NULL) == bus_error_out_of_resources);
+    supplied[21] = 2;
+    assert(set_backhaul_root(valid, &value, NULL) == bus_error_out_of_resources);
+    assert(revoked == 1 && admitted == 1);
     process_backhaul_root_admission(NULL, 26);
     process_backhaul_root_admission(request, 25);
     request[0] = 255;
     process_backhaul_root_admission(request, 26);
     assert(admitted == 1);
-    puts("PASS: production root bus getters, owned bytes, strict requests, control-queue serialization and failure propagation");
+    assert(admission_calls + revoke_calls == prior_calls);
+    puts("PASS: production root bus getters, owned bytes, strict requests, admission/revoke dispatch, stale HAL errors, invalid opcodes and queue failure propagation");
 }
 '''.replace("METHODS", "\n\n".join(methods))
 with tempfile.TemporaryDirectory(prefix="onewifi-root-admission-") as directory:
@@ -111,7 +150,11 @@ with tempfile.TemporaryDirectory(prefix="onewifi-root-admission-") as directory:
     compile_result = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-x", "c", "-",
                                      "-o", str(binary)], input=program, text=True, capture_output=True)
     run = subprocess.run([str(binary)], text=True, capture_output=True) if compile_result.returncode == 0 else None
-    result = {"source_sha256": hashes, "compile_exit": compile_result.returncode,
+    result = {"source_sha256": hashes, "source": str(args.source.resolve()),
+              "test_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+              "functions": [name for names in inputs.values() for name in names],
+              "scope": "actual bus and queue functions; HAL validation and queue ownership are stubs, not live recovery proof",
+              "compile_exit": compile_result.returncode,
               "compile_stderr": compile_result.stderr, "run_exit": run.returncode if run else None,
               "stdout": run.stdout if run else "", "stderr": run.stderr if run else "",
               "passed": run is not None and run.returncode == 0}

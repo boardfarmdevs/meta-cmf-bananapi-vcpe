@@ -338,6 +338,42 @@ static void matcher_tests()
     }
 }
 
+static void renewal_tests()
+{
+    check(rooted::proof_window_ms == 2000 && rooted::renewal_interval_ms == 500 &&
+        rooted::retry_interval_ms == 250 && rooted::initial_admission_ms == 10000,
+        "renewal.native-timing-contract");
+    const auto current = context();
+    rooted::transaction_matcher matcher;
+    rooted::wire_frame frame{};
+    check(begin(matcher), "renewal.begin");
+    check(!matcher.retry(999, frame) && !matcher.retry(1249, frame), "renewal.no-early-retry");
+    check(matcher.retry(1250, frame) && frame == encoded(), "renewal.retry-exact-250-same-mid-nonce");
+    check(!matcher.retry(1250, frame) && !matcher.retry(1499, frame), "renewal.retry-spacing");
+    check(matcher.retry(1500, frame) && frame == encoded(), "renewal.second-retry-keeps-transaction");
+    check(!matcher.expired(current, 3000) && matcher.retry(3000, frame), "renewal.window-inclusive");
+    check(matcher.expired(current, 3001) && !matcher.retry(3001, frame), "renewal.retry-does-not-extend-deadline");
+    auto changed = current;
+    ++changed.generation;
+    check(!matcher.expired(changed, 3001), "renewal.stale-generation-cannot-revoke-current");
+    changed = current;
+    changed.parent = mac(44);
+    check(!matcher.expired(changed, 3001), "renewal.stale-parent-cannot-revoke-current");
+    changed = current;
+    changed.connected = false;
+    check(!matcher.expired(changed, 3001), "renewal.disconnected-context-not-expiry-owner");
+    matcher.cancel();
+    check(!matcher.expired(current, 3001) && !matcher.retry(3001, frame), "renewal.cancel-clears-expiry-owner");
+    check(matcher.begin(current, 14, nonce(40), 3500, frame), "renewal.new-round-new-nonce");
+    auto old_reply = response_for();
+    check(!matcher.accept(old_reply.data(), old_reply.size(), current, 3501) && matcher.pending(),
+        "renewal.previous-round-replay-rejected");
+    rooted::wire_frame reply{};
+    check(rooted::controller_reply(frame.data(), frame.size(), current.controller, reply) &&
+        matcher.accept(reply.data(), reply.size(), current, 3502), "renewal.new-round-proof");
+    check(!matcher.expired(current, 9000), "renewal.accepted-round-no-stale-expiry");
+}
+
 static void generation_and_peer_tests()
 {
     const auto old_reply = response_for();
@@ -448,6 +484,7 @@ int main()
     codec_tests();
     controller_tests();
     matcher_tests();
+    renewal_tests();
     generation_and_peer_tests();
     return failures == 0 ? 0 : 1;
 }

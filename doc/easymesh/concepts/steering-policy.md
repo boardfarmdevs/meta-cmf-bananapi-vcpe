@@ -30,6 +30,17 @@ the HAL revalidates the association before acting. Link loss invalidates old
 proofs. Unknown, disconnected and stale contexts remain inhibited. No fixed
 parent, MAC ordering, room coordinates or management-IP fallback supplies proof.
 
+Admission is renewed every 500 ms, including while the kernel still reports the
+STA associated. A pending probe retries its identical nonce at 250 ms intervals;
+retries do not extend its two-second reply window. Expiry on an admitted link
+queues a generation-bound HAL revocation, closes downstream backhaul APs and
+disconnects the stale STA so normal OneWifi recovery can rescan. An initially
+unadmitted association has ten seconds for native registration before recovery;
+its downstream APs remain closed throughout. Teardown reloads hostapd while the
+AP is still up, before STOP_AP and verified interface-down, so child stations
+can receive deauthentication. Periodic proof also detects children that miss it.
+These are native recovery timers, not relaxed room convergence deadlines.
+
 Matching controller, agent, OneWifi and HAL versions are required; third-party
 support is not established. Reparenting can interrupt the downstream subtree.
 Qualification checks native rooted paths, traffic, both views and client
