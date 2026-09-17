@@ -46,7 +46,7 @@ WIFI_STA_SCAN_CANDIDATES_PATCH := "${THISDIR}/${BPN}/0034-validate-native-backha
 WIFI_CLIENT_COLLECTOR_CONFIG_PATCH := "${THISDIR}/${BPN}/0035-configure-client-collectors-from-radio-policy.patch"
 WIFI_CLIENT_MEMBERSHIP_PATCH := "${THISDIR}/${BPN}/0036-reconcile-event-seeded-client-membership.patch"
 WIFI_BACKHAUL_ROOT_ADMISSION_PATCH := "${THISDIR}/${BPN}/0037-native-backhaul-root-admission.patch"
-SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no"
+SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no file://0037-native-backhaul-root-admission.patch;apply=no"
 python do_patch_append() {
     import os
     import subprocess
