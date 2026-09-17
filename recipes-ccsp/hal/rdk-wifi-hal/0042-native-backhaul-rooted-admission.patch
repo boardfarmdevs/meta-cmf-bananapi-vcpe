@@ -51,7 +51,7 @@ only with current-generation root proof from the native EasyMesh agent.
 +
 +    if (__atomic_load_n(&backhaul_root_vap, __ATOMIC_ACQUIRE) < 0) return false;
 +    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
-+        radio = get_radio_by_index(radio_index);
++        radio = get_radio_by_rdk_index(radio_index);
 +        if (radio == NULL) continue;
 +        hash_map_foreach(radio->interface_map, interface) {
 +            if (strcmp(interface->name, name) == 0)
@@ -87,7 +87,7 @@ only with current-generation root proof from the native EasyMesh agent.
 +
 +    if (g_wifi_hal.num_radios == 0) return RETURN_ERR;
 +    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
-+        radio = get_radio_by_index(radio_index);
++        radio = get_radio_by_rdk_index(radio_index);
 +        if (radio == NULL) {
 +            result = RETURN_ERR;
 +            continue;
@@ -196,7 +196,7 @@ only with current-generation root proof from the native EasyMesh agent.
 +    __atomic_store_n(&backhaul_root_admitted, true, __ATOMIC_RELEASE);
 +    pthread_mutex_unlock(&backhaul_root_lock);
 +    for (radio_index = 0; radio_index < g_wifi_hal.num_radios; radio_index++) {
-+        radio = get_radio_by_index(radio_index);
++        radio = get_radio_by_rdk_index(radio_index);
 +        if (radio == NULL) {
 +            result = RETURN_ERR;
 +            continue;

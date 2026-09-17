@@ -76,7 +76,7 @@ static int fixture_ioctl(int fd, unsigned long request, struct ifreq *configurat
 static int fixture_close(int fd);
 static int get_vap_state(const char *name, short *flags);
 static wifi_interface_info_t *get_interface_by_vap_index(INT index);
-static wifi_radio_info_t *get_radio_by_index(unsigned int index);
+static wifi_radio_info_t *get_radio_by_rdk_index(unsigned int index);
 static bool is_backhaul_interface(wifi_interface_info_t *interface);
 static bool is_wifi_hal_vap_mesh_sta(INT index);
 static int nl80211_enable_ap(wifi_interface_info_t *interface, bool enable);
@@ -181,7 +181,7 @@ static wifi_interface_info_t *get_interface_by_vap_index(INT index)
     return NULL;
 }
 
-static wifi_radio_info_t *get_radio_by_index(unsigned int index)
+static wifi_radio_info_t *get_radio_by_rdk_index(unsigned int index)
 {
     return index >= g_wifi_hal.num_radios || (int)index == missing_radio ? NULL : &radios[index];
 }
