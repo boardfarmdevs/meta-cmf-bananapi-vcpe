@@ -39,10 +39,16 @@ Run one or several sections instead of `all`, for example:
 gen/tests/run-easymesh-suite.sh static webui browser
 gen/tests/run-easymesh-suite.sh live rooms --yes-act
 gen/tests/run-easymesh-suite.sh soak --yes-act --soak-duration 900
+gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100
 ```
 
 The default soak is 43,200 seconds (12 hours). A shorter duration is a
 shakedown, not long-duration acceptance.
+
+The runner counts provisioned `wlan-client` containers inside the appliance and
+uses that value for the health and P0 checks. Override the detected profile with
+`--expected-clients COUNT` (or `EASYMESH_EXPECTED_CLIENTS`) when intentionally
+testing a different provisioned roster.
 
 ## Prerequisites
 
