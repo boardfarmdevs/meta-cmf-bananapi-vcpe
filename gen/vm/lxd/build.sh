@@ -4,9 +4,10 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
-release_id=${EASYMESH_RELEASE_ID:-0916}
+source "$root/gen/vm/lxd/instance-config.sh"
+release_id=${EASYMESH_RELEASE_ID:-dev}
 case "$release_id" in
-    [0-9][0-9][0-9][0-9]) ;;
+    [a-zA-Z0-9][a-zA-Z0-9._-]*) ;;
     *) echo "invalid EASYMESH_RELEASE_ID: $release_id" >&2; exit 2 ;;
 esac
 default_host_address=$(ip -4 route get 1.1.1.1 2>/dev/null \
@@ -15,22 +16,23 @@ default_host_address=${default_host_address:-127.0.0.1}
 profile=$(easymesh_profile_name "${EASYMESH_LAB_PROFILE:-unified}")
 profile_clients=$(easymesh_profile_clients "$profile")
 profile_radios=$(easymesh_profile_radios "$profile")
-release_name=$(easymesh_profile_release_name "$profile")
-name=${EASYMESH_LXD_NAME:-$release_name}
+name=$(easymesh_instance_name)
+release_name=$name
 image=${EASYMESH_LXD_IMAGE:-ubuntu:24.04}
 cpus=${EASYMESH_LXD_CPUS:-$(easymesh_profile_cpus "$profile")}
 memory=${EASYMESH_LXD_MEMORY:-$(easymesh_profile_memory "$profile")}
 disk=${EASYMESH_LXD_DISK:-$(easymesh_profile_disk "$profile")}
 kernel=${EASYMESH_KERNEL:-7.0.0-30-generic}
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
-storage=${EASYMESH_LXD_STORAGE:-}
+storage=$(easymesh_instance_storage "$name")
+port_base=$(easymesh_instance_port_base "$name")
 guest_ipv4=${EASYMESH_LXD_IPV4:-}
 webui_address=${EASYMESH_WEBUI_HOST_IP:-$default_host_address}
-webui_port=${EASYMESH_WEBUI_PORT:-18889}
+webui_port=${EASYMESH_WEBUI_PORT:-$((port_base + 0))}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$webui_address}
-console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+console_port=${WMEDIUMD_CONSOLE_PORT:-$((port_base + 1))}
 room_address=${EASYMESH_ROOM_DEMO_HOST_IP:-$webui_address}
-room_port=${EASYMESH_ROOM_DEMO_PORT:-18891}
+room_port=${EASYMESH_ROOM_DEMO_PORT:-$((port_base + 2))}
 http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
 boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-ddb5a2b9e1707562595afc7e4000a3b8efa3cd81}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
@@ -61,11 +63,13 @@ Build inputs:
 
 Common overrides:
   EASYMESH_LAB_PROFILE=$profile_clients (fixed capacity: 100 clients)
+  EASYMESH_LAB_NAME=$name
   EASYMESH_LXD_NAME=$name
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
   EASYMESH_LXD_NETWORK=$network
-  EASYMESH_LXD_STORAGE=<destination pool; default is LXD default pool>
+  EASYMESH_LXD_STORAGE=$storage (created as an independent dir pool if absent)
+  EASYMESH_PORT_BASE=$port_base (WebUI, Console and room use base, base+1 and base+2)
   EASYMESH_LXD_IPV4=<automatic static address>
   EASYMESH_WEBUI_HOST_IP=$webui_address
   EASYMESH_WEBUI_PORT=$webui_port
@@ -347,13 +351,8 @@ build_vm() {
 
     init_args=(lxc init "$image" "$name" --vm
         --config limits.cpu="$cpus" --config limits.memory="$memory")
-    if [ -n "$storage" ]; then
-        lxc storage show "$storage" >/dev/null 2>&1 || {
-            echo "LXD storage pool does not exist: $storage" >&2
-            exit 1
-        }
-        init_args+=(--storage "$storage")
-    fi
+    easymesh_ensure_storage_pool "$storage"
+    init_args+=(--storage "$storage")
     "${init_args[@]}" </dev/null
     # The appliance builds the narrowly-scoped multichannel hwsim module from
     # the exact Ubuntu source package. Disable guest Secure Boot before first
@@ -514,6 +513,7 @@ export_vm() {
     # remains firmware-neutral until import.sh selects the target-LXD key.
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    install -m 0755 "$root/gen/vm/lxd/instance-config.sh" "$bundle/instance-config.sh"
     cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
@@ -554,7 +554,7 @@ EOF
           status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
-        sha256sum "$(basename "$output")" import.sh install-host.sh \
+        sha256sum "$(basename "$output")" import.sh instance-config.sh install-host.sh \
             package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
         find observability -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS
@@ -656,6 +656,7 @@ export_thin_vm() {
     printf 'archive_bytes=%s\n' "$(stat -c %s "$output")" >> "$trim_report"
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
+    install -m 0755 "$root/gen/vm/lxd/instance-config.sh" "$bundle/instance-config.sh"
     cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
@@ -693,7 +694,7 @@ EOF
           status:"candidate"}' > "$bundle/release.json"
     (
         cd "$bundle"
-        sha256sum "$(basename "$output")" import.sh install-host.sh \
+        sha256sum "$(basename "$output")" import.sh instance-config.sh install-host.sh \
             package-release.sh README.md RELEASE-NOTES.md release.env release.json trim-report.txt \
             > SHA256SUMS
         find observability -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS

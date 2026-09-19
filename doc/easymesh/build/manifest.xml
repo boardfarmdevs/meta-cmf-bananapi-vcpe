@@ -1,24 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Reproducible RDK Central source lock for the 0905 EasyMesh release.
-  Retains the reviewed immutable upstream revisions from the 0902 lock.
-
-  Generated on 2026-09-02 with:
-      repo manifest -r
-
-  Source manifest repository:
-      https://code.rdkcentral.com/r/manifests
-      kirkstone / rdkb-bpi-nosrc.xml
-      commit a4637a8cadb68e34dedba6e8a5afd9432cdc3a05
--->
 <manifest>
   <remote fetch="https://code.rdkcentral.com/r/a/" name="cmf" review="https://code.rdkcentral.com/r/a/"/>
   <remote fetch="https://github.com" name="github"/>
   <remote fetch="https://git.openembedded.org" name="openembedded"/>
   <remote fetch="http://git.yoctoproject.org" name="yocto"/>
-
   <default remote="cmf" revision="master" sync-j="2"/>
-
   <project name="mediatek/meta-cmf-filogic" path="meta-cmf-filogic" remote="github" revision="211fa3d81ae19cc5c6be731d52b1aa6733336b71"/>
   <project name="mediatek/meta-filogic" path="meta-filogic" remote="github" revision="c67a32a7c8876b328a8d1eeaca213e860d85b3ce"/>
   <project name="meta-lts-mixins" remote="yocto" revision="75c503be95d147a846bf02461fd975e74c1abe6f" upstream="kirkstone/rust"/>

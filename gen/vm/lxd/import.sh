@@ -6,6 +6,9 @@ if [ -r "$script_dir/release.env" ]; then
     # shellcheck disable=SC1091
     . "$script_dir/release.env"
 fi
+if [ -r "$script_dir/instance-config.sh" ]; then
+    . "$script_dir/instance-config.sh"
+fi
 usage() {
     echo "usage: $0 [--monitoring] [EASYMESH-LXD-BACKUP.tar.zst]" >&2
 }
@@ -20,7 +23,7 @@ while [ "$#" -gt 0 ]; do
             shift
             ;;
         --profile)
-            echo "Client sizing is selected by the room; 0916 always provides capacity for 100." >&2
+            echo "Client sizing is selected by the room; the appliance always provides capacity for 100." >&2
             exit 2
             ;;
         -h|--help)
@@ -47,9 +50,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 first_boot_provisioning=${LAB_FIRST_BOOT_PROVISIONING:-${LAB_PROFILE_SELECTABLE:-false}}
-release_id=${LAB_RELEASE_ID:-0916}
+release_id=${LAB_RELEASE_ID:-dev}
 case "$release_id" in
-    [0-9][0-9][0-9][0-9]) ;;
+    [a-zA-Z0-9][a-zA-Z0-9._-]*) ;;
     *) echo "invalid LAB_RELEASE_ID: $release_id" >&2; exit 2 ;;
 esac
 if [ "$first_boot_provisioning" = true ]; then
@@ -58,7 +61,7 @@ if [ "$first_boot_provisioning" = true ]; then
     selected_radios=128
     selected_cpus=8
     selected_memory=16GiB
-    default_name="rdkeasymesh-${release_id}"
+    default_name=${LAB_DEFAULT_NAME:-easymesh}
 else
     [ -z "$selected_clients" ] || {
         echo "--profile is valid only for a profile-selectable thin release" >&2
@@ -69,7 +72,7 @@ else
     selected_radios=${LAB_HWSIM_RADIOS:-unknown}
     selected_cpus=${LAB_DEFAULT_CPUS:-6}
     selected_memory=${LAB_DEFAULT_MEMORY:-8GiB}
-    default_name=${LAB_DEFAULT_NAME:-rdkeasymesh-${release_id}}
+    default_name=${LAB_DEFAULT_NAME:-easymesh}
 fi
 
 if [ -z "$backup" ]; then
@@ -82,21 +85,30 @@ if [ -z "$backup" ]; then
     }
     backup=${candidates[0]}
 fi
-name=${EASYMESH_LXD_NAME:-$default_name}
+if declare -F easymesh_instance_name >/dev/null; then
+    name=$(easymesh_instance_name)
+    storage=$(easymesh_instance_storage "$name")
+    port_base=$(easymesh_instance_port_base "$name")
+    named_defaults=true
+else
+    name=${EASYMESH_LXD_NAME:-$default_name}
+    storage=${EASYMESH_LXD_STORAGE:-}
+    port_base=${EASYMESH_PORT_BASE:-18889}
+    named_defaults=false
+fi
 if [ "$monitoring" = true ]; then
     test -f "$script_dir/observability/enable.sh" || { echo 'Monitoring bundle is missing' >&2; exit 1; }
 fi
 network=${EASYMESH_LXD_NETWORK:-lxdbr0}
-storage=${EASYMESH_LXD_STORAGE:-}
 cpus=${EASYMESH_LXD_CPUS:-$selected_cpus}
 memory=${EASYMESH_LXD_MEMORY:-$selected_memory}
 host_address=${EASYMESH_WEBUI_HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')}
 host_address=${host_address:-127.0.0.1}
-webui_port=${EASYMESH_WEBUI_PORT:-18889}
+webui_port=${EASYMESH_WEBUI_PORT:-$((port_base + 0))}
 console_address=${WMEDIUMD_CONSOLE_HOST_IP:-$host_address}
-console_port=${WMEDIUMD_CONSOLE_PORT:-18890}
+console_port=${WMEDIUMD_CONSOLE_PORT:-$((port_base + 1))}
 room_address=${EASYMESH_ROOM_DEMO_HOST_IP:-$host_address}
-room_port=${EASYMESH_ROOM_DEMO_PORT:-18891}
+room_port=${EASYMESH_ROOM_DEMO_PORT:-$((port_base + 2))}
 address_timeout=${EASYMESH_LXD_ADDRESS_TIMEOUT:-120}
 nested_ready_timeout=${EASYMESH_LXD_NESTED_READY_TIMEOUT:-$address_timeout}
 
@@ -117,7 +129,9 @@ command -v lxc >/dev/null 2>&1 || { echo "lxc is missing; run install-host.sh" >
 [ -c /dev/kvm ] || { echo "/dev/kvm is unavailable; enable hardware virtualization" >&2; exit 1; }
 [ -r "$backup" ] || { echo "backup is not readable: $backup" >&2; exit 1; }
 lxc network show "$network" >/dev/null 2>&1 || { echo "LXD network does not exist: $network" >&2; exit 1; }
-if [ -n "$storage" ]; then
+if [ "$named_defaults" = true ]; then
+    easymesh_ensure_storage_pool "$storage"
+elif [ -n "$storage" ]; then
     lxc storage show "$storage" >/dev/null 2>&1 || {
         echo "LXD storage pool does not exist: $storage" >&2
         exit 1

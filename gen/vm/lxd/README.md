@@ -1,337 +1,63 @@
-# Portable LXD VM appliance
+# Portable EasyMesh LXD appliance
 
-LXD VM is the supported portable EasyMesh lab. Bare metal remains the
-performance and kernel-debug reference.
+This directory is an exported appliance bundle. It contains a fixed-capacity
+EasyMesh lab: controller, four extenders, 100-client capacity, hwsim and
+wmediumd. Rooms choose the online client subset; they do not resize the VM.
 
-```text
-Ubuntu 22.04/24.04 host + LXD/KVM
-`-- rdkeasymesh-@EASYMESH_RELEASE_ID@ (Ubuntu 24.04/Linux 7 LXD VM)
-    |-- Docker: Boardfarm DHCP/NAT and br-wan101
-    |-- nested LXD: controller, four extenders, 100-client capacity; default room: 20 online
-    |-- hwsim + multichannel wmediumd
-    |-- EasyMesh WebUI :8888
-    `-- wmediumd Console :8890
-```
+For a source build, use `doc/easymesh/build/README.md` in the repository. That
+guide builds the BPI images first, then creates a named VM and selects test tiers.
 
-The guest kernel owns hwsim. This keeps the radio module, wiphys and medium
-lifecycle inside the appliance instead of crossing an outer system-container
-namespace.
+## Import
 
-Optional nested-container management and resource graphs are provided by
-[`observability/`](observability/README.md). The detailed
-[LXD UI and monitoring guide](../../../doc/easymesh/reference/observability/monitoring.md)
-covers secure browser access, Prometheus, Grafana, validation and removal.
-Enable with `--monitoring` during import or separately afterward; do not export
-its generated credentials or data. First network setup on an active lab requires
-the explicit maintenance option described in the guide.
-
-## Use the universal appliance
-
-For normal installation, start with `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` and its
-adjacent checksum in an empty directory. A source checkout and BPI image paths
-are not required:
+On an Ubuntu 22.04 x86-64 host with hardware virtualization:
 
 ```sh
-sha256sum -c rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar.sha256
-tar -xf rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar
-cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
 sha256sum -c SHA256SUMS
 sudo ./install-host.sh
 newgrp lxd
-EASYMESH_WEBUI_HOST_IP=192.168.2.140 ./import.sh
+EASYMESH_LXD_NAME=my-lab ./import.sh
 ```
 
-0916 uses one appliance with capacity for **100 clients**. There is no import
-size choice and no separate 20/50/100 VM. Rooms control the online subset:
-the default room uses 20 and `fifty-client-counter-roam` uses 50. Loading a room
-applies RF and presence automatically without recreating the pool. All five
-physical mesh containers (six logical roles) remain provisioned.
+The importer creates `my-lab-pool` with the LXD `dir` driver when necessary,
+uses it again for a later replacement, chooses a free bridge address, and derives
+a port block from the VM name. The first three ports serve the topology WebUI,
+wmediumd Console and room viewer. Set `EASYMESH_PORT_BASE` only when a site
+requires a specific port range.
 
-Defaults are 8 vCPUs, 16 GiB RAM, 128 radios, and a sparse 96-GiB disk. Leave
-resources for the host. Budget at least 120 GiB of free backing-storage space
-for a new import, plus space for retained VMs, exports and build intermediates.
-The compressed download size is not the disk requirement: a storage backend
-may allocate the entire logical disk. Check the selected pool and its backing
-filesystem before importing; do not delete a working rollback merely because
-a replacement has been downloaded. First boot provisions and validates all 100 clients,
-then the room service disconnects unused stations. This baseline health gate
-is distinct from live room membership. Baseline recovery restores all 100;
-restarting the room selects its default 20. The remaining sections are for
-release maintainers.
+The initial offline client-pool provisioning can take substantial time on a
+directory-backed pool. Later starts use the normal runtime path. Imported VMs
+have outer LXD autostart disabled.
 
-## Prepare an outer host
-
-On an Ubuntu 22.04 or 24.04 x86-64 host:
+## Operate
 
 ```sh
-sudo ./install-host.sh
-newgrp lxd
-lxc version
-test -c /dev/kvm
+EASYMESH_LXD_NAME=my-lab ./build.sh status
+EASYMESH_LXD_NAME=my-lab ./build.sh stop
+EASYMESH_LXD_NAME=my-lab ./build.sh start
+EASYMESH_LXD_NAME=my-lab ./build.sh check
+EASYMESH_LXD_NAME=my-lab ./build.sh delete
 ```
 
-The installer is idempotent. It installs LXD/KVM, adds the invoking user to the
-`lxd` group, and initializes LXD only when no storage pool exists.
+`delete` removes only the named VM. It retains the matching storage pool. Review
+and remove that exact pool with LXD only when its rebuild state is no longer needed.
 
-Validate fixed capacity, idempotent initialization, and import argument handling
-without creating an appliance:
+## Monitoring
+
+Monitoring is optional and excluded from exported appliances because it stores
+generated credentials and data. After import:
 
 ```sh
-./test-profiles.sh
-./test-build-storage.sh
-./test-import-storage.sh
-bash ./test-runtime-branch.sh
+host_ip=$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i == "src") {print $(i+1); exit}}')
+LAB_MONITORING_ALLOW_RESTART=1 \
+  bash observability/enable.sh my-lab "$host_ip"
 ```
 
-## Build a clean appliance
+LXD UI and Grafana use the fourth and fifth ports in the same named block. See
+`observability/README.md` for browser enrollment and credentials.
 
-The source checkout must be clean. Provide the accepted controller and extender images explicitly:
+## Release maintenance
 
-```sh
-EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
-EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
-  ./build.sh build
-```
-
-The builder:
-
-1. creates a fresh Ubuntu 24.04 VM with 8 vCPUs, 16 GiB RAM and a sparse
-   96-GiB disk;
-2. installs and boots the accepted Linux 7 kernel;
-3. installs Docker, nested LXD and the single Boardfarm repository;
-4. builds and loads the patched 128-radio, three-channel hwsim module;
-5. deploys the controller, four extenders, and the 100-client equally split
-   private/IoT client roster;
-6. keeps BPI NVRAM identities under `/var/lib/easymesh-lab/nvram`, outside
-   the replaceable source checkout;
-7. installs userspace wmediumd, the Console, configurator and optimizer;
-8. reboots the VM and lets systemd reconstruct the lab; and
-9. requires `easymesh-labctl check` plus both host-side HTTP health gates.
-
-Source and Boardfarm enter the VM as commit-bounded Git bundles. Images are
-checksum verified. Host Git credentials and host-mounted source directories do
-not enter the appliance.
-
-The acceptance audit rejects a mesh node whose `/nvram` bind source is missing
-or empty. Updating or replacing `/home/easymesh/git/meta-cmf-bananapi-vcpe`
-therefore cannot silently remove controller, Agent, AL-MAC or RUID identity.
-
-## Operate and verify
-
-```sh
-./build.sh status
-./build.sh check
-./build.sh stop
-./build.sh start
-./build.sh restart
-```
-
-The builder creates `rdkeasymesh-@EASYMESH_RELEASE_ID@`. Both the builder and
-thin import initialize the same 100-client pool. Change the online population
-by loading a room, not by importing another VM. The builder detects the address
-used by the outer host's IPv4 default route and exposes:
-
-```text
-http://HOST:18889/  EasyMesh WebUI
-http://HOST:18890/  wmediumd Console
-http://HOST:18891/  interactive room (20 online by default, capacity 100)
-```
-
-Override site-local settings without changing image identity:
-
-```sh
-EASYMESH_LXD_NAME=my-lab \
-EASYMESH_LXD_STORAGE=bpi-lab \
-EASYMESH_WEBUI_HOST_IP=192.168.2.140 \
-EASYMESH_WEBUI_PORT=28889 \
-WMEDIUMD_CONSOLE_PORT=28890 \
-EASYMESH_ROOM_DEMO_PORT=28891 \
-  ./build.sh start
-```
-
-The complete lab starts automatically after you start the VM. New builds and
-imports set LXD `boot.autostart=false`, so rebooting the outer host does not
-start the VM. The import command itself starts the VM once to provision it.
-Use `lxc start` for subsequent manual starts. To disable autostart on an older
-import:
-
-```sh
-lxc config set rdkeasymesh-@EASYMESH_RELEASE_ID@ boot.autostart false
-```
-
-## Ready builders and the universal thin release
-
-The release has two forms with different purposes:
-
-- A local `ready` builder retains every provisioned nested controller,
-  extender, and client. It is the accepted source used to produce a release,
-  but it is not the normal portable download.
-  Its first start reconstructs the accepted lab immediately, but the download
-  grows with the client count.
-- `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` is the one portable download. It retains the
-  installed VM, exact source, controller/extender archives,
-  and one reusable WLAN-client image, but contains zero provisioned lab
-  instances. `./import.sh` initializes the fixed 100-client, 128-radio pool
-  entirely offline and records an immutable initialization lock. It
-  records `/var/lib/easymesh-lab/thin-firstboot-report.json`, and then passes
-  through the same runtime and health gates as a ready appliance. Later boots
-  use the normal fast reconstruction path. Thin provisioning has no additional
-  fixed systemd start deadline because its duration depends on the host and
-  storage backend; the deployment scripts retain bounded readiness gates for
-  each operation. In particular, creating the 100-client roster on a
-  directory-backed LXD pool can legitimately take more than one hour.
-
-The thin release is not a network installer: its longer first boot does not
-clone repositories or fetch container images. Its sparse 96-GiB logical disk
-supports the complete pool and consumes only the blocks it actually writes.
-
-## Export a release
-
-After a passing check:
-
-```sh
-./build.sh export
-```
-
-The same accepted builder VM can be turned into the universal thin release.
-The builder must pass the 100-client baseline. Supply the original checksummed images
-because a ready export deliberately removed its staging cache:
-
-```sh
-EASYMESH_CONTROLLER_IMAGE=/absolute/path/to/X86EMLTRBPIBB_*.rootfs.lxc.tar.bz2 \
-EASYMESH_EXTENDER_IMAGE=/absolute/path/to/X86EMLTRBPIAP_*.rootfs.lxc.tar.bz2 \
-  ./build.sh export-thin
-```
-
-`export-thin` first reruns full ready-lab acceptance. It expands the sparse
-logical disk to the common 96-GiB maximum, then removes all
-provisioned nested instances and transient NVRAM/model state, retains exactly
-the offline inputs required by first boot, and verifies that the exported VM
-has zero lab definitions plus the `wlan-client-base` image and an unselected
-first-boot template. A systemd condition prevents the lab from starting before
-the importer writes the profile lock.
-
-`export` reruns the complete acceptance check. An `accepted` snapshot is not
-required by the release and is not created automatically because non-copy-on-
-write LXD pools duplicate the complete VM disk. On a copy-on-write pool, a
-release engineer may create the optional local rollback point with
-`./build.sh snapshot`; it is excluded from the portable export.
-
-`export-thin` creates `artifacts/rdkeasymesh-@EASYMESH_RELEASE_ID@-thin/` containing
-one zstd-compressed instance backup, importer, installer, release metadata,
-this README, `RELEASE-NOTES.md`, and `SHA256SUMS`. The VM is stopped before
-export so its nested
-LXD database, radio state and filesystems are coherent. Create the single file
-for Google Drive with:
-
-```sh
-EASYMESH_RELEASE_ID=@EASYMESH_RELEASE_ID@ ./package-release.sh artifacts/rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
-```
-
-This creates the requested `rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar` and adjacent
-`.sha256`. Upload those two files. Google Drive
-is transport only; the checksum and `release.json` identify the release. The
-outer checksum records only the bundle filename, so verification works from
-any empty download directory. Export also records the VM's actual CPU, memory
-and disk settings, plus the source host's storage-pool name for traceability.
-That pool name is not imposed on a destination host. The backup remains
-neutral between the old and current LXD
-Secure-Boot keys; the importer disables Secure Boot using the spelling
-supported by the destination host before the VM's first boot.
-
-Export first stops the lab and removes only reconstructible package, journal,
-Docker and nested-LXD image caches. It then issues filesystem discard before
-the instance-only export; it does not fill a thin disk with zeros. Provisioned
-containers, NVRAM identities, configuration and source are retained. The
-checksummed `trim-report.txt` records before/after guest usage, discard output
-and the final compressed archive size.
-
-## Import on another host
-
-Download the universal release into any empty working directory, verify and
-extract it:
-
-```sh
-sha256sum -c rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar.sha256
-tar -xf rdkeasymesh-@EASYMESH_RELEASE_ID@-thin.tar
-cd rdkeasymesh-@EASYMESH_RELEASE_ID@-thin
-sha256sum -c SHA256SUMS
-```
-
-No size selection or inner archive argument is needed when the bundle is
-intact:
-
-```sh
-EASYMESH_WEBUI_HOST_IP=192.168.2.150 \
-  ./import.sh
-```
-
-Defaults are 8 vCPUs and 16 GiB RAM. The importer rejects `--profile`; select
-the online client population by loading a room instead.
-
-The importer refuses to overwrite an existing instance, chooses an address on
-the selected LXD network, starts the VM, and reconciles the guest's outer NIC
-to that reservation before exposing the site-specific proxy devices. This
-bounded address gate prevents an imported DHCP lease from leaving the WebUI
-and Console proxies pointed at an address the guest does not own. It then
-prints the UI and acceptance commands. Use `EASYMESH_LXD_NAME`,
-`EASYMESH_LXD_NETWORK`, `EASYMESH_LXD_STORAGE`, `EASYMESH_WEBUI_PORT`, and
-`WMEDIUMD_CONSOLE_PORT` when the defaults collide. The address and agent gate
-defaults to 120 seconds; `EASYMESH_LXD_ADDRESS_TIMEOUT` may raise that bounded
-deadline for a slow foreign host. After the outer VM agent is reachable, the
-importer separately waits for the nested LXD API before it publishes the
-profile lock or proxy devices. `EASYMESH_LXD_NESTED_READY_TIMEOUT` controls
-that bounded wait and defaults to the address timeout.
-
-When the host's default storage pool cannot hold the selected sparse disk,
-choose an existing pool explicitly for both build and import:
-
-```sh
-EASYMESH_LXD_STORAGE=bpi-lab ./import.sh
-```
-
-The importer validates the pool before creating the VM. The source host's
-pool name is recorded for traceability but is not imposed on a destination
-host.
-
-Monitor the first imported cold reconstruction:
-
-```sh
-lxc console rdkeasymesh-@EASYMESH_RELEASE_ID@ --show-log
-lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- journalctl -fu easymesh-lab.service
-lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- /usr/local/sbin/easymesh-labctl check
-```
-
-Follow both provisioning and normal runtime gates:
-
-```sh
-lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- \
-  journalctl -fu easymesh-thin-firstboot.service -u easymesh-lab.service
-lxc exec rdkeasymesh-@EASYMESH_RELEASE_ID@ -- \
-  jq . /var/lib/easymesh-lab/thin-firstboot-report.json
-```
-
-Acceptance requires `result: "pass"`, `initial_instances: 0`, and
-`final_instances` equal to five mesh nodes plus the profile's client count.
-
-## Remove
-
-Review the exact target, then delete only that instance:
-
-```sh
-./build.sh delete
-```
-
-The delete command is destructive. It does not delete LXD itself, storage
-pools, networks, source checkouts, or another lab instance.
-## Optional container management and metrics
-
-For browser-ready inner LXD UI and a provisioned Grafana dashboard, use
-`bash import.sh --monitoring` when importing a newly packaged
-thin release, or `bash observability/enable.sh VM HOST_IPV4 LABEL` for an
-existing running VM. The option downloads two monitoring images (or uses
-preloaded copies); omit it to preserve the normal offline thin-import contract.
-Browser ports default to HTTPS 18892 (LXD) and HTTPS 18893 (Grafana), with
-certificate/password authentication. Outer VM autostart remains unchanged.
-See [setup and first login](observability/README.md) and the
-[detailed reference](../../../doc/easymesh/reference/observability/monitoring.md).
+Use `build.sh export-thin` only after the required VM and room tests pass. The
+export contains no provisioned nested lab instances and reconstructs them
+offline on first boot. Verify `SHA256SUMS` and the outer archive checksum before
+distribution. Archive integrity does not establish room or fresh-import acceptance.

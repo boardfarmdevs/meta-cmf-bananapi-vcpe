@@ -157,6 +157,8 @@ class DocumentationTests(unittest.TestCase):
                 if not path.is_file():
                     continue
                 with self.subTest(path=str(path.relative_to(ROOT))):
+                    if RDK and path.is_relative_to(HOME / "build") and path.suffix.lower() in {".xml", ".sh"}:
+                        continue
                     self.assertIn(path.suffix.lower(), {".md", ".svg", ".png"})
                     self.assertNotIn("results", path.relative_to(tree).parts)
                     self.assertIsNone(re.search(r"-(?:0[89][0-3][0-9]|20\d{6})(?:-|\.)", path.name))

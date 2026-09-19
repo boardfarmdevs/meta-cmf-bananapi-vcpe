@@ -2,7 +2,7 @@
 
 Optional. A local `repo` mirror makes creating a new build tree much faster and
 lets you re-sync without hitting the servers again. It is not required -- the
-plain `repo init` / `repo sync` in [../build](../build) works on its own.
+plain `repo init` / `repo sync` in the [EasyMesh build guide](../easymesh/build/README.md) works on its own.
 
 ## create repo mirror (once)
 
@@ -55,5 +55,5 @@ repo sync -j$(nproc) \
 
 ```
 
-Then continue with [../build](../build), skipping its `repo init` / `repo sync`
+Then continue with the [EasyMesh build guide](../easymesh/build/README.md), skipping its `repo init` / `repo sync`
 step -- the tree already exists.
