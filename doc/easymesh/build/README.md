@@ -11,7 +11,8 @@ The VM build does not invoke Yocto and the image build does not create a VM.
 | --- | --- | --- |
 | BPI images | controller and extender `*.rootfs.lxc.tar.bz2` | [BPI images](#bpi-images) |
 | Lab VM | one named LXD VM, matching LXD pool and named ports | [VM build](vm.md) |
-| Tests | static, image, VM and room tiers | [Test tiers](tests.md) |
+| Build-time tests | static, image and VM baseline tiers | [Test tiers](tests.md) |
+| Ready-VM qualification | full static, browser, live, room and soak suite | [Test guide](../test/README.md) |
 
 The permanent lab capacity is 100 clients and five physical mesh containers
 (six displayed roles). Rooms select the active client subset; they do not resize
@@ -141,5 +142,6 @@ in the platform reference.
 
 Build a named VM from the two verified images: [VM build](vm.md).
 Then select the smallest appropriate validation level: [test tiers](tests.md).
+After the VM baseline passes, use the [ready-VM test suite](../test/README.md).
 For installed-lab operation rather than construction, use the
 [operations guide](../guide/operations.md).

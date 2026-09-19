@@ -10,6 +10,7 @@ guide; the reference is for implementation details, not required reading.
 | --- | --- |
 | Open the running lab; find releases and limitations | [Current state](current-state.md) |
 | Build BPI images, a named VM, or choose a test tier | [Build](build/README.md) |
+| Qualify a ready VM with static, browser, room and soak tests | [Test suite](test/README.md) |
 | First use | [Quickstart](guide/quickstart.md) |
 | Deploy, start, stop or recover | [Operations](guide/operations.md) |
 | Understand the processes and radio model | [Architecture](concepts/architecture.md) |
