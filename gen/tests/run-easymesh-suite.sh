@@ -72,6 +72,8 @@ ssh_host=${EASYMESH_SSH_HOST:-localhost}
 webui_url="http://$host_address:$EASYMESH_WEBUI_PORT"
 room_url="http://$host_address:$EASYMESH_ROOM_DEMO_PORT"
 guest_repo=${EASYMESH_GUEST_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
+room_service_was_active=false
+room_service_stopped=false
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 output_root=${output_root:-"$root/test-results/$stamp-$vm"}
 mkdir -p "$output_root/logs"
@@ -150,6 +152,42 @@ prepare_lab() {
     lxc exec "$vm" -- test -d "$guest_repo" >/dev/null 2>&1
 }
 
+restore_room_service() {
+    if ! "$room_service_stopped"; then return 0; fi
+    room_service_stopped=false
+    if "$room_service_was_active"; then
+        printf 'Restoring easymesh-room-demo.service.\n'
+        lxc exec "$vm" -- systemctl start easymesh-room-demo.service
+    fi
+}
+
+trap 'status=$?; restore_room_service || true; exit "$status"' EXIT INT TERM
+
+wait_for_live_clients() {
+    local expected=$1 actual attempt
+    for attempt in $(seq 1 60); do
+        actual=$(lxc exec "$vm" -- bash -lc "curl -fsS http://127.0.0.1:8888/api/v1/clients | jq 'if type == \"array\" then length else (.clients // [] | length) end'" 2>/dev/null || true)
+        printf 'Waiting for %s live clients: %s/60 observed=%s\n' "$expected" "$attempt" "${actual:-unavailable}"
+        [[ $actual == "$expected" ]] && return 0
+        sleep 2
+    done
+    return 1
+}
+
+prepare_full_client_profile() {
+    local expected=$1 state
+    [[ $expected == 100 ]] || return 0
+    state=$(lxc exec "$vm" -- systemctl show easymesh-room-demo.service -p ActiveState --value)
+    room_service_was_active=false
+    if [[ $state == active || $state == activating ]]; then
+        room_service_was_active=true
+        printf 'Stopping easymesh-room-demo.service for the 100-client profile.\n'
+        lxc exec "$vm" -- systemctl stop easymesh-room-demo.service
+        room_service_stopped=true
+    fi
+    wait_for_live_clients "$expected"
+}
+
 lab_client_count() {
     if [[ $expected_clients != auto ]]; then
         printf '%s\n' "$expected_clients"
@@ -219,6 +257,11 @@ run_live() {
     prepare_lab || { skip live prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip live client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for live checks.\n' "$clients"
+    prepare_full_client_profile "$clients" || {
+        restore_room_service || true
+        skip live client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
+        return
+    }
     run live vm-check "cd '$root' && EASYMESH_LXD_NAME='$vm' EASYMESH_WEBUI_PORT='$EASYMESH_WEBUI_PORT' WMEDIUMD_CONSOLE_PORT='$WMEDIUMD_CONSOLE_PORT' EASYMESH_ROOM_DEMO_PORT='$EASYMESH_ROOM_DEMO_PORT' gen/vm/lxd/build.sh check"
     run live health "$(guest_command "HEALTH_EXPECT_CLIENTS='$clients' bash gen/tests/health-audit.sh")"
     run live hwsim-profiles "$(guest_command 'bash gen/tests/verify-hwsim-profile-uniqueness.sh')"
@@ -226,6 +269,7 @@ run_live() {
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
     run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
+    restore_room_service
 }
 
 run_rooms() {
@@ -250,7 +294,13 @@ run_soak() {
     prepare_lab || { skip soak prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip soak client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for P0 churn soak.\n' "$clients"
+    prepare_full_client_profile "$clients" || {
+        restore_room_service || true
+        skip soak client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
+        return
+    }
     run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
+    restore_room_service
 }
 
 for section in "${sections[@]}"; do

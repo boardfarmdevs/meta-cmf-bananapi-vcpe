@@ -50,6 +50,11 @@ uses that value for the health and P0 checks. Override the detected profile with
 `--expected-clients COUNT` (or `EASYMESH_EXPECTED_CLIENTS`) when intentionally
 testing a different provisioned roster.
 
+For the fixed 100-client profile, the runner stops the room service, waits up
+to two minutes for 100 live controller clients, and restores the prior room
+service state after live checks or the soak. No room-selection pre-step is
+required; do not operate the room while that profile is active.
+
 ## Prerequisites
 
 The host needs `python3`, `pytest`, `node`, `npm`, `lxc`, `ssh`, `curl`, and

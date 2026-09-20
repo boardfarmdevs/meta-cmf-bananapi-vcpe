@@ -289,7 +289,7 @@ Docker/Boardfarm reconstruction.
 | `wmediumd-client-carousel.py` | Live RF/roaming demonstration | Temporary RF changes |
 | `wmediumd-extender-outage.py` | Live RF outage/recovery | Temporary RF changes |
 | `p0-churn-soak.py` | Repeated live RF acceptance | Temporary RF changes |
-| `scale-soak-campaign.sh` | Sequential 20/50/100-client qualification | Reprovisions the hwsim pool and client roster |
+| `scale-soak-campaign.sh` | Fixed 100-client churn qualification | Reprovisions the hwsim pool |
 | `p0-cold-reconstruction.sh` | Repeated full reconstruction | Yes, highly disruptive |
 | `bpibroadband-memory-profile.py` | Live measurement | No |
 | `onewifi-memory-slope.py` | Live bounded-growth gate | No |
@@ -795,15 +795,13 @@ Run this as root inside the appliance VM or dedicated bare-metal lab host:
 
 ```sh
 EASYMESH_SOAK_PROFILE_SECONDS=43200 \
-  gen/tests/scale-soak-campaign.sh small medium stress
+  gen/tests/scale-soak-campaign.sh stress
 ```
 
-The campaign qualifies 20, 50 and 100 clients sequentially. At each boundary
-it stops every managed node, changes the idle hwsim pool to 32, 64 or 128
-radios, reconstructs the already provisioned roster, adds only missing client
-identities, then performs a clean whole-profile stop/start and health audit.
-It never changes a BPI `/nvram` identity. Each profile then runs the normal RF
-churn soak with an exact expected-client count.
+The appliance has one fixed 100-client pool. The campaign accepts `stress` and
+maps it to the pool helper's `100` profile, then performs a clean whole-profile
+stop/start, health audit and RF churn soak. `small` and `medium` fail before
+changing state with guidance to use their 20- and 50-client rooms instead.
 
 The default is twelve hours per profile. Results survive reboots below
 `/home/easymesh/easymesh-evidence/scale-soak`. To launch it as a managed

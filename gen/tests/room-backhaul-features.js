@@ -10,6 +10,37 @@ const execute = promisify(execFile);
 const rooms = ['backhaul-branch-formation', 'backhaul-parent-handover', 'backhaul-isolation-recovery'];
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+function usage() {
+  return 'usage: room-backhaul-features.js --yes-act true --host HOST --vm VM --room-url URL --topology-url URL --output DIRECTORY [--flavor rdk|prpl] [--room ROOM]';
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\\\"'\\\"'") + "'";
+}
+
+function optionsFrom(argv) {
+  if (!argv.length || argv.length % 2 || argv.includes('--help')) throw new Error(usage());
+  const options = {};
+  for (let index = 0; index < argv.length; index += 2) {
+    const key = argv[index], value = argv[index + 1];
+    if (!key.startsWith('--') || !value) throw new Error(usage());
+    options[key.slice(2)] = value;
+  }
+  for (const key of ['yes-act', 'host', 'vm', 'room-url', 'topology-url', 'output']) {
+    if (!options[key]) throw new Error(usage());
+  }
+  return options;
+}
+
+async function installGuestAudit(options) {
+  const source = path.join(__dirname, 'room-feature-guest-audit.py');
+  const encoded = fs.readFileSync(source).toString('base64');
+  const command = 'printf %s ' + shellQuote(encoded) + ' | base64 -d | lxc file push - ' +
+    shellQuote(options.vm + '/tmp/room-feature-guest-audit.py');
+  await execute('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', options.host, command],
+    {timeout: 30000, maxBuffer: 1048576});
+}
+
 function stackProfile(flavor) {
   assert.ok(['rdk', 'prpl'].includes(flavor), 'Unknown stack');
   return flavor === 'rdk' ?
@@ -64,6 +95,8 @@ function summarizeNative(samples, room) {
 async function run(options) {
   for (const key of ['host', 'vm']) assert.match(options[key], /^[a-zA-Z0-9_.-]+$/);
   assert.equal(options['yes-act'], 'true', 'Explicit --yes-act true is required; these rooms change live RF and can interrupt service');
+  assert.match(options['room-url'], /^https?:\/\/.+/, usage());
+  assert.match(options['topology-url'], /^https?:\/\/.+/, usage());
   const selectedRooms = options.room ? [options.room] : rooms;
   const flavor = options.flavor || 'rdk';
   const profile = stackProfile(flavor);
@@ -75,6 +108,7 @@ async function run(options) {
   const save = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value, null, 2) + '\n');
   const report = {flavor, started: new Date().toISOString(), scope: 'Geometry-room playback, native parent/traffic convergence and restoration; bounded, not a soak',
     rooms: [], errors: [], featureChecksPassed: false, recoveryPassed: false};
+  await installGuestAudit(options);
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
   const environment = {...process.env};
   delete environment.DISPLAY;
@@ -372,8 +406,9 @@ async function run(options) {
 
 module.exports = {summarizeNative, interfaceState, stackProfile, ready, parentPaths};
 if (require.main === module) {
-  const options = {};
-  for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];
+  let options;
+  try { options = optionsFrom(process.argv.slice(2)); }
+  catch (error) { console.error(error.message); process.exit(2); }
   run(options).then(report => {
     console.log(JSON.stringify({featureChecksPassed: report.featureChecksPassed, recoveryPassed: report.recoveryPassed, output: options.output}));
     process.exitCode = report.featureChecksPassed && report.recoveryPassed ? 0 : 1;
