@@ -59,6 +59,11 @@ workers for a faster first build; final association and convergence gates remain
 unchanged. Set `EASYMESH_NESTED_LXD_STORAGE_DRIVER=dir` or
 `CLIENT_CREATE_PARALLELISM=1` only for compatibility diagnosis.
 
+Workers share one short-lived hwsim allocation session. It inventories existing
+profile radio assignments once, reserves new radios under the allocator lock,
+then lets container creation and readiness continue in parallel. The build log
+reports the client-provisioning duration for direct build-to-build comparison.
+
 ```sh
 controller=$(find "$HOME/yocto/easymesh-bpi/build-qemux86bpibroadband/tmp/deploy/images" \
   -name '*.rootfs.lxc.tar.bz2' -type f | head -n 1)

@@ -779,15 +779,51 @@ hwsim_reclaim_dirty_phys() {
     done
 }
 
+hwsim_release_profile_session_radios() {
+    local profile="$1" session="${HWSIM_ALLOCATION_SESSION:-}" allocator_fd parent tmp
+    [ -n "$session" ] && [ -f "$session" ] || return 0
+    exec {allocator_fd}>/run/easymesh-hwsim-allocator.lock
+    flock "$allocator_fd"
+    while read -r parent; do
+        case "$parent" in virt-wlan[0-9]*) ;; *) continue ;; esac
+        tmp="${session}.tmp.$$"
+        grep -vxF "$parent" "$session" > "$tmp" || true
+        mv -f "$tmp" "$session"
+    done < <(
+        while read -r device; do
+            lxc profile device get "$profile" "$device" parent 2>/dev/null || true
+        done < <(lxc profile device list "$profile" 2>/dev/null)
+    )
+    flock -u "$allocator_fd"
+    exec {allocator_fd}>&-
+}
+
 # attach N free hwsim radios to a profile as physical NICs (named wlan0..N-1).
 hwsim_attach_radios() {
     local profile="$1" count="${2:-3}" candidate reserved_radio allocator_fd
+    local session="${HWSIM_ALLOCATION_SESSION:-}" session_tmp session_ready=false
     [ "$count" -gt 0 ] || return 0
     exec {allocator_fd}>/run/easymesh-hwsim-allocator.lock
     flock "$allocator_fd"
-    check_and_create_virt_wlan
-    hwsim_reclaim_dirty_phys           # return stale-VAP radios to the pool first
-    local reserved=($(hwsim_reserved_radios)) free=() i=0
+    if [ -n "$session" ] && [ -f "$session" ]; then
+        session_ready=true
+    fi
+    if [ "$session_ready" = false ]; then
+        check_and_create_virt_wlan
+        hwsim_reclaim_dirty_phys       # return stale-VAP radios to the pool first
+        if [ -n "$session" ]; then
+            session_tmp="${session}.tmp.$$"
+            umask 077
+            hwsim_reserved_radios | sort -u > "$session_tmp"
+            mv -f "$session_tmp" "$session"
+        fi
+    fi
+    local reserved=() free=() i=0
+    if [ -n "$session" ]; then
+        mapfile -t reserved < "$session"
+    else
+        mapfile -t reserved < <(hwsim_reserved_radios)
+    fi
     while read -r candidate; do
         [ -n "$candidate" ] || continue
         for reserved_radio in "${reserved[@]}"; do
@@ -799,9 +835,11 @@ hwsim_attach_radios() {
         echo "WARN hwsim: only ${#free[@]} unreserved free radios, need $count (raise HWSIM_POOL_SIZE, reload at idle)"
     fi
     while [ "$i" -lt "$count" ] && [ "$i" -lt "${#free[@]}" ]; do
-        lxc profile device add "$profile" "wlan${i}" nic \
-            nictype=physical parent="${free[$i]}" name="wlan${i}" 1>/dev/null 2>&1 \
-            && echo "  hwsim: wlan${i} <- ${free[$i]}"
+        if lxc profile device add "$profile" "wlan${i}" nic \
+            nictype=physical parent="${free[$i]}" name="wlan${i}" >/dev/null 2>&1; then
+            [ -z "$session" ] || printf '%s\n' "${free[$i]}" >> "$session"
+            echo "  hwsim: wlan${i} <- ${free[$i]}"
+        fi
         i=$((i+1))
     done
     flock -u "$allocator_fd"
