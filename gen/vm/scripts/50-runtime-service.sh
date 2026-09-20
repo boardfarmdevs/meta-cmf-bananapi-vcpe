@@ -5,9 +5,11 @@ test -f /home/easymesh/.local/state/easymesh-lab/deploy.status
 
 profile=${EASYMESH_SCALE_PROFILE:-unified}
 expected_clients=${HEALTH_EXPECT_CLIENTS:-100}
+client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
 cat > /etc/default/easymesh-lab <<EOF
 EASYMESH_SCALE_PROFILE=$profile
 HEALTH_EXPECT_CLIENTS=$expected_clients
+CLIENT_CREATE_PARALLELISM=$client_create_parallelism
 EOF
 
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-lab-runtime \

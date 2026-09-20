@@ -177,13 +177,15 @@ wait_for_live_clients() {
 prepare_full_client_profile() {
     local expected=$1 state
     [[ $expected == 100 ]] || return 0
-    state=$(lxc exec "$vm" -- systemctl show easymesh-room-demo.service -p ActiveState --value)
-    room_service_was_active=false
-    if [[ $state == active || $state == activating ]]; then
-        room_service_was_active=true
-        printf 'Stopping easymesh-room-demo.service for the 100-client profile.\n'
-        lxc exec "$vm" -- systemctl stop easymesh-room-demo.service
-        room_service_stopped=true
+    if ! "$room_service_stopped"; then
+        state=$(lxc exec "$vm" -- systemctl show easymesh-room-demo.service -p ActiveState --value)
+        room_service_was_active=false
+        if [[ $state == active || $state == activating ]]; then
+            room_service_was_active=true
+            printf 'Stopping easymesh-room-demo.service for the shared 100-client profile.\n'
+            lxc exec "$vm" -- systemctl stop easymesh-room-demo.service
+            room_service_stopped=true
+        fi
     fi
     wait_for_live_clients "$expected"
 }
@@ -258,7 +260,6 @@ run_live() {
     clients=$(lab_client_count) || { skip live client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for live checks.\n' "$clients"
     prepare_full_client_profile "$clients" || {
-        restore_room_service || true
         skip live client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
         return
     }
@@ -269,7 +270,6 @@ run_live() {
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
     run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
-    restore_room_service
 }
 
 run_rooms() {
@@ -295,24 +295,25 @@ run_soak() {
     clients=$(lab_client_count) || { skip soak client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for P0 churn soak.\n' "$clients"
     prepare_full_client_profile "$clients" || {
-        restore_room_service || true
         skip soak client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
         return
     }
     run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
-    restore_room_service
 }
 
-for section in "${sections[@]}"; do
-    printf '\n===== EasyMesh %s section =====\n' "$section"
-    case "$section" in
-        static) run_static ;;
-        webui) run_webui ;;
-        browser) run_browser ;;
-        live) run_live ;;
-        rooms) run_rooms ;;
-        soak) run_soak ;;
-    esac
+for section_group in 'static webui browser rooms' 'live soak'; do
+    for section in "${sections[@]}"; do
+        [[ " $section_group " == *" $section "* ]] || continue
+        printf '\n===== EasyMesh %s section =====\n' "$section"
+        case "$section" in
+            static) run_static ;;
+            webui) run_webui ;;
+            browser) run_browser ;;
+            live) run_live ;;
+            rooms) run_rooms ;;
+            soak) run_soak ;;
+        esac
+    done
 done
 
 python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" <<'PY'
