@@ -53,12 +53,19 @@ pool if needed, creates the VM, assigns a free bridge address, installs only
 commit-bounded source/assets, provisions the fixed client capacity and starts
 the lab.
 
+Fresh appliances use a Btrfs-backed nested LXD pool, so the 100 client roots
+are copy-on-write clones of the prepared client image. Use eight bounded client
+workers for a faster first build; final association and convergence gates remain
+unchanged. Set `EASYMESH_NESTED_LXD_STORAGE_DRIVER=dir` or
+`CLIENT_CREATE_PARALLELISM=1` only for compatibility diagnosis.
+
 ```sh
 controller=$(find "$HOME/yocto/easymesh-bpi/build-qemux86bpibroadband/tmp/deploy/images" \
   -name '*.rootfs.lxc.tar.bz2' -type f | head -n 1)
 extender=$(find "$HOME/yocto/easymesh-bpi/build-qemux86bpiap/tmp/deploy/images" \
   -name '*.rootfs.lxc.tar.bz2' -type f | head -n 1)
 test -n "$controller" && test -n "$extender"
+CLIENT_CREATE_PARALLELISM=8 \
 EASYMESH_CONTROLLER_IMAGE="$controller" EASYMESH_EXTENDER_IMAGE="$extender" \
   gen/vm/lxd/build.sh build
 ```
