@@ -51,11 +51,11 @@ uses that value for the health and P0 checks. Override the detected profile with
 testing a different provisioned roster.
 
 For the fixed 100-client profile, the runner executes room checks first, then
-stops the room service once, waits up to two minutes for 100 live controller
-clients, and retains that state through all live and soak checks. It restores
-the prior room-service state once when the suite exits, including after a
-failure or interruption. No room-selection pre-step is required; do not
-operate the room while that profile is active.
+runtime-masks and stops the room service once, waits up to two minutes for 100
+live controller clients, and retains that state through all live and soak
+checks. It restores the prior room-service state once when the suite exits,
+including after a failure or interruption. No room-selection pre-step is
+required; do not operate the room while that profile is active.
 
 ## Prerequisites
 

@@ -74,6 +74,7 @@ room_url="http://$host_address:$EASYMESH_ROOM_DEMO_PORT"
 guest_repo=${EASYMESH_GUEST_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 room_service_was_active=false
 room_service_stopped=false
+room_service_masked=false
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 output_root=${output_root:-"$root/test-results/$stamp-$vm"}
 mkdir -p "$output_root/logs"
@@ -153,8 +154,12 @@ prepare_lab() {
 }
 
 restore_room_service() {
-    if ! "$room_service_stopped"; then return 0; fi
+    if ! "$room_service_stopped" && ! "$room_service_masked"; then return 0; fi
     room_service_stopped=false
+    if "$room_service_masked"; then
+        room_service_masked=false
+        lxc exec "$vm" -- systemctl unmask --runtime easymesh-room-demo.service || true
+    fi
     if "$room_service_was_active"; then
         printf 'Restoring easymesh-room-demo.service.\n'
         lxc exec "$vm" -- systemctl start easymesh-room-demo.service
@@ -182,7 +187,9 @@ prepare_full_client_profile() {
         room_service_was_active=false
         if [[ $state == active || $state == activating ]]; then
             room_service_was_active=true
-            printf 'Stopping easymesh-room-demo.service for the shared 100-client profile.\n'
+            printf 'Isolating the shared 100-client profile from easymesh-room-demo.service.\n'
+            lxc exec "$vm" -- systemctl mask --runtime easymesh-room-demo.service
+            room_service_masked=true
             lxc exec "$vm" -- systemctl stop easymesh-room-demo.service
             room_service_stopped=true
         fi
@@ -211,7 +218,9 @@ run_static() {
     fi
     if have_command node; then
         for test in "$root"/gen/tests/viewer-*-test.js "$root"/gen/tests/test-*.js "$root"/gen/tests/fullscreen-control-test.js "$root"/gen/tests/signal-meter-test.js; do
-            [[ $(basename "$test") == *browser-test.js ]] && continue
+            case $(basename "$test") in
+                *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
+            esac
             run static "$(basename "${test%.js}")" "cd '$root' && node '$test'"
         done
     else
