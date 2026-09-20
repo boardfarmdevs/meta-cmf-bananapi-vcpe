@@ -4,8 +4,16 @@ source_dir=$(cd "$(dirname "$0")" && pwd)
 instance=${1:?usage: bash enable.sh VM HOST_IPV4 [LABEL]}
 host_address=${2:?supply the physical host IPv4 address}
 label=${3:-$instance}
-ui_port=${LAB_LXD_UI_PORT:-18892}
-grafana_port=${LAB_GRAFANA_PORT:-18893}
+if [ -r "$source_dir/../instance-config.sh" ]; then
+    EASYMESH_LXD_NAME=${EASYMESH_LXD_NAME:-$instance}
+    . "$source_dir/../instance-config.sh"
+    port_base=$(easymesh_instance_port_base "$instance")
+else
+    port_base=18889
+fi
+ui_port=${LAB_LXD_UI_PORT:-$((port_base + 3))}
+grafana_port=${LAB_GRAFANA_PORT:-$((port_base + 4))}
+outer_metrics_port=${LAB_OUTER_METRICS_PORT:-$((port_base + 5))}
 python3 - "$host_address" "$ui_port" "$grafana_port" <<'PY'
 import ipaddress
 import sys
@@ -70,7 +78,8 @@ if ! lxc config device show "$instance" | grep '^lab-grafana:' >/dev/null; then
         listen="tcp:$host_address:$grafana_port" connect="tcp:$guest_address:3000"
 fi
 if [ -n "${LAB_OUTER_METRICS_ADDRESS:-}" ]; then
-    bash "$source_dir/enable-outer-metrics.sh" "$instance" "$LAB_OUTER_METRICS_ADDRESS" \
+    LAB_OUTER_METRICS_PORT="$outer_metrics_port" \
+        bash "$source_dir/enable-outer-metrics.sh" "$instance" "$LAB_OUTER_METRICS_ADDRESS" \
         "${LAB_OUTER_TLS_NAME:?Set LAB_OUTER_TLS_NAME to a DNS SAN in the host LXD certificate}" "$label"
 fi
 lxc exec "$instance" -- docker compose --project-directory /opt/easymesh-observability kill --signal SIGHUP prometheus

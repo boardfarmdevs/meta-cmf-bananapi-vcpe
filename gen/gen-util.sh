@@ -520,24 +520,22 @@ get_eth_interface() {
 
 ensure_lxd_lab_pool() {
     # Keep short-lived hwsim lab roots off the host's default storage backend.
-    # In particular, loop-backed ZFS can serialize image/container mutations for
-    # minutes after repeated lab teardown. The dir driver is sufficient here and
-    # gives deterministic create/delete latency. One pool is shared by BPI nodes
-    # and WLAN clients; override the name only with another dir-backed pool.
+    # One pool is shared by BPI nodes and WLAN clients.
     local pool="${LAB_LXD_POOL:-bpi-lab}" driver
     if ! lxc storage show "$pool" > /dev/null 2>&1; then
         if [ "$pool" != "bpi-lab" ]; then
             echo "ERROR LXD: LAB_LXD_POOL '$pool' does not exist" >&2
             return 1
         fi
-        lxc storage create "$pool" dir > /dev/null || {
-            echo "ERROR LXD: could not create directory-backed pool '$pool'" >&2
+        driver=${LAB_LXD_POOL_DRIVER:-btrfs}
+        lxc storage create "$pool" "$driver" > /dev/null || {
+            echo "ERROR LXD: could not create $driver-backed pool '$pool'" >&2
             return 1
         }
     fi
     driver=$(lxc storage show "$pool" | sed -n 's/^driver: *//p' | head -1)
-    if [ "$driver" != "dir" ]; then
-        echo "ERROR LXD: lab pool '$pool' uses '$driver', expected 'dir'" >&2
+    if [ "$driver" != "dir" ] && [ "$driver" != "btrfs" ]; then
+        echo "ERROR LXD: lab pool '$pool' uses unsupported driver '$driver'" >&2
         return 1
     fi
     printf '%s\n' "$pool"
@@ -783,8 +781,10 @@ hwsim_reclaim_dirty_phys() {
 
 # attach N free hwsim radios to a profile as physical NICs (named wlan0..N-1).
 hwsim_attach_radios() {
-    local profile="$1" count="${2:-3}" candidate reserved_radio
+    local profile="$1" count="${2:-3}" candidate reserved_radio allocator_fd
     [ "$count" -gt 0 ] || return 0
+    exec {allocator_fd}>/run/easymesh-hwsim-allocator.lock
+    flock "$allocator_fd"
     check_and_create_virt_wlan
     hwsim_reclaim_dirty_phys           # return stale-VAP radios to the pool first
     local reserved=($(hwsim_reserved_radios)) free=() i=0
@@ -804,4 +804,6 @@ hwsim_attach_radios() {
             && echo "  hwsim: wlan${i} <- ${free[$i]}"
         i=$((i+1))
     done
+    flock -u "$allocator_fd"
+    exec {allocator_fd}>&-
 }

@@ -9,17 +9,17 @@ test -c /dev/kvm || {
 
 stage=$(mktemp -d /tmp/easymesh-import-storage.XXXXXX)
 trap 'rm -rf -- "$stage"' EXIT
-bundle=$stage/rdkeasymesh-20-test-lxd
+bundle=$stage/test-lxd-bundle
 install -d "$bundle"
 install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
-backup=$bundle/rdkeasymesh-20-test-lxd.tar.zst
+backup=$bundle/test-lxd-bundle.tar.zst
 log=$stage/lxc.log
 netplan_capture=$stage/site-netplan.yaml
 : > "$backup"
 printf '%s\n' \
     'LAB_PROFILE=small' \
     'LAB_CLIENTS=20' \
-    'LAB_DEFAULT_NAME=rdkeasymesh-20-storage-test' \
+    'LAB_DEFAULT_NAME=storage-test' \
     'LAB_DEFAULT_CPUS=6' \
     'LAB_DEFAULT_MEMORY=8GiB' > "$bundle/release.env"
 : > "$log"
@@ -78,18 +78,18 @@ EASYMESH_ROOM_DEMO_PORT=29891 \
     bash "$bundle/import.sh" > "$stage/import.out"
 
 grep -Fx \
-    "import $backup rdkeasymesh-20-storage-test --storage large-pool --device eth0\\,network=lxdbr0 --device eth0\\,ipv4.address=10.20.30.250 --device easymesh-webui\\,listen=tcp:127.0.0.1:29889 --device easymesh-webui\\,connect=tcp:10.20.30.250:8888 --device wmediumd-console\\,listen=tcp:127.0.0.1:29890 --device wmediumd-console\\,connect=tcp:10.20.30.250:8890 --device room-demo-viewer\\,listen=tcp:127.0.0.1:29891 --device room-demo-viewer\\,connect=tcp:10.20.30.250:8891 " \
+    "import $backup storage-test --storage large-pool --device eth0\\,network=lxdbr0 --device eth0\\,ipv4.address=10.20.30.250 --device easymesh-webui\\,listen=tcp:127.0.0.1:29889 --device easymesh-webui\\,connect=tcp:10.20.30.250:8888 --device wmediumd-console\\,listen=tcp:127.0.0.1:29890 --device wmediumd-console\\,connect=tcp:10.20.30.250:8890 --device room-demo-viewer\\,listen=tcp:127.0.0.1:29891 --device room-demo-viewer\\,connect=tcp:10.20.30.250:8891 " \
     "$log" >/dev/null
 grep -F 'profile:           20 clients (small)' "$stage/import.out" >/dev/null
-grep -Fx 'config set rdkeasymesh-20-storage-test limits.memory 8GiB ' \
+grep -Fx 'config set storage-test limits.memory 8GiB ' \
     "$log" >/dev/null
-grep -Fx 'config set rdkeasymesh-20-storage-test boot.autostart false ' \
+grep -Fx 'config set storage-test boot.autostart false ' \
     "$log" >/dev/null
 if grep -q 'boot.autostart true' "$log"; then
     echo 'import unexpectedly enabled VM autostart' >&2
     exit 1
 fi
-grep -Fx 'config device unset rdkeasymesh-20-storage-test eth0 ipv4.address ' \
+grep -Fx 'config device unset storage-test eth0 ipv4.address ' \
     "$log" >/dev/null
 grep -Fx 'site address:      enp5s0 10.20.30.250/24 via 10.20.30.1' \
     "$stage/import.out" >/dev/null
@@ -101,11 +101,11 @@ grep -Fx '        - 10.20.30.250/24' "$netplan_capture" >/dev/null
 grep -Fx '          via: 10.20.30.1' "$netplan_capture" >/dev/null
 grep -Fx '          - 10.20.30.1' "$netplan_capture" >/dev/null
 
-start_line=$(grep -nFx 'start rdkeasymesh-20-storage-test ' "$log" | cut -d: -f1)
+start_line=$(grep -nFx 'start storage-test ' "$log" | cut -d: -f1)
 apply_line=$(grep -nFx \
-    'exec rdkeasymesh-20-storage-test -- netplan apply ' "$log" | cut -d: -f1)
+    'exec storage-test -- netplan apply ' "$log" | cut -d: -f1)
 proxy_line=$(grep -nF \
-    'config device add rdkeasymesh-20-storage-test easymesh-webui proxy ' \
+    'config device add storage-test easymesh-webui proxy ' \
     "$log" | tail -1 | cut -d: -f1)
 test "$start_line" -lt "$apply_line"
 test "$apply_line" -lt "$proxy_line"
@@ -166,22 +166,22 @@ EASYMESH_ROOM_DEMO_PORT=29891 \
     bash "$bundle/import.sh" "$backup" \
         > "$stage/nested-delayed.out"
 test "$(cat "$ready_count")" = 2
-grep -Fx 'config set rdkeasymesh-0916 boot.autostart false ' \
+grep -Fx 'config set easymesh boot.autostart false ' \
     "$log" >/dev/null
 ready_line=$(grep -nF \
-    'exec rdkeasymesh-0916 -- lxc query /1.0 ' "$log" \
+    'exec easymesh -- lxc query /1.0 ' "$log" \
     | tail -1 | cut -d: -f1)
 select_line=$(grep -nF \
-    'exec rdkeasymesh-0916 -- /usr/local/sbin/easymesh-select-thin-profile 100 ' \
+    'exec easymesh -- /usr/local/sbin/easymesh-select-thin-profile 100 ' \
     "$log" | cut -d: -f1)
 proxy_line=$(grep -nF \
-    'config device add rdkeasymesh-0916 easymesh-webui proxy ' \
+    'config device add easymesh easymesh-webui proxy ' \
     "$log" | tail -1 | cut -d: -f1)
 reload_line=$(grep -nF \
-    'exec rdkeasymesh-0916 -- systemctl daemon-reload ' \
+    'exec easymesh -- systemctl daemon-reload ' \
     "$log" | tail -1 | cut -d: -f1)
 start_line=$(grep -nF \
-    'exec rdkeasymesh-0916 -- systemctl --no-block start easymesh-lab.service ' \
+    'exec easymesh -- systemctl --no-block start easymesh-lab.service ' \
     "$log" | tail -1 | cut -d: -f1)
 test "$ready_line" -lt "$select_line"
 test "$select_line" -lt "$proxy_line"
@@ -222,8 +222,8 @@ EASYMESH_TEST_NESTED_READY_AFTER=1 \
 EASYMESH_LXD_STORAGE=large-pool \
 EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
     bash "$bundle/import.sh" --monitoring "$backup" > "$stage/monitoring.out"
-monitoring_line=$(grep -nF 'monitoring-enabled rdkeasymesh-0916 127.0.0.1' "$log" | cut -d: -f1)
-start_line=$(grep -nF 'exec rdkeasymesh-0916 -- systemctl --no-block start easymesh-lab.service ' "$log" | cut -d: -f1)
+monitoring_line=$(grep -nF 'monitoring-enabled easymesh 127.0.0.1' "$log" | cut -d: -f1)
+start_line=$(grep -nF 'exec easymesh -- systemctl --no-block start easymesh-lab.service ' "$log" | cut -d: -f1)
 test "$monitoring_line" -lt "$start_line"
 
 echo 'PASS: LXD import storage selection and optional monitoring before lab startup'

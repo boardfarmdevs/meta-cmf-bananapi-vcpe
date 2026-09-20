@@ -19,11 +19,11 @@ check() {
     test "$(easymesh_profile_release_name "$input")" = "$release_name"
 }
 
-check 100 unified 100 128 rdkeasymesh-0916
-check unified unified 100 128 rdkeasymesh-0916
-test "$(easymesh_thin_release_name)" = rdkeasymesh-0916-thin
-test "$(EASYMESH_RELEASE_ID=0901 easymesh_profile_release_name 100)" = rdkeasymesh-0901
-test "$(EASYMESH_RELEASE_ID=0901 easymesh_thin_release_name)" = rdkeasymesh-0901-thin
+check 100 unified 100 128 easymesh
+check unified unified 100 128 easymesh
+test "$(easymesh_thin_release_name)" = easymesh-thin
+test "$(EASYMESH_LXD_NAME=sample easymesh_profile_release_name 100)" = sample
+test "$(EASYMESH_LXD_NAME=sample easymesh_thin_release_name)" = sample-thin
 for obsolete in 20 50 small medium stress; do
     if easymesh_profile_name "$obsolete" >/dev/null 2>&1; then
         echo "obsolete size accepted: $obsolete" >&2
@@ -54,14 +54,10 @@ if grep -q / "$tmp/test-release-bundle.tar.sha256"; then
     exit 1
 fi
 
-mv "$tmp/test-release" "$tmp/rdkeasymesh-0831-thin"
-"$root/gen/vm/lxd/package-release.sh" "$tmp/rdkeasymesh-0831-thin" >/dev/null
-test -f "$tmp/rdkeasymesh-0831-thin.tar"
-test -f "$tmp/rdkeasymesh-0831-thin.tar.sha256"
-mv "$tmp/rdkeasymesh-0831-thin" "$tmp/rdkeasymesh-0901-thin"
-"$root/gen/vm/lxd/package-release.sh" "$tmp/rdkeasymesh-0901-thin" >/dev/null
-test -f "$tmp/rdkeasymesh-0901-thin.tar"
-test -f "$tmp/rdkeasymesh-0901-thin.tar.sha256"
+mv "$tmp/test-release" "$tmp/sample-thin"
+"$root/gen/vm/lxd/package-release.sh" "$tmp/sample-thin" >/dev/null
+test -f "$tmp/sample-thin.tar"
+test -f "$tmp/sample-thin.tar.sha256"
 
 for clients in 100; do
     expected_profile=unified

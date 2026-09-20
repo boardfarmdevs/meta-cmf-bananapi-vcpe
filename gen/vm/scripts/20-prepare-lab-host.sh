@@ -13,6 +13,18 @@ meta_bundle="$assets/meta-cmf-bananapi-vcpe.bundle"
 expected_meta_head=${EASYMESH_RUNTIME_COMMIT:-}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-codex/0916-clean}
 alpine_remote=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}
+nested_storage_driver=${EASYMESH_NESTED_LXD_STORAGE_DRIVER:-btrfs}
+
+case "$nested_storage_driver" in
+    btrfs)
+        command -v mkfs.btrfs >/dev/null 2>&1 && modinfo btrfs >/dev/null 2>&1 || {
+            echo 'nested Btrfs storage is unavailable; set EASYMESH_NESTED_LXD_STORAGE_DRIVER=dir to use the compatibility backend' >&2
+            exit 1
+        }
+        ;;
+    dir) ;;
+    *) echo "unsupported EASYMESH_NESTED_LXD_STORAGE_DRIVER: $nested_storage_driver" >&2; exit 2 ;;
+esac
 
 if [ "$(uname -r)" != "$expected_kernel" ]; then
     echo "expected $expected_kernel after reboot, found $(uname -r)" >&2
@@ -93,7 +105,7 @@ if ! lxc storage show default >/dev/null 2>&1; then
     lxd init --auto --storage-backend dir </dev/null
 fi
 if ! lxc storage show bpi-lab >/dev/null 2>&1; then
-    lxc storage create bpi-lab dir
+    lxc storage create bpi-lab "$nested_storage_driver"
 fi
 
 if ! lxc image info alpine >/dev/null 2>&1 \

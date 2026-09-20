@@ -236,21 +236,40 @@ up)
             trap restore_medium EXIT INT TERM
         fi
     fi
-    for index in $(seq 0 $((TOTAL - 1))); do
-        args=()
+    create_parallelism=${CLIENT_CREATE_PARALLELISM:-1}
+    [[ "$create_parallelism" =~ ^[1-9][0-9]*$ ]] || { echo 'CLIENT_CREATE_PARALLELISM must be positive' >&2; exit 2; }
+    create_client() {
+        local index=$1 name cohort ordinal band security ssid psk
+        local -a args=()
         [ "$index" -eq 0 ] || args=(-i "$index")
         name=$(container_name "$index")
         client_parameters "$index"
         if [ "${healthy[$index]:-0}" = 1 ]; then
             echo "$name: already healthy on $ssid; keeping existing radio and identity"
         else
-            "$HERE/wlan-client.sh" "${args[@]}" --cohort "$cohort" --security "$security" --band "$band" \
+            WAIT_EASYMESH_EXPORT=0 "$HERE/wlan-client.sh" "${args[@]}" --cohort "$cohort" --security "$security" --band "$band" \
                 up "$ssid" "$psk"
         fi
         lxc config set "$name" user.easymesh.ordinal "$ordinal"
         lxc config set "$name" user.easymesh.band "$band"
         lxc config set "$name" boot.autostart false
+    }
+    declare -a create_pids=()
+    create_failed=0
+    collect_creates() {
+        local pid
+        for pid in "${create_pids[@]}"; do
+            wait "$pid" || create_failed=1
+        done
+        create_pids=()
+    }
+    for index in $(seq 0 $((TOTAL - 1))); do
+        create_client "$index" &
+        create_pids+=("$!")
+        if [ "${#create_pids[@]}" -ge "$create_parallelism" ]; then collect_creates; fi
     done
+    [ "${#create_pids[@]}" -eq 0 ] || collect_creates
+    [ "$create_failed" = 0 ] || { echo 'one or more client creations failed' >&2; exit 1; }
     restore_medium
     trap - EXIT INT TERM
     # The live topology provides the authoritative, SSID-qualified fronthaul

@@ -84,7 +84,9 @@ def test_both_backends_and_explicit_browser_ports_are_supported():
     setup = (BUNDLE / "setup.sh").read_text()
     assert "/etc/default/easymesh-lab" in setup and "/etc/default/prplmesh-lab" in setup
     enable = (BUNDLE / "enable.sh").read_text()
-    assert 'LAB_LXD_UI_PORT:-18892' in enable and 'LAB_GRAFANA_PORT:-18893' in enable
+    assert 'instance-config.sh' in enable
+    assert 'LAB_LXD_UI_PORT:-$((port_base + 3))' in enable
+    assert 'LAB_GRAFANA_PORT:-$((port_base + 4))' in enable
     assert 'lab-lxd-ui proxy nat=true' in enable and 'lab-grafana proxy nat=true' in enable
     assert 'boot.autostart' not in enable
     assert 'reload-lxd.sh' in setup and 'server-identity-reviewed' in setup
@@ -176,7 +178,7 @@ elif arguments[0] == "exec":
         sys.stdin.buffer.read()
 ''')
     executable.chmod(0o755)
-    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "MONITORING_ACTIONS": str(actions)}
+    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "MONITORING_ACTIONS": str(actions), "EASYMESH_PORT_BASE": "18889"}
     for variable in ("LAB_LXD_UI_PORT", "LAB_GRAFANA_PORT"):
         environment.pop(variable, None)
     subprocess.run(["bash", str(BUNDLE / "enable.sh"), "lab-vm", "192.0.2.10"], env=environment, check=True, capture_output=True, timeout=20)

@@ -31,7 +31,7 @@ backhaul, and the fronthaul VAPs the controller pushes to the extender.
 | [architecture](doc/easymesh/concepts/architecture.md) | EasyMesh, containers, hwsim and clients |
 | [operations](doc/easymesh/guide/operations.md) | deploy, start, stop, recover and validate |
 | [experiments](doc/easymesh/experiments/README.md) | steering, RF scenarios and optimizer evaluation |
-| [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | building the images; local repo mirror; prpl LCM build |
+| [EasyMesh build](doc/easymesh/build) · [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | EasyMesh images, named VM and test tiers; other builds; local repo mirror; prpl LCM build |
 
 ## layout
 

@@ -17,7 +17,7 @@ sample_interval=${EASYMESH_SOAK_SAMPLE_SECONDS:-60}
 settle=${EASYMESH_SOAK_SETTLE_SECONDS:-30}
 output_root=${EASYMESH_SOAK_OUTPUT_ROOT:-/home/easymesh/easymesh-evidence/scale-soak}
 if [ "$#" -eq 0 ]; then
-    profiles=(small medium stress)
+    profiles=(stress)
 else
     profiles=("$@")
 fi
@@ -49,6 +49,21 @@ profile_cli_limit() {
         small) printf '192\n' ;;
         medium) printf '320\n' ;;
         stress) printf '512\n' ;;
+    esac
+}
+
+pool_profile() {
+    case "$1" in
+        stress) printf '100\n' ;;
+        small)
+            echo 'small needs a 20-client room such as home-a-private-client-room-walk; the appliance keeps one fixed 100-client pool' >&2
+            return 2
+            ;;
+        medium)
+            echo 'medium needs the fifty-client-counter-roam room; the appliance keeps one fixed 100-client pool' >&2
+            return 2
+            ;;
+        *) echo "unknown client profile: $1" >&2; return 2 ;;
     esac
 }
 
@@ -119,7 +134,7 @@ prepare_profile() {
     # then add only the missing clients while the APs are available, register
     # one complete medium matrix, and retain every established identity.
     "$runtime" start || return
-    "$repo/gen/wlan-client-pool.sh" up --profile "$profile" || return
+    "$repo/gen/wlan-client-pool.sh" up --profile "$(pool_profile "$profile")" || return
     current=$(lxc list -c n --format csv \
         | grep -Ec '^wlan-client(-[0-9]{3})?$' || true)
     [ "$current" -eq "$expected" ] || {
@@ -156,6 +171,11 @@ for profile in "${profiles[@]}"; do
     expected=$(profile_clients "$profile")
     radios=$(profile_radios "$profile")
     record profile_start "profile=$profile clients=$expected radios=$radios"
+    if ! pool_profile "$profile" >/dev/null; then
+        failed_profiles+=("$profile")
+        record profile_unsupported "profile=$profile fixed_pool=100"
+        continue
+    fi
     if prepare_profile "$profile" "$expected" "$radios"; then
         :
     else
