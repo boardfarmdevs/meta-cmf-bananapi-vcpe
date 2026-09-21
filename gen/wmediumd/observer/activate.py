@@ -11,7 +11,7 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 GEN = HERE.parent.parent
-sys.path[:0] = [str(GEN / "demo"), str(GEN / "wmediumd/configurator")]
+sys.path[:0] = [str(GEN / "demo"), str(GEN / "optimizer"), str(GEN / "wmediumd/configurator")]
 
 
 def run(*command, timeout=300, **kwargs):
