@@ -130,6 +130,11 @@ release detailed demand. Collection is not zero-cost; performance qualification
 must compare the same workload with and without the observer.
 
 Coverage shows complete, collecting, changing, unsupported or unavailable.
+Traffic rows appear progressively, without waiting for the full scan. Each
+browser receives at most 512 changed path rows per update; coverage distinguishes
+daemon collection from browser delivery. Counter sample age is separate from
+last-packet age. Large maintained tables can take minutes to refresh completely;
+selected RF readbacks and frame windows update independently of that scan.
 Traffic pages span a sequence interval, not an atomic instant. During room
 movement the RF generation may change too quickly for a complete matrix;
 selected readbacks remain preferable. Never treat missing rows as zero.

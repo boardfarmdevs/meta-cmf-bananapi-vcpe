@@ -221,6 +221,8 @@ func (runtime *Runtime) Run(ctx context.Context) {
 	selected := map[string]Rule{}
 	details := map[string]Report{}
 	ownership := map[string]Report{}
+	paths := map[string]model.ActiveLink{}
+	pathsChanged := false
 	var lastInfo, lastSummary, lastPublish, lastInventory, lastService, byteWindow time.Time
 	var lastSuccess time.Time
 	var collectorError string
@@ -264,6 +266,8 @@ func (runtime *Runtime) Run(ctx context.Context) {
 					selected = map[string]Rule{}
 					details = map[string]Report{}
 					ownership = map[string]Report{}
+					paths = map[string]model.ActiveLink{}
+					pathsChanged = false
 					service = Report{}
 					lastInventory = time.Time{}
 				}
@@ -446,6 +450,15 @@ func (runtime *Runtime) Run(ctx context.Context) {
 				}
 				current.page.Pairs = append(current.page.Pairs, page.Pairs...)
 				current.page.Frequencies = append(current.page.Frequencies, page.Frequencies...)
+				for index := range page.Paths {
+					page.Paths[index].SampledAt = now
+					row := page.Paths[index]
+					key := Key(row.Source, row.Destination, row.FrequencyMHz)
+					if _, exists := paths[key]; exists || len(paths) < 65536 {
+						paths[key] = row
+						pathsChanged = true
+					}
+				}
 				current.page.Paths = append(current.page.Paths, page.Paths...)
 				current.page.Radios = append(current.page.Radios, page.Radios...)
 				current.page.VIFs = append(current.page.VIFs, page.VIFs...)
@@ -471,7 +484,11 @@ func (runtime *Runtime) Run(ctx context.Context) {
 					case "frequencies":
 						snapshot.FrequencyOverrides = current.page.Frequencies
 					case "paths":
-						snapshot.ActiveLinks = current.page.Paths
+						paths = map[string]model.ActiveLink{}
+						for _, row := range current.page.Paths {
+							paths[Key(row.Source, row.Destination, row.FrequencyMHz)] = row
+						}
+						pathsChanged = true
 					case "radios":
 						snapshot.RadioFrequencies = current.page.Radios
 					case "vifs":
@@ -522,6 +539,18 @@ func (runtime *Runtime) Run(ctx context.Context) {
 		}
 		lastPublish = now
 		sequence++
+		if pathsChanged {
+			keys := make([]string, 0, len(paths))
+			for key := range paths {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			snapshot.ActiveLinks = make([]model.ActiveLink, 0, len(keys))
+			for _, key := range keys {
+				snapshot.ActiveLinks = append(snapshot.ActiveLinks, paths[key])
+			}
+			pathsChanged = false
+		}
 		for key, value := range selected {
 			if now.Sub(value.ObservedAt) > time.Minute {
 				delete(selected, key)

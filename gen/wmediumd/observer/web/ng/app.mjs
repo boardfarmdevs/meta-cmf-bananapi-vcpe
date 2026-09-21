@@ -1,6 +1,6 @@
 import { ObserverClient } from './client.mjs';
 import { MediumScene } from './scene.mjs';
-import { signalColor, counter, frameType, fresh, keyOf } from './model.mjs';
+import { signalColor, counter, frameType, fresh, keyOf, coalescePatch } from './model.mjs';
 
 const element = id => document.getElementById(id);
 const node = (tag, text, className) => { const result = document.createElement(tag); if (text != null) result.textContent = text; if (className) result.className = className; return result; };
@@ -38,7 +38,7 @@ function interest() {
   client.subscribe({ topics: [...new Set(topics)], source, destination, frequency_mhz: Number(selection?.frequency_mhz || 0) });
 }
 function process(patch = {}) {
-  pendingPatch = { ...pendingPatch, ...patch };
+  pendingPatch = coalescePatch(pendingPatch, patch);
   if (workerBusy || frozen) { pendingOptions = true; return; }
   pendingOptions = false;
   workerBusy = true; revision++;
@@ -91,6 +91,7 @@ function renderStatus() {
     const status = data.coverage?.[topic]; coverage.append(node('p', `${topic}: ${status?.state || 'not requested'} · ${status?.rows ?? 0}/${status?.total ?? '?'} · ${age(status?.observed_at)}`));
   }
   if (data.identity_inventory?.error) coverage.append(node('p', `Names: ${data.identity_inventory.error}`));
+  if (data.paths_delivered != null && options.mode === 'observed') coverage.append(node('p', `Browser paths: ${data.paths_delivered}/${data.paths_cached} cached rows delivered. Collection continues progressively.`));
   coverage.append(node('p', 'Pages are sampled over time, not an atomic traffic snapshot. A moving RF generation may prevent a complete matrix.'));
 }
 
@@ -207,10 +208,11 @@ function renderTraffic(host, radio, path, key) {
   rfGuide(host, 'packet-error-probability-and-loss');
   if (path) {
     const row = result?.paths.find(row => row.key === key);
+    properties(host, [['Path counters sampled', path.sampled_at ? age(path.sampled_at) : 'Unknown']]);
     properties(host, [['Path record', `${path.source} → ${path.destination} @ ${path.frequency_mhz} MHz`], ['TX frames (lifetime)', path.frames], ['TX attempts / retries', `${path.attempts} / ${path.retries}`], ['ACKed / not ACKed', `${path.acked} / ${path.no_ack}`], ['RX injections (lifetime)', path.rx_injected], ['Frames/s', decimal(row?.rate)], ['Last signal / SNR', `${path.last_signal_dbm} dBm / ${path.last_snr_db} dB`], ['Last PER', `${decimal(Number(path.last_per_million) / 10000)}%`], ['Last frame', frameType(path.last_type, path.last_subtype)], ['Last access category', ['Voice (VO)', 'Video (VI)', 'Best effort (BE)', 'Background (BK)'][Number(path.last_access_category)] || 'Unavailable'], ['Includes multicast fan-out', path.multicast ? 'Yes; may also contain unicast' : 'No multicast flag observed']]);
     heading(host, 'Outcome counters'); properties(host, ['offchannel', 'cca', 'interference', 'per', 'no_receiver'].map(reason => [`Drop · ${reason}`, path[`drops_${reason}`]]));
     notice(host, 'TX frames and receiver candidates have different counting boundaries. A multicast-only path can have RX outcomes with zero TX frames. Never sum both as unique packets.');
-  } else notice(host, selection.destination ? 'No maintained traffic record for this exact directed frequency. RF configuration alone does not imply traffic.' : 'Choose a destination for packet-path details.');
+  } else notice(host, selection.destination ? 'No traffic record collected yet for this exact directed frequency. The full scan can take time; the selected frame window below updates independently. Missing collection is not proof of no traffic.' : 'Choose a destination for packet-path details.');
   const detail = data.details?.[key];
   heading(host, 'Selected frame-type window');
   if (!data.daemon?.capabilities?.includes('explorer_details')) notice(host, 'This daemon has legacy path telemetry: last type/subtype only. Install the Console NG telemetry patch for leased subtype counters and header metadata.');

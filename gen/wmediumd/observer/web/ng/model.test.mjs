@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MediumModel, compare, counter, frameType } from './model.mjs';
+import { MediumModel, compare, counter, frameType, coalescePatch, keyOf } from './model.mjs';
 
 const source = '02:00:00:00:00:01', destination = '02:00:00:00:00:02';
 function fixture(now = Date.now()) {
@@ -56,6 +56,27 @@ test('daemon restart discards old rows and rate state', () => {
   assert.equal(model.explore().paths.length, 0); assert.equal(model.previous.size, 0);
 });
 test('unknown frame type is not manufactured as management', () => { assert.equal(frameType(undefined, undefined), 'Unavailable'); });
+
+test('progressive path chunks preserve unsampled rates and removals', () => {
+  const now = Date.now(), model = new MediumModel(), data = fixture(now);
+  data.paths[0].sampled_at = new Date(now).toISOString(); model.update(data, now);
+  const updated = { ...data.paths[0], frames: '9007199254740995', sampled_at: new Date(now + 2000).toISOString() };
+  model.update({ path_updates: [updated] }, now + 2000);
+  assert.equal(model.explore({}, now + 2000).paths[0].rate, 1);
+  model.update({ path_updates: [], coverage: { paths: { observed_at: new Date(now + 4000).toISOString() } } }, now + 4000);
+  assert.equal(model.explore({}, now + 4000).paths[0].rate, 1);
+  model.update({ path_removed: [keyOf(updated)] }, now + 4000);
+  assert.equal(model.explore({}, now + 4000).paths.length, 0);
+});
+
+test('worker backpressure coalesces path updates without losing resets or deletes', () => {
+  const model = new MediumModel(), data = fixture(), first = data.paths[0], second = { ...first, destination: 'other' };
+  model.update(data);
+  const pending = coalescePatch({ paths_reset: true, path_updates: [first] }, { path_updates: [second], paths_reset: false });
+  model.update(pending); assert.equal(model.explore().paths.length, 2);
+  model.update(coalescePatch({ path_updates: [first] }, { path_removed: [keyOf(first)] }));
+  assert.equal(model.explore().paths.length, 1);
+});
 
 test('faulted room intent cannot classify clients as excluded', () => {
   const model = new MediumModel(), data = fixture(); data.room.data.fault = 'external RF writer'; model.update(data);

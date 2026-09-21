@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/internal/model"
 )
 
 type Handler struct {
@@ -531,6 +533,8 @@ func (handler *Handler) stream(writer http.ResponseWriter, request *http.Request
 	interest := Interest{}
 	previous := map[string]string{}
 	baseline := uint64(0)
+	pathDelivery := newPathDelivery()
+	pathInstance := ""
 	for {
 		select {
 		case update, open := <-updates:
@@ -548,6 +552,9 @@ func (handler *Handler) stream(writer http.ResponseWriter, request *http.Request
 				previous = map[string]string{}
 				baseline = 0
 			}
+			if update.Type == "resync" {
+				pathInstance = ""
+			}
 			interest = update.Interest
 		case <-ticker.C:
 		}
@@ -559,10 +566,23 @@ func (handler *Handler) stream(writer http.ResponseWriter, request *http.Request
 			continue
 		}
 		document := envelope(view, interest)
+		if has(interest.Topics, "paths") {
+			reset := pathInstance != view.Snapshot.Daemon.InstanceID
+			if reset {
+				pathDelivery = newPathDelivery()
+				pathInstance = view.Snapshot.Daemon.InstanceID
+			}
+			updated, removed := pathDelivery.next(view.Snapshot.ActiveLinks)
+			delete(document, "paths")
+			document["paths_reset"] = reset
+			document["path_updates"], document["path_removed"] = updated, removed
+			document["paths_delivered"] = len(pathDelivery.sent)
+			document["paths_cached"] = len(view.Snapshot.ActiveLinks)
+		}
 		changed := map[string]json.RawMessage{}
 		for topic, value := range document {
 			encoded := handler.encodeTopic(topic, value)
-			if previous[topic] != string(encoded) {
+			if topic == "path_updates" || topic == "path_removed" || topic == "paths_reset" || previous[topic] != string(encoded) {
 				changed[topic] = encoded
 				previous[topic] = string(encoded)
 			}
@@ -581,6 +601,40 @@ func (handler *Handler) stream(writer http.ResponseWriter, request *http.Request
 		}
 		baseline = view.Snapshot.Sequence
 	}
+}
+
+type pathDelivery struct {
+	sent   map[string]time.Time
+	cursor int
+}
+
+func newPathDelivery() *pathDelivery {
+	return &pathDelivery{sent: map[string]time.Time{}}
+}
+
+func (delivery *pathDelivery) next(rows []model.ActiveLink) ([]model.ActiveLink, []string) {
+	updated := make([]model.ActiveLink, 0, 512)
+	removed := []string{}
+	present := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		present[Key(row.Source, row.Destination, row.FrequencyMHz)] = true
+	}
+	for key := range delivery.sent {
+		if !present[key] && len(removed) < 512 {
+			removed = append(removed, key)
+			delete(delivery.sent, key)
+		}
+	}
+	for visited := 0; visited < len(rows) && len(updated) < 512; visited++ {
+		row := rows[delivery.cursor%len(rows)]
+		delivery.cursor = (delivery.cursor + 1) % len(rows)
+		key := Key(row.Source, row.Destination, row.FrequencyMHz)
+		if stamp, exists := delivery.sent[key]; !exists || !stamp.Equal(row.SampledAt) {
+			updated = append(updated, row)
+			delivery.sent[key] = row.SampledAt
+		}
+	}
+	return updated, removed
 }
 
 func (handler *Handler) encodeTopic(topic string, value any) []byte {

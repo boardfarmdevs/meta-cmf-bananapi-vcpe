@@ -1,6 +1,26 @@
 export const keyOf = row => `${row.source}>${row.destination}@${row.frequency_mhz || 0}`;
 export const number = value => value === undefined || value === null || value === '' ? null : Number(value);
 export const counter = value => { try { return BigInt(value ?? 0); } catch { return 0n; } };
+export function applyPathPatch(cache, patch) {
+  if (patch.paths_reset || Array.isArray(patch.paths)) cache.clear();
+  for (const row of patch.paths || []) cache.set(keyOf(row), row);
+  for (const key of patch.path_removed || []) cache.delete(key);
+  for (const row of patch.path_updates || []) cache.set(keyOf(row), row);
+  return [...cache.values()];
+}
+export function coalescePatch(pending, patch) {
+  const reset = patch.paths_reset || Array.isArray(patch.paths);
+  const updates = new Map((reset ? [] : pending.path_updates || []).map(row => [keyOf(row), row]));
+  const removed = new Set(reset ? [] : pending.path_removed || []);
+  for (const key of patch.path_removed || []) { updates.delete(key); removed.add(key); }
+  for (const row of patch.path_updates || []) { const key = keyOf(row); updates.set(key, row); removed.delete(key); }
+  const result = { ...pending, ...patch };
+  if (pending.path_updates || patch.path_updates || reset) {
+    result.path_updates = [...updates.values()]; result.path_removed = [...removed];
+    result.paths_reset = Boolean(pending.paths_reset || patch.paths_reset);
+  }
+  return result;
+}
 export const drops = row => ['offchannel', 'cca', 'interference', 'per', 'no_receiver'].reduce((total, reason) => total + counter(row[`drops_${reason}`]), 0n);
 export const bandOf = frequency => frequency >= 5955 ? '6GHz' : frequency >= 5000 ? '5GHz' : frequency >= 2300 ? '2.4GHz' : 'unknown';
 export const signalColor = value => value === null || value === undefined ? '#83909c' : Number(value) < 15 ? '#eb6965' : Number(value) < 25 ? '#e5ba4e' : '#62c798';
@@ -24,15 +44,17 @@ export function compare(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true });
 }
 export class MediumModel {
-  constructor() { this.instance = ''; this.previous = new Map(); this.rates = new Map(); this.data = {}; }
+  constructor() { this.instance = ''; this.previous = new Map(); this.rates = new Map(); this.pathRows = new Map(); this.data = {}; }
   update(patch, now = Date.now()) {
     const instance = patch.daemon?.instance_id || this.instance;
-    if (instance !== this.instance) { this.previous.clear(); this.rates.clear(); this.data = {}; this.instance = instance; }
+    if (instance !== this.instance) { this.previous.clear(); this.rates.clear(); this.pathRows.clear(); this.data = {}; this.instance = instance; }
+    if (patch.paths || patch.path_updates || patch.path_removed || patch.paths_reset) patch = { ...patch, paths: applyPathPatch(this.pathRows, patch) };
     this.data = { ...this.data, ...patch };
     if (patch.paths) {
-      const observed = Date.parse(this.data.coverage?.paths?.observed_at) || now;
+      const sampled = Date.parse(this.data.coverage?.paths?.observed_at) || now;
       const liveKeys = new Set();
       for (const row of patch.paths) {
+        const observed = Date.parse(row.sampled_at) || sampled;
         const key = keyOf(row), before = this.previous.get(key);
         liveKeys.add(key);
         const seconds = before ? (observed - before.at) / 1000 : 0;

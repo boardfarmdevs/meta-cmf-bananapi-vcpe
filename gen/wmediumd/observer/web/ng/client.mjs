@@ -1,6 +1,8 @@
+import { applyPathPatch } from './model.mjs';
+
 export class ObserverClient extends EventTarget {
   constructor() {
-    super(); this.interest = { topics: [] }; this.data = {}; this.sequence = '0'; this.backoff = 500; this.closed = false;
+    super(); this.interest = { topics: [] }; this.data = {}; this.pathRows = new Map(); this.sequence = '0'; this.backoff = 500; this.closed = false;
     this.connect();
     this.heartbeat = setInterval(() => this.send(), 5000);
     document.addEventListener('visibilitychange', () => this.send());
@@ -15,8 +17,12 @@ export class ObserverClient extends EventTarget {
         if (!['snapshot', 'delta'].includes(message.type)) return;
         if (message.type === 'delta' && message.baseline !== this.sequence) { this.send('resync'); this.status('Resynchronizing'); return; }
         this.sequence = message.sequence;
+        if (message.data.daemon?.instance_id && message.data.daemon.instance_id !== this.data.daemon?.instance_id) this.pathRows.clear();
+        const patch = message.data;
+        const paths = applyPathPatch(this.pathRows, patch);
         this.data = message.type === 'snapshot' ? message.data : { ...this.data, ...message.data };
-        this.dispatchEvent(new CustomEvent('data', { detail: { data: this.data, patch: message.type === 'snapshot' ? this.data : message.data } }));
+        this.data = { ...this.data, paths };
+        this.dispatchEvent(new CustomEvent('data', { detail: { data: this.data, patch } }));
       } catch { this.status('Invalid update; resynchronizing'); this.send('resync'); }
     };
     this.socket.onclose = () => {

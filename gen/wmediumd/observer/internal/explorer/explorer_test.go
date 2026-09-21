@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,6 +131,25 @@ func TestReadOnlyRoutesAndCoherentExport(tester *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v2/pair?source=bad&destination=bad", nil))
 	if response.Code != 400 {
 		tester.Fatal("invalid selected identities accepted")
+	}
+}
+
+func TestProgressivePathDeliveryIsBounded(tester *testing.T) {
+	delivery := newPathDelivery()
+	rows := make([]model.ActiveLink, 700)
+	for index := range rows {
+		rows[index] = model.ActiveLink{Source: fmt.Sprint(index), Destination: "peer", SampledAt: time.Now()}
+	}
+	first, _ := delivery.next(rows)
+	second, _ := delivery.next(rows)
+	third, _ := delivery.next(rows)
+	if len(first) != 512 || len(second) != 188 || len(third) != 0 {
+		tester.Fatalf("unbounded or repeated path delivery: %d %d %d", len(first), len(second), len(third))
+	}
+	rows[0].SampledAt = rows[0].SampledAt.Add(time.Second)
+	updated, removed := delivery.next(rows[:699])
+	if len(updated) != 1 || len(removed) != 1 || updated[0].Source != "0" {
+		tester.Fatal("fresh samples or evictions were lost")
 	}
 }
 

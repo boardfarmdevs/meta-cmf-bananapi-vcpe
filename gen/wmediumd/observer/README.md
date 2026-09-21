@@ -130,6 +130,14 @@ Renew subscriptions every five seconds. Leases expire after 15 seconds;
 Slow/disconnected readers cannot build unbounded queues. V1 and `/metrics`
 remain available.
 
+Traffic pages are published progressively with per-row `sampled_at`, retaining
+previous rows until the next scan establishes evictions. The WebSocket uses
+`path_updates`, `path_removed` and `paths_reset`, with at most 512 updated rows
+and 512 removals per message, instead of resending the whole maintained table.
+`paths_delivered`/`paths_cached` distinguish browser catch-up from daemon scan
+coverage. Counter rates use actual row sample times, not unrelated page arrivals.
+Selected RF/detail windows do not wait for a full traffic scan.
+
 Daemon opcode 17, capability bit 16, uses a 16-byte request:
 source MAC (6), destination MAC (6), big-endian MHz (4). All-zero requests
 return services. A zero frequency with radio identities returns the pair
