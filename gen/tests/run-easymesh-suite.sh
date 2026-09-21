@@ -187,6 +187,7 @@ restore_room_service() {
     fi
     if "$room_service_was_active"; then
         printf 'Restoring easymesh-room-demo.service.\n'
+        lxc exec "$vm" -- systemctl reset-failed easymesh-room-demo.service
         lxc exec "$vm" -- systemctl start easymesh-room-demo.service
     fi
 }
@@ -235,7 +236,7 @@ prepare_full_client_profile() {
     if ! "$room_service_stopped"; then
         state=$(lxc exec "$vm" -- systemctl show easymesh-room-demo.service -p ActiveState --value)
         room_service_was_active=false
-        if [[ $state == active || $state == activating ]]; then
+        if [[ $state == active || $state == activating || $state == failed ]]; then
             room_service_was_active=true
         fi
         printf 'Isolating the shared 100-client profile from easymesh-room-demo.service.\n'
