@@ -1,7 +1,15 @@
 # wmediumd Console: interactive medium explorer
 
-**Status: proposed implementation specification.** This document defines an
-observer redesign, not a new RF simulator. Capability statements below are
+**Status: Console NG implementation supplied; runtime qualification pending.**
+The [operator manual](../guide/wmediumd-console-ng.md) describes the shipped UI.
+`gen/wmediumd/observer/internal/explorer`, `web/ng` and daemon patch 0032 implement
+the read-only explorer, demand-driven collection, selected subtype/header
+windows and service accounting. The room supplies a side-effect-free observer
+endpoint. No BPI or hwsim ABI changes are required. Compilation is not a measured
+performance claim; the acceptance campaign below remains operator-run.
+
+This document retains the design rationale and acceptance targets, not promises
+that older deployed binaries support the new records. Capability statements below are
 verified against the repository's wmediumd patches, hwsim patches, Go observer
 and room implementation. They do not certify the binaries in a running VM.
 Negotiate capabilities and show actual availability on every connection.
@@ -450,7 +458,13 @@ native-report adapters must not block medium observation.
 
 ### Collection classes and initial budgets
 
-These are implementation targets to validate, not achieved measurements.
+These are qualification targets, not achieved measurements. The implementation
+uses a two-second default status target while visible (configurable down to one
+second), one-second room/cache reads, and lazy complete-page traffic scans with
+capture sequence bounds. Larger collections can take longer than these targets.
+Selected properties bypass the need for a complete matrix. Optional controls
+remain deliberately excluded from NG. Advertised BSS Load is parsed only in a
+leased selected header window; no active capture service is started.
 
 | Collection | With visible demand | Without demand |
 | --- | --- | --- |

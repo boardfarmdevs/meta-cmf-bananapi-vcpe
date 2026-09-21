@@ -149,6 +149,19 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.addCleanup(self.session.close)
         self.lease = self.session.acquire("browser-test")
 
+    def test_observer_snapshot_does_not_expire_lease_or_write_medium(self):
+        before = len(self.client.applied)
+        with patch.object(self.session, "_expire_lease", side_effect=AssertionError("observer mutated lease")):
+            observed = self.session.observer_snapshot()
+        self.assertEqual(observed["schema"], "easymesh.room-observer.v1")
+        self.assertTrue(observed["read_only"])
+        self.assertEqual(len(self.client.applied), before)
+        role = next(row for row in observed["roles"] if row["role"] == "sta_01")
+        self.assertEqual(role["radio"], PLAN["bindings"]["sta_01"]["radio_tx_mac"])
+        role["position"][0] = 999
+        current = next(row for row in self.session.observer_snapshot()["roles"] if row["role"] == "sta_01")
+        self.assertNotEqual(current["position"][0], 999)
+
     def test_candidate_epochs_track_client_and_mesh_changes(self):
         initial = self.session.snapshot()["candidate_epochs"]
         self.session.position("sta_01", token=self.lease["token"], expected_revision=0,

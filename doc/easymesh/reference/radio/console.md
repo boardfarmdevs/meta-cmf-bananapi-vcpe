@@ -24,6 +24,14 @@ scenario writer, steering optimizer or source of EasyMesh measurements.
 
 ## Implementation status
 
+**Console NG is the default presentation and collector.** Start with the
+[NG manual](../../guide/wmediumd-console-ng.md) and
+[implementation/acceptance specification](../../concepts/wmediumd-console-design.md).
+The contracts below describe the retained v1/classic implementation unless
+explicitly stated otherwise. NG is read-only, adds `/api/v2/` subscriptions and
+room/survey correlation, and does not enable the classic typed controls.
+Those now require `--classic --enable-control` together.
+
 The implemented observation path is:
 
 - patched wmediumd exposes bounded packet telemetry through a separate,
@@ -41,7 +49,8 @@ The implemented observation path is:
 
 The code is in `gen/wmediumd/observer/`; its focused operator and API manual is
 `gen/wmediumd/observer/README.md`. Persistent cross-component correlation beyond the interfaces described here is
-not a current Console capability.
+is available through NG's explicitly configured, cached room/survey adapters;
+the classic collector remains independent.
 
 ### Current data flow
 

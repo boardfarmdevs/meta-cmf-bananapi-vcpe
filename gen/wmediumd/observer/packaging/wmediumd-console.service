@@ -1,5 +1,5 @@
 [Unit]
-Description=wmediumd Console telemetry and UI
+Description=wmediumd console ng read-only medium explorer
 Documentation=file:/usr/local/share/doc/wmediumd-console/README.md
 After=network.target
 ConditionFileIsExecutable=/usr/local/bin/wmediumd-console
@@ -9,8 +9,10 @@ Type=simple
 User=wmediumd-console
 Group=wmediumd-console
 SupplementaryGroups=lxd
+Environment=WMEDIUMD_CONSOLE_ROOM_URL=http://127.0.0.1:8891
+Environment=WMEDIUMD_CONSOLE_SURVEY_STATUS=/run/wmdcfg-survey.json
 EnvironmentFile=-/etc/default/wmediumd-console
-ExecStart=/usr/local/bin/wmediumd-console --listen=${WMEDIUMD_CONSOLE_LISTEN} --socket=${WMEDIUMD_CONSOLE_SOCKET} --identity-inventory=${WMEDIUMD_CONSOLE_IDENTITY_INVENTORY} --config=${WMEDIUMD_CONSOLE_CONFIG} --pid-file=${WMEDIUMD_CONSOLE_PID_FILE} --daemon-manifest=${WMEDIUMD_CONSOLE_DAEMON_MANIFEST} $WMEDIUMD_CONSOLE_EXTRA_ARGS
+ExecStart=/usr/local/bin/wmediumd-console --listen=${WMEDIUMD_CONSOLE_LISTEN} --socket=${WMEDIUMD_CONSOLE_SOCKET} --identity-inventory=${WMEDIUMD_CONSOLE_IDENTITY_INVENTORY} --config=${WMEDIUMD_CONSOLE_CONFIG} --pid-file=${WMEDIUMD_CONSOLE_PID_FILE} --daemon-manifest=${WMEDIUMD_CONSOLE_DAEMON_MANIFEST} --room-url=${WMEDIUMD_CONSOLE_ROOM_URL} --survey-status=${WMEDIUMD_CONSOLE_SURVEY_STATUS} $WMEDIUMD_CONSOLE_EXTRA_ARGS
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=10s

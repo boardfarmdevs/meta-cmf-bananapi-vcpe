@@ -274,6 +274,7 @@ run_static() {
         skip static python 'install python3 and pytest for Python and documentation tests'
     fi
     if have_command node; then
+        run static console-ng-model "cd '$root' && node --test gen/wmediumd/observer/web/ng/model.test.mjs"
         for test in "$root"/gen/tests/viewer-*-test.js "$root"/gen/tests/test-*.js "$root"/gen/tests/fullscreen-control-test.js "$root"/gen/tests/signal-meter-test.js; do
             case $(basename "$test") in
                 *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
@@ -302,7 +303,7 @@ run_webui() {
 run_browser() {
     local static fixture d3
     prepare_browser || { skip browser prerequisites 'install node/npm and Playwright/Chromium, or rerun with --install-browser-deps'; return; }
-    for test in pane-divider-browser-test.js viewer-room-convergence-browser-test.js viewer-room-guide-browser-test.js viewer-sidebar-layout-test.js viewer-steering-resume-browser-test.js; do
+    for test in pane-divider-browser-test.js viewer-room-convergence-browser-test.js viewer-room-guide-browser-test.js viewer-sidebar-layout-test.js viewer-steering-resume-browser-test.js wmediumd-console-ng-browser-test.js; do
         run browser "${test%.js}" "cd '$root' && node gen/tests/$test"
     done
     static=$(webui_static_dir)
