@@ -258,10 +258,16 @@ function renderLoad(host, radio, frequency) {
   raw(host, 'Radio-local published contexts / epochs', written);
   notice(host, 'Global channel occupancy and a radio-local survey are not interchangeable. Values model airtime visibility, not physical RF throughput. Provider writes are not proof of a fresh beacon.');
   heading(host, 'Native EasyMesh BSS load');
-  const native = data.room?.data?.native, bssids = new Set((data.vifs || []).filter(row => row.radio === radio?.mac).map(row => row.mac));
-  const records = (native?.bss_loads || []).filter(row => bssids.has(row.bssid) || row.radio_id === radio?.mac || (row.role && row.role === radio?.roleState?.role));
+  const native = data.room?.data?.native, aliases = new Map((data.vifs || []).filter(row => row.radio === radio?.mac).map(row => [row.mac, row]));
+  const records = (native?.bss_loads || []).filter(row => {
+    const context = aliases.get(row.bssid);
+    const matched = Boolean(context) || row.radio_id === radio?.mac || (row.role && row.role === radio?.roleState?.role);
+    return matched && (!frequency || !Number(context?.frequency_mhz) || Number(context.frequency_mhz) === frequency);
+  });
   if (!records.length) notice(host, 'No cached native BSS-load record correlated to this radio. No AP query or packet capture is triggered by this panel.');
   for (const record of records) {
+    const context = aliases.get(record.bssid);
+    properties(host, [['Native channel / observed BSSID frequency', `${record.channel ?? 'unknown'} / ${Number(context?.frequency_mhz) ? `${context.frequency_mhz} MHz` : 'unverified; not necessarily the selected frequency'}`]]);
     const byte = record.channel_utilization ?? record.utilization;
     const reportAge = Date.now() - Date.parse(record.observed_at || '');
     const current = result?.roomValid && Number.isFinite(reportAge) && reportAge < Number(native?.maximum_age_seconds || 30) * 1000;
