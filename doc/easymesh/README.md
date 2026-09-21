@@ -18,6 +18,7 @@ guide; the reference is for implementation details, not required reading.
 | Choose a demonstration | [Room catalog](reference/rooms/catalog.md) |
 | Understand or develop steering policy | [Optimizer](concepts/optimizer.md) |
 | Diagnose RF and measurements | [RF simulation](concepts/rf-simulation.md), [radio reference](reference/radio/README.md) |
+| Develop the interactive medium observer | [wmediumd Console design](concepts/wmediumd-console-design.md) (proposed) |
 | Open LXD UI or Grafana, including outer-VM metrics | [Monitoring](reference/observability/monitoring.md) |
 | Test changes and measure convergence | [Testing](experiments/README.md) |
 | Find detailed contracts or proposed work | [Categorized reference](reference/README.md) |

@@ -15,6 +15,7 @@ HOME = ROOT / ("doc/easymesh" if RDK else "docs")
 REFERENCE = ROOT / ("doc/easymesh/reference" if RDK else "reference")
 TREES = (HOME,) if RDK else (HOME, REFERENCE)
 SPECIAL_INTRODUCTORY_LIMITS = {
+    ROOT / "doc/easymesh/concepts/wmediumd-console-design.md": (7200, "The requested single-document console design includes the complete implementation and acceptance contracts."),
     ROOT / "doc/easymesh/build/README.md": (750, "The build guide is the copyable new-developer procedure."),
     ROOT / "doc/easymesh/concepts/steering-policy.md": (1600, "The steering policy guide is the complete operator control contract."),
     ROOT / "doc/easymesh/reference/radio/virtual-rf-assessment.md": (10200, "The RF assessment is the maintained implementation reference."),
