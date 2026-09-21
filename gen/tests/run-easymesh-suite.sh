@@ -204,6 +204,31 @@ wait_for_live_clients() {
     return 1
 }
 
+archive_rebuilt_room_recovery() {
+    local expected=$1
+    lxc exec "$vm" -- env HEALTH_EXPECT_CLIENTS="$expected" bash -lc '
+        set -euo pipefail
+        /usr/local/sbin/easymesh-labctl check
+        recovery=/run/easymesh-room-demo/recovery.json
+        [ -e "$recovery" ] || exit 0
+        archive=/home/easymesh/easymesh-evidence/recovery-archives
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        mkdir -p "$archive"
+        target="$archive/$stamp-$(sha256sum "$recovery" | awk "{print substr(\$1, 1, 12)}").json"
+        cp -p -- "$recovery" "$target"
+        {
+            printf "replaced_by_clean_lab_reconstruction=true\\n"
+            printf "archived_at=%s\\n" "$stamp"
+            printf "expected_clients=%s\\n" "$HEALTH_EXPECT_CLIENTS"
+            printf "source=%s\\n" "$recovery"
+            printf "archive=%s\\n" "$target"
+            sha256sum "$target"
+        } > "$target.receipt"
+        rm -f -- "$recovery"
+        printf "Archived stale room recovery record: %s\\n" "$target"
+    '
+}
+
 prepare_full_client_profile() {
     local expected=$1 state
     [[ $expected == 100 ]] || return 0
@@ -224,7 +249,8 @@ prepare_full_client_profile() {
         lxc exec "$vm" -- systemctl restart easymesh-lab.service
         full_profile_reset=true
     fi
-    wait_for_live_clients "$expected"
+    wait_for_live_clients "$expected" || return
+    archive_rebuilt_room_recovery "$expected"
 }
 
 lab_client_count() {

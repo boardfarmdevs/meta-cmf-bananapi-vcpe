@@ -60,6 +60,12 @@ the prior room-service state once when the suite exits, including after a
 failure or interruption. No room-selection pre-step is required; do not operate
 the room while that profile is active.
 
+A clean full-roster reconstruction supersedes any unfinished room RF journal.
+After the reconstructed lab passes its in-guest baseline audit, the runner
+archives that journal and a checksum receipt in
+`/home/easymesh/easymesh-evidence/recovery-archives/` before restarting the
+room service. It never removes a journal before the clean-lab audit succeeds.
+
 ## Prerequisites
 
 The host needs `python3`, `pytest`, `node`, `npm`, `lxc`, `ssh`, `curl`, and
