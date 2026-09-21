@@ -40,6 +40,11 @@ controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
 extender_image=${EASYMESH_EXTENDER_IMAGE:-}
 export_dir=${EASYMESH_LXD_EXPORT_DIR:-$root/gen/vm/lxd/artifacts}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short HEAD)}
+client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
+[[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
+    echo 'CLIENT_CREATE_PARALLELISM must be a positive integer' >&2
+    exit 2
+}
 
 usage() {
     cat <<EOF
@@ -76,6 +81,7 @@ Common overrides:
   WMEDIUMD_CONSOLE_PORT=$console_port
   EASYMESH_ROOM_DEMO_PORT=$room_port
   EASYMESH_LXD_HTTP_READY_TIMEOUT=$http_ready_timeout
+  CLIENT_CREATE_PARALLELISM=$client_create_parallelism (fresh-roster workers; default: 8)
 EOF
 }
 
@@ -395,6 +401,7 @@ build_vm() {
     run_root env HOME=/home/easymesh \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EASYMESH_SCALE_PROFILE="$profile" \
+        CLIENT_CREATE_PARALLELISM="$client_create_parallelism" \
         bash /home/easymesh/easymesh-provision/55-scale-topology.sh
     run_root env EASYMESH_SCALE_PROFILE="$profile" \
         HEALTH_EXPECT_CLIENTS="$profile_clients" \

@@ -9,10 +9,17 @@ assets=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
 nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 profile=${EASYMESH_SCALE_PROFILE:-unified}
+client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
 case "$profile" in
     100|unified) profile=unified; expected_clients=100; expected_private=50; expected_iot=50 ;;
     *) echo "invalid EASYMESH_SCALE_PROFILE: $profile" >&2; exit 2 ;;
 esac
+[[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
+    echo 'CLIENT_CREATE_PARALLELISM must be a positive integer' >&2
+    exit 2
+}
+export CLIENT_CREATE_PARALLELISM="$client_create_parallelism"
+printf 'Provisioning client roster with %s worker(s).\n' "$client_create_parallelism"
 
 mkdir -p "$nvram_root"
 export BPI_NVRAM_ROOT="$nvram_root"

@@ -238,6 +238,18 @@ up)
     fi
     create_parallelism=${CLIENT_CREATE_PARALLELISM:-1}
     [[ "$create_parallelism" =~ ^[1-9][0-9]*$ ]] || { echo 'CLIENT_CREATE_PARALLELISM must be positive' >&2; exit 2; }
+    allocation_session=
+    if [ "$needs_provisioning" = 1 ]; then
+        allocation_session="/run/easymesh-hwsim-allocation-$$.state"
+        rm -f "$allocation_session"
+        export HWSIM_ALLOCATION_SESSION="$allocation_session"
+    fi
+    cleanup_provisioning() {
+        restore_medium
+        [ -z "$allocation_session" ] || rm -f "$allocation_session"
+    }
+    trap cleanup_provisioning EXIT INT TERM
+    provisioning_started_ms=$(date +%s%3N)
     create_client() {
         local index=$1 name cohort ordinal band security ssid psk
         local -a args=()
@@ -270,7 +282,10 @@ up)
     done
     [ "${#create_pids[@]}" -eq 0 ] || collect_creates
     [ "$create_failed" = 0 ] || { echo 'one or more client creations failed' >&2; exit 1; }
-    restore_medium
+    provisioning_finished_ms=$(date +%s%3N)
+    printf 'Client provisioning completed with %s worker(s) in %sms.\n' \
+        "$create_parallelism" "$((provisioning_finished_ms - provisioning_started_ms))"
+    cleanup_provisioning
     trap - EXIT INT TERM
     # The live topology provides the authoritative, SSID-qualified fronthaul
     # counts.  STAList also contains one associated mesh_backhaul station for

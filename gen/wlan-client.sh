@@ -84,7 +84,8 @@ _lxc_launch() {
     for try in 1 2 3; do
         # A failed start leaves the profile device behind. Remove it before the
         # next init so every retry observes the same WLAN-free init ordering.
-        if [ -n "$prof" ] && [ "$radios" -gt 0 ]; then
+        if [ "$try" -gt 1 ] && [ -n "$prof" ] && [ "$radios" -gt 0 ]; then
+            hwsim_release_profile_session_radios "$prof"
             for r in $(seq 0 $((radios - 1))); do
                 lxc profile device remove "$prof" "wlan$r" >/dev/null 2>&1 || true
             done

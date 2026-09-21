@@ -46,14 +46,19 @@ The default soak is 43,200 seconds (12 hours). A shorter duration is a
 shakedown, not long-duration acceptance.
 
 The runner counts provisioned `wlan-client` containers inside the appliance and
-uses that value for the health and P0 checks. Override the detected profile with
-`--expected-clients COUNT` (or `EASYMESH_EXPECTED_CLIENTS`) when intentionally
-testing a different provisioned roster.
+uses that value for the health, optimizer, and P0 checks. The optimizer receives
+a temporary matching policy, so the checked-in 20-client development default is
+not changed. Override the detected profile with `--expected-clients COUNT` (or
+`EASYMESH_EXPECTED_CLIENTS`) when intentionally testing a different roster.
 
-For the fixed 100-client profile, the runner stops the room service, waits up
-to two minutes for 100 live controller clients, and restores the prior room
-service state after live checks or the soak. No room-selection pre-step is
-required; do not operate the room while that profile is active.
+For the fixed 100-client profile, the runner executes room checks first, then
+runtime-masks and stops the room service once, waits up to two minutes for 100
+live controller clients, and retains that state through all live and soak
+checks. Before the first such check it reconstructs the clean full roster; this
+normally takes the same bounded cold-start time as a VM restart. It restores
+the prior room-service state once when the suite exits, including after a
+failure or interruption. No room-selection pre-step is required; do not operate
+the room while that profile is active.
 
 ## Prerequisites
 
