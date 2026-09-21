@@ -53,9 +53,11 @@ testing a different provisioned roster.
 For the fixed 100-client profile, the runner executes room checks first, then
 runtime-masks and stops the room service once, waits up to two minutes for 100
 live controller clients, and retains that state through all live and soak
-checks. It restores the prior room-service state once when the suite exits,
-including after a failure or interruption. No room-selection pre-step is
-required; do not operate the room while that profile is active.
+checks. Before the first such check it reconstructs the clean full roster; this
+normally takes the same bounded cold-start time as a VM restart. It restores
+the prior room-service state once when the suite exits, including after a
+failure or interruption. No room-selection pre-step is required; do not operate
+the room while that profile is active.
 
 ## Prerequisites
 
