@@ -73,6 +73,9 @@ async function main() {
     assert.ok(Number(await page.locator('#divider').getAttribute('aria-valuenow')) >= 190);
     const manual = await page.request.get(`http://127.0.0.1:${server.address().port}/ng/manual.html`);
     assert.equal(manual.status(), 200); assert.match(await manual.text(), /Beacon BSS Load/);
+    const properties = await page.request.get(`http://127.0.0.1:${server.address().port}/ng/rf-properties.html`);
+    assert.equal(properties.status(), 200); assert.match(await properties.text(), /Noise reference and CCA/);
+    assert.equal(await page.locator('header a[href="/ng/rf-properties.html"]').count(), 1);
     assert.deepEqual(failures, []);
     console.log('PASS Console NG: pool identity, filters, virtualization, selection, exact counters, capability fallback, freeze, matrix, divider, embedded manual (mock transport).');
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

@@ -25,6 +25,49 @@ func TestIntegerPrecision(tester *testing.T) {
 	}
 }
 
+func TestRetiredUIAndReadiness(tester *testing.T) {
+	runtime, _ := New(Config{}, nil)
+	runtime.view = &View{LastSuccess: time.Now(), Snapshot: model.Snapshot{
+		Daemon:            model.Daemon{Capabilities: []string{"explorer_details"}},
+		IdentityInventory: model.IdentityInventory{Matched: 105},
+		PacketMetrics:     model.PacketMetrics{Available: true},
+	}}
+	handler := NewHandler(runtime, fstest.MapFS{"ng/index.html": &fstest.MapFile{Data: []byte("console ng")}},
+		http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(200) }))
+	for _, path := range []string{"/classic", "/classic/"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		if response.Code != 308 || response.Header().Get("Location") != "/" || len(runtime.interests) != 0 {
+			tester.Fatal("retired UI must redirect without starting eager collection")
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/app.js", nil))
+	if response.Code != 404 {
+		tester.Fatal("retired UI assets are still served")
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v1/status", nil))
+	if response.Code != 200 || response.Header().Get("Deprecation") == "" || len(runtime.interests) != 0 {
+		tester.Fatal("compatibility health request must not start a matrix scan")
+	}
+	for _, ready := range []bool{true, false} {
+		runtime.view.Snapshot.PacketMetrics.Available = ready
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v2/health", nil))
+		if (response.Code == 200) != ready {
+			tester.Fatal("NG readiness did not follow live telemetry availability")
+		}
+	}
+	runtime.view.Snapshot.PacketMetrics.Available = true
+	runtime.view.Snapshot.Daemon.Capabilities = nil
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v2/health", nil))
+	if response.Code != 503 {
+		tester.Fatal("old daemon incorrectly passed NG readiness")
+	}
+}
+
 func TestSubscriptionsValidateAndExpire(tester *testing.T) {
 	runtime, err := New(Config{}, nil)
 	if err != nil {

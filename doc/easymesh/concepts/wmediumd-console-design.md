@@ -2,11 +2,16 @@
 
 **Status: Console NG implementation supplied; runtime qualification pending.**
 The [operator manual](../guide/wmediumd-console-ng.md) describes the shipped UI.
-`gen/wmediumd/observer/internal/explorer`, `web/ng` and daemon patch 0032 implement
+`gen/wmediumd/observer/internal/explorer`, `web/ng` and daemon patches 0032–0033 implement
 the read-only explorer, demand-driven collection, selected subtype/header
 windows and service accounting. The room supplies a side-effect-free observer
 endpoint. No BPI or hwsim ABI changes are required. Compilation is not a measured
 performance claim; the acceptance campaign below remains operator-run.
+
+NG is the only shipped UI/collector; classic URLs redirect and legacy control
+flags cannot enable writes. Fresh VM builds gate on NG and matching room/survey
+sources. The embedded [RF property field guide](../reference/radio/console-rf-properties.md)
+documents producers, observation paths and limitations, separately from goals.
 
 This document retains the design rationale and acceptance targets, not promises
 that older deployed binaries support the new records. Capability statements below are

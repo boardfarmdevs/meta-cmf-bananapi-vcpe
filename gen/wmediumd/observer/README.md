@@ -7,7 +7,8 @@ and embedded manual. The existing binary name, systemd unit and port remain
 
 - [Operator manual](../../../doc/easymesh/guide/wmediumd-console-ng.md)
 - [Implementation and acceptance contract](../../../doc/easymesh/concepts/wmediumd-console-design.md)
-- [Classic/v1 protocol reference](../../../doc/easymesh/reference/radio/console.md)
+- [RF property field guide](../../../doc/easymesh/reference/radio/console-rf-properties.md)
+- [Protocol reference](../../../doc/easymesh/reference/radio/console.md)
 
 ## Build
 
@@ -49,6 +50,42 @@ no BPI image, kernel module or full VM rebuild requirement.
 Compilation-only artifacts are supplied; run the qualification below before
 accepting them for performance comparisons.
 
+### Activate the complete integration
+
+Fresh VM builds install everything automatically. Existing VMs need the
+**updated guest checkout**, not merely a copied console binary. From that
+checkout, inside the VM, run:
+
+```sh
+sudo python3 gen/wmediumd/observer/activate.py --restart-medium
+```
+
+This maintenance operation interrupts RF, preserves the current `-F`/`-Q`
+modes and CPU affinity, backs up the running binaries/configuration/recovery
+journal, replaces the medium through its normal launcher, restarts the survey
+bridge and console, and restarts an enabled room service into its default room.
+It does not rebuild or restart containers. The launcher runs its usual bounded
+binary self-check; this is not a room/traffic acceptance campaign.
+
+An already failed/contaminated recovery journal is refused unless the operator
+explicitly adds `--reset-room`. That option replaces the RF session, verifies
+a new daemon instance, reconnects journaled clients belonging to the new
+inventory, and archives the old journal. It never replays contaminated RF
+values. Saved client band-profile changes must be restored before activation.
+Backups and completion receipts live in `/var/lib/wmediumd-console/upgrades/`.
+An interrupted activation reports that location and does not claim rollback
+or silently bypass recovery ownership checks.
+
+Check integration readiness without generating traffic or changing RF:
+
+```sh
+python3 gen/wmediumd/observer/check-ready.py --require-room --require-survey
+```
+
+The bounded check requires the NG extension, compiled RF model description,
+identity inventory, same-instance room intent and fresh survey publications.
+It does not qualify client convergence, native AP reports or beacon content.
+
 ## Configuration
 
 `/etc/default/wmediumd-console` retains existing listener and socket settings.
@@ -69,14 +106,18 @@ Service variables are `WMEDIUMD_CONSOLE_ROOM_URL` and
 Set `WMEDIUMD_CONSOLE_EXTRA_ARGS` for additional CLI options.
 The unprivileged service has no capabilities or LXD socket access.
 
-`/classic/` retains the legacy presentation on the shared collector.
-Use `--classic` for the original eager collector. Its optional typed controls
-require `--classic --enable-control`; NG refuses HTTP mutations.
+NG is the only served presentation and collector. `/classic/` permanently
+redirects to `/`. Deprecated `--classic`, `--enable-control` and
+`--control-socket` options cannot enable the old UI or write access. Existing
+read-only v1 clients and `/metrics` remain supported, with v1 deprecation
+headers; the compatibility HTTP health/status routes do not trigger matrix scans.
+The service sandbox hides the writable scenario socket as well as LXD sockets.
 
 ## API and accounting
 
 `/api/v2/overview`, `radios`, `paths`, `pairs`, `pair`, `services`,
 `events`, `export` and WebSocket `stream` share one collector.
+`/api/v2/health` returns 503 until live NG telemetry and named radios are ready.
 REST pages accept `limit` (1–512), `cursor`, `token`, `q`, `sort`,
 `direction`, `source`, `destination`, `band`, `frequency_mhz`.
 Page tokens expire after 30 seconds; eight immutable page snapshots are cached.

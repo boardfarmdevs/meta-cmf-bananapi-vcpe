@@ -2,8 +2,8 @@
 set -euo pipefail
 
 systemctl is-active --quiet wmediumd-console.service
-curl -fsS http://127.0.0.1:8890/api/v1/status \
-    | jq -e '.packet_metrics.available == true and .identity_inventory.matched > 0' \
+curl -fsS http://127.0.0.1:8890/api/v2/health \
+    | jq -e '.ready == true and .telemetry_extension == true and .identity_inventory.matched > 0' \
         >/dev/null
 
 exec </dev/null

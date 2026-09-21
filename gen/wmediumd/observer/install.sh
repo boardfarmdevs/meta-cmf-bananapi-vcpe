@@ -52,6 +52,7 @@ fi
 $elevate install -D -m 0755 "$binary" /usr/local/bin/wmediumd-console
 $elevate install -D -m 0644 "$here/README.md" /usr/local/share/doc/wmediumd-console/README.md
 $elevate install -D -m 0644 "$here/web/ng/manual.html" /usr/local/share/doc/wmediumd-console/manual.html
+$elevate install -D -m 0644 "$here/web/ng/rf-properties.html" /usr/local/share/doc/wmediumd-console/rf-properties.html
 $elevate install -D -m 0644 "$here/identity-inventory.example.json" /usr/local/share/doc/wmediumd-console/identity-inventory.example.json
 $elevate install -D -m 0644 "$here/packaging/wmediumd-console.service" /etc/systemd/system/wmediumd-console.service
 if [ ! -e /etc/default/wmediumd-console ]; then

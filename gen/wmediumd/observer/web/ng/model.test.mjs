@@ -57,6 +57,12 @@ test('daemon restart discards old rows and rate state', () => {
 });
 test('unknown frame type is not manufactured as management', () => { assert.equal(frameType(undefined, undefined), 'Unavailable'); });
 
+test('faulted room intent cannot classify clients as excluded', () => {
+  const model = new MediumModel(), data = fixture(); data.room.data.fault = 'external RF writer'; model.update(data);
+  assert.equal(model.explore().pool.unknown, 1);
+  assert.equal(model.explore().pool.excluded, 0);
+});
+
 test('exact-frequency matrix includes pair fallback only with complete override coverage', () => {
   const now = Date.now(), model = new MediumModel(), data = fixture(now);
   data.daemon.capabilities = ['frequency_qualified_snr'];

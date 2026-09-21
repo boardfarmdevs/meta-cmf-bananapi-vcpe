@@ -424,9 +424,11 @@ build_vm() {
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
     wait_http_ready "EasyMesh WebUI proxy" \
         "http://$proxy_check_address:$webui_port/api/v1/topology"
-    wait_http_ready "wmediumd Console proxy" \
-        "http://$proxy_check_address:$console_port/api/v1/health"
+    wait_http_ready "wmediumd Console NG proxy" \
+        "http://$proxy_check_address:$console_port/api/v2/health"
     wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
+    run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/check-ready.py \
+        --require-room --require-survey --timeout 120
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded

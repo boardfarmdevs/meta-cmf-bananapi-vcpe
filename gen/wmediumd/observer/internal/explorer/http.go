@@ -62,10 +62,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if request.URL.Path == "/classic" || request.URL.Path == "/classic/" {
-		_ = handler.runtime.Interest("classic", Interest{Topics: []string{"pairs", "frequencies", "paths", "radios", "vifs", "events", "ownership"}})
-		copyRequest := request.Clone(request.Context())
-		copyRequest.URL.Path = "/"
-		handler.fallback.ServeHTTP(writer, copyRequest)
+		writer.Header().Set("Deprecation", "true")
+		http.Redirect(writer, request, "/", http.StatusPermanentRedirect)
 		return
 	}
 	if request.URL.Path == "/" {
@@ -79,8 +77,16 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if !strings.HasPrefix(request.URL.Path, "/api/v2/") {
+		if !strings.HasPrefix(request.URL.Path, "/api/v1/") && request.URL.Path != "/metrics" {
+			http.NotFound(writer, request)
+			return
+		}
 		if strings.HasPrefix(request.URL.Path, "/api/v1/") {
-			_ = handler.runtime.Interest("classic", Interest{Topics: []string{"pairs", "frequencies", "paths", "radios", "vifs", "events", "ownership"}})
+			writer.Header().Set("Deprecation", "true")
+			writer.Header().Set("Link", "</api/v2/overview>; rel=\"successor-version\"")
+			if request.URL.Path != "/api/v1/status" && request.URL.Path != "/api/v1/health" {
+				_ = handler.runtime.Interest("compatibility", Interest{Topics: []string{"pairs", "frequencies", "paths", "radios", "vifs", "events", "ownership"}})
+			}
 		}
 		if request.URL.Path == "/api/v1/stream" {
 			done := make(chan struct{})
@@ -113,9 +119,21 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	topic := strings.TrimPrefix(request.URL.Path, "/api/v2/")
 	switch topic {
+	case "health":
+		ready := view.Error == "" && time.Since(view.LastSuccess) < 10*time.Second &&
+			view.Snapshot.PacketMetrics.Available && view.Snapshot.IdentityInventory.Matched > 0 &&
+			has(view.Snapshot.Daemon.Capabilities, "explorer_details")
+		status := http.StatusOK
+		if !ready {
+			status = http.StatusServiceUnavailable
+		}
+		respond(writer, status, map[string]any{"schema": view.Schema, "ready": ready, "read_only": true,
+			"telemetry_extension": has(view.Snapshot.Daemon.Capabilities, "explorer_details"),
+			"last_success":        view.LastSuccess, "error": view.Error, "identity_inventory": view.Snapshot.IdentityInventory})
 	case "overview", "services":
-		_ = handler.runtime.Interest("rest-"+topic, Interest{Topics: []string{"services"}})
-		respond(writer, 200, envelope(view, Interest{Topics: []string{"services"}}))
+		interest := Interest{Topics: []string{"services", "room", "survey"}}
+		_ = handler.runtime.Interest("rest-"+topic, interest)
+		respond(writer, 200, envelope(view, interest))
 	case "radios", "paths", "pairs", "events":
 		handler.page(writer, request, view, topic)
 	case "pair":

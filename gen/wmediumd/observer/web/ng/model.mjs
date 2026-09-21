@@ -48,7 +48,7 @@ export class MediumModel {
   }
   explore(options = {}, now = Date.now()) {
     const data = this.data;
-    const roomValid = fresh(data.room, now) && data.room.data?.live !== false && data.room.data?.instance_id === data.daemon?.instance_id;
+    const roomValid = fresh(data.room, now) && data.room.data?.live !== false && !data.room.data?.fault && data.room.data?.instance_id === data.daemon?.instance_id;
     const roleByRadio = new Map(), roleByOwner = new Map();
     if (roomValid) for (const role of data.room.data.roles || []) {
       if (role.radio) roleByRadio.set(role.radio, role);

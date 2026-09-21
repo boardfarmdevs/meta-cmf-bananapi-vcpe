@@ -7,7 +7,18 @@ def inline(value):
     value = html.escape(value)
     value = re.sub(r"`([^`]+)`", r"<code>\1</code>", value)
     value = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", value)
-    value = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", value)
+    def link(match):
+        target = match[2]
+        pages = {"wmediumd-console-ng.md": "/ng/manual.html",
+                 "console-rf-properties.md": "/ng/rf-properties.html"}
+        destination = pages.get(target.split("#")[0].rsplit("/", 1)[-1])
+        if destination and "#" in target:
+            destination += "#" + target.split("#", 1)[1]
+        if target.startswith("#"):
+            destination = target
+        return f'<a href="{destination}">{match[1]}</a>' if destination else match[1]
+
+    value = re.sub(r"\[([^]]+)\]\(([^)]+)\)", link, value)
     return value
 
 
@@ -51,15 +62,23 @@ def render(source):
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
-    source = here.parents[2] / "doc/easymesh/guide/wmediumd-console-ng.md"
-    target = here / "web/ng/manual.html"
-    target.write_text(
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>wmediumd console ng manual</title><link rel="stylesheet" href="/ng/style.css">'
-        '</head><body><article class="manual"><nav><a href="/">← Console NG</a>'
-        '<a href="#channel-utilization-and-bss-load">Load metrics</a>'
-        '<a href="#a-20-client-room-in-a-100-client-lab">Excluded clients</a>'
-        '<a href="#freshness-cost-and-exports">Freshness and cost</a></nav>'
-        + render(source.read_text()) + '</article></body></html>\n'
-    )
+    for document, filename in [
+        ("guide/wmediumd-console-ng.md", "manual.html"),
+        ("reference/radio/console-rf-properties.md", "rf-properties.html"),
+    ]:
+        source = (here.parents[2] / "doc/easymesh" / document).read_text()
+        contents = render(source)
+        sections = re.findall(r'<h2 id="([^"]+)">([^<]+)</h2>', contents)
+        index = '<details><summary>On this page</summary><ul>' + "".join(
+            f'<li><a href="#{anchor}">{title}</a></li>' for anchor, title in sections
+        ) + '</ul></details>'
+        title = html.escape(source.splitlines()[0].lstrip("# "))
+        (here / "web/ng" / filename).write_text(
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{title}</title><link rel="stylesheet" href="/ng/style.css">'
+            '</head><body><article class="manual"><nav><a href="/">← Console NG</a>'
+            '<a href="/ng/manual.html">Operator manual</a>'
+            '<a href="/ng/rf-properties.html">RF properties</a></nav>'
+            + index + contents + '</article></body></html>\n'
+        )

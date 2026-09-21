@@ -6,6 +6,10 @@ properties inspector. Open the existing VM-specific **wmediumd console URL**;
 the port does not change. The **Manual** link opens this guide inside the
 console, without internet access.
 
+**RF properties** opens the [simulation and observation field guide](../reference/radio/console-rf-properties.md):
+every supported RF property, its producer, where to observe it, optional modes
+and fidelity limits. The observer itself does not simulate or change RF.
+
 ## First look
 
 1. Start with **Observed packet paths**. Expand a radio, then its frequency.
@@ -144,9 +148,10 @@ Room correlation needs the matching room-service observer endpoint.
 
 Keep access on the trusted lab network or use an authenticated TLS proxy.
 There are no NG RF mutations, shell commands, LXD queries or browser-selected
-proxy targets. `/classic/` retains the old presentation; `--classic` selects its
-original collector for diagnostics. Old typed controls require both `--classic`
-and `--enable-control`; they are not part of NG.
+proxy targets. The classic UI is retired: `/classic/` redirects to NG.
+Legacy `--classic`, `--enable-control` and `--control-socket` flags no longer
+enable another collector or RF writes. Read-only v1 APIs remain compatible;
+new integrations use v2 and `/api/v2/health` for NG telemetry readiness.
 
 Compilation is not acceptance. Run the focused checks and bounded lab comparison
 listed in the observer README before treating an updated deployment as qualified.

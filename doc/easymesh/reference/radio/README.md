@@ -20,3 +20,6 @@ RF delivery, configurator and Console.
 - [Optional kernel medium](kernel-medium.md)
 - [wmediumd: operation, control and simulation model](wmediumd-internals.md)
 - [Console installation and API](../../../../gen/wmediumd/observer/README.md)
+- [Console NG RF property field guide](console-rf-properties.md): modeled inputs,
+  observed outcomes, native reporting, optional modes and fidelity limits;
+  also embedded offline in the console.

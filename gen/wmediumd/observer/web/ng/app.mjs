@@ -23,6 +23,7 @@ function property(list, label, value, title) { const term = node('dt', label), d
 function notice(host, text) { host.append(node('p', text, 'notice')); }
 function raw(host, title, value) { const details = node('details'), summary = node('summary', title), pre = node('pre', pretty(value)); details.append(summary, pre); host.append(details); }
 function heading(host, text) { host.append(node('h3', text)); }
+function rfGuide(host, anchor) { const link = node('a', 'How this RF property is modeled and observed ↗'); link.href = `/ng/rf-properties.html#${anchor}`; link.target = '_blank'; link.rel = 'noopener'; host.append(link); }
 function properties(host, entries) { const list = node('dl'); for (const [label, value, title] of entries) property(list, label, value, title); host.append(list); return list; }
 
 function interest() {
@@ -180,12 +181,15 @@ function renderInspector() {
   element('inspector').scrollTop = scrollTop;
 }
 function renderRF(host, radio, peer, frequency, key) {
+  rfGuide(host, 'directed-snr');
   properties(host, [['Radio', radio?.label], ['Room presence', radio?.presence], ['Observed association', radio?.ownership?.available ? radio.ownership.data.evidence : 'Unavailable'], ['Owner radio', radio?.ownership?.data?.owner], ['Ownership fetched', radio?.ownership ? age(radio.ownership.observed_at) : 'not requested']]);
   if (radio?.presence === 'room-excluded') {
     notice(host, 'This client remains a bound hwsim radio. Room exclusion requests low-SNR RF gating plus client disconnection; it does not delete a container or prove RF silence.');
     properties(host, [['Disconnect journal', radio.roleState?.disconnect_requested ? 'requested / recorded' : 'not recorded'], ['Room generation', data.room?.data?.generation], ['Room RF application', data.room?.data?.last_rf_applied_at]]);
   }
   if (radio?.presence === 'unknown') notice(host, 'No fresh, matching room evidence. Do not infer that this radio is offline.');
+  const contexts = (data.radio_frequencies || []).filter(row => row.radio === radio?.mac);
+  raw(host, 'Observed radio/frequency contexts', contexts);
   if (!selection.destination) { notice(host, 'Choose a destination for exact directed RF readback and its reverse direction.'); return; }
   heading(host, 'Current RF readback');
   for (const [source, destination, title] of [[selection.source || selection.mac, selection.destination, 'Forward'], [selection.destination, selection.source || selection.mac, 'Reverse']]) {
@@ -198,9 +202,9 @@ function renderRF(host, radio, peer, frequency, key) {
     if (rule?.error) notice(host, `${title} readback: ${rule.error}`);
   }
   notice(host, 'Configured SNR is a simulation input; last-packet SNR is an observation. Static startup configuration, current pair values and dynamic frequency overrides are different sources. The startup file hash is in Services.');
-  const contexts = (data.radio_frequencies || []).filter(row => row.radio === radio?.mac); raw(host, 'Observed radio/frequency contexts', contexts);
 }
 function renderTraffic(host, radio, path, key) {
+  rfGuide(host, 'packet-error-probability-and-loss');
   if (path) {
     const row = result?.paths.find(row => row.key === key);
     properties(host, [['Path record', `${path.source} → ${path.destination} @ ${path.frequency_mhz} MHz`], ['TX frames (lifetime)', path.frames], ['TX attempts / retries', `${path.attempts} / ${path.retries}`], ['ACKed / not ACKed', `${path.acked} / ${path.no_ack}`], ['RX injections (lifetime)', path.rx_injected], ['Frames/s', decimal(row?.rate)], ['Last signal / SNR', `${path.last_signal_dbm} dBm / ${path.last_snr_db} dB`], ['Last PER', `${decimal(Number(path.last_per_million) / 10000)}%`], ['Last frame', frameType(path.last_type, path.last_subtype)], ['Last access category', ['Voice (VO)', 'Video (VI)', 'Best effort (BE)', 'Background (BK)'][Number(path.last_access_category)] || 'Unavailable'], ['Includes multicast fan-out', path.multicast ? 'Yes; may also contain unicast' : 'No multicast flag observed']]);
@@ -214,6 +218,7 @@ function renderTraffic(host, radio, path, key) {
   else {
     const detailData = detail.data;
     properties(host, [['Window start (daemon µs)', detailData.started_usec], ['Sample (daemon µs)', detailData.observed_usec], ['Window lease', '15 seconds; renewed only while selected'], ['Ring overwrites', detailData.header_overwrites], ['Scope', detailData.scope]]);
+    properties(host, [['TX unicast / multicast', `${detailData.tx_unicast} / ${detailData.tx_multicast}`], ['RX unicast / multicast candidates', `${detailData.rx_unicast} / ${detailData.rx_multicast}`], ['TX / RX EAPOL', `${detailData.tx_eapol} / ${detailData.rx_eapol}`]]);
     for (const boundary of ['tx', 'rx']) {
       heading(host, boundary === 'tx' ? 'TX decisions by type/subtype' : 'RX candidates by type/subtype');
       const counts = detailData[`${boundary}_subtypes`] || []; const entries = counts.map((value, index) => [frameType(Math.floor(index / 16), index % 16), value]).filter(entry => counter(entry[1]) > 0n);
@@ -224,6 +229,7 @@ function renderTraffic(host, radio, path, key) {
   raw(host, 'Source radio type counters', (data.radio_frequencies || []).filter(row => row.radio === radio?.mac));
 }
 function renderLoad(host, radio, frequency) {
+  rfGuide(host, 'channel-utilization');
   const survey = data.survey, status = survey?.data;
   const recorded = counter(status?.recorded_monotonic_ns), reader = counter(status?.reader_monotonic_ns);
   const bridgeAge = reader >= recorded && recorded > 0n ? Number(reader - recorded) / 1e9 + Math.max(0, (Date.now() - Date.parse(survey.observed_at)) / 1000) : null;
@@ -238,6 +244,11 @@ function renderLoad(host, radio, frequency) {
     if (usable) { const meter = node('div', null, 'meter'), fill = node('span'); fill.style.width = `${Math.min(100, Math.max(0, Number(observation.value)))}%`; meter.append(fill); host.append(meter); }
   }
   const written = (status?.written || []).filter(row => row.radio === radio?.mac && (!frequency || Number(row.frequency_mhz) === frequency));
+  for (const context of written) {
+    const active = counter(context.active_us), busy = counter(context.busy_us);
+    const usable = valid && active > 0n && busy >= 0n && busy <= active;
+    properties(host, [[`Radio-local ${context.frequency_mhz} MHz`, usable ? `${decimal(Number(busy * 10000n / active) / 100)}% published busy / active` : 'Unavailable / stale'], ['Published active / busy', `${context.active_us} / ${context.busy_us} µs`], ['Context epoch / provider', `${context.epoch} / ${context.provider}`]]);
+  }
   raw(host, 'Radio-local published contexts / epochs', written);
   notice(host, 'Global channel occupancy and a radio-local survey are not interchangeable. Values model airtime visibility, not physical RF throughput. Provider writes are not proof of a fresh beacon.');
   heading(host, 'Native EasyMesh BSS load');
@@ -253,7 +264,7 @@ function renderLoad(host, radio, frequency) {
   heading(host, 'Advertised beacon BSS Load');
   let advertised = false;
   for (const [key, detail] of Object.entries(data.details || {})) {
-    if (!key.startsWith(`${radio?.mac}>`) || !fresh(detail)) continue;
+    if (!key.startsWith(`${radio?.mac}>`) || !fresh(detail) || (frequency && Number(detail.data?.frequency_mhz) !== frequency)) continue;
     const beacon = detail.data?.beacon_bss_load;
     if (!beacon || Number(detail.data.observed_usec) - Number(beacon.observed_usec) > 5000000) continue;
     advertised = true;
@@ -271,6 +282,11 @@ function renderServices() {
   heading(host, 'Console observer');
   properties(host, [['Read-only', collector.read_only], ['Shared subscriptions', collector.subscriptions], ['Socket requests / bytes', `${collector.requests ?? '—'} / ${collector.bytes ?? '—'}`], ['Read budget', `${collector.request_budget_per_second ?? 10} requests/s · ${collector.byte_budget_per_second ?? 262144} bytes/s`], ['Daemon contact', age(data.last_success)], ['Summary sampled', age(data.captured_at)]]);
   heading(host, 'Daemon control services');
+  rfGuide(host, 'noise-reference-and-cca');
+  if (fresh(service)) {
+    const status = service.data;
+    properties(host, [['Airtime fidelity', status.airtime_profile], ['Survey width', status.survey_width_mhz == null ? 'Unavailable' : `${status.survey_width_mhz} MHz`], ['Fixed noise reference', status.noise_reference_dbm == null ? 'Unavailable' : `${status.noise_reference_dbm} dBm (not measured)`], ['CCA threshold', status.cca_threshold_dbm == null ? 'Unavailable' : `${status.cca_threshold_dbm} dBm`], ['Independent reverse ACK', status.independent_reverse_ack], ['Interference enabled', status.interference_enabled], ['Fading coefficient', status.fading_coefficient], ['Daemon packet capture enabled', status.pcap_enabled]]);
+  }
   if (fresh(service)) { const status = service.data; properties(host, [['Visibility contention', status.visibility_contention], ['Priority queues', status.priority_queues], ['Survey enabled', status.survey_enabled], ['Model', status.model], ['Last writer PID / UID', `${status.last_writer_pid ?? 'unknown'} / ${status.last_writer_uid ?? 'unknown'}`], ['Last writer generation', status.last_writer_generation], ['Last write (daemon µs)', status.last_write_usec]]); raw(host, 'Connections, requests and protocol errors', status.endpoints); raw(host, 'Runtime modes / observer capacities', status); }
   else notice(host, service?.error || 'Detailed service accounting needs the Console NG daemon capability. Existing summary counters remain available.');
   const opcodeNames = ['reserved', 'hello', 'status', 'apply pairs', 'read pair', 'dump pairs', 'apply frequencies', 'read frequency', 'dump frequencies', 'summary', 'radio contexts', 'active paths', 'VIFs', 'events', 'association', 'channel survey', 'observer surveys', 'NG detail'];
@@ -282,6 +298,7 @@ function renderServices() {
   heading(host, 'Independent sources'); properties(host, [['Room source', fresh(data.room) ? `${data.room.data?.world} · ${age(data.room.observed_at)}` : data.room?.error || 'not connected'], ['Room writer (reported intent)', data.room?.data?.writer], ['Room requested generation', data.room?.data?.generation], ['Recovery journal', data.room?.data?.recovery?.state], ['Survey source', data.survey?.data?.source || data.survey?.error || 'not requested']]);
   notice(host, 'A PID/UID identifies a socket peer, not a verified service name. A missing HTTP/file source does not prove its systemd unit is stopped.');
   raw(host, 'Configuration and binary hashes', data.artifacts); raw(host, 'Capabilities', data.daemon?.capabilities);
+  raw(host, 'Packet, scheduler and netlink counters', data.summary?.summary);
   for (const details of host.querySelectorAll('details')) details.open = openDetails.has(details.querySelector('summary').textContent);
 }
 function renderEvents() {
