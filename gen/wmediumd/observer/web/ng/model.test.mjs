@@ -84,6 +84,14 @@ test('faulted room intent cannot classify clients as excluded', () => {
   assert.equal(model.explore().pool.excluded, 0);
 });
 
+test('room frequencies allow selected readback before full radio discovery', () => {
+  const model = new MediumModel(), data = fixture();
+  data.room.data.roles[0].frequencies = { '2.4GHz': 2437, '5GHz': 5180 };
+  model.update(data); assert.deepEqual(model.explore().frequencies, [2437, 5180]);
+  model.update({ radio_frequencies: [{ frequency_mhz: '6135' }] });
+  assert.deepEqual(model.explore().frequencies, [2437, 5180, 6135]);
+});
+
 test('exact-frequency matrix includes pair fallback only with complete override coverage', () => {
   const now = Date.now(), model = new MediumModel(), data = fixture(now);
   data.daemon.capabilities = ['frequency_qualified_snr'];

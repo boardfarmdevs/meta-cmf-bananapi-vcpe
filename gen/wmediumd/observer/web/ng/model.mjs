@@ -155,6 +155,10 @@ export class MediumModel {
     const totalClients = radios.filter(radio => radio.role === 'wlan-client' || radio.role === 'iot-client');
     return { rows, radios: visibleRadios, allRadios: radios, paths: filtered, totalPaths: paths.length, roomValid,
       pool: { bound: totalClients.length, present: totalClients.filter(radio => radio.presence === 'present').length, excluded: totalClients.filter(radio => radio.presence === 'room-excluded').length, unknown: totalClients.filter(radio => radio.presence === 'unknown').length },
-      coverage: data.coverage?.[configured ? 'pairs' : 'paths'], frequencies: [...new Set((data.radio_frequencies || []).map(row => Number(row.frequency_mhz)))].sort((left, right) => left - right) };
+      coverage: data.coverage?.[configured ? 'pairs' : 'paths'], frequencies: [...new Set([
+        ...(data.radio_frequencies || []).map(row => Number(row.frequency_mhz)),
+        ...(data.frequencies || []).map(row => Number(row.frequency_mhz)),
+        ...(roomValid ? data.room.data.roles || [] : []).flatMap(role => Object.values(role.frequencies || {}).map(Number)),
+      ].filter(value => value >= 2300 && value <= 7125))].sort((left, right) => left - right) };
   }
 }

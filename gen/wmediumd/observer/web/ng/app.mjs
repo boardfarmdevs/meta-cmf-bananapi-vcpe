@@ -12,6 +12,7 @@ const options = { mode: 'observed', arrangement: 'medium', expanded: [], minSNR:
 const fields = ['mode', 'search', 'band', 'frequency', 'presence', 'role', 'traffic', 'type', 'minSNR', 'sort', 'direction', 'showMAC', 'arrangement', 'allEdges', 'fanout', 'animate'];
 let data = {}, result = null, selection = null, tab = 'rf', frozen = false, servicesOpen = false, revision = 0, renderedRevision = 0, workerBusy = false, pendingPatch = {}, lastProcessed = '';
 let scrollIndex = 0, lastSelectionKey = '', history = [], lastHistory = '', toastTimer;
+let selectionControlsSignature = '';
 let pendingOptions = false;
 const worker = new Worker('/ng/worker.mjs', { type: 'module' });
 const client = new ObserverClient();
@@ -63,7 +64,7 @@ client.addEventListener('data', event => {
 });
 
 function render() {
-  renderStatus(); renderTable(); renderInspector(); renderEvents(); if (servicesOpen) renderServices();
+  renderStatus(); renderTable(); renderSelectionControls(); renderInspector(); renderEvents(); if (servicesOpen) renderServices();
   const arrangement = options.mode === 'matrix' ? 'matrix' : options.arrangement;
   scene.setMode(arrangement); scene.labels.hidden = arrangement === 'matrix' || !scene.renderer;
   scene.update(result, data, { ...options, selection });
@@ -143,6 +144,9 @@ function select(row) {
   renderSelectionControls(); interest(); renderTable(); renderInspector(); if (result) scene.update(result, data, { ...options, selection });
 }
 function renderSelectionControls() {
+  const signature = JSON.stringify([selection, result?.allRadios.map(radio => [radio.mac, radio.label]), result?.frequencies]);
+  if (signature === selectionControlsSignature) return;
+  selectionControlsSignature = signature;
   const controls = element('selection-controls'); controls.replaceChildren(); if (!selection) return;
   const source = selection.source || selection.mac;
   const label = node('label', 'Inspect destination'), destination = node('select'); destination.add(new Option('Radio only', ''));
