@@ -298,7 +298,7 @@ run_browser() {
 }
 
 run_live() {
-    local clients
+    local clients optimizer_policy
     prepare_lab || { skip live prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip live client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for live checks.\n' "$clients"
@@ -309,7 +309,8 @@ run_live() {
     run live vm-check "cd '$root' && EASYMESH_LXD_NAME='$vm' EASYMESH_WEBUI_PORT='$EASYMESH_WEBUI_PORT' WMEDIUMD_CONSOLE_PORT='$WMEDIUMD_CONSOLE_PORT' EASYMESH_ROOM_DEMO_PORT='$EASYMESH_ROOM_DEMO_PORT' gen/vm/lxd/build.sh check"
     run live health "$(guest_command "HEALTH_EXPECT_CLIENTS='$clients' bash gen/tests/health-audit.sh")"
     run live hwsim-profiles "$(guest_command 'bash gen/tests/verify-hwsim-profile-uniqueness.sh')"
-    run live optimizer "$(guest_command 'python3 gen/tests/optimizer-live-smoke.py --cycles 5 --interval 1')"
+    optimizer_policy='/tmp/easymesh-optimizer-live-policy.yaml'
+    run live optimizer "$(guest_command "sed 's/^expected_clients: .*/expected_clients: $clients/' gen/optimizer/configs/threshold-policy.yaml > '$optimizer_policy' && python3 gen/tests/optimizer-live-smoke.py --cycles 5 --interval 1 --policy '$optimizer_policy'; status=\$?; rm -f '$optimizer_policy'; exit \$status")"
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
     run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
