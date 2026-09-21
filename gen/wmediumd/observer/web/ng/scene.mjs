@@ -58,13 +58,15 @@ export class MediumScene {
     } else { this.matrixCanvas?.remove(); this.matrixCanvas = null; this.canvas.hidden = false; }
     if (this.result) this.update(this.result, this.data, this.options);
     this.resize();
+    this.fit();
   }
   update(result, data, options = {}) {
     this.result = result; this.data = data; this.options = options;
     this.rows = result.radios.slice(0, 1024); this.points.clear(); this.labels.replaceChildren();
     const mesh = this.rows.filter(row => !['wlan-client', 'iot-client'].includes(row.role));
     const clients = this.rows.filter(row => ['wlan-client', 'iot-client'].includes(row.role));
-    const allCoordinates = result.allRadios.filter(row => row.position).map(row => row.position);
+    const excluded = result.allRadios.filter(row => row.presence === 'room-excluded');
+    const allCoordinates = result.allRadios.filter(row => row.position && row.presence === 'present').map(row => row.position);
     const center = allCoordinates.length ? [0, 1].map(axis => (Math.min(...allCoordinates.map(position => Number(position[axis]))) + Math.max(...allCoordinates.map(position => Number(position[axis])))) / 2) : [0, 0];
     const extent = allCoordinates.length ? Math.max(10, ...allCoordinates.flatMap(position => [Math.abs(Number(position[0]) - center[0]) * 2, Math.abs(Number(position[1]) - center[1]) * 2])) : 30;
     this.layoutCenter = center; this.layoutScale = 36 / extent;
@@ -72,7 +74,10 @@ export class MediumScene {
     this.rows.forEach((row, index) => {
       const client = clients.includes(row), roleIndex = (client ? clients : mesh).indexOf(row);
       let horizontal, depth;
-      if (this.mode === 'room' && row.position) { horizontal = (Number(row.position[0]) - center[0]) * this.layoutScale; depth = (Number(row.position[1]) - center[1]) * this.layoutScale; }
+      if (this.mode === 'room' && row.presence === 'room-excluded') {
+        const slot = excluded.indexOf(row); horizontal = 25 + slot % 10 * 2.8; depth = -12 + Math.floor(slot / 10) * 2.8;
+      }
+      else if (this.mode === 'room' && row.position) { horizontal = (Number(row.position[0]) - center[0]) * this.layoutScale; depth = (Number(row.position[1]) - center[1]) * this.layoutScale; }
       else if (client) { horizontal = (roleIndex % 12 - 5.5) * 3; depth = 7 + Math.floor(roleIndex / 12) * 2.4; }
       else { horizontal = (roleIndex - (mesh.length - 1) / 2) * 5; depth = -5; }
       const frequency = Number(options.frequency || (data.radio_frequencies || []).find(context => context.radio === row.mac)?.frequency_mhz || 0);
@@ -81,7 +86,7 @@ export class MediumScene {
       const color = row.presence === 'room-excluded' ? '#687584' : row.role === 'controller-agent' ? '#ef7675' : client ? (row.role === 'iot-client' ? '#bca2ed' : '#72c1dc') : '#ed9c62';
       row.sceneColor = color;
       if (this.renderer) { matrix.makeScale(client ? 1 : 1.5, client ? 1 : 1.5, client ? 1 : 1.5); matrix.setPosition(position); this.markers.setMatrixAt(index, matrix); this.markers.setColorAt(index, new THREE.Color(color)); }
-      const label = document.createElement('button'); label.textContent = options.showMAC ? `${row.label} · ${row.mac}` : row.label; label.className = 'scene-label'; label.title = `${row.label} · ${row.presence}`; label.addEventListener('click', () => this.select(row));
+      const label = document.createElement('button'); label.textContent = options.showMAC ? `${row.label} · ${row.mac}` : row.label; label.className = 'scene-label'; label.title = `${row.label} · ${row.presence}${this.mode === 'room' && row.presence === 'room-excluded' ? ' · parked outside room; not RF coordinates' : ''}`; label.addEventListener('click', () => this.select(row));
       this.labels.append(label); row.labelElement = label;
     });
     if (this.renderer) { this.markers.count = this.rows.length; this.markers.instanceMatrix.needsUpdate = true; if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true; this.markers.computeBoundingSphere(); }
@@ -92,7 +97,7 @@ export class MediumScene {
     this.animate = Boolean(options.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches && this.edges.some(row => row.rate > 0));
     this.makeLines();
     this.makeWalls();
-    const baseNotice = this.mode === 'room' && !result.roomValid ? 'Room overlay unavailable or from another daemon; using stable medium layout. ' : '';
+    const baseNotice = this.mode === 'room' ? !result.roomValid ? 'Room overlay unavailable or from another daemon; using stable medium layout. ' : excluded.length ? 'Grey excluded pool is parked beside the room (display positions only). ' : '' : '';
     this.notice.textContent = `${baseNotice}${this.mode === 'matrix' ? 'Directed SNR: source ↓ · destination →. Grey is missing/stale, not zero.' : `${this.edges.length}/${paths.length} filtered paths drawn · ${options.fanout ? 'fan-out included' : 'fan-out hidden'} · particles illustrate measured rates, not individual packets`}`;
     this.dirty = true;
   }

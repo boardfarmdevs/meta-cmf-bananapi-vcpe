@@ -305,9 +305,13 @@ class RoomDemoServer:
                 elif parsed.path == "/api/demo/mesh-layout":
                     self._json({**store.mesh_layout(), "live": viewer_mode != "replay"})
                 elif parsed.path == "/api/demo/observer" and interactions is not None:
-                    self._json({**interactions.observer_snapshot(),
-                                "native": store.mesh_layout().get("rf_observations", {}),
-                                "live": viewer_mode != "replay"})
+                    observed = interactions.observer_snapshot()
+                    if observed is None:
+                        self._json({"error": "room observer busy or closed; retry later"}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                    else:
+                        self._json({**observed,
+                                    "native": store.mesh_layout().get("rf_observations", {}),
+                                    "live": viewer_mode != "replay"})
                 elif parsed.path == "/api/demo/rf-load" and interactions is not None and viewer_mode != "replay":
                     self._json(load_status())
                 elif parsed.path == "/api/demo/world":

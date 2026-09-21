@@ -46,7 +46,8 @@ controller decisions are different evidence; missing or stale is never zero.
 ## Distance, walls and movement
 
 - **Model:** the room/configurator converts distance, per-band reference SNR,
-  path-loss exponent and crossed-wall attenuation into bounded SNR values.
+  path-loss exponent, crossed-wall attenuation and optional seeded shadowing
+  into bounded SNR values.
   Motion generates new frequency-qualified values; wmediumd consumes those
   values, not the room geometry itself.
 - **Observe:** Room coordinates arrangement, RF readbacks and Services writer

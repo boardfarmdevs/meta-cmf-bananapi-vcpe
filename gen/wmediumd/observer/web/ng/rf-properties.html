@@ -21,7 +21,7 @@
 </ul>
 <h2 id="distance-walls-and-movement">Distance, walls and movement</h2>
 <ul>
-<li><strong>Model:</strong> the room/configurator converts distance, per-band reference SNR, path-loss exponent and crossed-wall attenuation into bounded SNR values. Motion generates new frequency-qualified values; wmediumd consumes those values, not the room geometry itself.</li>
+<li><strong>Model:</strong> the room/configurator converts distance, per-band reference SNR, path-loss exponent, crossed-wall attenuation and optional seeded shadowing into bounded SNR values. Motion generates new frequency-qualified values; wmediumd consumes those values, not the room geometry itself.</li>
 <li><strong>Observe:</strong> Room coordinates arrangement, RF readbacks and Services writer generation. The room viewer remains the place to edit positions.</li>
 <li><strong>Boundary:</strong> walls are an attenuation model, not ray tracing, diffraction, multipath, Doppler or a calibrated building propagation measurement.</li>
 </ul>

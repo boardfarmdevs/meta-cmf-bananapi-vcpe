@@ -20,6 +20,9 @@ class FakeInteractions:
     def snapshot(self):
         return {"enabled": True, "revision": self.revision}
 
+    def observer_snapshot(self):
+        return {"schema": "easymesh.room-observer.v1", "read_only": True, "revision": self.revision}
+
     def acquire(self, owner, **_body):
         return {"token": "lease-token", "owner": owner, "revision": self.revision}
 
@@ -334,6 +337,19 @@ class InteractiveServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result, report)
         load.assert_called_once_with()
+
+    def test_observer_is_read_only_and_reports_busy_without_queueing(self):
+        with patch.object(self.interactions, "snapshot", side_effect=AssertionError("observer used mutable snapshot")):
+            status, result = self._request("/api/demo/observer")
+        self.assertEqual(status, 200)
+        self.assertTrue(result["read_only"])
+        self.assertTrue(result["live"])
+        self.assertEqual(result["schema"], "easymesh.room-observer.v1")
+        self.assertEqual(self.interactions.revision, 2)
+        with patch.object(self.interactions, "observer_snapshot", return_value=None):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self._request("/api/demo/observer")
+        self.assertEqual(caught.exception.code, 503)
 
     def test_world_apply_requires_revision_without_operator(self):
         _, catalog = self._request("/api/demo/worlds")

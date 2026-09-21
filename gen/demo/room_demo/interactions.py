@@ -350,7 +350,15 @@ class InteractiveMediumSession:
         finally:
             self._lock.release()
 
-    def observer_snapshot(self) -> dict[str, Any]:
+    def observer_snapshot(self) -> dict[str, Any] | None:
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            return self._observer_snapshot_locked()
+        finally:
+            self._lock.release()
+
+    def _observer_snapshot_locked(self) -> dict[str, Any]:
         with self._lock:
             paused = set(self.recovery.paused_clients()) if self.recovery else set()
             roles = []

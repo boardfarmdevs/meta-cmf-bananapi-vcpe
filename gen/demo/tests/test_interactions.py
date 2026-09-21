@@ -234,6 +234,7 @@ class InteractiveMediumSessionTests(unittest.TestCase):
             self.assertTrue(acquired.wait(1))
             started = time.monotonic()
             self.assertIsNone(engine.projection_snapshot())
+            self.assertIsNone(engine.observer_snapshot())
             self.assertLess(time.monotonic() - started, 0.1)
         finally:
             release.set()
@@ -242,6 +243,7 @@ class InteractiveMediumSessionTests(unittest.TestCase):
         self.assertEqual(engine.projection_snapshot()["revision"], engine.snapshot()["revision"])
         with patch.object(self.session, "_expire_lease", side_effect=AssertionError("a display read mutated the lease")):
             self.assertIsNotNone(engine.projection_snapshot())
+            self.assertEqual(engine.observer_snapshot()["schema"], "easymesh.room-observer.v1")
 
     def test_probe_selection_is_client_only_and_does_not_write_rf(self):
         self.session._traffic_probe_role = None

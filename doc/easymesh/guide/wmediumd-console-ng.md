@@ -33,6 +33,9 @@ context, not physical elevation. A multi-band radio still has one marker;
 the table exposes its separate contexts. **Room coordinates** follows the
 matching room's current positions and walls, without controlling that room.
 Missing or mismatched room evidence falls back to the medium arrangement.
+Excluded radios are parked in a separate grey grid beside the room; those
+display positions are not physical/RF coordinates. Use **Room clients** to
+hide the parked pool and **Fit view** to enlarge the active scene.
 
 Edges have arrows and show directed medium paths, **not mesh associations**.
 Initially only recent paths are drawn. Selection focuses edges; **All filtered
