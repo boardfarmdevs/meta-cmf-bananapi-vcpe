@@ -68,3 +68,8 @@ def test_native_audit_replaces_old_operator_owned_tmp_file():
         assert expected in source
         assert "--mode non-interactive" in source
         assert not re.search(r"lxc file push[^\n]+room-feature-guest-audit", source)
+
+
+def test_generated_test_output_does_not_dirty_source_checkout():
+    for path in ("test-results/fixture/results.tsv", ".cache/easymesh-browser-tools/package-lock.json"):
+        subprocess.run(["git", "check-ignore", "--no-index", "--quiet", path], cwd=ROOT, check=True)
