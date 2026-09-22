@@ -11,10 +11,11 @@ output_root=
 
 usage() {
     cat <<'EOF'
-usage: gen/tests/run-easymesh-suite.sh [all|static|webui|browser|live|rooms|soak] [options]
+usage: gen/tests/run-easymesh-suite.sh [all|static|webui|browser|live|rooms|rf|soak] [options]
 
 Run one or more EasyMesh qualification sections. `all` runs every section,
 including the duration-bound soak, and requires --yes-act.
+The rf section runs focused RF contracts and two bounded new-room checks.
 
 Options:
   --yes-act                 Permit tests that change room RF or associations.
@@ -39,7 +40,7 @@ EOF
 
 while (($#)); do
     case "$1" in
-        all|static|webui|browser|live|rooms|soak) sections+=("$1") ;;
+        all|static|webui|browser|live|rooms|rf|soak) sections+=("$1") ;;
         --yes-act) yes_act=true ;;
         --install-browser-deps) install_browser=true ;;
         --soak-duration) shift; soak_duration=${1:-} ;;
@@ -59,8 +60,8 @@ expected_clients=${EASYMESH_EXPECTED_CLIENTS:-$expected_clients}
     echo '--expected-clients must be a positive integer or auto' >&2
     exit 2
 }
-if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
-    echo 'live, rooms and soak change the live lab; rerun with --yes-act' >&2
+if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' rf '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
+    echo 'live, rooms, rf and soak change the live lab; rerun with --yes-act' >&2
     exit 2
 fi
 
@@ -382,8 +383,19 @@ run_rooms() {
     run rooms geometry "cd '$root' && node gen/tests/room-backhaul-features.js --yes-act true --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --output '$output_root/geometry'"
     run rooms rf-hover "cd '$root' && node gen/tests/webui-rf-hover-browser-test.js '$webui_url' '$output_root/rf-hover'"
     run rooms rf-access "cd '$root' && python3 gen/tests/rf-access-smoke.py --room-url '$room_url' --output '$output_root/rf-access.json'"
+    run rooms rf-properties "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'"
     run rooms world-switch "$(guest_command "python3 gen/tests/room-world-switch-smoke.py --yes-act --all-worlds --output '$guest_repo/test-results-world-switch-$stamp'")"
     run rooms restore-default "$(guest_command 'python3 gen/tests/room-world-switch-smoke.py --yes-act --world home-a-private-client-room-walk --skip-presence --output /tmp/easymesh-default-restore')"
+}
+
+run_rf() {
+    run rf contracts "cd '$root' && PYTHONPATH='$root/gen/wmediumd/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib -o addopts='' -q gen/optimizer/tests/test_counter_guard.py gen/optimizer/tests/test_counter_shadow.py gen/tests/test_native_retry_counters.py gen/optimizer/tests/test_load_policy.py gen/optimizer/tests/test_policy.py gen/optimizer/tests/test_owner_observation.py gen/optimizer/tests/test_rf_observations.py gen/demo/tests/test_rf_property_coverage.py gen/demo/tests/test_rf_rooms.py gen/demo/tests/test_world_switch.py gen/demo/tests/test_traffic_experiment.py gen/demo/tests/test_rf_observation.py gen/tests/test_rf_property_rooms_smoke.py gen/tests/test_counter_guard_room_smoke.py gen/tests/test_frequency_slot_allocation.py gen/tests/test_console_ng_contract.py gen/wmediumd/configurator/tests/test_rf_contract.py" || return
+    run rf viewer "cd '$root' && node gen/tests/viewer-room-guide-test.js" || return
+    run rf inspector "cd '$root' && node gen/tests/viewer-rf-inspector-test.js" || return
+    run rf documentation "cd '$root' && python3 gen/tests/test_documentation.py" || return
+    run rf rooms "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'" || return
+    run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/tests/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || return
+    run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/wmediumd/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }
 
 run_soak() {
@@ -398,7 +410,7 @@ run_soak() {
     run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
 }
 
-for section_group in 'static webui browser rooms' 'live soak'; do
+for section_group in 'static webui browser rooms rf' 'live soak'; do
     for section in "${sections[@]}"; do
         [[ " $section_group " == *" $section "* ]] || continue
         printf '\n===== EasyMesh %s section =====\n' "$section"
@@ -408,6 +420,7 @@ for section_group in 'static webui browser rooms' 'live soak'; do
             browser) run_browser ;;
             live) run_live ;;
             rooms) run_rooms ;;
+            rf) run_rf ;;
             soak) run_soak ;;
         esac
     done

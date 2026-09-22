@@ -16,6 +16,7 @@ guide; the reference is for implementation details, not required reading.
 | Understand the processes and radio model | [Architecture](concepts/architecture.md) |
 | Use the room and network topology | [Room manual](live-room-demo/README.md) |
 | Choose a demonstration | [Room catalog](reference/rooms/catalog.md) |
+| Match RF properties to rooms and policy checks | [RF coverage](reference/radio/rf-property-coverage.md) |
 | Understand or develop steering policy | [Optimizer](concepts/optimizer.md) |
 | Diagnose RF and measurements | [RF simulation](concepts/rf-simulation.md), [radio reference](reference/radio/README.md) |
 | Observe medium activity and RF state | [Console NG manual](guide/wmediumd-console-ng.md), [implementation design](concepts/wmediumd-console-design.md) |

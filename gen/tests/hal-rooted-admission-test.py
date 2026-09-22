@@ -80,9 +80,9 @@ def guards(sources):
                 body = sources[filename][start:end]
             else:
                 start, end, body = function(sources[filename], name)
-            guarded = "wifi_hal_backhaul_root_blocked" in body or "wifi_hal_backhaul_root_name_blocked" in body
+            guarded = any(name in body for name in ("wifi_hal_backhaul_root_blocked", "wifi_hal_backhaul_root_name_blocked", "wifi_hal_backhaul_beacon_blocked"))
             required_count = 2 if name == "wifi_hal_createVAP" else 1
-            found_count = body.count("wifi_hal_backhaul_root_blocked") + body.count("wifi_hal_backhaul_root_name_blocked")
+            found_count = sum(body.count(name) for name in ("wifi_hal_backhaul_root_blocked", "wifi_hal_backhaul_root_name_blocked", "wifi_hal_backhaul_beacon_blocked"))
             checks.append({"name": f"static.{name}.guard-present", "passed": guarded and found_count >= required_count,
                            "source": filename, "line": sources[filename].count("\n", 0, start) + 1,
                            "function_sha256": sha(body.encode()), "guard_count": found_count,

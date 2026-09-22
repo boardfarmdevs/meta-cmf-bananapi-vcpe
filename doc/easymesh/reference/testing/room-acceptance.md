@@ -1,44 +1,82 @@
 # Room correctness and convergence acceptance
 
-The 0916 release retry batches received-band status checks and native scan
-dump in one namespace worker, removing three redundant LXD exec round trips.
-The client's own iw/mount namespace supplies the dump. Two-second freshness,
-world/association guards, correlated passive scan completion and steering
-exclusion remain unchanged. Retain the earlier band-counter-roam freshness
-failure and compare duration/publication telemetry in the live retry.
+Received-band status/scan dumps share one client-namespace worker, retaining
+two-second freshness, world/association guards, correlation and steering exclusion.
 
-Linux observers with render-device access may use `--renderer vulkan` to
-avoid software-rendering stalls. SwiftShader remains the portable default.
-The harness records the actual WebGL renderer and rejects missing hardware
-or software fallback for Vulkan. Grant render access only to the observer
-process, without changing lab CPU limits or device permissions.
+Linux observers with render access may use `--renderer vulkan`; SwiftShader is
+the portable default. Recorded Vulkan must be hardware-backed. Grant access only
+to the observer, without changing lab CPU limits or device permissions.
 
 [Testing reference](README.md) · [Expected room features](../rooms/catalog.md)
 
-Run every advertised room sequentially within each lab; independent RDK and
-prpl runs may overlap across hosts. This is bounded feature testing, not a soak
-or intrinsic stack-speed ranking. A targeted `--world` run is not full coverage.
-
-Bring the room to the foreground before using its controls. Capture room and
-topology screenshots sequentially with each page foregrounded, then restore
-room focus; concurrent background captures can stall the headless software
-renderer. Keep physical audits ahead of screenshots and retain observer failures
-separately from native convergence failures. A renderer timeout does not qualify
-an unplayed room.
+Run rooms sequentially per lab; independent hosts may overlap. Targeted runs
+are not catalog/soak coverage or stack-speed rankings. Audit physical state,
+foreground each view for captures, then restore room focus. Separate renderer
+and native failures; unplayed rooms remain unqualified.
 
 ## Current RF hardening checks
 
 [RF qualification](../radio/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
-records non-turbo/priority profiles. Earlier evidence on rev150 remains under
-`/home/rev/work/rf-demand-0913/evidence/` and
-`/home/rev/work/rf-reliability-0913/evidence/`; cooling mitigation is not repair.
+records cooling/priority profiles and earlier evidence. Historical six-room and
+UDP cancellation passes do not erase two controller exits during restoration.
+UAF patch 0193's contract/build and bounded reconnect pass; ASan churn was stopped.
 
-The earlier six-room campaigns and four UDP cancellation cases pass, but
-**RDK's historical native qualification is not clean:** two controller exits
-during restoration remain recorded. Symbolized evidence identifies the
-topology/disassociation `dm_sta_t` UAF; patch 0193's contract/build and bounded
-disconnect/reconnect pass. ASan churn was stopped. Neither later repairs nor
-the checks below retroactively qualify those failures.
+### Candidate admission and isolated beacons
+
+Enabled RDK **0207** rejects unready/occupied radios before global admission.
+Its native regression fails before and passes afterward, preserving unrelated
+ownership. UAF **0193** remains installed. Bounded same-MID retry candidate
+**0206** passes fixtures but is held pending return-handover qualification.
+
+Held HAL **0044** separates hwsim beacons from rooted-child admission; physical
+platforms/fronthauls are unchanged. Native builds, 66 rooted-admission cases and
+beacon/admission/retransmission fixtures pass, including fail-closed flushing.
+Observer/conductor tests pass: RDK 80, prpl 28. Typed inventory errors pause
+interactive RDK steering; noninteractive checks fail. Source parity is not live
+qualification.
+
+Bounded RDK results on `demo-a`, in the checkout's `test-results/`:
+
+| Evidence directory | Result |
+| --- | --- |
+| `rf-next-isolation-final-20260922T033153Z` | Pass: initial convergence, real upstream outage with operating backhaul/fronthaul APs, return convergence and default restoration; native identities unchanged |
+| `rf-next-geometry-verified-20260922T032707Z` | Fail: branch midpoint lost Ext-2/Ext-4 uplinks; Ext-1/Ext-3 formed their branch. Bounded default restoration also failed; later recovery does not erase it |
+| `rf-next-branch-original-hal-20260922T033807Z` | Pass after restoring the original HAL: branch, return and default recovery; patched controller/observer retained |
+| `rf-next-handover-final-20260922T034210Z` | Fail with 0206/0207 and original HAL: lower-relay move passes, upper-relay return fails; ten clients converge and default restoration passes |
+| `rf-next-handover-admission-ready-20260922T040422Z` | Pass with 0207 only/original HAL: initial, lower-relay handover, upper-relay return, all ten clients and default restoration; native identities unchanged |
+| `rf-next-branch-admission-ready-20260922T041008Z` | Fail: Ext-4 retains Ext-3 rather than Ext-2; ten clients converge. Bounded default restoration also fails; later twenty-client recovery does not erase it |
+| `rf-next-branch-divider-20260922T042629Z` | Branch feature passes: initial, both branches, return, ten clients, kernel audit and both views; native identities unchanged. Overall fail: default recovery misses its 60-second measurement gate |
+
+The installed admission-only controller's `040300Z` attempt failed initial
+readiness; evidence remains. One comparison does not establish 0206 causality.
+Shared RF-contract fixtures pass 51 cases per stack, not live qualification.
+
+`rf-next-access-divider-20260922T043705Z.json`: five GET-only samples pass,
+including exact-BSSID backhaul load (3.2–57.9 ms requests). Console NG room/survey
+readiness passes with 105 matched radios.
+
+HAL 0044 is **held outside the default recipe**, and the original HAL is restored.
+The original branch stimulus offered only 1 dB relay gain (native RCPI 64/62),
+below 6 dB hysteresis. The branch-only layout adds a 12 dB divider: intended
+relay/other child/gateway SNR becomes 13/0/−7 dB. Original paths, policy,
+timing and live assertions remain unchanged; new source tests check every
+alternative. The intermediate shortened-path run `042124Z` failed initial
+convergence before playback; default recovery passed. Held HAL 0044 remains
+unqualified. Component replacement/policy restoration occurred outside scenarios.
+
+The divider run restores all twenty associations, five operating APs, traffic
+and six topology nodes, but checks only 19/20 clients: `sta_mobile_08` lacks
+one candidate measurement after native `Error_Not_Ready`. Later 20/20 convergence
+does not erase this deadline failure. No policy or timeout was relaxed.
+
+Use assembled native sources, not the layer. Retry/beacon fixtures require their
+held candidate patches; they are not tests of the default native build:
+
+```sh
+python3 gen/tests/candidate-query-admission-test.py "$MESH_SOURCE"
+python3 gen/tests/unassoc-query-retry-test.py "$MESH_SOURCE"
+python3 gen/tests/hal-backhaul-beacon-test.py "$HAL_SOURCE"
+```
 
 ### RDK threshold and query qualification
 

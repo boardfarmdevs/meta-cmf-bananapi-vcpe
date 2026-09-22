@@ -1,0 +1,181 @@
+Subject: [PATCH] Keep hwsim backhaul beacons while closing unrooted admission
+
+Separate beacon availability from the generation-bound root admission gate.
+On hwsim, disconnect and flush downstream stations without stopping the AP;
+reject station creation and authorization while the parent is unproved.
+Keep fronthauls untouched and retain the old shutdown path if the kernel
+station flush fails. Non-hwsim targets retain AP shutdown until their
+admission behavior is qualified. Readmission leaves a running AP untouched;
+recovery of a stopped AP resets hostapd before setup, avoiding a restart of
+an already-started BSS. Flush children even when cached bss_started is false;
+a verified down netdevice needs no kernel flush and cannot block STA startup.
+
+Upstream-Status: Pending
+
+Not enabled in the recipe: isolation/recovery passes, but branch-room
+convergence failed. Retain the original HAL until geometry qualification.
+
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -846,7 +846,7 @@
+                     interface->vap_info.u.bss_info.enabled, radio->configured,
+                     radio->oper_param.enable);
+                 if (radio->oper_param.enable && interface->vap_info.u.bss_info.enabled &&
+-                    !wifi_hal_backhaul_root_blocked(interface)) {
++                    !wifi_hal_backhaul_beacon_blocked(interface)) {
+                     if (nl80211_interface_enable(interface_name, true) != 0) {
+                         ret = nl80211_retry_interface_enable(interface, true);
+                         if (ret != 0) {
+@@ -1173,6 +1173,16 @@
+         !__atomic_load_n(&backhaul_root_admitted, __ATOMIC_ACQUIRE);
+ }
+ 
++bool wifi_hal_backhaul_beacon_blocked(wifi_interface_info_t *interface)
++{
++#ifdef HWSIM_RADIO
++    (void)interface;
++    return false;
++#else
++    return wifi_hal_backhaul_root_blocked(interface);
++#endif
++}
++
+ bool wifi_hal_backhaul_root_name_blocked(const char *name)
+ {
+     unsigned int radio_index;
+@@ -1185,7 +1195,7 @@
+         if (radio == NULL) continue;
+         hash_map_foreach(radio->interface_map, interface) {
+             if (strcmp(interface->name, name) == 0)
+-                return wifi_hal_backhaul_root_blocked(interface);
++                return wifi_hal_backhaul_beacon_blocked(interface);
+         }
+     }
+     return false;
+@@ -1224,6 +1234,33 @@
+         }
+         hash_map_foreach(radio->interface_map, interface) {
+             if (!wifi_hal_backhaul_root_blocked(interface)) continue;
++#ifdef HWSIM_RADIO
++            pthread_mutex_lock(&g_wifi_hal.hapd_lock);
++            if (interface->u.ap.hapd.conf != NULL) {
++                struct hostapd_data *hapd = &interface->u.ap.hapd;
++                while (hapd->sta_list != NULL) {
++                    struct sta_info *child = hapd->sta_list;
++                    hostapd_drv_sta_deauth(hapd, child->addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
++                    ap_free_sta(hapd, child);
++                }
++                if (get_vap_state(interface->name, &flags) == 0 && !(flags & IFF_UP)) {
++                    interface->bss_started = false;
++                    interface->beacon_set = 0;
++                    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++                    continue;
++                }
++                if (hostapd_flush(hapd) != 0) {
++                    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++                    result = RETURN_ERR;
++                } else {
++                    pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++                    continue;
++                }
++            } else {
++                pthread_mutex_unlock(&g_wifi_hal.hapd_lock);
++                continue;
++            }
++#endif
+             if (interface->bss_started && interface->u.ap.hapd.conf != NULL) {
+                 if (reload_interface(interface) != 0) result = RETURN_ERR;
+             }
+@@ -1366,6 +1403,13 @@
+             if (interface->vap_info.vap_mode != wifi_vap_mode_ap ||
+                 !is_backhaul_interface(interface) || !interface->vap_initialized ||
+                 !interface->vap_info.u.bss_info.enabled) continue;
++#ifdef HWSIM_RADIO
++            if (interface->bss_started && interface->beacon_set) continue;
++            if (interface->u.ap.hapd.conf != NULL && reload_interface(interface) != 0) {
++                result = RETURN_ERR;
++                continue;
++            }
++#endif
+             if (wifi_hal_backhaul_root_blocked(interface) ||
+                 nl80211_interface_enable(interface->name, true) != 0 ||
+                 restart_interface(interface) != 0) result = RETURN_ERR;
+@@ -1821,7 +1865,7 @@
+                     interface_name, interface->bss_started);
+                 if (!(interface->bss_started)) {
+                     if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
+-                        !wifi_hal_backhaul_root_blocked(interface)) {
++                        !wifi_hal_backhaul_beacon_blocked(interface)) {
+                         wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__,
+                             __LINE__, interface_name);
+                         interface->beacon_set = 0;
+@@ -1841,7 +1885,7 @@
+                     return RETURN_ERR;
+                 }
+                 if (vap->u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
+-                    !wifi_hal_backhaul_root_blocked(interface)) {
++                    !wifi_hal_backhaul_beacon_blocked(interface)) {
+                     wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__,
+                         __LINE__, interface_name);
+                     interface->beacon_set = 0;
+--- a/wifi_hal_priv.h
++++ b/wifi_hal_priv.h
+@@ -931,6 +931,7 @@
+ INT wifi_hal_disconnect(INT ap_index);
+ INT wifi_hal_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map);
+ bool wifi_hal_backhaul_root_blocked(wifi_interface_info_t *interface);
++bool wifi_hal_backhaul_beacon_blocked(wifi_interface_info_t *interface);
+ bool wifi_hal_backhaul_root_name_blocked(const char *name);
+ void wifi_hal_backhaul_root_link(wifi_interface_info_t *interface, bool connected);
+ INT wifi_hal_backhaul_root_close(INT vap_index);
+--- a/wifi_hal_hostapd.c
++++ b/wifi_hal_hostapd.c
+@@ -3370,7 +3370,7 @@
+ 
+ int start_bss(wifi_interface_info_t *interface)
+ {
+-    if (wifi_hal_backhaul_root_blocked(interface)) return RETURN_ERR;
++    if (wifi_hal_backhaul_beacon_blocked(interface)) return RETURN_ERR;
+     int ret;
+     struct hostapd_data *hapd = NULL;
+     struct hostapd_bss_config *conf = NULL;
+--- a/wifi_hal_nl80211_utils.c
++++ b/wifi_hal_nl80211_utils.c
+@@ -6354,7 +6354,7 @@
+ 
+     interface->in_reconf = false;
+ 
+-    if (!wifi_hal_backhaul_root_blocked(interface) &&
++    if (!wifi_hal_backhaul_beacon_blocked(interface) &&
+         interface->vap_info.u.bss_info.enabled && radio->configured && radio->oper_param.enable &&
+         interface->vap_initialized == true) {
+         wifi_hal_info_print("%s:%d: interface:%s enable ap\n", __func__, __LINE__, interface_name);
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -15080,6 +15080,9 @@
+      * edge that completes a new or returning association. */
+     authorization_started = (flags_or & WPA_STA_AUTHORIZED) != 0;
+ 
++    if ((total_flags & WPA_STA_AUTHORIZED) && wifi_hal_backhaul_root_blocked(interface))
++        return -EPERM;
++
+     if (!(msg = nl80211_drv_cmd_msg(g_wifi_hal.nl80211_id, interface, 0, NL80211_CMD_SET_STATION)) ||
+           nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, addr))
+     {
+@@ -15430,6 +15433,7 @@
+     wifi_hal_dbg_print("%s:%d: Enter\n", __func__, __LINE__);
+ 
+     interface = (wifi_interface_info_t *)priv;
++    if (wifi_hal_backhaul_root_blocked(interface)) return -EPERM;
+     vap = &interface->vap_info;
+     radio = get_radio_by_rdk_index(vap->radio_index);
+     //radio_param = &radio->oper_param;
+@@ -17524,7 +17528,7 @@
+     int link_id = -1;
+ 
+     interface = (wifi_interface_info_t *)priv;
+-    if (interface->in_reconf || wifi_hal_backhaul_root_blocked(interface)) {
++    if (interface->in_reconf || wifi_hal_backhaul_beacon_blocked(interface)) {
+         wifi_hal_dbg_print("%s:%d: Interface %s is in reconfiguration, skip set_ap\n", __func__,
+             __LINE__, interface->name);
+         return 0;

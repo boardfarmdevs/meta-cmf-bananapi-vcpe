@@ -1,0 +1,83 @@
+Subject: [PATCH] Retry lost native candidate transactions with the same MID
+
+A candidate query is sent only once and otherwise holds native single-flight
+admission until the generic command expires. A transient backhaul outage can
+therefore cause an HTTP timeout followed by busy rejections for other radios.
+Bound retransmission to four sends, two seconds apart, retaining the original
+MID and command. Do not extend the command timeout or measurement freshness.
+The agent correlates repeated work by MID and samples the native HAL again.
+Completion/cancellation resets the retry state.
+
+Upstream-Status: Pending
+
+Not enabled in the recipe: hold retransmission separately from the admission
+fix until coexistence with native backhaul collection passes return handover.
+
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -740,6 +740,8 @@
+ #endif
+ 
+         unsigned short m_unassoc_sta_query_msg_id = 0;
++        unsigned int m_unassoc_sta_query_transmits = 0;
++        uint64_t m_unassoc_sta_query_last_send_ms = 0;
+  
+        /**
+         * @brief Get the current Unassociated STA Query message ID.
+@@ -757,7 +759,12 @@
+         * Resets the stored query message ID after the corresponding
+         * ACK has been received and processed.
+         */
+-        void clear_unassoc_sta_query_msg_id() { m_unassoc_sta_query_msg_id = 0; }	
++        void clear_unassoc_sta_query_msg_id()
++        {
++            m_unassoc_sta_query_msg_id = 0;
++            m_unassoc_sta_query_transmits = 0;
++            m_unassoc_sta_query_last_send_ms = 0;
++        }
+ 
+ public:
+ 
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -2869,8 +2869,11 @@
+     }
+ 
+     em_t *em = static_cast<em_t *>(this);
+-    if (em->get_unassoc_sta_query_msg_id() != 0) {
+-        /* One outstanding MID is retried by command timeout, not replaced. */
++    const uint64_t sent_at = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++    if (m_unassoc_sta_query_transmits != 0 &&
++        (m_unassoc_sta_query_transmits >= 4 || sent_at < m_unassoc_sta_query_last_send_ms ||
++         sent_at - m_unassoc_sta_query_last_send_ms < 2000)) {
+         return 0;
+     }
+ 
+@@ -2904,7 +2907,8 @@
+     memset(cmdu, 0, sizeof(em_cmdu_t));
+     cmdu->type = htons(em_msg_type_unassoc_sta_link_metrics_query);
+ 
+-    cmdu->id = htons(get_mgr()->get_next_msg_id());
++    cmdu->id = htons(em->get_unassoc_sta_query_msg_id() != 0 ?
++        em->get_unassoc_sta_query_msg_id() : get_mgr()->get_next_msg_id());
+     cmdu->last_frag_ind = 1;
+     cmdu->relay_ind = 0;
+ 
+@@ -2958,12 +2962,14 @@
+         return -1;
+     }
+ 
+-   if (send_frame(buff, len) < 0) {
++    ++m_unassoc_sta_query_transmits;
++    m_unassoc_sta_query_last_send_ms = sent_at;
++    if (send_frame(buff, len) < 0) {
+         em_printfout("%s:%d: Unassoc Query send failed errno=%d",__func__, __LINE__, errno);
+         return -1;
+     }
+ 
+-    em_printfout("%s:%d: Unassoc Query sent to Agent successfully", __func__, __LINE__);
++    em_printfout("Unassoc Query sent MID=%u attempt=%u", ntohs(cmdu->id), m_unassoc_sta_query_transmits);
+ 
+     em->m_unassoc_sta_query_msg_id = ntohs(cmdu->id);
+     em_printfout("%s:%d Stored query msg_id=%u",

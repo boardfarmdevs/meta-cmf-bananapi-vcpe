@@ -56,6 +56,18 @@ policy test double, not evidence that the controller reported a measurement.
 
 ## Opt-in Native Load Policy
 
+`configs/load-counter-guard-policy.yaml` additionally requires fresh native
+retry, TX-failure and RX-drop rates before load balancing; missing counters
+abstain and rates over explicit limits veto balancing. Signal rescue remains
+unchanged. See [RF coverage](../../doc/easymesh/reference/radio/rf-property-coverage.md)
+for the limits, decision reasons, demonstration rooms and focused validation.
+The checked-in `gen/demo/manifests/native-counter-guard-room-profile.json`
+operates `rf-asymmetric-ack` with this guard; select it with
+`gen/demo/room-demo interactive --mode recommend --profiling --manifest ...`
+after stopping the existing room service. The bounded native counter acceptance
+can replay real report windows through the shared guard without inventing a
+load target. Clear/pressure/recovery qualifies only that veto, not a load move.
+
 Default operation remains signal-only. Select `configs/load-aware-policy.yaml`
 for an experiment; live mode requires root in the VM and
 `--candidate-provider controller`. Its owned native IEEE 1905 receiver closes

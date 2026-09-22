@@ -1,8 +1,7 @@
 # Test a ready EasyMesh VM
 
-Use after the BPI images and named LXD appliance are built and its baseline
-check passes. Run `gen/tests/run-easymesh-suite.sh` from the **host layer checkout**,
-not inside the VM. It does not build images or create VMs.
+Run `gen/tests/run-easymesh-suite.sh` from the **host layer checkout** against a
+built, baseline-checked appliance. It never builds images or creates VMs.
 
 ## Quick start
 
@@ -28,12 +27,14 @@ an executed test failed. **Skipped is not passed.**
 | `browser` | Isolated Playwright viewer and WebUI browser tests | No |
 | `live` | VM health, hwsim, optimizer, candidate, medium and commanded steering | Yes |
 | `rooms` | Default readiness, every room, geometry backhaul and RF access | Yes |
+| `rf` | RF contracts and bounded room checks | Yes |
 | `soak` | Duration-bound P0 RF churn, health and recovery checks | Yes |
 
 Run selected sections instead of `all`:
 
 ```sh
 gen/tests/run-easymesh-suite.sh static webui browser
+gen/tests/run-easymesh-suite.sh rf --yes-act
 gen/tests/run-easymesh-suite.sh live rooms --yes-act
 gen/tests/run-easymesh-suite.sh soak --yes-act --soak-duration 900
 gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100

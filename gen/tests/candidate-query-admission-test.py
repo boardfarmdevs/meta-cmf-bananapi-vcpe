@@ -202,6 +202,15 @@ int main(int count, char **arguments) {
         assert(!admitted);
         assert(startup.owner == configuration && startup.clears == 0);
         assert(!orch.is_cmd_type_in_progress(&next_query));
+        startup.state = em_state_ctrl_configured;
+        assert(!orch.submit_command(query_for(startup)));
+        assert(startup.owner == configuration && startup.clears == 0);
+        assert(!orch.is_cmd_type_in_progress(&next_query));
+        healthy.state = em_state_ctrl_channel_query_pending;
+        assert(!orch.submit_command(query_for(healthy)));
+        assert(healthy.owner == nullptr && healthy.clears == 0);
+        assert(!orch.is_cmd_type_in_progress(&next_query));
+        healthy.state = em_state_ctrl_configured;
         auto *healthy_query = query_for(healthy);
         assert(orch.submit_command(healthy_query));
         orch.advance_commands(false);

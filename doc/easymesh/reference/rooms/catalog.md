@@ -2,6 +2,9 @@
 
 [Room reference](README.md) · [Acceptance](../testing/room-acceptance.md)
 
+[RF property coverage](../radio/rf-property-coverage.md) maps every supported,
+diagnostic and unsupported field to rooms and explicit policy/observation checks.
+
 These are expected features, not claims that every deployed backend passes.
 The deployed golden files determine exact roles, RF values and timing. Start
 paused, wait for load/roster/measurement readiness, then press Play at 1×.
@@ -24,6 +27,8 @@ are not a claim that a particular live run has passed.
 
 | World ID | Script | Clients / expected behavior |
 | --- | ---: | --- |
+| `rf-packet-size-counters` | 30 s | 10; equal offered UDP bitrate with 256/1200-byte payloads; native packet/byte windows and optional counter guard |
+| `rf-asymmetric-ack` | 30 s | 10; fixed strong downlink/weak uplink plus bounded ICMP; directional ACK observations and native counter abstention checks |
 | `fifty-client-counter-roam` | 36 s | 50; two walkers swap Ext-1/Ext-2 regions while 48 peers stay fixed; pause at 18 s, then return |
 | `band-upgrade-24-5` | 30 s | Same-AP 2.4/5 GHz upgrade/fallback; capability-limited reference client remains on 2.4 GHz, not BSSID-pinned |
 | `band-upgrade-5-6` | 30 s | Same-AP 5/6 GHz steering; inspect native BSSID, frequency and traffic |
@@ -42,7 +47,7 @@ are not a claim that a particular live run has passed.
 | `home-a-private-client-room-walk` | 240 s | 20; default narrated walker with nineteen reference clients |
 | `home-a-slow-walk-ten` | 60 s | 20; ten walkers plus ten static clients |
 | `home-b-slow-walk-ten` | 60 s | 20; changed AP geometry; compare serving APs without assuming adaptive backhaul |
-| `backhaul-branch-formation` | 24 s | 10; geometry-driven backhaul; roles 3/4 move behind a partition, creating relay opportunities through roles 1/2 |
+| `backhaul-branch-formation` | 24 s | 10; geometry-driven backhaul; a branch-divider wall gives roles 1/2 a 13 dB advantage over every alternative for roles 3/4; weak gateway paths remain |
 | `backhaul-parent-handover` | 24 s | 10; geometry-driven backhaul; role 3 and a nearby client move between upper/lower relay regions |
 | `backhaul-isolation-recovery` | 24 s | 10; geometry-driven backhaul; role 4 and a nearby client cross a 70 dB isolation wall and return |
 
