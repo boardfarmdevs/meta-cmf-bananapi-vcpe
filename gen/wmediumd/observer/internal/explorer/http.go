@@ -78,6 +78,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.assets.ServeHTTP(writer, request)
 		return
 	}
+	if request.URL.Path == "/api/v2/rf-catalog" {
+		copyRequest := request.Clone(request.Context())
+		copyRequest.URL.Path = "/ng/rf-catalog.json"
+		handler.assets.ServeHTTP(writer, copyRequest)
+		return
+	}
 	if !strings.HasPrefix(request.URL.Path, "/api/v2/") {
 		if !strings.HasPrefix(request.URL.Path, "/api/v1/") && request.URL.Path != "/metrics" {
 			http.NotFound(writer, request)

@@ -302,6 +302,12 @@ class RoomDemoServer:
                 elif parsed.path == "/api/demo/optimizer/safety":
                     self._json(optimizer_status() if optimizer_status is not None and viewer_mode == "interactive"
                                else {"enabled": False, "resume_supported": False})
+                elif parsed.path == "/api/demo/rf-catalog":
+                    from optimizer.rf_observations import property_catalog
+                    from wmdcfg.protocol_registry import protocol_registry
+                    self._json({**property_catalog(), "protocol": protocol_registry()})
+                elif parsed.path == "/api/demo/rf-observations":
+                    self._json(store.rf_observations())
                 elif parsed.path == "/api/demo/mesh-layout":
                     self._json({**store.mesh_layout(), "live": viewer_mode != "replay"})
                 elif parsed.path == "/api/demo/observer" and interactions is not None:

@@ -317,6 +317,11 @@ function argumentsFrom(argv) {
 }
 
 async function run(args) {
+  const audit = fs.readFileSync(path.join(__dirname, 'room-feature-guest-audit.py')).toString('base64');
+  await execFileAsync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', args.host,
+    'printf %s ' + quote(audit) + ' | base64 -d | lxc exec --mode non-interactive ' + quote(args.vm) +
+    ' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py'],
+  {timeout: 30000, maxBuffer: 1048576});
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   const directory = path.resolve(args.output);
   if (fs.existsSync(directory) && fs.readdirSync(directory).length) throw new Error('Use a new, empty output directory to preserve previous evidence');

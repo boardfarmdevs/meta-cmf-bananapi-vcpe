@@ -26,6 +26,22 @@ func TestIntegerPrecision(tester *testing.T) {
 	}
 }
 
+func TestRFCatalogDoesNotStartCollection(tester *testing.T) {
+	runtime, _ := New(Config{}, nil)
+	catalog := `{"schema":"easymesh.rf-properties.v1"}`
+	handler := NewHandler(runtime, fstest.MapFS{"ng/rf-catalog.json": &fstest.MapFile{Data: []byte(catalog)}}, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v2/rf-catalog", nil))
+	if response.Code != 200 || response.Body.String() != catalog || len(runtime.interests) != 0 {
+		tester.Fatal("catalog must be available without live collection or viewer interest")
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("POST", "/api/v2/rf-catalog", nil))
+	if response.Code != 405 {
+		tester.Fatal("catalog must remain read-only")
+	}
+}
+
 func TestRetiredUIAndReadiness(tester *testing.T) {
 	runtime, _ := New(Config{}, nil)
 	runtime.view = &View{LastSuccess: time.Now(), Snapshot: model.Snapshot{

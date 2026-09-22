@@ -1,6 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MediumModel, compare, counter, frameType, coalescePatch, keyOf } from './model.mjs';
+import { MediumModel, compare, counter, frameType, coalescePatch, keyOf, nativeLoadValue } from './model.mjs';
+
+test('native load hides stale or untrusted values without hiding valid zero', () => {
+  const now = Date.now();
+  const record = {source: 'native_ap_metrics', transport: 'ieee1905-ethernet',
+    observed_at: new Date(now).toISOString(), utilization: '0', station_count: '0'};
+  const inspection = {enabled: true, maximum_age_seconds: '5'};
+  assert.deepEqual(nativeLoadValue(record, inspection, true, now), {valid: true, utilization: 0, station_count: 0});
+  for (const changes of [{observed_at: new Date(now - 5001).toISOString()},
+    {observed_at: new Date(now + 1).toISOString()}, {source: 'fixture'}, {transport: 'unknown'}]) {
+    assert.equal(nativeLoadValue({...record, ...changes}, inspection, true, now).utilization, null);
+  }
+  for (const utilization of [null, true, 256, -1, '', 'NaN', '1.5', Infinity]) {
+    assert.equal(nativeLoadValue({...record, utilization}, inspection, true, now).utilization, null);
+  }
+  assert.equal(nativeLoadValue(record, {...inspection, error: 'closed'}, true, now).station_count, null);
+  assert.equal(nativeLoadValue(record, inspection, false, now).station_count, null);
+});
 
 const source = '02:00:00:00:00:01', destination = '02:00:00:00:00:02';
 function fixture(now = Date.now()) {

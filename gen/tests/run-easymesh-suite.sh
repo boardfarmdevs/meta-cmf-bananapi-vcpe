@@ -59,8 +59,8 @@ expected_clients=${EASYMESH_EXPECTED_CLIENTS:-$expected_clients}
     echo '--expected-clients must be a positive integer or auto' >&2
     exit 2
 }
-if [[ " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
-    echo 'rooms and soak change the live lab; rerun with --yes-act' >&2
+if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
+    echo 'live, rooms and soak change the live lab; rerun with --yes-act' >&2
     exit 2
 fi
 
@@ -75,7 +75,7 @@ room_url="http://$host_address:$EASYMESH_ROOM_DEMO_PORT"
 guest_repo=${EASYMESH_GUEST_REPO:-/home/easymesh/git/meta-cmf-bananapi-vcpe}
 room_service_was_active=false
 room_service_stopped=false
-room_service_masked=false
+room_service_guarded=false
 full_profile_reset=false
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 output_root=${output_root:-"$root/test-results/$stamp-$vm"}
@@ -102,6 +102,7 @@ run() {
     printf '\n== %s / %s ==\n%s\n' "$section" "$name" "$command" | tee "$log"
     if bash -o pipefail -c "$command" 2>&1 | tee -a "$log"; then status=passed; else status=failed; fi
     record "$section" "$name" "$status" "$started" "$log" "$command"
+    [[ $status == passed ]]
 }
 
 skip() {
@@ -113,6 +114,7 @@ skip() {
 }
 
 have_command() { command -v "$1" >/dev/null 2>&1; }
+have_modern_node() { have_command node && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; }
 
 webui_static_dir() {
     if [[ -n ${WEBUI_STATIC_DIR:-} && -f $WEBUI_STATIC_DIR/script.js ]]; then
@@ -125,7 +127,10 @@ webui_static_dir() {
 
 prepare_browser() {
     local tools=$root/.cache/easymesh-browser-tools chromium
-    if ! have_command node || ! have_command npm; then return 1; fi
+    if ! have_modern_node || ! have_command npm; then
+        echo 'Browser tests require Node 22+ and npm on PATH.' >&2
+        return 1
+    fi
     if ! node -e "require.resolve('playwright-core')" >/dev/null 2>&1; then
         if ! "$install_browser"; then return 1; fi
         npm install --prefix "$tools" playwright
@@ -179,20 +184,22 @@ select_room_ssh_host() {
 }
 
 restore_room_service() {
-    if ! "$room_service_stopped" && ! "$room_service_masked"; then return 0; fi
-    room_service_stopped=false
-    if "$room_service_masked"; then
-        room_service_masked=false
-        lxc exec "$vm" -- systemctl unmask --runtime easymesh-room-demo.service || true
+    if ! "$room_service_stopped" && ! "$room_service_guarded"; then return 0; fi
+    if "$room_service_guarded"; then
+        lxc exec "$vm" -- bash -s -- release < "$root/gen/tests/lib/suite-room-guard.sh" || return
+        room_service_guarded=false
     fi
     if "$room_service_was_active"; then
         printf 'Restoring easymesh-room-demo.service.\n'
-        lxc exec "$vm" -- systemctl reset-failed easymesh-room-demo.service
-        lxc exec "$vm" -- systemctl start easymesh-room-demo.service
+        lxc exec "$vm" -- systemctl reset-failed easymesh-room-demo.service || return
+        lxc exec "$vm" -- systemctl start easymesh-room-demo.service || return
     fi
+    room_service_stopped=false
 }
 
-trap 'status=$?; restore_room_service || true; exit "$status"' EXIT INT TERM
+trap 'status=$?; trap - EXIT; restore_room_service || status=1; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_for_live_clients() {
     local expected=$1 actual attempt
@@ -240,18 +247,28 @@ prepare_full_client_profile() {
             room_service_was_active=true
         fi
         printf 'Isolating the shared 100-client profile from easymesh-room-demo.service.\n'
-        lxc exec "$vm" -- systemctl mask --runtime easymesh-room-demo.service
-        room_service_masked=true
-        lxc exec "$vm" -- systemctl stop easymesh-room-demo.service || true
+        lxc exec "$vm" -- bash -s -- acquire < "$root/gen/tests/lib/suite-room-guard.sh" || return
+        room_service_guarded=true
+        lxc exec "$vm" -- systemctl stop easymesh-room-demo.service || return
         room_service_stopped=true
     fi
     if ! "$full_profile_reset"; then
         printf 'Reconstructing the clean 100-client lab state for live qualification.\n'
-        lxc exec "$vm" -- systemctl restart easymesh-lab.service
+        lxc exec "$vm" -- systemctl restart easymesh-lab.service || return
         full_profile_reset=true
     fi
     wait_for_live_clients "$expected" || return
     archive_rebuilt_room_recovery "$expected"
+}
+
+qualify_client_profile() {
+    local section=$1 expected=$2 started log outcome
+    started=$(date +%s)
+    log=$output_root/logs/"$section-client-profile.log"
+    if prepare_full_client_profile "$expected" > "$log" 2>&1; then outcome=passed; else outcome=failed; fi
+    cat "$log"
+    record "$section" client-profile "$outcome" "$started" "$log" "establish $expected clients with exclusive room guard"
+    [[ $outcome == passed ]]
 }
 
 lab_client_count() {
@@ -273,7 +290,7 @@ run_static() {
     else
         skip static python 'install python3 and pytest for Python and documentation tests'
     fi
-    if have_command node; then
+    if have_modern_node; then
         run static console-ng-model "cd '$root' && node --test gen/wmediumd/observer/web/ng/model.test.mjs"
         for test in "$root"/gen/tests/viewer-*-test.js "$root"/gen/tests/test-*.js "$root"/gen/tests/fullscreen-control-test.js "$root"/gen/tests/signal-meter-test.js; do
             case $(basename "$test") in
@@ -282,13 +299,13 @@ run_static() {
             run static "$(basename "${test%.js}")" "cd '$root' && node '$test'"
         done
     else
-        skip static node-units 'node is not installed'
+        skip static node-units 'Node 22+ is required on PATH'
     fi
 }
 
 run_webui() {
     local static
-    have_command node || { skip webui node 'node is not installed'; return; }
+    have_modern_node || { skip webui node 'Node 22+ is required on PATH'; return; }
     static=$(webui_static_dir)
     [[ -n $static && -f $static/script.js && -f $static/room-topology.js && -f $static/steering-cues.js ]] || {
         skip webui artifact 'set WEBUI_STATIC_DIR to the built unified-wifi-mesh static directory'; return;
@@ -330,11 +347,14 @@ run_live() {
     prepare_lab || { skip live prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip live client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for live checks.\n' "$clients"
-    prepare_full_client_profile "$clients" || {
-        skip live client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
+    qualify_client_profile live "$clients" || {
+        skip live dependents "failed to establish $clients live clients; see client-profile log"
         return
     }
-    run live vm-check "cd '$root' && EASYMESH_LXD_NAME='$vm' EASYMESH_WEBUI_PORT='$EASYMESH_WEBUI_PORT' WMEDIUMD_CONSOLE_PORT='$WMEDIUMD_CONSOLE_PORT' EASYMESH_ROOM_DEMO_PORT='$EASYMESH_ROOM_DEMO_PORT' gen/vm/lxd/build.sh check"
+    run live vm-check "cd '$root' && EASYMESH_LXD_NAME='$vm' EASYMESH_WEBUI_PORT='$EASYMESH_WEBUI_PORT' WMEDIUMD_CONSOLE_PORT='$WMEDIUMD_CONSOLE_PORT' EASYMESH_ROOM_DEMO_PORT='$EASYMESH_ROOM_DEMO_PORT' gen/vm/lxd/build.sh check" || {
+        skip live dependents 'VM provenance/baseline check failed; do not qualify a different or unhealthy deployment'
+        return
+    }
     run live health "$(guest_command "HEALTH_EXPECT_CLIENTS='$clients' bash gen/tests/health-audit.sh")"
     run live hwsim-profiles "$(guest_command 'bash gen/tests/verify-hwsim-profile-uniqueness.sh')"
     optimizer_policy='/tmp/easymesh-optimizer-live-policy.yaml'
@@ -342,6 +362,7 @@ run_live() {
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
     run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
+    run live steering-matrix "$(guest_command 'bash gen/tests/steering-matrix.sh 1 --ssid private_ssid && bash gen/tests/steering-matrix.sh 1 --ssid iot_ssid')"
 }
 
 run_rooms() {
@@ -352,12 +373,16 @@ run_rooms() {
         skip rooms ssh "SSH host $ssh_host must execute 'lxc exec $vm' without a password"
         return
     fi
+    run rooms guest-audit "lxc exec --mode non-interactive '$vm' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py < '$root/gen/tests/room-feature-guest-audit.py'" || {
+        skip rooms dependents 'Could not install the native guest audit; room qualification cannot proceed'
+        return
+    }
     run rooms default-readiness "cd '$root' && python3 gen/tests/room-final-readiness.py --room-url '$room_url' --require-absolute-best --output '$output_root/default-readiness'"
     run rooms catalog "cd '$root' && node gen/tests/room-feature-acceptance.js --yes-act --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --worlds '$worlds' --output '$output_root/catalog'"
     run rooms geometry "cd '$root' && node gen/tests/room-backhaul-features.js --yes-act true --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --output '$output_root/geometry'"
     run rooms rf-hover "cd '$root' && node gen/tests/webui-rf-hover-browser-test.js '$webui_url' '$output_root/rf-hover'"
+    run rooms rf-access "cd '$root' && python3 gen/tests/rf-access-smoke.py --room-url '$room_url' --output '$output_root/rf-access.json'"
     run rooms world-switch "$(guest_command "python3 gen/tests/room-world-switch-smoke.py --yes-act --all-worlds --output '$guest_repo/test-results-world-switch-$stamp'")"
-    run rooms steering-matrix "$(guest_command 'bash gen/tests/steering-matrix.sh 1 --ssid private_ssid && bash gen/tests/steering-matrix.sh 1 --ssid iot_ssid')"
     run rooms restore-default "$(guest_command 'python3 gen/tests/room-world-switch-smoke.py --yes-act --world home-a-private-client-room-walk --skip-presence --output /tmp/easymesh-default-restore')"
 }
 
@@ -366,8 +391,8 @@ run_soak() {
     prepare_lab || { skip soak prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip soak client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for P0 churn soak.\n' "$clients"
-    prepare_full_client_profile "$clients" || {
-        skip soak client-profile "the stopped room service did not establish $clients live clients within 120 seconds"
+    qualify_client_profile soak "$clients" || {
+        skip soak dependents "failed to establish $clients live clients; see client-profile log"
         return
     }
     run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
@@ -387,6 +412,17 @@ for section_group in 'static webui browser rooms' 'live soak'; do
         esac
     done
 done
+
+if "$room_service_stopped" || "$room_service_guarded"; then
+    cleanup_started=$(date +%s)
+    if restore_room_service > "$output_root/logs/cleanup-room-service.log" 2>&1; then
+        cleanup_result=passed
+    else
+        cleanup_result=failed
+    fi
+    cat "$output_root/logs/cleanup-room-service.log"
+    record cleanup room-service "$cleanup_result" "$cleanup_started" "$output_root/logs/cleanup-room-service.log" 'restore prior room service state'
+fi
 
 python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" <<'PY'
 import json

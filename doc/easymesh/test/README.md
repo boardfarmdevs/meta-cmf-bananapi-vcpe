@@ -1,15 +1,13 @@
 # Test a ready EasyMesh VM
 
-Use this guide after the BPI images and named LXD appliance have been built and
-the appliance baseline check passes. It does not build an image or create a VM.
-The top-level runner is `gen/tests/run-easymesh-suite.sh`; run it from the layer
-checkout, not from inside the appliance.
+Use after the BPI images and named LXD appliance are built and its baseline
+check passes. Run `gen/tests/run-easymesh-suite.sh` from the **host layer checkout**,
+not inside the VM. It does not build images or create VMs.
 
 ## Quick start
 
-Set the name used when the appliance was built, then run the complete ordered
-qualification. The `all` profile includes room mutations and the duration-bound
-P0 churn soak, so it requires an explicit acknowledgement.
+Select the existing appliance. `all` includes room mutations and P0 churn soak,
+requiring `--yes-act`:
 
 ```sh
 cd /path/to/meta-cmf-bananapi-vcpe
@@ -17,10 +15,9 @@ export EASYMESH_LXD_NAME=my-lab
 gen/tests/run-easymesh-suite.sh all --yes-act
 ```
 
-It creates a timestamped directory below `test-results/`. Each command has its
-own complete log; `results.tsv` is a compact scorecard and `summary.json` is a
-machine-readable result. A nonzero exit status means at least one executed test
-failed. A skipped test is recorded separately and is not a pass.
+Results go into timestamped `test-results/` directories: per-command logs,
+`results.tsv` scorecard and machine-readable `summary.json`. Nonzero exit means
+an executed test failed. **Skipped is not passed.**
 
 ## Sections
 
@@ -29,11 +26,11 @@ failed. A skipped test is recorded separately and is not a pass.
 | `static` | Documentation, Python unit and source-contract tests | No |
 | `webui` | Built EasyMesh WebUI JavaScript unit tests | No |
 | `browser` | Isolated Playwright viewer and WebUI browser tests | No |
-| `live` | VM health, hwsim, optimizer, candidate and medium checks | Bounded traffic only |
-| `rooms` | Default readiness, every room, geometry backhaul and steering | Yes |
+| `live` | VM health, hwsim, optimizer, candidate, medium and commanded steering | Yes |
+| `rooms` | Default readiness, every room, geometry backhaul and RF access | Yes |
 | `soak` | Duration-bound P0 RF churn, health and recovery checks | Yes |
 
-Run one or several sections instead of `all`, for example:
+Run selected sections instead of `all`:
 
 ```sh
 gen/tests/run-easymesh-suite.sh static webui browser
@@ -42,71 +39,89 @@ gen/tests/run-easymesh-suite.sh soak --yes-act --soak-duration 900
 gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100
 ```
 
-The default soak is 43,200 seconds (12 hours). A shorter duration is a
-shakedown, not long-duration acceptance.
+Default soak: **43,200 seconds (12 hours)**. Shorter runs are shakedowns,
+not long-duration acceptance.
 
-The runner counts provisioned `wlan-client` containers inside the appliance and
-uses that value for the health, optimizer, and P0 checks. The optimizer receives
-a temporary matching policy, so the checked-in 20-client development default is
-not changed. Override the detected profile with `--expected-clients COUNT` (or
-`EASYMESH_EXPECTED_CLIENTS`) when intentionally testing a different roster.
+The runner detects provisioned `wlan-client` containers for health, optimizer
+and P0 checks, using a temporary optimizer policy without changing checked-in
+defaults. Override with `--expected-clients COUNT` or `EASYMESH_EXPECTED_CLIENTS`.
 
-For the fixed 100-client profile, the runner executes room checks first, then
-runtime-masks and stops the room service once, waits up to two minutes for 100
-live controller clients, and retains that state through all live and soak
-checks. Before the first such check it reconstructs the clean full roster; this
-normally takes the same bounded cold-start time as a VM restart. It restores
-the prior room-service state once when the suite exits, including after a
-failure or interruption. No room-selection pre-step is required; do not operate
-the room while that profile is active.
+For 100 clients, room checks run first. The runner then guards/stops the
+room service, reconstructs the full roster (VM-restart-scale cold-start time),
+and waits up to two minutes for 100 live controller clients. This state persists
+through all live/soak checks. The prior room-service state is restored once at
+exit, including failure/interruption. No room-selection pre-step is needed;
+**do not operate the room during these checks.**
 
-A clean full-roster reconstruction supersedes any unfinished room RF journal.
-After the reconstructed lab passes its in-guest baseline audit, the runner
-archives that journal and a checksum receipt in
-`/home/easymesh/easymesh-evidence/recovery-archives/` before restarting the
-room service. It never removes a journal before the clean-lab audit succeeds.
+Only after the reconstructed lab passes its baseline audit, the runner archives
+any superseded room RF journal and checksum receipt under
+`/home/easymesh/easymesh-evidence/recovery-archives/`. It restarts the room only
+after all native live/soak work. Failed audits never remove the journal.
+
+The guard is a runtime systemd condition, not a runtime mask: an installed
+`/etc/systemd/system` unit can outrank a mask under `/run`. A second suite
+cannot acquire the same guard. Restoration failures count as failures.
+Commanded steering never runs concurrently with room-owned RF generations.
+
+For a short **GET-only** RF check, without rebuilding or stopping the room:
+
+```sh
+python3 gen/tests/rf-access-smoke.py \
+  --room-url "http://${EASYMESH_HOST_ADDRESS:-127.0.0.1}:$EASYMESH_ROOM_DEMO_PORT" \
+  --output "test-results/rf-access-$(date -u +%Y%m%dT%H%M%SZ).json"
+```
+
+This checks access/freshness, not room convergence or new RF physics.
+Use `--require-backhaul-load` to require fresh native utilization on every
+reported wireless backhaul hop; unverified context fails.
 
 ## Prerequisites
 
-The host needs `python3`, `pytest`, `node`, `npm`, `lxc`, `ssh`, `curl`, and
-access to the named appliance. The runner derives proxy ports from the lab name;
-set `EASYMESH_HOST_ADDRESS` only when the proxies are not reachable through
-`127.0.0.1`.
+Host tools: `python3`, `pytest`, Node 22+, `npm`, `lxc`, `ssh`, `curl`, plus appliance
+access. Proxy ports derive from the lab name. Builds normally bind proxies to
+the LAN address, not loopback. Inspect
+`lxc config device show "$EASYMESH_LXD_NAME"` and export its `listen` host IP
+as `EASYMESH_HOST_ADDRESS` when `127.0.0.1` cannot reach them.
 
-WebUI unit and fixture tests require the static directory from the completed
-controller image build. Point `WEBUI_STATIC_DIR` at the directory containing
-`script.js`, `room-topology.js`, and `steering-cues.js`:
+Check Console NG before the suite stops the room service. `lab-config.sh`
+sets ports, not the host address:
+
+```sh
+source doc/easymesh/build/scripts/lab-config.sh "$EASYMESH_LXD_NAME"
+python3 gen/wmediumd/observer/check-ready.py \
+  --url "http://${EASYMESH_HOST_ADDRESS:-127.0.0.1}:$WMEDIUMD_CONSOLE_PORT" \
+  --require-room --require-survey
+```
+
+WebUI tests need the completed controller build's static directory containing
+`script.js`, `room-topology.js` and `steering-cues.js`:
 
 ```sh
 export WEBUI_STATIC_DIR=/path/to/unified-wifi-mesh/static
 ```
 
-Browser and room tests require Playwright plus a compatible Chromium. Reuse an
-existing installation with `NODE_PATH`, `PLAYWRIGHT_MODULE`, and
-`CHROMIUM_PATH`, or allow a per-checkout installation and browser download:
+Browser/room tests need Playwright and compatible Chromium. Reuse
+`NODE_PATH`, `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH`, or install per checkout:
 
 ```sh
 gen/tests/run-easymesh-suite.sh browser --install-browser-deps
 ```
 
-The room catalog and geometry tests run browser automation locally and use SSH
-to invoke `lxc exec` on the LXD host. For a local appliance, ensure this works
-without a password first:
+Room tests automate browsers locally and invoke `lxc exec` through SSH.
+Verify passwordless access to the LXD host:
 
 ```sh
 ssh localhost true
 ```
 
-Set `EASYMESH_SSH_HOST` when the LXD host has another reachable SSH name. The
-published-viewer browser test is optional; set `PUBLIC_VIEWER_URL` to include
-it. Absent browser assets, published URL, or SSH access are shown as skips in
-the scorecard.
+Override SSH destination with `EASYMESH_SSH_HOST`. Set `PUBLIC_VIEWER_URL` for
+the optional published-viewer test. Missing browser assets, URL or SSH access
+are recorded as skips.
 
 ## Scope and safety
 
-The runner restores the default room after its room section. Do not run another
-room controller, optimizer experiment, or manual traffic test concurrently.
-It deliberately excludes `scale-soak-campaign.sh`, `p0-cold-reconstruction.sh`,
-and `room-recovery-smoke.py`: those reprovision the lab, rebuild the appliance,
-or contain a different fixed deployment assumption. Run those only from their
-specific procedures after preserving this suite's evidence.
+The room section restores the default room. Do not run concurrent room,
+optimizer or manual traffic experiments. Excluded scripts:
+`scale-soak-campaign.sh`, `p0-cold-reconstruction.sh`, `room-recovery-smoke.py`.
+They reprovision, rebuild or assume another deployment; preserve evidence and
+follow their separate procedures.

@@ -1,6 +1,6 @@
 import { ObserverClient } from './client.mjs';
 import { MediumScene } from './scene.mjs';
-import { signalColor, counter, frameType, fresh, keyOf, coalescePatch } from './model.mjs';
+import { signalColor, counter, frameType, fresh, keyOf, coalescePatch, nativeLoadValue } from './model.mjs';
 
 const element = id => document.getElementById(id);
 const node = (tag, text, className) => { const result = document.createElement(tag); if (text != null) result.textContent = text; if (className) result.className = className; return result; };
@@ -14,6 +14,9 @@ let data = {}, result = null, selection = null, tab = 'rf', frozen = false, serv
 let scrollIndex = 0, lastSelectionKey = '', history = [], lastHistory = '', toastTimer;
 let selectionControlsSignature = '';
 let pendingOptions = false;
+let rfCatalog = null;
+fetch('/api/v2/rf-catalog').then(response => response.ok ? response.json() : null)
+  .then(value => { rfCatalog = value; }).catch(() => {});
 const worker = new Worker('/ng/worker.mjs', { type: 'module' });
 const client = new ObserverClient();
 const scene = new MediumScene(element('scene'), select);
@@ -187,6 +190,7 @@ function renderInspector() {
 }
 function renderRF(host, radio, peer, frequency, key) {
   rfGuide(host, 'directed-snr');
+  if (rfCatalog) raw(host, 'Shared RF property catalog · support is not policy use', rfCatalog);
   properties(host, [['Radio', radio?.label], ['Room presence', radio?.presence], ['Observed association', radio?.ownership?.available ? radio.ownership.data.evidence : 'Unavailable'], ['Owner radio', radio?.ownership?.data?.owner], ['Ownership fetched', radio?.ownership ? age(radio.ownership.observed_at) : 'not requested']]);
   if (radio?.presence === 'room-excluded') {
     notice(host, 'This client remains a bound hwsim radio. Room exclusion requests low-SNR RF gating plus client disconnection; it does not delete a container or prove RF silence.');
@@ -262,17 +266,38 @@ function renderLoad(host, radio, frequency) {
   const records = (native?.bss_loads || []).filter(row => {
     const context = aliases.get(row.bssid);
     const matched = Boolean(context) || row.radio_id === radio?.mac || (row.role && row.role === radio?.roleState?.role);
-    return matched && (!frequency || !Number(context?.frequency_mhz) || Number(context.frequency_mhz) === frequency);
+    const observedFrequency = Number(row.frequency_mhz || context?.frequency_mhz);
+    return matched && (!frequency || !observedFrequency || observedFrequency === frequency);
   });
   if (!records.length) notice(host, 'No cached native BSS-load record correlated to this radio. No AP query or packet capture is triggered by this panel.');
   for (const record of records) {
     const context = aliases.get(record.bssid);
-    properties(host, [['Native channel / observed BSSID frequency', `${record.channel ?? 'unknown'} / ${Number(context?.frequency_mhz) ? `${context.frequency_mhz} MHz` : 'unverified; not necessarily the selected frequency'}`]]);
-    const byte = record.channel_utilization ?? record.utilization;
-    const reportAge = Date.now() - Date.parse(record.observed_at || '');
-    const current = result?.roomValid && Number.isFinite(reportAge) && reportAge < Number(native?.maximum_age_seconds || 30) * 1000;
-    properties(host, [['BSSID', record.bssid], ['Native report freshness', current ? age(record.observed_at) : 'stale / unknown'], ['Channel utilization byte', byte], ['Byte / 255', byte == null ? 'Unavailable' : `${decimal(Number(byte) * 100 / 255)}%`], ['Station count', record.station_count], ['Source / transport', `${record.source || 'unknown'} / ${record.transport || 'unknown'}`], ['Epoch', record.epoch]]);
+    const observedFrequency = Number(record.frequency_mhz || context?.frequency_mhz);
+    properties(host, [['Native channel / observed BSSID frequency', `${record.channel ?? 'unknown'} / ${observedFrequency ? `${observedFrequency} MHz` : 'unverified; not necessarily the selected frequency'}`]]);
+    const sample = nativeLoadValue(record, native, result?.roomValid);
+    if (record.context_state === 'unverified') notice(host, 'Fresh native BSSID/device report; radio/channel join unverified. Not policy evidence.');
+    const byte = sample.utilization;
+    properties(host, [['BSSID', record.bssid], ['Native report freshness', sample.valid ? age(record.observed_at) : 'stale / unknown'], ['Channel utilization byte', byte], ['Byte / 255', byte == null ? 'Unavailable' : `${decimal(Number(byte) * 100 / 255)}%`], ['Station count', sample.station_count], ['Source / transport', `${record.source || 'unknown'} / ${record.transport || 'unknown'}`], ['Epoch', record.epoch]]);
   }
+  if (native) raw(host, 'Shared RF observations · not decision-used values', native.observations || native);
+  const backhaul = native?.backhaul?.paths?.find(row => row.role === radio?.roleState?.role);
+  if (backhaul) {
+    heading(host, 'Native backhaul path · inspection only');
+    const seconds = (Date.now() - Date.parse(backhaul.observed_at)) / 1000;
+    const validPath = result?.roomValid && backhaul.state === 'valid' && seconds >= 0 && seconds <= 5;
+    properties(host, [['Actual path', validPath ? backhaul.path.join(' → ') : 'Unavailable / stale'],
+      ['Wireless hops', validPath ? backhaul.wireless_hops : null]]);
+    if (validPath) for (const link of backhaul.links || []) {
+      const value = record => {
+        const elapsed = (Date.now() - Date.parse(record?.observed_at)) / 1000;
+        return record?.state === 'valid' && elapsed >= 0 && elapsed <= 5 ? `${record.value} ${record.unit}` : 'Unavailable';
+      };
+      properties(host, [['Hop', `${link.role} → ${link.parent_role}`], ['Frequency MHz', link.frequency_mhz],
+        ['Native signal', value(link.signal)], ['AP utilization', value(link.utilization)], ['Backhaul traffic', value(link.traffic)]]);
+    }
+    notice(host, 'Same-frequency hops may contend. Load is not additive; this explanation neither estimates capacity nor changes steering.');
+  }
+  if (native?.error) notice(host, native.error);
   heading(host, 'Advertised beacon BSS Load');
   let advertised = false;
   for (const [key, detail] of Object.entries(data.details || {})) {

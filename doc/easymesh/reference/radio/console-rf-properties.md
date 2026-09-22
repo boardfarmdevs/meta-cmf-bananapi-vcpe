@@ -10,6 +10,52 @@ the console location, and **Boundary** explains what the observation cannot
 prove. Configured inputs, medium outcomes, driver surveys, native reports and
 controller decisions are different evidence; missing or stale is never zero.
 
+## Shared RF observations
+
+The room's **RF inspector → RF property catalog** and Console NG's **RF**
+details use the same generated property definitions: scope, units, source
+category, activation requirements and potential policy usage. Definitions are
+not proof that a running feature is enabled. Actual modes remain in Services.
+
+The room publishes native BSS load and client activity from the existing
+receiver independently of candidate queries, coalesced to at most two updates
+per second. No browser read starts a scan, AP query or RF write. The collector
+does not depend on Console NG or an open browser. Load-aware steering remains
+opt-in; **Optimizer decision** shows the historical values actually used,
+not the latest inspection sample.
+
+- Room `GET /api/demo/rf-catalog` returns property and wire-allocation metadata.
+- Room `GET /api/demo/rf-observations` returns the cached inspection with an
+  `easymesh.rf-observations.v1` envelope. Records carry units, identity,
+  provider epoch, source/transport, receipt time, age and explicit validity.
+  This normalized projection is built from cached rows on demand, outside
+  the event lock; live events retain compact rows rather than repeated metadata.
+- Room `GET /api/demo/mesh-layout` and `/api/demo/observer` carry the same
+  AP-load projection for topology and Console NG; they omit client-activity
+  records to keep these frequent reads bounded.
+- Console `GET /api/v2/rf-catalog` serves embedded metadata without collection;
+  `/api/v2/overview` exposes the existing cached room source. Rebuild the
+  Console binary after changing embedded assets.
+
+Reports expire after five seconds. A fresh native BSSID/device report can
+remain visible while the inventory join is unavailable: radio, channel and
+frequency then say **unverified**, and client activity is withheld. Such a
+report is not valid policy evidence. Native report windows are unknown; receipt
+time is not measurement duration. Native packet/byte/retry/error rates retain
+their actual counter-delta window. Valid zero remains zero; unknown is not zero.
+Record validity describes publication time; readers must also check current
+receipt age, including when replaying or inspecting a stopped session.
+
+Snapshots 1/2 remain compatible. The optimizer's `Snapshot.rf_observations()`
+accessor projects existing load/activity for inspection without changing
+policy state. The envelope does not yet unify signal, scans, modeled surveys
+or backhaul paths; their existing configured/native/decision views remain
+authoritative. The protocol registry reserves existing IDs, including detail
+opcode 17/capability bit 16; it allocates no new medium operation.
+
+This integration is implemented in both source trees; runtime deployment and
+room acceptance are separate gates. No current room-test result is claimed.
+
 ## Frequency, band and channel
 
 - **Model:** hwsim supplies the transmitting channel context. The patched
@@ -218,6 +264,27 @@ controller decisions are different evidence; missing or stale is never zero.
   or mismatched room instance is unknown, never automatically offline.
 
 ## Steering and properties not simulated
+
+### Native backhaul explanations
+
+The room RF inspector, topology node hover and Console NG Load tab share
+`easymesh.backhaul-observations.v1` under `rf_observations.backhaul`.
+They show the actual controller parent/path, wireless hops, frequency and
+fresh native signal/load where an exact parent-BSSID/device/context join exists.
+Missing parents, cycles, conflicting parents and stale topology invalidate the
+path. Retunes invalidate load joins until a new report arrives. Geometry and
+configured SNR never fill missing native measurements.
+
+RDK `/api/v1/bsses` now includes backhaul AP radio/channel identity. Only known
+AP-mode records qualify; station-mode copies cannot establish an AP context.
+This changes observation coverage, not client steering eligibility.
+
+Repeated same-frequency hops flag potential contention, not additive utilization
+or an inferred capacity/bottleneck score. Backhaul traffic remains unavailable
+until a qualified backhaul counter window exists; client traffic is not a
+substitute. These cached joins issue no additional native queries and never
+change optimizer ranking. Signal values without measurement timestamps remain
+unknown even when the topology itself was just polled.
 
 BTM/non-BTM actions, roaming, parent choice and band steering are native mesh
 or optimizer decisions, not RF properties invented by the observer. Use the

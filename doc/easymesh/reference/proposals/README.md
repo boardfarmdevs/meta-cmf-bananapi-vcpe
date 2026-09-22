@@ -6,11 +6,12 @@ Proposals are not current runtime capabilities. An accepted implementation
 belongs in its owning subsystem contract, not in an indefinitely growing plan.
 
 - [Future RF assessment and development plan](easymesh-rf-assessment-and-development-plan.md):
-  supplied 14 September 2026 plan, preserved in full; M0–M9 priorities,
-  common/RDK/prpl ownership, optimizer/viewer contracts and acceptance gates.
-  **Proposed, not implemented.** Its assessment is pinned to RDK commit
-  `a41216d`; deployed prpl was not independently inventoried. Start with M0
-  reconciliation rather than treating its capability table as current lab status.
+  the [current integration review](easymesh-rf-assessment-and-development-plan.md#current-integration-review)
+  prioritizes shared RF access and backhaul explanations before new physics.
+  It reviews the external feature summary without adopting its unverified
+  branches. The original M0–M9 plan remains below, historically pinned to
+  `a41216d`; its capability table is not current deployment evidence.
+  **Proposed work, not implemented.**
 - [Neighbor-network rooms](neighbor-rooms/design.md): preserved design and
   illustration from the supplied archive; discovery/contention fidelity levels,
   external AP actors and scenario acceptance gates. **Proposed, not implemented.**

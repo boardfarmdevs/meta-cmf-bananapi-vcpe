@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import re
 import time
 from urllib.request import urlopen
 
@@ -9,7 +10,12 @@ def fresh(report, seconds=5):
     if not report.get("available"):
         return False
     try:
-        stamp = datetime.fromisoformat(report["observed_at"].replace("Z", "+00:00"))
+        observed_at = re.sub(
+            r"\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)",
+            lambda match: "." + match.group(1)[:6].ljust(6, "0"),
+            report["observed_at"],
+        )
+        stamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
         return 0 <= (datetime.now(timezone.utc) - stamp).total_seconds() < seconds
     except (KeyError, ValueError, TypeError):
         return False

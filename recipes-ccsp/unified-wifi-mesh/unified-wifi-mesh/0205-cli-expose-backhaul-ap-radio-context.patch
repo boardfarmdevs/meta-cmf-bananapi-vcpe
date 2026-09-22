@@ -1,0 +1,24 @@
+Subject: [PATCH] cli: include native backhaul AP identity in BSS inventory
+
+Native AP metrics already contain backhaul BSSID reports. Hiding these APs
+from /bsses prevents observers from verifying their device, radio and channel.
+Include AP-mode entries from the existing controller tree, never station-mode
+copies or unknown modes. Identity and channel still come from the owning native
+radio; no load, capacity or candidate quality is inferred. Client candidate
+selection retains its independent fronthaul SSID filter.
+
+Upstream-Status: Pending
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3681,8 +3681,9 @@
+ 				bssid := strings.ToLower(getTreeValue(bss, "BSSID"))
+ 				ssid := getTreeValue(bss, "SSID")
+ 				haulType := getTreeValue(bss, "HaulType")
+-				if bssid == "" || bssid == "00:00:00:00:00:00" || ssid == "" ||
+-					strings.EqualFold(haulType, "Backhaul") || ssid == "mesh_backhaul" {
++				mode := getNetworkTreeByKey(bss, "VapMode")
++				modeKnown := mode != nil && C.get_node_type(mode) == C.em_network_node_data_type_number
++				if !isInventoryAP(bssid, ssid, getKeyIntValue(bss, "VapMode"), modeKnown) {
+ 					continue
+ 				}
+ 				if _, found := seen[bssid]; found {

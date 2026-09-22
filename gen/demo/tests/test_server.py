@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import socket
 import tempfile
 import unittest
@@ -86,6 +87,54 @@ class FakeInteractions:
 
 
 class ServerTests(unittest.TestCase):
+    def test_rf_endpoints_only_read_shared_cache_and_metadata(self):
+        payload = {"schema": "easymesh.rf-inspection.v2", "bss_loads": [], "client_activity": []}
+        self.store.publish_rf_observations(payload, 0, self.store.environment_epoch())
+        with patch.object(self.store, "current", side_effect=AssertionError("full state copied")):
+            with urllib.request.urlopen(self.base + "/api/demo/rf-observations") as response:
+                body = json.load(response)
+                backhaul = body.pop("backhaul")
+                self.assertEqual(backhaul["schema"], "easymesh.backhaul-observations.v1")
+                self.assertEqual(backhaul["paths"], [])
+                self.assertFalse(backhaul["decision_inputs"])
+                self.assertEqual(body, {**payload, "environment_epoch": self.store.environment_epoch()})
+            with urllib.request.urlopen(self.base + "/api/demo/rf-catalog") as response:
+                catalog = json.load(response)
+        self.assertEqual(catalog["schema"], "easymesh.rf-properties.v1")
+        self.assertEqual(catalog["protocol"]["opcodes"]["17"], "explorer_detail")
+
+    def test_shared_projection_omits_activity_and_preserves_native_record(self):
+        self.test_mesh_layout_is_a_read_only_small_projection()
+        load = {"bssid": "bss", "device_id": "mac-2", "utilization": 0, "station_count": 0}
+        record = {"property": "native_utilization", "scope": "bss", "value": 0,
+                  "identity": {"device_id": "mac-2", "bssid": "bss"}}
+        activity = {"property": "packets_per_second", "scope": "client-link", "value": 10,
+                    "identity": {"sta_mac": "client", "bssid": "bss"}}
+        payload = {"enabled": True, "bss_loads": [load], "observations": {
+            "schema": "easymesh.rf-observations.v1", "records": [record, activity]}}
+        self.store.publish_rf_observations(payload, 0, self.store.environment_epoch())
+        projected = self.store.mesh_layout()["rf_observations"]
+        self.assertEqual(projected["observations"]["records"], [record])
+        self.assertEqual(projected["bss_loads"][0]["utilization"], 0)
+        self.assertEqual(self.store.rf_observations()["observations"]["records"], [record, activity])
+
+    def test_rf_envelope_is_derived_only_on_demand_from_compact_cache(self):
+        stamp = datetime.now(timezone.utc).isoformat()
+        payload = {"schema": "easymesh.rf-inspection.v2", "published_at": stamp, "bss_loads": [
+            {"bssid": "bss", "device_id": "mac-2", "channel": 36, "band": 1,
+             "utilization": 0, "station_count": 0, "observed_at": stamp, "source": "native_ap_metrics"}]}
+        self.store.publish_rf_observations(payload, 0, self.store.environment_epoch())
+        inspection = self.store.rf_observations()
+        self.assertEqual(inspection["observations"]["records"][0]["value"], 0)
+        self.assertEqual(inspection["observations"]["records"][0]["identity"]["frequency_mhz"], 5180)
+        self.assertNotIn("observations", self.store.current()["rf_observations"])
+        self.assertNotIn("observations", self.store.current()["latest"]["rf.observations"]["payload"])
+        payload["bss_loads"][0]["observed_at"] = "2000-01-01T00:00:00Z"
+        self.store.publish_rf_observations(payload, 0, self.store.environment_epoch())
+        record = self.store.rf_observations()["observations"]["records"][0]
+        self.assertEqual(record["state"], "stale")
+        self.assertIsNone(record["value"])
+
     def test_mesh_layout_is_a_read_only_small_projection(self):
         self.store.emit("room.world.committed", 0, {"world": {
             "name": "layout", "duration_ms": 1000, "tick_ms": 100,

@@ -162,3 +162,18 @@ export class MediumModel {
       ].filter(value => value >= 2300 && value <= 7125))].sort((left, right) => left - right) };
   }
 }
+export function nativeLoadValue(record, inspection, roomValid, now = Date.now()) {
+  const age = (now - Date.parse(record?.observed_at || '')) / 1000;
+  const limit = Math.min(5, Number(inspection?.maximum_age_seconds) || 5);
+  const integer = (value, maximum) => {
+    if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) return null;
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 0 && number <= maximum ? number : null;
+  };
+  const valid = Boolean(roomValid && inspection?.enabled === true && !inspection.error &&
+    record?.source === 'native_ap_metrics' &&
+    ['ieee1905-ethernet', 'prpl-1905-broker', 'prpl-local-broker'].includes(record.transport) &&
+    Number.isFinite(age) && age >= 0 && age <= limit);
+  return {valid, utilization: valid ? integer(record.utilization, 255) : null,
+    station_count: valid ? integer(record.station_count, 65535) : null};
+}

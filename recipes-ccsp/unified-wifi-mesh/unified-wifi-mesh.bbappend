@@ -202,11 +202,13 @@ EASYMESH_CORE_PATCHES = " \
     file://0202-native-backhaul-root-admission.patch \
     file://0203-renew-native-backhaul-root-proof.patch \
     file://0204-report-client-steering-cancellation-state.patch \
+    file://0205-cli-expose-backhaul-ap-radio-context.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
 SRC_URI += "file://native_steering.go file://native_steering_test.go"
 SRC_URI += "file://native_http.go file://native_http_test.go"
+SRC_URI += "file://bss_inventory.go file://bss_inventory_test.go"
 SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go file://room-topology.js file://steering-cues.js"
 
 python do_patch_append() {
@@ -219,7 +221,7 @@ python do_patch_append() {
     for name in ("room-topology.js", "steering-cues.js", "room-name.js", "room-projection.js", "pane-divider.js", "pane-divider.css"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli/static", name))
-    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go"):
+    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli", name))
 }

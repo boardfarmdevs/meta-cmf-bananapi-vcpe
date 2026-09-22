@@ -1,12 +1,18 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
+const {chromium, selectors} = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
 const url = process.argv[2];
 const output = process.argv[3];
 const expectedRows = 6;
 
 (async () => {
+  await selectors.register('rf-device', () => ({
+    queryAll: (root, identity) => [...root.querySelectorAll('.nodes .node > image')]
+      .filter(image => String(image.__data__?.id).toLowerCase() === identity.toLowerCase()),
+    query: (root, identity) => [...root.querySelectorAll('.nodes .node > image')]
+      .find(image => String(image.__data__?.id).toLowerCase() === identity.toLowerCase()) || null,
+  }));
   const browser = await chromium.launch({headless: true,
     ...(process.env.CHROMIUM_PATH ? {executablePath: process.env.CHROMIUM_PATH} : {}),
     args: ['--no-sandbox']});
@@ -27,13 +33,10 @@ const expectedRows = 6;
     assert.equal(snapshot.rf_observations.enabled, true);
     assert.equal(snapshot.rf_observations.policy_enabled, false);
     assert.equal(snapshot.rf_observations.error, '');
-    await page.locator('.nodes .node > image').evaluateAll(images => {
-      for (const image of images) image.dataset.rfDevice = image.__data__.id;
-    });
     const results = [];
     for (const node of snapshot.nodes) {
-      const icon = page.locator('.nodes .node > image[data-rf-device="' + node.device_id + '"]');
-      await icon.hover({force: true});
+      const icon = page.locator('rf-device=' + node.device_id);
+      await icon.hover();
       await page.waitForFunction(() => /[0-9]+[.][0-9]+%/.test(document.querySelector('#custom-tooltip')?.textContent || ''));
       const text = await page.locator('#custom-tooltip').innerText();
       assert.match(text, /AP-reported BSS load/);
@@ -44,7 +47,20 @@ const expectedRows = 6;
       results.push({role: node.role, device_id: node.device_id, text});
     }
     await page.locator('#follow-room-layout').uncheck();
-    await page.locator('.nodes .node > image[data-rf-device="' + snapshot.nodes[0].device_id + '"]').hover({force: true});
+    const selectedIcon = page.locator('rf-device=' + snapshot.nodes[0].device_id);
+    const deadline = Date.now() + 30000;
+    let previousBounds = null, stableSince = Date.now(), settled = false;
+    while (Date.now() < deadline) {
+      const bounds = await selectedIcon.boundingBox();
+      if (!bounds || !previousBounds || Object.keys(bounds).some(key => Math.abs(bounds[key] - previousBounds[key]) > 0.5)) {
+        stableSince = Date.now();
+      }
+      previousBounds = bounds;
+      if (bounds && Date.now() - stableSince >= 2500) { settled = true; break; }
+      await page.waitForTimeout(100);
+    }
+    assert.ok(settled, 'AP icon did not settle after switching to manual layout');
+    await selectedIcon.hover();
     await page.waitForFunction(() => /[0-9]+[.][0-9]+%/.test(document.querySelector('#custom-tooltip')?.textContent || ''));
     await page.waitForTimeout(2200);
     assert.match(await page.locator('#custom-tooltip').innerText(), /[0-9]+\.[0-9]+%/);

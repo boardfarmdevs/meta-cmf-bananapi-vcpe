@@ -35,8 +35,8 @@ function optionsFrom(argv) {
 async function installGuestAudit(options) {
   const source = path.join(__dirname, 'room-feature-guest-audit.py');
   const encoded = fs.readFileSync(source).toString('base64');
-  const command = 'printf %s ' + shellQuote(encoded) + ' | base64 -d | lxc file push - ' +
-    shellQuote(options.vm + '/tmp/room-feature-guest-audit.py');
+  const command = 'printf %s ' + shellQuote(encoded) + ' | base64 -d | lxc exec --mode non-interactive ' +
+    shellQuote(options.vm) + ' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py';
   await execute('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', options.host, command],
     {timeout: 30000, maxBuffer: 1048576});
 }

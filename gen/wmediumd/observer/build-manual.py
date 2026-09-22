@@ -1,6 +1,8 @@
 from pathlib import Path
 import html
 import re
+import json
+import sys
 
 
 def inline(value):
@@ -62,6 +64,12 @@ def render(source):
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
+    sys.path[:0] = [str(here.parents[1] / "optimizer"), str(here.parent / "configurator")]
+    from optimizer.rf_observations import property_catalog
+    from wmdcfg.protocol_registry import protocol_registry
+    catalog = json.dumps({**property_catalog(), "protocol": protocol_registry()}, indent=2) + "\n"
+    (here / "web/ng/rf-catalog.json").write_text(catalog)
+    (here.parent / "configurator/worlds/viewer/rf-catalog.json").write_text(catalog)
     for document, filename in [
         ("guide/wmediumd-console-ng.md", "manual.html"),
         ("reference/radio/console-rf-properties.md", "rf-properties.html"),
