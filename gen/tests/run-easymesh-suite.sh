@@ -11,11 +11,12 @@ output_root=
 
 usage() {
     cat <<'EOF'
-usage: gen/tests/run-easymesh-suite.sh [all|static|webui|browser|live|rooms|rf|soak] [options]
+usage: gen/tests/run-easymesh-suite.sh [all|static|webui|browser|live|rooms|rf|rf-actions|soak] [options]
 
 Run one or more EasyMesh qualification sections. `all` runs every section,
 including the duration-bound soak, and requires --yes-act.
 The rf section runs focused RF contracts and two bounded new-room checks.
+The rf-actions section qualifies guarded native load steering, veto and rescue.
 
 Options:
   --yes-act                 Permit tests that change room RF or associations.
@@ -40,7 +41,7 @@ EOF
 
 while (($#)); do
     case "$1" in
-        all|static|webui|browser|live|rooms|rf|soak) sections+=("$1") ;;
+        all|static|webui|browser|live|rooms|rf|rf-actions|soak) sections+=("$1") ;;
         --yes-act) yes_act=true ;;
         --install-browser-deps) install_browser=true ;;
         --soak-duration) shift; soak_duration=${1:-} ;;
@@ -53,15 +54,15 @@ while (($#)); do
 done
 
 if ((${#sections[@]} == 0)); then sections=(all); fi
-if [[ " ${sections[*]} " == *' all '* ]]; then sections=(static webui browser live rooms soak); fi
+if [[ " ${sections[*]} " == *' all '* ]]; then sections=(static webui browser live rooms rf rf-actions soak); fi
 [[ "$soak_duration" =~ ^[1-9][0-9]*$ ]] || { echo '--soak-duration must be a positive integer' >&2; exit 2; }
 expected_clients=${EASYMESH_EXPECTED_CLIENTS:-$expected_clients}
 [[ "$expected_clients" == auto || "$expected_clients" =~ ^[1-9][0-9]*$ ]] || {
     echo '--expected-clients must be a positive integer or auto' >&2
     exit 2
 }
-if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' rf '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
-    echo 'live, rooms, rf and soak change the live lab; rerun with --yes-act' >&2
+if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || " ${sections[*]} " == *' rf '* || " ${sections[*]} " == *' rf-actions '* || " ${sections[*]} " == *' soak '* ]] && ! "$yes_act"; then
+    echo 'live, rooms, rf, rf-actions and soak change the live lab; rerun with --yes-act' >&2
     exit 2
 fi
 
@@ -324,6 +325,11 @@ run_browser() {
     for test in pane-divider-browser-test.js viewer-room-convergence-browser-test.js viewer-room-guide-browser-test.js viewer-sidebar-layout-test.js viewer-steering-resume-browser-test.js wmediumd-console-ng-browser-test.js; do
         run browser "${test%.js}" "cd '$root' && node gen/tests/$test"
     done
+    if have_command openssl && python3 -c 'import aiohttp' >/dev/null 2>&1; then
+        run browser remote-access "cd '$root' && node gen/tests/remote-access-browser-test.js"
+    else
+        skip browser remote-access 'install python3-aiohttp and openssl for the isolated HTTPS gateway fixture'
+    fi
     static=$(webui_static_dir)
     if [[ -n $static && -f $static/steering-cues.js ]]; then
         fixture=$(webui_browser_fixture "$static") || {
@@ -398,6 +404,16 @@ run_rf() {
     run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/wmediumd/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }
 
+run_rf_actions() {
+    local scenario destination
+    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/wmediumd/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || return
+    prepare_lab || { skip rf-actions prerequisites "LXD VM $vm or guest repository is unavailable"; return; }
+    for scenario in clear pressure rescue; do
+        destination="$guest_repo/test-results/rf-actions-$stamp-$scenario"
+        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/wmediumd/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --payload-bytes 1400 --counter-case '$scenario' --yes-change-lab --output '$destination'")" || return
+    done
+}
+
 run_soak() {
     local clients
     prepare_lab || { skip soak prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
@@ -410,7 +426,7 @@ run_soak() {
     run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
 }
 
-for section_group in 'static webui browser rooms rf' 'live soak'; do
+for section_group in 'static webui browser rooms rf rf-actions' 'live soak'; do
     for section in "${sections[@]}"; do
         [[ " $section_group " == *" $section "* ]] || continue
         printf '\n===== EasyMesh %s section =====\n' "$section"
@@ -421,6 +437,7 @@ for section_group in 'static webui browser rooms rf' 'live soak'; do
             live) run_live ;;
             rooms) run_rooms ;;
             rf) run_rf ;;
+            rf-actions) run_rf_actions ;;
             soak) run_soak ;;
         esac
     done

@@ -202,6 +202,7 @@ async function run(options) {
   async function load(id) {
     await roomPage.bringToFront();
     if (await roomPage.evaluate(() => Boolean(document.fullscreenElement))) await roomPage.locator('#roomFullscreen').click();
+    await roomPage.waitForFunction(() => !document.fullscreenElement);
     changed = true;
     const [response] = await Promise.all([
       roomPage.waitForResponse(response => response.url().endsWith('/api/demo/world/apply') && response.request().method() === 'POST', {timeout: 60000}),
@@ -212,6 +213,7 @@ async function run(options) {
     assert.equal(result.backhaul_rf_verified, true);
     await roomPage.waitForFunction(() => !document.getElementById('world').disabled, null, {timeout: 60000});
     await roomPage.locator('#roomFullscreen').click();
+    await roomPage.waitForFunction(() => document.fullscreenElement?.id === 'roomView');
     return result;
   }
 
@@ -256,6 +258,7 @@ async function run(options) {
     await topologyPage.locator('#topologyFullscreen').click();
     await roomPage.bringToFront();
     await roomPage.locator('#roomFullscreen').click();
+    await roomPage.waitForFunction(() => document.fullscreenElement?.id === 'roomView');
     for (const id of selectedRooms) {
       currentRoom = {id, samples: []};
       report.rooms.push(currentRoom);

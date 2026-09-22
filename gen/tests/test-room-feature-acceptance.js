@@ -4,12 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, kernelClientAudit} = require('./room-feature-acceptance.js');
 const harnessSource = fs.readFileSync(path.join(__dirname, 'room-feature-acceptance.js'), 'utf8');
+assert.match(harnessSource, /await room\.waitForFunction\(\(\) => document\.fullscreenElement\?\.id === 'roomView'\);\s*phase = 'playing';\s*await clickPlay\(\);/);
 assert.ok(harnessSource.includes('context.setDefaultTimeout(45000)'));
 assert.ok(harnessSource.includes("const renderer = args.renderer || 'swiftshader'"));
 assert.ok(harnessSource.includes("['--use-angle=vulkan', '--disable-software-rasterizer']"));
 assert.ok(harnessSource.includes("save('renderer.json', report.renderer)"));
 assert.match(harnessSource, /renderer === 'vulkan' &&[\s\S]*?swiftshader\|llvmpipe\|software/);
 assert.match(harnessSource, /async function loadWorld\(id\) \{\s*await room\.bringToFront\(\);/);
+assert.match(harnessSource, /async function exitRoomFullscreen\(\)[\s\S]*?await room\.waitForFunction\(\(\) => !document\.fullscreenElement\);/);
+assert.match(harnessSource, /phase = 'restore'; activeRoom = null;\s*try \{\s*await exitRoomFullscreen\(\);/);
 const screenshotSource = harnessSource.slice(harnessSource.indexOf('  async function screenshot(label)'),
   harnessSource.indexOf('  async function loadWorld(id)'));
 assert.match(screenshotSource, /await room\.bringToFront\(\);\s*await room\.screenshot/);

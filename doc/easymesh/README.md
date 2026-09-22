@@ -13,6 +13,7 @@ guide; the reference is for implementation details, not required reading.
 | Qualify a ready VM with static, browser, room and soak tests | [Test suite](test/README.md) |
 | First use | [Quickstart](guide/quickstart.md) |
 | Deploy, start, stop or recover | [Operations](guide/operations.md) |
+| Share a lab remotely with one timed user session | [Tailscale remote access](reference/deployment/remote-access.md) |
 | Understand the processes and radio model | [Architecture](concepts/architecture.md) |
 | Use the room and network topology | [Room manual](live-room-demo/README.md) |
 | Choose a demonstration | [Room catalog](reference/rooms/catalog.md) |

@@ -551,6 +551,11 @@ async function run(args) {
     await room.bringToFront();
     save(activeRoom.id + '-' + label + '.json', lastSample);
   }
+  async function exitRoomFullscreen() {
+    await room.bringToFront();
+    if (await room.evaluate(() => Boolean(document.fullscreenElement))) await room.locator('#roomFullscreen').click();
+    await room.waitForFunction(() => !document.fullscreenElement);
+  }
   async function loadWorld(id) {
     await room.bringToFront();
     await room.locator('#world').waitFor({state: 'visible'});
@@ -711,6 +716,7 @@ async function run(args) {
         await screenshot('loaded');
         await room.bringToFront();
         if (!await room.evaluate(() => Boolean(document.fullscreenElement))) await room.locator('#roomFullscreen').click();
+        await room.waitForFunction(() => document.fullscreenElement?.id === 'roomView');
         phase = 'playing';
         await clickPlay();
         const playStarted = performance.now();
@@ -756,7 +762,7 @@ async function run(args) {
       } catch (error) {
         activeRoom.errors.push({phase, message: error.stack});
       } finally {
-        if (await room.evaluate(() => Boolean(document.fullscreenElement)).catch(() => false)) await room.locator('#roomFullscreen').click().catch(() => {});
+        await exitRoomFullscreen().catch(error => activeRoom.errors.push({phase: 'fullscreen-exit', message: error.stack}));
         activeRoom.finished = new Date().toISOString();
         summarizeRoom(activeRoom);
         sampleOutput.end(); sampleOutput = null;
@@ -773,7 +779,7 @@ async function run(args) {
   } finally {
     phase = 'restore'; activeRoom = null;
     try {
-      if (await room.evaluate(() => Boolean(document.fullscreenElement)).catch(() => false)) await room.locator('#roomFullscreen').click();
+      await exitRoomFullscreen();
       if (token) {
         const [response] = await Promise.all([
           room.waitForResponse(response => worldApplyResponse(response, 'default'), {timeout: 45000}),

@@ -5,9 +5,10 @@
 **Status: Phases 0–2 and the bounded Phase 3 profile are qualified; Phase 4 is partially implemented.**
 The [supported profile](#124-implemented-phases-12-survey-and-native-bss-load)
 is legacy-rate, 20 MHz; optional visibility is not calibrated capacity or full DCF.
-Source baseline: `codex/0916-clean`, RDK `f0bac18`, prpl backport `02b5673`,
-plus local changes below. The operator RDK suite had 60 passes, eight failures
-and three skips. Bounded fixes/checks do not replace room requalification.
+Current development branch: `codex/0916-clean` in both repositories. The
+[property-to-room coverage and live gates](rf-property-coverage.md#native-load-action-qualification)
+separate implementation, measured behavior and remaining qualification failures.
+Bounded diagnostics do not replace clean-source release acceptance.
 
 See [Console NG properties](console-rf-properties.md),
 [integration priorities](../proposals/easymesh-rf-assessment-and-development-plan.md#current-integration-review),

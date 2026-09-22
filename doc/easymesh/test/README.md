@@ -1,7 +1,7 @@
 # Test a ready EasyMesh VM
 
-Run `gen/tests/run-easymesh-suite.sh` from the **host layer checkout** against a
-built, baseline-checked appliance. It never builds images or creates VMs.
+Run `gen/tests/run-easymesh-suite.sh` from the **host checkout** against an
+existing baseline-checked appliance.
 
 ## Quick start
 
@@ -28,6 +28,7 @@ an executed test failed. **Skipped is not passed.**
 | `live` | VM health, hwsim, optimizer, candidate, medium and commanded steering | Yes |
 | `rooms` | Default readiness, every room, geometry backhaul and RF access | Yes |
 | `rf` | RF contracts and bounded room checks | Yes |
+| `rf-actions` | Native guarded load BTM, retry-pressure veto and weak-signal rescue | Yes |
 | `soak` | Duration-bound P0 RF churn, health and recovery checks | Yes |
 
 Run selected sections instead of `all`:
@@ -35,6 +36,7 @@ Run selected sections instead of `all`:
 ```sh
 gen/tests/run-easymesh-suite.sh static webui browser
 gen/tests/run-easymesh-suite.sh rf --yes-act
+gen/tests/run-easymesh-suite.sh rf-actions --yes-act
 gen/tests/run-easymesh-suite.sh live rooms --yes-act
 gen/tests/run-easymesh-suite.sh soak --yes-act --soak-duration 900
 gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100
@@ -43,9 +45,10 @@ gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100
 Default soak: **43,200 seconds (12 hours)**. Shorter runs are shakedowns,
 not long-duration acceptance.
 
-The runner detects provisioned `wlan-client` containers for health, optimizer
-and P0 checks, using a temporary optimizer policy without changing checked-in
-defaults. Override with `--expected-clients COUNT` or `EASYMESH_EXPECTED_CLIENTS`.
+See [RF action qualification](../reference/radio/rf-property-coverage.md#native-load-action-qualification).
+
+Client count is auto-detected; override with `--expected-clients COUNT` or
+`EASYMESH_EXPECTED_CLIENTS`. Checked-in policies remain unchanged.
 
 For 100 clients, room checks run first. The runner then guards/stops the
 room service, reconstructs the full roster (VM-restart-scale cold-start time),
@@ -78,8 +81,8 @@ reported wireless backhaul hop; unverified context fails.
 
 ## Prerequisites
 
-Host tools: `python3`, `pytest`, Node 22+, `npm`, `lxc`, `ssh`, `curl`, plus appliance
-access. Proxy ports derive from the lab name. Builds normally bind proxies to
+Host tools: `python3`, `pytest`, Node 22+, `npm`, `lxc`, `ssh`, `curl`;
+gateway tests: `python3-aiohttp`, `openssl`. Proxies derive from lab names and bind to
 the LAN address, not loopback. Inspect
 `lxc config device show "$EASYMESH_LXD_NAME"` and export its `listen` host IP
 as `EASYMESH_HOST_ADDRESS` when `127.0.0.1` cannot reach them.
