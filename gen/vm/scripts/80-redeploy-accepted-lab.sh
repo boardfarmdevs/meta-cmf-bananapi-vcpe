@@ -167,6 +167,7 @@ bash "$repo/gen/wmediumd/observer/install.sh"
 sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \
     /etc/default/wmediumd-console
 sudo systemctl enable --now wmediumd-console.service
+python3 "$repo/gen/wmediumd/observer/check-ready.py" --timeout 60
 
 console_status=
 for attempt in $(seq 1 30); do

@@ -53,6 +53,12 @@ pool if needed, creates the VM, assigns a free bridge address, installs only
 commit-bounded source/assets, provisions the fixed client capacity and starts
 the lab.
 
+Every new VM includes **wmediumd Console NG**, its updated daemon telemetry,
+the room observer endpoint and survey bridge. No separate Go/Node install is
+needed in the VM. The final build gate checks NG telemetry and matching room
+and survey sources, not just whether a web page answers. The console uses the
+same named port; its header includes the manual and RF property field guide.
+
 Fresh appliances use a Btrfs-backed nested LXD pool, so the 100 client roots
 are copy-on-write clones of the prepared client image. Use eight bounded client
 workers for a faster first build; final association and convergence gates remain

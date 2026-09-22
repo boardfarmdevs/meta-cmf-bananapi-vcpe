@@ -12,3 +12,6 @@ examples/*/out/
 # Python validation and test bytecode.
 __pycache__/
 *.py[cod]
+
+/test-results/
+/.cache/easymesh-browser-tools/
