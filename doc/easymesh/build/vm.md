@@ -92,6 +92,35 @@ LAB_MONITORING_ALLOW_RESTART=1 \
   gen/vm/lxd/observability/enable.sh "$EASYMESH_LXD_NAME" "$host_ip"
 ```
 
+## Estimated build phases and time
+
+Use **about 55 minutes** as a planning reference for a fresh 100-client VM
+with Btrfs-backed nested storage and eight client-creation workers. The example
+below was reconstructed from provisioning markers and service logs, from VM
+creation through final readiness. These are observed phase durations, not
+timeouts or guaranteed performance; CPU, storage, download speeds, caches and
+competing workloads affect the result.
+
+| Phase | Example duration |
+| --- | ---: |
+| VM creation, input upload and base OS | 2m 23s |
+| Kernel installation and first reboot | 1m 05s |
+| Nested LXD/hwsim preparation and second reboot | 2m 38s |
+| Boardfarm/WAN setup | 9m 08s |
+| Initial mesh deployment and first five clients | 10m 10s |
+| Additional extenders and expansion to 100 clients | 13m 55s |
+| Runtime/Console installation, final reboot and WAN readiness | 2m 11s |
+| Cold-boot reconstruction and acceptance | 11m 45s |
+| Final audit, room startup and readiness | 1m 35s |
+| **Measured total** | **54m 50s** |
+
+The total excludes the separate BPI image builds, host-side asset preparation
+before VM creation, optional monitoring setup, and the subsequent
+[full room/soak test suite](../test/README.md). Build-time acceptance does not
+replace that suite. Client expansion includes association/convergence checks,
+not just container creation; cold-boot acceptance verifies reconstruction after
+the final reboot. Do not shorten these gates merely to match the estimate.
+
 ## Operate, rebuild and remove
 
 ```sh
