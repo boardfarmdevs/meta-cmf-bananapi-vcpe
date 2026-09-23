@@ -13,11 +13,13 @@ fi
 
 rounds=1
 ssid=private_ssid
+requested_clients=()
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then rounds=$1; shift; fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --ssid) ssid=$2; shift 2 ;;
-        *) echo "usage: $0 [rounds] [--ssid private_ssid|iot_ssid]" >&2; exit 2 ;;
+        --client) requested_clients+=("$2"); shift 2 ;;
+        *) echo "usage: $0 [rounds] [--ssid private_ssid|iot_ssid] [--client NAME ...]" >&2; exit 2 ;;
     esac
 done
 case "$ssid" in private_ssid|iot_ssid) ;; *) echo "unsupported SSID: $ssid" >&2; exit 2;; esac
@@ -128,7 +130,7 @@ prime_candidate_scan() {
     local attempt poll
     ssid_hex=$(printf '%s' "$ssid" | od -An -tx1 | tr -d ' \n')
     for attempt in $(seq 1 5); do
-        request=$(lxc exec -T "$client" -- wpa_cli -i wlan0 scan \
+        request=$(lxc exec -T "$client" -- wpa_cli -i wlan0 scan TYPE=ONLY \
             "freq=$frequency" "bssid=$target" "ssid $ssid_hex" \
             2>/dev/null || true)
         for poll in $(seq 1 20); do
@@ -154,6 +156,26 @@ prime_candidate_scan() {
     else
         echo "$client: target $target was absent from the ${frequency}MHz scan" >&2
     fi
+    return 1
+}
+
+verify_steering_source() {
+    local client=$1 station=$2 expected=$3 actual reported deadline=$((SECONDS + 10))
+    while ((SECONDS < deadline)); do
+        actual=$(client_bssid "$client" 1 || true)
+        if [[ $actual != "$expected" ]]; then
+            echo "pre-BTM association changed: $client expected=$expected actual=${actual:-disconnected}; no steering request sent" >&2
+            return 1
+        fi
+        reported=$(curl -fsS --max-time 3 http://127.0.0.1:8888/api/v1/clients | jq -r --arg sta "$station" '
+            [.clients[] | select(.mac == $sta) | .connected_bssid]
+            | if length == 1 then .[0] else empty end') || return 1
+        if [[ $reported == "$expected" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "pre-BTM controller ownership did not match $client on $expected; no steering request sent" >&2
     return 1
 }
 
@@ -184,6 +206,16 @@ mapfile -t clients < <(
     done < <(lxc list -c n --format csv \
         | grep -E '^wlan-client(-[0-9]{3})?$' | sort -V)
 )
+if ((${#requested_clients[@]})); then
+    for requested in "${requested_clients[@]}"; do
+        if [[ ! $requested =~ ^wlan-client(-[0-9]{3})?$ ]] \
+            || ! printf '%s\n' "${clients[@]}" | grep -Fxq "$requested"; then
+            echo "requested client is not eligible for this SSID/band: $requested" >&2
+            exit 2
+        fi
+    done
+    mapfile -t clients < <(printf '%s\n' "${requested_clients[@]}" | sort -Vu)
+fi
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 expected_total_clients=$(jq -r \
     '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")
@@ -238,6 +270,7 @@ for ((round=1; round <= rounds; round++)); do
             | tee -a "$commands"
         prime_candidate_scan "$client" "$target" "$steering_frequency" \
             | tee -a "$commands"
+        verify_steering_source "$client" "$sta" "$source"
         status_pass "Candidate $target is visible to $client."
 
         ping_file=$(mktemp)
@@ -327,7 +360,11 @@ restore_medium
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
 [ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" \
     -eq "$expected_total_clients" ]
-status_pass "Steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed."
+if ((failures == 0)); then
+    status_pass "Steering matrix complete: $((rounds * ${#clients[@]}))/$((rounds * ${#clients[@]})) passed."
+else
+    echo "FAIL: Steering matrix has $failures failed moves." >&2
+fi
 echo "steering matrix complete: $((rounds * ${#clients[@]} - failures))/$((rounds * ${#clients[@]})) passed"
 echo "results: $results"
 echo "events: $events"
