@@ -13,7 +13,7 @@ export EASYMESH_LXD_NAME=my-lab
 gen/tests/run-easymesh-suite.sh all --yes-act
 ```
 
-Results go into timestamped `test-results/` directories: per-command logs,
+Results go into timestamped `test-results/`: per-command logs,
 `results.tsv` scorecard and machine-readable `summary.json`. Nonzero exit means
 an executed test failed. **Skipped is not passed.**
 
@@ -24,7 +24,7 @@ an executed test failed. **Skipped is not passed.**
 | `static` | Documentation, Python unit and source-contract tests | No |
 | `webui` | Built EasyMesh WebUI JavaScript unit tests | No |
 | `browser` | Isolated Playwright viewer and WebUI browser tests | No |
-| `live` | VM health, hwsim, optimizer, candidate, medium and commanded steering | Yes |
+| `live` | Health, hwsim, optimizer, candidate, medium and separate private/IoT steering scorecards | Yes |
 | `rooms` | Default readiness, every room, geometry backhaul and RF access | Yes |
 | `rf` | RF contracts and bounded room checks | Yes |
 | `rf-actions` | Native guarded load BTM, retry-pressure veto and weak-signal rescue | Yes |

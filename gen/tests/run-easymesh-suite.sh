@@ -369,7 +369,8 @@ run_live() {
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
     run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
-    run live steering-matrix "$(guest_command 'bash gen/tests/steering-matrix.sh 1 --ssid private_ssid && bash gen/tests/steering-matrix.sh 1 --ssid iot_ssid')"
+    run live steering-private "$(guest_command "RESULTS_FILE='$guest_repo/test-results/$stamp/steering-private.csv' bash gen/tests/steering-matrix.sh 1 --ssid private_ssid")"
+    run live steering-iot "$(guest_command "RESULTS_FILE='$guest_repo/test-results/$stamp/steering-iot.csv' bash gen/tests/steering-matrix.sh 1 --ssid iot_ssid")"
 }
 
 run_rooms() {

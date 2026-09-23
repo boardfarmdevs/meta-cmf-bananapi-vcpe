@@ -89,3 +89,27 @@ def test_generated_test_output_does_not_dirty_source_checkout():
 def test_room_and_rf_tiers_preserve_independent_evidence():
     assert "'$output_root/rf-properties.json'" in function("run_rooms")
     assert "'$output_root/rf-tier-properties.json'" in function("run_rf")
+
+
+def test_both_steering_cohorts_run_after_a_private_failure():
+    script = '''
+root=/fixture
+vm=fixture
+guest_repo=/guest
+stamp=run
+EASYMESH_WEBUI_PORT=1
+WMEDIUMD_CONSOLE_PORT=2
+EASYMESH_ROOM_DEMO_PORT=3
+prepare_lab() { return 0; }
+lab_client_count() { echo 100; }
+qualify_client_profile() { return 0; }
+guest_command() { printf '%s' "$1"; }
+run() { printf '%s\\n' "$*"; [[ "$2" != steering-private ]]; }
+skip() { return 1; }
+''' + function("run_live") + '\nrun_live\n'
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "live steering-private" in result.stdout
+    assert "live steering-iot" in result.stdout
+    assert "/guest/test-results/run/steering-private.csv" in result.stdout
+    assert "/guest/test-results/run/steering-iot.csv" in result.stdout
