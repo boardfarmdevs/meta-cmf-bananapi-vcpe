@@ -15,6 +15,7 @@ if sys.version_info < (3, 9):
 
 from optimizer.model import CandidateObservation, ClientObservation, MeshHealth, Snapshot
 from optimizer.candidates import CandidateMetricsError, CandidateMetricsUnavailable, CandidateSnapshotSuperseded
+from optimizer.observer import ControllerInventoryUnavailable
 from optimizer.policy import Decision, Evaluation, PolicyConfig, ThresholdPolicy
 from optimizer.state import ClientPolicyState, PolicyState
 from room_demo.conductor import (
@@ -574,6 +575,28 @@ class ConductorProjectionTests(unittest.TestCase):
         unavailable = store.current()["latest"]["optimizer.measurement.unavailable"]["payload"]
         self.assertEqual(unavailable["reason"], "controller_transport_unavailable")
         self.assertFalse(unavailable["automatic_actuation_ready"])
+
+    def test_unavailable_inventory_retries_without_stopping_room_or_steering(self):
+        conductor, store, policy, actuator, sleeper = self._run_optimizer([
+            ControllerInventoryUnavailable("controller clients inventory unavailable or malformed"), None,
+        ])
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(len(conductor.warnings), 1)
+        self.assertEqual(policy.evaluate.call_count, 1)
+        actuator.execute.assert_not_called()
+        self.assertEqual(sleeper.call_args_list[0].args[0], 1)
+        unavailable = store.current()["latest"]["optimizer.measurement.unavailable"]["payload"]
+        self.assertEqual(unavailable["reason"], "controller_inventory_unavailable")
+        self.assertFalse(unavailable["automatic_actuation_ready"])
+        self.assertFalse(unavailable["fleet"]["converged"])
+
+    def test_unavailable_inventory_still_fails_noninteractive_measurement(self):
+        conductor, _store, policy, actuator, _sleeper = self._run_optimizer(
+            [ControllerInventoryUnavailable("controller inventory unavailable")], interactive=False,
+        )
+        self.assertEqual(len(conductor.errors), 1)
+        policy.evaluate.assert_not_called()
+        actuator.execute.assert_not_called()
 
     def test_outage_restarts_an_unacted_hold_before_the_next_evaluation(self):
         holding = PolicyState((ClientPolicyState(

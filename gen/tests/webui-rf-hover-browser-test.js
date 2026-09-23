@@ -71,7 +71,12 @@ const expectedRows = 6;
       for (const row of body.rf_observations.bss_loads) row.observed_at = new Date(Date.now() - 60000).toISOString();
       await route.fulfill({response, json: body});
     });
-    await page.waitForFunction(() => /stale/.test(document.querySelector('#custom-tooltip')?.textContent || ''), null, {timeout: 15000});
+    await page.waitForFunction(() => {
+      const rows = window.EasyMeshController.roomLayout.snapshot?.rf_observations?.bss_loads || [];
+      const text = document.querySelector('#custom-tooltip')?.textContent || '';
+      return rows.length > 0 && rows.every(row => Date.now() - Date.parse(row.observed_at) >= 60000) &&
+        /stale/.test(text) && !/[0-9]+[.][0-9]+%/.test(text);
+    }, null, {timeout: 15000});
     assert.doesNotMatch(await page.locator('#custom-tooltip').innerText(), /[0-9]+\.[0-9]+%/);
     await page.unroute('**/api/v1/room-layout');
     await page.route('**/api/v1/room-layout', route => route.fulfill({status: 503, json: {error: 'fixture'}}));

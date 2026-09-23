@@ -303,6 +303,15 @@ def set_client_link(clients: list[dict], state: str) -> None:
             time.sleep(0.5 * attempt)
 
 
+def request_candidate_scan(command, timeout_seconds=10):
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        result = subprocess.run(command, check=False, text=True, capture_output=True, timeout=5)
+        if result.returncode or result.stdout.strip() != "FAIL-BUSY" or time.monotonic() >= deadline:
+            return result
+        time.sleep(0.25)
+
+
 def prime_candidate_scans(
     clients: list[dict], aps_by_container: dict[str, dict],
     targets: dict[str, str], attempts: int = 3,
@@ -330,15 +339,12 @@ def prime_candidate_scans(
             errors = []
             resolved = False
             for bssid, frequency in sorted(candidates.items()):
-                request = subprocess.run(
+                request = request_candidate_scan(
                     (
                         "lxc", "exec", client["container"], "--", "wpa_cli",
                         "-i", "wlan0", "scan", f"freq={frequency}",
                         f"bssid={bssid}", f"ssid {ssid_hex}",
                     ),
-                    check=False,
-                    text=True,
-                    capture_output=True,
                 )
                 if request.returncode or request.stdout.strip() != "OK":
                     errors.append(

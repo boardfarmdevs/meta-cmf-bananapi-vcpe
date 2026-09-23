@@ -65,6 +65,48 @@ def test_cache_expires_while_collection_is_blocked(streaming):
     assert collect(provider, snapshot(31)) == []
 
 
+def test_publication_during_snapshot_processing_is_retained_until_next_snapshot(streaming):
+    provider, delegate = streaming
+    collect(provider)
+    assert delegate.published.wait(1)
+    collect(provider)
+    newer = snapshot(1)
+    provider._messages.put((provider._identity, dict(provider._versions), newer.candidates, set(),
+                            {"finished_at": newer.observed_at}, time.monotonic()))
+    assert collect(provider) == list(snapshot(0).candidates)
+    assert provider.last_selection["pending_snapshot_comparisons"] == len(newer.candidates)
+    assert collect(provider, newer) == list(newer.candidates)
+    assert provider.last_selection["pending_snapshot_comparisons"] == 0
+
+
+def test_deferred_publication_cannot_cross_an_owner_change(streaming):
+    provider, delegate = streaming
+    collect(provider)
+    assert delegate.published.wait(1)
+    newer = snapshot(1)
+    provider._messages.put((provider._identity, dict(provider._versions), newer.candidates, set(),
+                            {"finished_at": newer.observed_at}, time.monotonic()))
+    collect(provider)
+    moved = replace(newer, clients=(replace(newer.clients[0], connected_bssid="02:00:00:aa:aa:02"),))
+    assert collect(provider, moved) == []
+    assert collect(provider, newer) == []
+
+
+def test_deferred_rejection_does_not_remove_valid_evidence_before_snapshot_time(streaming):
+    provider, delegate = streaming
+    collect(provider)
+    assert delegate.published.wait(1)
+    assert collect(provider)
+    sample = snapshot(0)
+    key = (sample.candidates[0].sta_mac, sample.candidates[0].bssid)
+    provider._messages.put((provider._identity, dict(provider._versions), (), {key},
+                            {"finished_at": snapshot(1).observed_at}, time.monotonic()))
+    assert collect(provider) == list(sample.candidates)
+    assert not provider.last_rejected_candidate_keys
+    assert collect(provider, snapshot(1)) == [item for item in sample.candidates if (item.sta_mac, item.bssid) != key]
+    assert provider.last_rejected_candidate_keys == {key}
+
+
 def test_roam_and_return_cannot_resurrect_queued_measurements(streaming):
     provider, delegate = streaming
     collect(provider)
@@ -189,3 +231,63 @@ def test_roaming_low_mac_cannot_starve_an_unmeasured_band(streaming):
     collect(provider, roamed)
     provider._future.result(timeout=1)
     assert delegate.calls == [{sample.clients[0].sta_mac}, {waiting}]
+
+
+def test_large_cohort_publishes_incrementally_without_blocking_observations(streaming):
+    provider, delegate = streaming
+    provider.maximum_clients = 64
+    original = snapshot(0)
+    stations = [f"02:00:00:00:{index:02x}:00" for index in range(1, 51)]
+    sample = replace(original,
+                     clients=tuple(replace(original.clients[0], sta_mac=station) for station in stations),
+                     candidates=tuple(replace(original.candidates[0], sta_mac=station) for station in stations))
+    assert collect(provider, sample) == []
+    assert delegate.published.wait(1)
+    assert len(collect(provider, sample)) == 50
+    assert delegate.calls == [set(stations)]
+    assert not provider._future.done()
+
+
+def test_sparse_bands_share_a_collection_round(streaming):
+    provider, delegate = streaming
+    original = snapshot(0)
+    other = "02:00:00:00:0e:00"
+    sample = replace(original,
+                     clients=(*original.clients, replace(original.clients[0], sta_mac=other, band="6")),
+                     candidates=(*original.candidates, replace(original.candidates[0], sta_mac=other, band="6")))
+    collect(provider, sample)
+    assert delegate.published.wait(1)
+    assert delegate.calls == [{original.clients[0].sta_mac, other}]
+    assert len(collect(provider, sample)) == len(sample.candidates)
+
+
+def test_progress_is_coalesced_off_the_native_request_thread():
+    callback_threads = []
+    payloads = []
+    class ProgressDelegate(Delegate):
+        def __call__(self, *arguments):
+            for completed in range(100):
+                self.progress({"completed_queries": completed})
+            return super().__call__(*arguments)
+
+    delegate = ProgressDelegate()
+    def report(payload):
+        callback_threads.append(threading.get_ident())
+        payloads.append(payload)
+    delegate.progress = report
+    provider = StreamingCandidateProvider(delegate)
+    try:
+        collect(provider)
+        assert delegate.published.wait(1)
+        assert not payloads
+        assert collect(provider)
+        assert payloads == [{"completed_queries": 99}]
+        assert callback_threads == [threading.get_ident()]
+        collect(provider)
+        assert len(payloads) == 1
+        provider._progress_update = ("previous-world", {"completed_queries": 42})
+        collect(provider)
+        assert len(payloads) == 1
+    finally:
+        delegate.release.set()
+        provider.close()

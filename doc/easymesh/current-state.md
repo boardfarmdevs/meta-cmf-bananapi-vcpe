@@ -1,122 +1,101 @@
 # Current RDK lab
 
-Reviewed 17 September 2026. This is a deployment summary, not a live health
-monitor; use [operations](guide/operations.md) for current service checks.
+Reviewed 22 September 2026. This is the source/checkpoint and last-tested
+deployment summary, not a live health monitor. See [operations](guide/operations.md).
 
 ## Identity and release status
 
 | Item | Current value |
 | --- | --- |
 | Canonical branch | `codex/0916-clean` |
-| Canonical checkout | `rev140:/home/rev/yocto/rdkb-bpi-nosrc-vcpe-0916-clean/meta-cmf-bananapi-vcpe` |
-| Candidate appliance | `rev140:rdkeasymesh-0916` |
-| Packaged runtime/source origin | `294dd6d394663d08edf2cd68f31d496ad4b7b6cc` |
+| Development checkout | `rev150:/home/rev/git/meta-cmf-bananapi-vcpe-builddocs` |
+| Existing build checkout | `rev140:/home/rev/yocto/easymesh-bpi/meta-cmf-bananapi-vcpe` |
+| Last-tested VM | `rev140:demo-a` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
 | Fixed pool | 100 clients; five mesh containers / six displayed roles |
-| Release classification | 0916 candidate with known issues; not fully room-qualified |
-| prplMesh peer | Separate repository and appliance on rev150 |
+| Current classification | Development checkpoint; fresh-VM/full-suite acceptance pending |
+| prplMesh peer | Separate repository; last-tested VM `rev120:demo-prpl` |
 
-Controller and Agent-1 share the root container; four extenders complete the
-mesh. Default selects ten private and ten IoT clients. Loading a room does not
-resize the permanent container/radio pool. Outer VM autostart is disabled.
-
-Both final Yocto images build using `/home/rev/oe/downloads` and
-`/home/rev/oe/sstate-cache`. The station-lifetime repair, native AP threshold/query
-handling and proactive native backhaul steering remain included. Documentation
-updates after the runtime commit do not imply rebuilt native binaries.
+Controller and Agent-1 share the root container. Default selects ten private
+and ten IoT clients; other rooms change presence, not permanent pool size.
+Do not enable VM autostart as part of rebuilding or optional remote access.
 
 ## Qualification and remaining failures
 
-The latest normal lifecycle passes all 105 containers, 100 client identities and
-an independent audit covering exactly 100 unique clients with zero packet loss.
-Final-image/runtime alignment, retained assets, initial Default-20 restoration
-and the bounded zero-additional-medium-receive-drop observation also pass.
+The latest bounded catalog diagnostics passed **24/24 ordinary rooms** through
+load, convergence, Play, native roster/traffic and room/topology checks, followed
+by healthy Default-20 restoration. Native identities stayed unchanged. These
+runs included recorded working-tree fixes; they are not clean-source fresh-VM
+acceptance and do not replace the next full 100-client baseline.
 
-**The subsequent geometry branch room fails complete convergence and its bounded
-Default recovery check.** It does form valid rooted branches:
-ext3→ext1→agent-1 and ext4→ext2→agent-1. The combined uplink/client/traffic/two-view
-predicate fails; a visible branch is not full-room acceptance. Samples include
-missing fresh candidate metrics, incomplete model associations and HTTP 503
-candidate-query responses. These are symptoms, not an established root cause.
+| Remaining gate | Last observation |
+| --- | --- |
+| Geometry branch formation | Failed the initial 60-second convergence gate before Play; all ten clients were present, but fresh candidate coverage was incomplete. Default recovery passed. |
+| Geometry parent handover | Passed the scenario and Default recovery. |
+| Geometry isolation/recovery | Failed initial convergence before the outage was played; incomplete fresh measurements. Default recovery passed. |
+| Guarded load steering | A native BTM and receiver delivery were observed, but repeat qualification hit native 503/504 query failures. |
+| Pressure veto / weak-signal rescue | Test stimuli did not sustain the required otherwise-eligible decision context; no complete live proof. |
 
-That focused failure stopped the latest full 22-client-room + 3-geometry-room
-campaign and later pool qualification. Older room passes do not qualify this
-exact runtime. Current-source handover and outage acceptance remain incomplete.
-Live medium replacement is not qualified; use the normal lab stop/start lifecycle.
+The [maintained RF qualification record](reference/radio/rf-property-coverage.md#room-catalog-qualification-and-open-failures)
+contains exact evidence paths, repaired harness/namespace issues and attribution.
+The `rf-actions` tier is included in `all`; known failures remain failures.
+Do not relax deadlines, disable native admission checks, or invent unavailable
+metrics to make the new build green. Optional live visibility/priority modes
+remain unqualified; isolated medium selftests do not qualify those modes.
 
-The later export prerequisite again passed all 100 traffic probes but failed
-the expected 5-device/15-radio/50-BSS/104-STA topology-model counts. Its failed
-audit is retained. A private, explicitly recorded candidate-packaging wrapper
-skips that qualification call; tracked acceptance gates and native code remain
-unchanged. Packaging is not a topology-audit pass.
+## Rebuild checkpoint
 
-The owner requested packaging with these limitations on 17 September, without
-further debugging. This supersedes the earlier hold for complete room acceptance;
-it does not turn failed or unexecuted tests into passes.
+Use clean, matching host/guest source commits. The existing rev140 build
+checkout contains older uncommitted diagnostic copies; it was inspected but
+not reset or overwritten. Preserve/reconcile that work, or use a fresh source
+workspace before following the [build guide](build/README.md).
 
-Evidence on rev150 is under `/home/rev/work/release-0916/`, particularly:
+The latest recorded controller and extender image builds there used layer
+`3b81ede45d765062f64daa6da9aeeed385448dfb`. Native recipe inputs have changed
+since then. **Build both BPI roles again before the new VM**, retaining
+`$HOME/oe/downloads` and `$HOME/oe/sstate-cache`; do not clean those caches.
+The VM builder consumes images and does not invoke BitBake itself.
+The UAF repair, native AP threshold/query handling, proactive backhaul steering
+and current candidate-admission patch remain selected by the layer.
 
-- `evidence/rdk-native-reconstruction-294dd6d-medium-01/`
-- `evidence/rdk-image-runtime-alignment-294dd6d-medium-01/`
-- `evidence/rdk-native-geometry-294dd6d-medium-01/rdk-native-geometry-20260917T155634Z/results/report.json`
+Start with static/webui/browser checks, then a fresh VM baseline, rooms and
+the remaining [test suite](test/README.md). Retain old VMs stopped until their
+replacements pass. No new thin archive or VirtualBox package is produced by
+this source checkpoint.
 
 ## Access and distribution
 
-Candidate forwarding is configured for these addresses. Packaging temporarily
-stops services; an address is not a promise of current health.
+These are the last-tested VM's configured addresses, not a health promise:
 
-| View | rev140 RDK |
+| View | RDK |
 | --- | --- |
-| Live room | <http://192.168.2.140:49891/> |
-| Network topology | <http://192.168.2.140:49889/> |
-| wmediumd console | <http://192.168.2.140:49890/> |
+| Live room | <http://192.168.2.140:26342/> |
+| Network topology | <http://192.168.2.140:26340/> |
+| Console NG | <http://192.168.2.140:26341/> |
 
-Packaging alone does not promote production ports 48889/48890/48891 or enroll
-monitoring on 48892/48893. Use the [monitoring guide](reference/observability/monitoring.md)
-for nested-container and outer-VM metrics. No `?mode=` is needed. Proxy devices
-survive reboot; management interfaces require a trusted LAN/VPN.
+New VM names receive their own port blocks. See
+[monitoring](reference/observability/monitoring.md) for LXD/Grafana.
+The optional [Tailscale gateway](reference/deployment/remote-access.md) is
+implemented and locally tested, **not installed or published**. Leave it
+disabled for initial VM qualification; it needs no BPI/VM rebuild.
 
-### Post-export appliance state
-
-The 0916 export thinned the running qualification appliance and started its
-normal 100-client reconstruction. At the final packaging check, the bounded
-outer restoration wrapper had ended while `easymesh-thin-firstboot.service` was
-still active. `easymesh-lab.service` and `easymesh-room-demo.service` were
-inactive, so the RDK room URL must be treated as unavailable until that normal
-first-boot service completes. This is an operational recovery limitation; it was
-recorded without debugging or forcing the service. See the release-side
-`PACKAGING-STATUS.md` for the timestamp and evidence location.
-
-0916 artifacts belong under `/home/rev/releases/0916/`: RDK thin tar, RDK
-VirtualBox box and its Windows/Vagrant wrapper. Adjacent SHA-256 files,
-`release.json`, `KNOWN-ISSUES-0916.md` and packaging receipts identify actual
-inputs and completed checks. Archive integrity, exact-archive fresh import,
-Linux VirtualBox boot and Windows testing are separate claims. Unrecorded
-checks are not passed. See [release information](release-notes.md).
-
-The 0916 box builds and passes archive checks. Its bounded rev120 Vagrant smoke
-stopped before boot because querying a pre-existing inaccessible VirtualBox
-registration returned `E_ACCESSDENIED`. Boot/login, native pool provisioning and
-Windows operation remain unverified. `CANDIDATE-BOOT.json` and `BOOT-LOG.txt`
-inside the VirtualBox wrapper record the attempt; no unrelated VM was modified
-to work around the failure.
-
-Verified older downloads and rollback material remain on rev140. Redundant
-rev150 copies were removed only after full hash verification, recovering
-77.17 GiB; shared OE caches and unique evidence were preserved.
+Older 0916 downloads under `/home/rev/releases/0916/` are separately identified
+candidates, not builds of this checkpoint. Their manifests, known-issues and
+packaging receipts remain authoritative. Original image/model, restoration,
+fresh-import and VirtualBox boot limitations are not superseded by these room
+diagnostics. See [release information](release-notes.md).
 
 ## Supported behavior and boundaries
 
-- Loading immediately applies a world. Play, drag, presence, traffic probes,
-  shared signal colors, fullscreen and room-following topology remain supported.
-- The external reference optimizer supplies client policy through native BTM;
-  this is not a claim of native autonomous client optimization.
-- Most rooms protect startup backhaul; three geometry rooms change AP-to-AP RF
-  without externally choosing parents. Loss recovery and proactive steering differ.
-- Convergence requires membership, native ownership, fresh eligible candidates
-  and traffic, not just a green badge or an accepted steering request.
-- Keep host cooling and observer load separately attributed. Grafana guest
-  resource metrics do not measure physical-host totals or subsecond roam latency.
+- Loading applies a world immediately; Play, drag, presence, traffic probes,
+  signal colors, fullscreen and room-following topology remain supported.
+- The external optimizer supplies client policy through native BTM; this is not
+  a claim of native autonomous client optimization.
+- Most rooms protect startup backhaul; three geometry rooms exercise native
+  parent adaptation. Loss recovery and proactive steering are separate checks.
+- Convergence requires native membership, ownership, fresh eligible measurements
+  and traffic, not just a green badge or an accepted request.
+- Host cooling and observer load remain separate from native steering latency.
 - [Neighbor-network rooms](reference/proposals/neighbor-rooms/design.md) remain
   proposed; [room acceptance](reference/testing/room-acceptance.md) defines tests.

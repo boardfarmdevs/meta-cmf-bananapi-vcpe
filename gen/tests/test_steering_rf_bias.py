@@ -6,6 +6,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 MODULE_PATH = Path(__file__).with_name("steering-rf-bias.py")
@@ -45,6 +47,35 @@ class FakeControl:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_cross_band_bias_snapshots_both_actual_frequencies(self):
+        source = "02:00:00:00:00:01"
+        target = "02:00:00:00:00:02"
+        station = "02:00:00:00:00:03"
+        args = SimpleNamespace(source_bssid=source, target_bssid=target, client="wlan-client-052",
+                               frequency=5180, station_radio=None, source_radio=None,
+                               target_radio=None, mesh_radio=None, target_snr=60,
+                               source_snr=20, other_snr=-20, state=Path("unused"), backend="control")
+        inventory = {"radios": [
+            {"kind": "station", "container": args.client, "tx_mac": station},
+            {"kind": "mesh", "tx_mac": source, "interfaces": [{"mac": source, "frequency_mhz": 2437}]},
+            {"kind": "mesh", "tx_mac": target, "interfaces": [{"mac": target, "frequency_mhz": 5180}]},
+        ]}
+        control = MagicMock()
+        status = SimpleNamespace(generation=7, instance_id="medium")
+        with patch.object(MODULE, "discover", return_value=inventory), \
+                patch.object(MODULE, "medium_client") as context, \
+                patch.object(MODULE, "snapshot_link_keys", return_value=(status, [])) as snapshot, \
+                patch.object(MODULE, "write_state"):
+            context.return_value.__enter__.return_value = control
+            self.assertEqual(MODULE.apply(args), 0)
+        self.assertEqual({key[2] for key in snapshot.call_args.args[1]}, {2437, 5180})
+        generation, updates = control.apply_frequency.call_args.args
+        self.assertEqual(generation, 8)
+        values = {(row["destination"], row["frequency_mhz"]): row["value"]
+                  for row in updates if row["source"] == station}
+        self.assertEqual(values, {(source, 2437): 20, (source, 5180): -20,
+                                  (target, 2437): -20, (target, 5180): 60})
+
     def test_combines_frequency_overrides_with_base_links(self):
         status, prior = MODULE.snapshot_frequency_links(
             FakeControl(),

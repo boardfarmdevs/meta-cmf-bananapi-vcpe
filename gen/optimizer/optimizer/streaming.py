@@ -27,6 +27,10 @@ class StreamingCandidateProvider:
         self.telemetry = telemetry or (lambda _value: None)
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="native-candidate-stream")
         self._messages = SimpleQueue()
+        self._deferred = []
+        self._progress_lock = threading.Lock()
+        self._progress_update = None
+        self._report_progress = getattr(provider, "progress", None)
         self._future = None
         self._cancel = threading.Event()
         self._closed = False
@@ -52,6 +56,11 @@ class StreamingCandidateProvider:
         self._executor.shutdown(wait=True)
 
     def _collect(self, clients, inventory, bsses, observed_at, selected, identity, versions, cancel):
+        def progress(payload):
+            with self._progress_lock:
+                self._progress_update = (identity, dict(payload))
+            self.updated()
+
         def publish(measured, rejected, transaction):
             self._messages.put((identity, versions, measured, rejected, transaction, time.monotonic()))
             self.updated()
@@ -59,6 +68,7 @@ class StreamingCandidateProvider:
         self.provider.client_selector = lambda client, _observed_at: client.sta_mac in selected
         self.provider.generation_guard = lambda: not cancel.is_set()
         self.provider.result_ready = publish
+        self.provider.progress = progress if self._report_progress is not None else None
         try:
             self.provider(clients, inventory, bsses, observed_at)
             return None
@@ -77,6 +87,7 @@ class StreamingCandidateProvider:
             self._cancel.set()
             self._cache.clear()
             self._rejections.clear()
+            self._deferred.clear()
             self._queried.clear()
             self._identity = identity
         owners = {client.sta_mac: (RollingCandidateProvider._owner(client),
@@ -86,25 +97,39 @@ class StreamingCandidateProvider:
             if self._owners.get(station) != owners.get(station):
                 self._versions[station] = self._versions.get(station, 0) + 1
         self._owners = owners
+        with self._progress_lock:
+            progress = self._progress_update
+            self._progress_update = None
+        if progress is not None and progress[0] == identity and self._report_progress is not None:
+            self._report_progress(progress[1])
         available = {(item.sta_mac, item.bssid) for item in inventory if item.eligible}
         now = parse_time(observed_at)
 
-        def valid(key, version, timestamp):
+        def valid(key, version, timestamp, *, pending=False):
             return (key in available and key[0] in owners and self._versions.get(key[0]) == version
                     and timestamp is not None
-                    and 0 <= (now - parse_time(timestamp)).total_seconds() <= self.maximum_age_seconds)
+                    and (-self.maximum_age_seconds if pending else 0)
+                    <= (now - parse_time(timestamp)).total_seconds() <= self.maximum_age_seconds)
 
         self.last_raw = []
+        messages, self._deferred = self._deferred, []
         while True:
             try:
-                source_identity, versions, measured, rejected, transaction, ready_at = self._messages.get_nowait()
+                messages.append(self._messages.get_nowait())
             except Empty:
                 break
+        for message in messages:
+            source_identity, versions, measured, rejected, transaction, ready_at = message
+            finished = parse_time(transaction["finished_at"])
+            if source_identity == identity and 0 < (finished - now).total_seconds() <= self.maximum_age_seconds:
+                self._deferred.append(message)
+                continue
             accepted = 0
             if source_identity == identity:
                 for item in measured:
                     key = (item.sta_mac, item.bssid)
-                    if valid(key, versions.get(item.sta_mac), item.metric_observed_at):
+                    if (valid(key, versions.get(item.sta_mac), item.metric_observed_at)
+                            and parse_time(item.metric_observed_at) <= finished):
                         self._cache[key] = (versions[item.sta_mac], item)
                         self._rejections.pop(key, None)
                         accepted += 1
@@ -131,7 +156,7 @@ class StreamingCandidateProvider:
         eligible = [client for client in clients if self.selector is None or self.selector(client, observed_at)]
         eligible.sort(key=lambda client: (self._queried.get(client.sta_mac, -1), client.sta_mac))
         if not self._closed and self._future is None and eligible and time.monotonic() >= self._next_attempt:
-            cohort = [client for client in eligible if client.band == eligible[0].band][:self.maximum_clients]
+            cohort = eligible[:self.maximum_clients]
             selected = {client.sta_mac for client in cohort}
             self._round += 1
             self._queried = {key: value for key, value in self._queried.items()
@@ -142,13 +167,20 @@ class StreamingCandidateProvider:
             self._cancel = threading.Event()
             self._future = self._executor.submit(self._collect, clients, inventory, bsses, observed_at,
                                                   selected, identity, dict(self._versions), self._cancel)
-        self.last_rejected_candidate_keys = set(self._rejections)
+        fresh = {key: item for key, (version, item) in self._cache.items()
+                 if valid(key, version, item.metric_observed_at)}
+        self.last_rejected_candidate_keys = {key for key, (version, timestamp) in self._rejections.items()
+                                            if valid(key, version, timestamp)}
         self.last_requested_sta_macs = set(self._active_selected) if self._future is not None else set()
-        self.last_selected_sta_macs = {key[0] for key in self._cache}
+        self.last_selected_sta_macs = {key[0] for key in fresh}
         self.last_selection = {"eligible_clients": len(eligible), "selected_clients": len(self.last_requested_sta_macs),
                                "streaming": True, "round": self._round,
                                "collection_in_flight": self._future is not None,
-                               "cached_native_comparisons": len(self._cache),
+                               "cached_native_comparisons": len(fresh),
+                               "pending_snapshot_comparisons": sum(
+                                   valid((item.sta_mac, item.bssid), versions.get(item.sta_mac),
+                                         item.metric_observed_at, pending=True)
+                                   for _identity, versions, measured, *_remaining in self._deferred for item in measured),
                                "maximum_cache_age_seconds": self.maximum_age_seconds,
                                "unavailable_cohort": sorted(self._active_selected) if self.last_unavailable else []}
-        return [item for _version, item in self._cache.values()]
+        return list(fresh.values())

@@ -16,6 +16,11 @@ and SSE at the same origin. LXD proxy devices persist across VM restarts.
 
 ## Private remote use
 
+For browser access to all three views, use the optional
+[Tailscale gateway](../deployment/remote-access.md). Its setup scripts provide
+private Serve access or authenticated public Funnel access, with one shared
+timed reservation, visible ownership and direct-port protection.
+
 Prefer a VPN or SSH tunnel rather than forwarding unauthenticated management
 ports to the Internet. For example, run on your workstation, replacing the
 host and port with the deployment's values:
@@ -35,9 +40,10 @@ LXD admin credentials just to let someone watch a demonstration.
 
 ## Shared Internet service
 
-This is a deployment design, not an enabled public endpoint. Put an
-authenticated HTTPS gateway in front of the same-origin viewer/API/SSE service,
-or reach it through a private VPN. Keep full LXD, Prometheus, native control and
+The [implemented Tailscale gateway](../deployment/remote-access.md) is optional;
+installing repository code does not enable a public endpoint. It places
+authentication and a reservation gate in front of the same-origin viewer/API/SSE
+services. Keep full LXD, Prometheus, native control and
 wmediumd sockets private. If the lab is behind CGNAT, use an outbound private
 tunnel to the gateway; no Wi-Fi simulation changes are required.
 
@@ -46,7 +52,8 @@ timeouts/keepalives, the full API path set and control methods, body limits,
 authentication on both streams and requests, and reconnection/resync.
 Use a trusted certificate; do not teach users to bypass Internet TLS errors.
 An operator lease is concurrency control, not Internet authentication.
-Use separate observer/operator authorization at the gateway where needed.
+The supplied gateway grants exclusive operator access, not public spectator
+access. Separate observer/operator authorization would require an extension.
 
 Before publication, test login/logout, denied unauthenticated control, SSE
 reconnect after a network break, lease behavior, world load/play/drag,

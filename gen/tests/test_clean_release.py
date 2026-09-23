@@ -29,8 +29,10 @@ def test_clean_build_uses_shared_oe_caches_and_complete_images():
     assert "rdk-generic-ap-extender-image" in source
     assert 'git -C "$source_root" status --porcelain' in source
     bootstrap = source.index('MACHINE="$machine" BPI_IMG_TYPE=nand source')
-    assert source.index('set +o pipefail') < bootstrap
-    assert source.index('set -eo pipefail', bootstrap) > bootstrap
+    assert source.index('set +e +u +o pipefail') < bootstrap
+    restored = source.index('set -euo pipefail', bootstrap)
+    assert bootstrap < source.index('setup_status=$?', bootstrap) < restored
+    assert source.index('[ "$setup_status" -eq 0 ]', restored) > restored
     assert '"$record/incomplete-conf"' in source
     assert 'grep -Fq \'meta-cmf-bananapi-vcpe\' conf/bblayers.conf' in source
 

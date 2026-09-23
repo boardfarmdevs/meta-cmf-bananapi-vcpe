@@ -6,6 +6,8 @@ const path = require('path');
 const harness = fs.readFileSync(path.join(__dirname, 'room-backhaul-features.js'), 'utf8');
 assert.ok(harness.includes("document.fullscreenElement ? '#fullscreenPlay' : '#play'"));
 assert.match(harness, /async function load\(id\)[\s\S]*?fullscreenElement[\s\S]*?#roomFullscreen[\s\S]*?changed = true/);
+assert.match(harness, /await roomPage\.waitForFunction\(\(\) => !document\.fullscreenElement\);\s*changed = true/);
+assert.match(harness, /await roomPage\.waitForFunction\(\(\) => document\.fullscreenElement\?\.id === 'roomView'\);\s*return result/);
 const {interfaceState, summarizeNative, stackProfile, ready, parentPaths} = require('./room-backhaul-features.js');
 assert.equal(stackProfile('rdk').gateway, '10.0.0.1');
 assert.equal(stackProfile('prpl').gateway, '192.168.77.1');

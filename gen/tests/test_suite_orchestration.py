@@ -56,9 +56,20 @@ def test_failed_dependency_and_cleanup_are_not_reported_as_passes():
 
 
 def test_live_section_requires_explicit_mutation_consent():
-    result = subprocess.run(["bash", str(ROOT / "gen/tests/run-easymesh-suite.sh"), "live"],
-                            capture_output=True, text=True)
-    assert result.returncode == 2 and "--yes-act" in result.stderr
+    for section in ("live", "rf-actions"):
+        result = subprocess.run(["bash", str(ROOT / "gen/tests/run-easymesh-suite.sh"), section],
+                                capture_output=True, text=True)
+        assert result.returncode == 2 and "--yes-act" in result.stderr
+
+
+def test_rf_actions_stop_on_failure_and_precede_shared_full_pool_guard():
+    source = function("run_rf_actions")
+    assert "for scenario in clear pressure rescue" in source
+    assert "--counter-case" in source and "load-counter-guard-policy.yaml" in source
+    assert "--payload-bytes 1400" in source
+    assert "--yes-change-lab" in source and "|| return" in source
+    assert "qualify_client_profile" not in source
+    assert "'static webui browser rooms rf rf-actions' 'live soak'" in SUITE
 
 
 def test_native_audit_replaces_old_operator_owned_tmp_file():
@@ -73,3 +84,8 @@ def test_native_audit_replaces_old_operator_owned_tmp_file():
 def test_generated_test_output_does_not_dirty_source_checkout():
     for path in ("test-results/fixture/results.tsv", ".cache/easymesh-browser-tools/package-lock.json"):
         subprocess.run(["git", "check-ignore", "--no-index", "--quiet", path], cwd=ROOT, check=True)
+
+
+def test_room_and_rf_tiers_preserve_independent_evidence():
+    assert "'$output_root/rf-properties.json'" in function("run_rooms")
+    assert "'$output_root/rf-tier-properties.json'" in function("run_rf")

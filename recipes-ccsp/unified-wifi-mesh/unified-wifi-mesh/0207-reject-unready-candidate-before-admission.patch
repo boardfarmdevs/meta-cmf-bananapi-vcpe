@@ -1,0 +1,36 @@
+Subject: [PATCH] Refuse unready candidate queries before global admission
+
+Candidate commands queued behind an onboarding radio registered their global
+single-flight type before they could execute. Pending commands do not start
+the execution timeout, so every other agent could be rejected indefinitely.
+Check both radio ownership and execution readiness under the command lock
+before queuing this read-only request. Return Not_Ready without clearing the
+radio owner or registering command statistics. Other command admission is
+unchanged. The regression reproduces the old block for 70 ticks and exercises
+occupied-ready, idle-unready and healthy-unrelated radios.
+
+Upstream-Status: Pending
+
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -152,6 +152,20 @@
+         // if there are no candidates, complete the command
+         destroy_command(pcmd);
+     } else {
++        if (pcmd->m_type == em_cmd_type_unassoc_sta_query) {
++            bool ready = eligible_for_active(pcmd);
++            for (unsigned int index = 0; ready && index < queue_count(pcmd->m_em_candidates); ++index) {
++                auto *radio = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, index));
++                ready = radio != nullptr && is_em_ready_for_orch_exec(pcmd, radio);
++            }
++            if (!ready) {
++                while (queue_count(pcmd->m_em_candidates) != 0)
++                    queue_remove(pcmd->m_em_candidates, queue_count(pcmd->m_em_candidates) - 1);
++                pcmd->deinit();
++                delete pcmd;
++                return false;
++            }
++        }
+         queue_push(m_pending, pcmd);
+         push_stats(pcmd);
+         unsigned int pending = queue_count(m_pending);
