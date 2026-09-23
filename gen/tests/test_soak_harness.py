@@ -371,6 +371,25 @@ def test_carousel_does_not_accept_an_empty_hidden_bss_cache_entry():
     assert scan.call_args_list[0].args[0][-1] == "ssid 696f745f73736964"
 
 
+def test_carousel_waits_for_existing_scan_before_requesting_its_own():
+    carousel = load_script("wmediumd-client-carousel.py")
+    busy = subprocess.CompletedProcess(["scan"], 0, "FAIL-BUSY\n", "")
+    accepted = subprocess.CompletedProcess(["scan"], 0, "OK\n", "")
+    with patch.object(carousel.subprocess, "run", side_effect=[busy, accepted]) as run, \
+            patch.object(carousel.time, "sleep"):
+        assert carousel.request_candidate_scan(["scan"]).stdout.strip() == "OK"
+    assert run.call_count == 2
+
+
+def test_carousel_busy_scan_is_bounded_and_still_fails():
+    carousel = load_script("wmediumd-client-carousel.py")
+    busy = subprocess.CompletedProcess(["scan"], 0, "FAIL-BUSY\n", "")
+    with patch.object(carousel.subprocess, "run", return_value=busy) as run, \
+            patch.object(carousel.time, "monotonic", side_effect=[0, 11]):
+        assert carousel.request_candidate_scan(["scan"]).stdout.strip() == "FAIL-BUSY"
+    assert run.call_count == 1
+
+
 def test_carousel_requires_exact_controller_bssid_agreement():
     carousel = load_script("wmediumd-client-carousel.py")
     observation = {

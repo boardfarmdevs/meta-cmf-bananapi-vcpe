@@ -84,3 +84,8 @@ def test_native_audit_replaces_old_operator_owned_tmp_file():
 def test_generated_test_output_does_not_dirty_source_checkout():
     for path in ("test-results/fixture/results.tsv", ".cache/easymesh-browser-tools/package-lock.json"):
         subprocess.run(["git", "check-ignore", "--no-index", "--quiet", path], cwd=ROOT, check=True)
+
+
+def test_room_and_rf_tiers_preserve_independent_evidence():
+    assert "'$output_root/rf-properties.json'" in function("run_rooms")
+    assert "'$output_root/rf-tier-properties.json'" in function("run_rf")

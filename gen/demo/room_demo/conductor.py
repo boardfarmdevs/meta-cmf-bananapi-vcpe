@@ -1172,7 +1172,7 @@ class LiveConductor:
             fallback_executor=self._probe_executor if self.interactive else None,
         )
         if self.profiling:
-            provider = StreamingCandidateProvider(provider, maximum_clients=8,
+            provider = StreamingCandidateProvider(provider, maximum_clients=64,
                                                 maximum_age_seconds=min(30, policy.config.reject_stale_metrics_after_seconds),
                                                 identity=lambda: self._observation_key(room_before),
                                                 client_identity=lambda station: self._candidate_epoch(station, room_before),

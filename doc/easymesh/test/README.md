@@ -5,8 +5,7 @@ existing baseline-checked appliance.
 
 ## Quick start
 
-Select the existing appliance. `all` includes room mutations and P0 churn soak,
-requiring `--yes-act`:
+`all` includes room mutations and P0 churn soak, requiring `--yes-act`:
 
 ```sh
 cd /path/to/meta-cmf-bananapi-vcpe
@@ -31,7 +30,7 @@ an executed test failed. **Skipped is not passed.**
 | `rf-actions` | Native guarded load BTM, retry-pressure veto and weak-signal rescue | Yes |
 | `soak` | Duration-bound P0 RF churn, health and recovery checks | Yes |
 
-Run selected sections instead of `all`:
+Select sections:
 
 ```sh
 gen/tests/run-easymesh-suite.sh static webui browser
@@ -62,12 +61,14 @@ any superseded room RF journal and checksum receipt under
 `/home/easymesh/easymesh-evidence/recovery-archives/`. It restarts the room only
 after all native live/soak work. Failed audits never remove the journal.
 
-The guard is a runtime systemd condition, not a runtime mask: an installed
-`/etc/systemd/system` unit can outrank a mask under `/run`. A second suite
-cannot acquire the same guard. Restoration failures count as failures.
-Commanded steering never runs concurrently with room-owned RF generations.
+The exclusive guard prevents concurrent suites and room-owned RF changes.
+Restoration failures count as failures.
 
-For a short **GET-only** RF check, without rebuilding or stopping the room:
+World switching checks configured-policy convergence; absolute-best placement
+is reported separately. Use `room-world-switch-smoke.py --require-absolute-best`
+for the stricter criterion, which may conflict with steering hysteresis.
+
+For a **GET-only** RF check:
 
 ```sh
 python3 gen/tests/rf-access-smoke.py \
@@ -87,8 +88,16 @@ the LAN address, not loopback. Inspect
 `lxc config device show "$EASYMESH_LXD_NAME"` and export its `listen` host IP
 as `EASYMESH_HOST_ADDRESS` when `127.0.0.1` cannot reach them.
 
-Check Console NG before the suite stops the room service. `lab-config.sh`
-sets ports, not the host address:
+Install Python dependencies; activate this environment in every test terminal:
+
+```sh
+sudo apt-get install -y python3-venv
+python3 -m venv "$HOME/.venvs/easymesh-tests"
+source "$HOME/.venvs/easymesh-tests/bin/activate"
+python3 -m pip install -r gen/tests/requirements.txt
+```
+
+Check Console NG first. `lab-config.sh` sets ports, not the host address:
 
 ```sh
 source doc/easymesh/build/scripts/lab-config.sh "$EASYMESH_LXD_NAME"

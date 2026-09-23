@@ -133,6 +133,7 @@ def apply(args: argparse.Namespace) -> int:
     target_bssid = normalize_mac(args.target_bssid)
     if source_bssid == target_bssid:
         raise RuntimeError("source and target BSSIDs are identical")
+    source_frequency = getattr(args, "source_frequency", None) or args.frequency
     explicit = (
         args.station_radio,
         args.source_radio,
@@ -167,7 +168,6 @@ def apply(args: argparse.Namespace) -> int:
             item for item in mesh
             if any(
                 normalize_mac(interface.get("mac", "")) == source_bssid
-                and int(interface.get("frequency_mhz") or 0) == args.frequency
                 for interface in item.get("interfaces", [])
             )
         ]
@@ -181,7 +181,7 @@ def apply(args: argparse.Namespace) -> int:
         ]
         if len(sources) != 1:
             raise RuntimeError(
-                f"{source_bssid}: expected one {args.frequency} MHz source radio, "
+                f"{source_bssid}: expected one source radio, "
                 f"found {len(sources)}"
             )
         if len(targets) != 1:
@@ -190,29 +190,26 @@ def apply(args: argparse.Namespace) -> int:
                 f"found {len(targets)}"
             )
         source_radio = sources[0]["tx_mac"]
+        source_frequencies = {int(interface.get("frequency_mhz") or 0)
+                              for interface in sources[0].get("interfaces", [])
+                              if normalize_mac(interface.get("mac", "")) == source_bssid}
+        if len(source_frequencies) != 1 or min(source_frequencies) <= 0:
+            raise RuntimeError(f"{source_bssid}: source BSS frequency is unavailable")
+        source_frequency = source_frequencies.pop()
         target_radio = targets[0]["tx_mac"]
         mesh_radios = sorted(item["tx_mac"] for item in mesh)
     updates = []
-    pairs = []
-    values = {}
-    for radio in mesh_radios:
-        values[radio] = (
-            args.target_snr if radio == target_radio
-            else args.source_snr if radio == source_radio
-            else args.other_snr
-        )
-        pairs.extend(((station, radio), (radio, station)))
+    for frequency in sorted({source_frequency, args.frequency}):
+        for radio in mesh_radios:
+            value = (args.target_snr if radio == target_radio and frequency == args.frequency
+                     else args.source_snr if radio == source_radio and frequency == source_frequency
+                     else args.other_snr)
+            for source, destination in ((station, radio), (radio, station)):
+                updates.append({"source": source, "destination": destination,
+                                "frequency_mhz": frequency, "value": value, "override": True})
     with medium_client(args) as control:
-        status, prior = snapshot_frequency_links(control, pairs, args.frequency)
-        for source, destination in pairs:
-            radio = destination if source == station else source
-            updates.append({
-                "source": source,
-                "destination": destination,
-                "frequency_mhz": args.frequency,
-                "value": values[radio],
-                "override": True,
-            })
+        keys = [(item["source"], item["destination"], item["frequency_mhz"]) for item in updates]
+        status, prior = snapshot_link_keys(control, keys)
         state = {
             "schema": "easymesh.steering-rf-bias.v1",
             "backend": args.backend,
@@ -349,6 +346,7 @@ def main() -> int:
     apply_parser.add_argument("--target-bssid", required=True)
     apply_parser.add_argument("--state", required=True, type=Path)
     apply_parser.add_argument("--frequency", type=int, default=5180)
+    apply_parser.add_argument("--source-frequency", type=int)
     apply_parser.add_argument("--source-snr", type=int, default=40)
     apply_parser.add_argument("--target-snr", type=int, default=60)
     apply_parser.add_argument("--other-snr", type=int, default=-20)

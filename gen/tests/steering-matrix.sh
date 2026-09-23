@@ -61,6 +61,11 @@ restore_medium() {
     if [ "$medium_restored" -eq 1 ]; then
         return 0
     fi
+    if [[ -n ${active_bias_state:-} && ! -e $active_bias_state ]]; then
+        medium_restored=1
+        active_bias_state=
+        return 0
+    fi
     if [[ -n ${active_bias_state:-} && -s $active_bias_state ]] \
         && "${bias_command[@]}" restore --state "$active_bias_state" >/dev/null; then
         active_bias_state=

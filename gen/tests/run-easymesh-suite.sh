@@ -399,7 +399,7 @@ run_rf() {
     run rf viewer "cd '$root' && node gen/tests/viewer-room-guide-test.js" || return
     run rf inspector "cd '$root' && node gen/tests/viewer-rf-inspector-test.js" || return
     run rf documentation "cd '$root' && python3 gen/tests/test_documentation.py" || return
-    run rf rooms "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'" || return
+    run rf rooms "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-tier-properties.json'" || return
     run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/tests/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || return
     run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/wmediumd/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }

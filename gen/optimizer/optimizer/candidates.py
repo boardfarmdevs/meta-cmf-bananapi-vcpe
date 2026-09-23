@@ -104,7 +104,8 @@ def _default_request(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             CandidateMetricsUnavailable
             if error.code in {408, 429, 502, 503, 504} else CandidateMetricsError
         )
-        if error.code == 503 and "Error_Prev_Cmd_In_Progress" in str(detail.get("message", "")):
+        if error.code == 503 and any(code in str(detail.get("message", ""))
+                                     for code in ("Error_Prev_Cmd_In_Progress", "Error_Not_Ready")):
             error_type = CandidateMetricsBusy
         raise error_type(
             f"candidate query failed with HTTP {error.code}: {detail}"
@@ -392,14 +393,15 @@ class ControllerCandidateProvider:
                             continue
                         failures += 1
                         if failures >= self.request_attempts:
-                            if self.stop_on_unavailable and isinstance(error, CandidateMetricsUnavailable):
+                            if (self.stop_on_unavailable and isinstance(error, CandidateMetricsUnavailable)
+                                    and not isinstance(error, CandidateMetricsBusy)):
                                 collection_cancelled.set()
                             suffix = (
                                 f": {error}" if self.request_attempts == 1
                                 else f" after {attempt} attempt(s): {error}"
                             )
                             error_type = (
-                                CandidateMetricsUnavailable
+                                CandidateMetricsBusy if isinstance(error, CandidateMetricsBusy) else CandidateMetricsUnavailable
                                 if isinstance(error, CandidateMetricsUnavailable)
                                 else CandidateMetricsError
                             )
@@ -524,7 +526,30 @@ class ControllerCandidateProvider:
         measured_by_agent: dict[str, list[CandidateObservation]] = {}
         rejected_by_agent: dict[str, set[tuple[str, str]]] = {}
         failures: dict[str, CandidateMetricsError] = {}
-        if jobs_by_agent:
+        if jobs_by_agent and self.max_parallel_agents == 1:
+            deferred = []
+            for batch_index in range(max(map(len, jobs_by_agent.values()))):
+                for agent, jobs in jobs_by_agent.items():
+                    if agent in failures or batch_index >= len(jobs) or collection_cancelled.is_set():
+                        continue
+                    try:
+                        measured, rejected = query_agent(agent, [jobs[batch_index]])
+                        measured_by_agent.setdefault(agent, []).extend(measured)
+                        rejected_by_agent.setdefault(agent, set()).update(rejected)
+                    except CandidateMetricsBusy:
+                        deferred.append((agent, jobs[batch_index]))
+                    except CandidateMetricsError as error:
+                        failures[agent] = error
+            for agent, job in deferred:
+                if agent in failures or collection_cancelled.is_set():
+                    continue
+                try:
+                    measured, rejected = query_agent(agent, [job])
+                    measured_by_agent.setdefault(agent, []).extend(measured)
+                    rejected_by_agent.setdefault(agent, set()).update(rejected)
+                except CandidateMetricsError as error:
+                    failures[agent] = error
+        elif jobs_by_agent:
             with ThreadPoolExecutor(
                 max_workers=min(self.max_parallel_agents, len(jobs_by_agent)),
                 thread_name_prefix="candidate-agent",

@@ -322,6 +322,11 @@ async function run(args) {
     'printf %s ' + quote(audit) + ' | base64 -d | lxc exec --mode non-interactive ' + quote(args.vm) +
     ' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py'],
   {timeout: 30000, maxBuffer: 1048576});
+  const rfAudit = fs.readFileSync(path.join(__dirname, 'room-feature-rf-audit.py')).toString('base64');
+  await execFileAsync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', args.host,
+    'printf %s ' + quote(rfAudit) + ' | base64 -d | lxc exec --mode non-interactive ' + quote(args.vm) +
+    ' -- install -m 0644 /dev/stdin /tmp/room-feature-rf-audit.py'],
+  {timeout: 30000, maxBuffer: 1048576});
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   const directory = path.resolve(args.output);
   if (fs.existsSync(directory) && fs.readdirSync(directory).length) throw new Error('Use a new, empty output directory to preserve previous evidence');
@@ -544,12 +549,17 @@ async function run(args) {
       firstRosterSeconds: firstRoster, firstConvergenceSeconds: firstConvergence, samples, final: lastSample?.result};
   }
   async function screenshot(label) {
+    const captured = lastSample;
+    if (args.screenshots === 'false') {
+      save(activeRoom.id + '-' + label + '.json', captured);
+      return;
+    }
     await room.bringToFront();
     await room.screenshot({path: path.join(directory, activeRoom.id + '-' + label + '-room.png')});
     await topology.bringToFront();
     await topology.screenshot({path: path.join(directory, activeRoom.id + '-' + label + '-topology.png')});
     await room.bringToFront();
-    save(activeRoom.id + '-' + label + '.json', lastSample);
+    save(activeRoom.id + '-' + label + '.json', captured);
   }
   async function exitRoomFullscreen() {
     await room.bringToFront();
@@ -562,7 +572,8 @@ async function run(args) {
     const started = performance.now();
     const clickedAt = Date.now();
     const [response] = await Promise.all([
-      room.waitForResponse(response => worldApplyResponse(response, id), {timeout: 45000}),
+      room.waitForResponse(async response => worldApplyResponse(response, id) &&
+        !(response.status() === 409 && (await response.json()).error === 'stale_revision'), {timeout: 45000}),
       room.locator('#world').selectOption(id),
     ]);
     const body = await response.json();
@@ -699,6 +710,7 @@ async function run(args) {
     const preferred = ['home-a-stationary', 'home-a-one-client-handover', 'large-room-extender-evacuation', 'large-room-perimeter-counter-roam'];
     const names = args.world || [...preferred.filter(name => catalog.some(item => item.id === name)), ...catalog.map(item => item.id).filter(name => !preferred.includes(name))];
     for (const id of names) {
+      let movingCapture = null;
       activeRoom = {id, started: new Date().toISOString(), samples: [], errors: [], checkpoints: []};
       sampleOutput = fs.createWriteStream(path.join(directory, id + '-samples.jsonl'));
       phase = 'loading';
@@ -736,7 +748,8 @@ async function run(args) {
               const audit = JSON.parse((await execFileAsync('ssh', [args.host, command], {timeout: 30000})).stdout);
               save('../asymmetric-rf-audit.json', audit);
             }
-            await screenshot('moving'); middleCaptured = true;
+            movingCapture = screenshot('moving').catch(error => activeRoom.errors.push({phase: 'screenshot', message: error.message}));
+            middleCaptured = true;
           }
           if (result.playback.status === 'completed') { completed = true; break; }
           if (result.playback.status === 'paused') {
@@ -748,6 +761,7 @@ async function run(args) {
             settled.kernel = await auditKernel(settled.final);
             settled.passed &&= settled.kernel.passed;
             activeRoom.checkpoints.push({timeMs: checkpoint, ...settled});
+            await movingCapture;
             await screenshot('checkpoint-' + checkpoint);
             await clickPlay(); checkpointMs += performance.now() - started;
           }
@@ -758,10 +772,12 @@ async function run(args) {
         if (!completed) throw new Error('Playback exceeded bounded wall-clock deadline');
         activeRoom.final = await settle(world, Number(args['final-timeout'] || 120), 'final');
         activeRoom.kernel = await auditKernel(activeRoom.final.final);
+        await movingCapture;
         await screenshot('final');
       } catch (error) {
         activeRoom.errors.push({phase, message: error.stack});
       } finally {
+        await movingCapture;
         await exitRoomFullscreen().catch(error => activeRoom.errors.push({phase: 'fullscreen-exit', message: error.stack}));
         activeRoom.finished = new Date().toISOString();
         summarizeRoom(activeRoom);

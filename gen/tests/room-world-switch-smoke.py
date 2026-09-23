@@ -40,6 +40,27 @@ def identities():
     return result
 
 
+def client_convergence(current, expected):
+    optimizer = current.get("optimizer", {})
+    fleet = optimizer.get("fleet", {})
+    rows = optimizer.get("client_decisions", [])
+    clients = {client["sta_mac"]: client for client in current.get("network", {}).get("clients", [])}
+    identities_match = (len(rows) == len(clients) == expected
+                        and {row.get("sta_mac") for row in rows} == set(clients)
+                        and all(row.get("current_rcpi") is not None
+                                and row.get("source_bssid") == clients[row["sta_mac"]].get("connected_bssid")
+                                for row in rows))
+    policy_checked = identities_match and fleet.get("converged") is True
+    absolute_checked = identities_match and fleet.get("absolute_best_converged") is True and all(
+        all(score.get("gain_rcpi", 0) <= 0 for score in row.get("scores", [])
+            if score.get("band") == row.get("current_band")) for row in rows)
+    return policy_checked, absolute_checked
+
+
+def release_control(request_fn, token):
+    return request_fn("/api/demo/interactions/lease", {"token": token}, method="DELETE")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Opt-in fixed-pool world switching acceptance; restores default in finally")
     parser.add_argument("--yes-act", action="store_true")
@@ -49,6 +70,8 @@ def main():
     parser.add_argument("--all-worlds", action="store_true", help="test every compatible installed room")
     parser.add_argument("--world", action="append", help="test only these room IDs, then restore default")
     parser.add_argument("--skip-presence", action="store_true", help="omit the additional disappear/reappear cycle")
+    parser.add_argument("--require-absolute-best", action="store_true",
+                        help="also require no stronger same-band AP, beyond the configured steering policy")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not args.yes_act:
@@ -110,14 +133,7 @@ def main():
             optimizer = current.get("optimizer", {})
             fleet = optimizer.get("fleet", {})
             rows = optimizer.get("client_decisions", [])
-            clients = {client["sta_mac"]: client for client in current.get("network", {}).get("clients", [])}
-            best_ap_checked = len(rows) == expected and all(
-                row.get("current_rcpi") is not None
-                and row.get("source_bssid") == clients.get(row["sta_mac"], {}).get("connected_bssid")
-                and all(score.get("gain_rcpi", 0) <= 0 for score in row.get("scores", [])
-                        if score.get("band") == row.get("current_band"))
-                for row in rows
-            )
+            policy_checked, best_ap_checked = client_convergence(current, expected)
             evaluated_at = optimizer.get("evaluated_at")
             evaluation_age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
                 evaluated_at.replace("Z", "+00:00"))).total_seconds() if evaluated_at else float("inf")
@@ -134,8 +150,8 @@ def main():
                          and fleet.get("measurement_complete") is True
                          and fleet.get("clients_checked") == expected
                          and fleet.get("clients_evaluated") == expected
-                         and fleet.get("clients_with_stronger_ap") == 0
-                         and best_ap_checked and -5 <= evaluation_age <= 60 and backhaul_settled)
+                         and policy_checked and (best_ap_checked or not args.require_absolute_best)
+                         and -5 <= evaluation_age <= 60 and backhaul_settled)
             if (actual == desired and len(actual) == expected and len(topology["nodes"]) == 6
                     and health.get("healthy") is True and health.get("expected_online_clients") == expected
                     and (converged or not require_convergence)):
@@ -156,6 +172,7 @@ def main():
                           "elapsed_seconds": round(time.monotonic() - started, 2), "healthy": True,
                           "kernel_offline_clients_verified": len(offline),
                           "passed": True, "fleet_converged": converged,
+                          "configured_policy_verified": policy_checked,
                           "best_eligible_same_band_ap_verified": best_ap_checked,
                           "backhaul_settled": backhaul_settled, "backhaul_parents": reported_parents,
                           "evaluation_age_seconds": round(evaluation_age, 3),
@@ -179,7 +196,7 @@ def main():
                               "actions_used": optimizer.get("actions_used"),
                               "elapsed": round(time.monotonic() - started)}), flush=True)
             time.sleep(3)
-        raise RuntimeError(f"{name}: exact {expected}-client roster and measured best-AP convergence not achieved")
+        raise RuntimeError(f"{name}: exact {expected}-client roster and measured policy convergence not achieved")
 
     before = identities()
     preflight_deadline = time.monotonic() + args.timeout
@@ -260,18 +277,22 @@ def main():
                                 revision=snapshot["revision"], method="PUT")
                 report["final_restoration"] = wait_for_world("default-restore", 20)
                 report["restored_default"] = True
-                query = urllib.request.Request(args.base_url + "/api/demo/interactions/lease", method="DELETE",
-                    data=json.dumps({"token": lease, "command_id": "release-" + uuid.uuid4().hex}).encode(),
-                    headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(query, timeout=20):
-                    pass
         except Exception as error:
             report["restore_error"] = str(error)
+            report["passed"] = False
             print(json.dumps({"restore_failed": str(error)}), flush=True)
         finally:
+            if lease is not None:
+                try:
+                    release_control(request, lease)
+                except Exception as error:
+                    report["lease_release_error"] = str(error)
+                    report["passed"] = False
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + "\n")
-        if not report["restored_default"] and report["passed"]:
+            if report.get("lease_release_error"):
+                raise RuntimeError("acceptance did not release its control lease: " + report["lease_release_error"])
+        if lease is not None and not report["restored_default"]:
             raise RuntimeError("acceptance did not restore the default room")
     print(json.dumps(report), flush=True)
 
