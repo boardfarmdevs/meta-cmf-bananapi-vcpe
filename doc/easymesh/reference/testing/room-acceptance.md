@@ -5,6 +5,9 @@ render access. Do not change lab CPU limits or device permissions.
 
 [Testing reference](README.md) · [Expected room features](../rooms/catalog.md)
 
+Geometry reports retain browser/lab identities and `host-monitor.jsonl`; diagnostic
+collection errors fail explicitly.
+
 Run rooms sequentially per lab; independent hosts may overlap. Audit native
 state and both foreground views. Targeted passes are not catalog/soak coverage;
 unplayed rooms remain unqualified.

@@ -47,6 +47,7 @@ WIFI_CLIENT_COLLECTOR_CONFIG_PATCH := "${THISDIR}/${BPN}/0035-configure-client-c
 WIFI_CLIENT_MEMBERSHIP_PATCH := "${THISDIR}/${BPN}/0036-reconcile-event-seeded-client-membership.patch"
 WIFI_BACKHAUL_ROOT_ADMISSION_PATCH := "${THISDIR}/${BPN}/0037-native-backhaul-root-admission.patch"
 WIFI_BACKHAUL_ROOT_REVOCATION_PATCH := "${THISDIR}/${BPN}/0038-native-backhaul-root-revocation.patch"
+WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH := "${THISDIR}/${BPN}/0039-preserve-backhaul-recovery-candidate-budget.patch"
 SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no file://0037-native-backhaul-root-admission.patch;apply=no file://0038-native-backhaul-root-revocation.patch;apply=no"
 python do_patch_append() {
     import os
@@ -255,6 +256,8 @@ python do_patch_append() {
     for variable in ('WIFI_NASTA_METADATA_PATCH', 'WIFI_NASTA_SAMPLING_PATCH', 'WIFI_EM_REPORT_AGE_PATCH', 'WIFI_EM_COLD_QUERY_PATCH', 'WIFI_STA_SCAN_CANDIDATES_PATCH', 'WIFI_CLIENT_COLLECTOR_CONFIG_PATCH', 'WIFI_CLIENT_MEMBERSHIP_PATCH', 'WIFI_BACKHAUL_ROOT_ADMISSION_PATCH', 'WIFI_BACKHAUL_ROOT_REVOCATION_PATCH'):
         with open(d.getVar(variable), 'rb') as stream:
             apply_layer_patch(stream)
+    with open(d.getVar('WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
 
     # GNU patch -N can return success after skipping later hunks when an older
     # revision of this hand-applied patch left the WORKDIR only partly patched.
@@ -335,6 +338,8 @@ do_patch[vardepsexclude] += "WIFI_BACKHAUL_ROOT_ADMISSION_PATCH"
 do_patch[file-checksums] += "${WIFI_BACKHAUL_ROOT_ADMISSION_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_BACKHAUL_ROOT_REVOCATION_PATCH"
 do_patch[file-checksums] += "${WIFI_BACKHAUL_ROOT_REVOCATION_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH"
+do_patch[file-checksums] += "${WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH}:True"
 do_patch[file-checksums] += "${VAP_SVC_SIGNCOMPARE_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_EM_HDRLEN_PATCH}:True"
 do_patch[file-checksums] += "${WIFI_DB_ONEWIFI_DB_SUPPORT_OFF_PATCH}:True"

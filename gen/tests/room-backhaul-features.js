@@ -3,9 +3,11 @@
 const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const {execFile} = require('child_process');
 const {promisify} = require('util');
 const {kernelClientAudit} = require('./room-feature-acceptance.js');
+const {startHostMonitor} = require('./room-host-monitor.js');
 const execute = promisify(execFile);
 const rooms = ['backhaul-branch-formation', 'backhaul-parent-handover', 'backhaul-isolation-recovery'];
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -115,7 +117,8 @@ async function run(options) {
   assert.ok(!fs.existsSync(directory), 'Use a new output directory');
   fs.mkdirSync(directory, {recursive: true});
   const save = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value, null, 2) + '\n');
-  const report = {flavor, started: new Date().toISOString(), scope: 'Geometry-room playback, native parent/traffic convergence and restoration; bounded, not a soak',
+  const report = {flavor, browserHost: os.hostname(), labHost: options.host, vm: options.vm,
+    started: new Date().toISOString(), scope: 'Geometry-room playback, native parent/traffic convergence and restoration; bounded, not a soak',
     rooms: [], errors: [], featureChecksPassed: false, recoveryPassed: false};
   await installGuestAudit(options);
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
@@ -138,6 +141,7 @@ async function run(options) {
   let baseline = null;
   let currentRoom = null;
   let bindings = {};
+  let hostMonitor = null;
   const request = async endpoint => {
     const response = await context.request.get(base + endpoint, {timeout: 15000});
     if (!response.ok()) throw new Error(endpoint + ': HTTP ' + response.status());
@@ -241,6 +245,7 @@ async function run(options) {
   }
 
   try {
+    hostMonitor = await startHostMonitor(options.host, directory, {processes: true});
     report.before = await identity();
     report.renderer = {requested: renderer, actual: await roomPage.evaluate(() => {
       const context = document.createElement('canvas').getContext('webgl');
@@ -422,6 +427,12 @@ async function run(options) {
       assert.deepEqual(report.after, report.before, 'Native process identities changed');
       report.nativeIdentitiesUnchanged = true;
     } catch (error) { report.errors.push(error.message); report.nativeIdentitiesUnchanged = false; }
+    if (hostMonitor) {
+      try {
+        report.hostMonitor = await hostMonitor.stop();
+        if (report.hostMonitor.error) report.errors.push('Host monitor: ' + report.hostMonitor.error);
+      } catch (error) { report.errors.push('Host monitor: ' + error.message); }
+    }
     report.featureChecksPassed = report.featureChecksPassed && report.errors.length === 0;
     save('report.json', report);
     await browser.close();

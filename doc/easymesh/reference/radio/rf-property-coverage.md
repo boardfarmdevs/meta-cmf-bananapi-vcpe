@@ -430,10 +430,12 @@ The prpl geometry failure is distinct from the repaired band-settings issue.
 All mesh nodes recovered connectivity and their fronthaul APs remained present.
 The three missing Default clients still had kernel links on Ext-4's 6 GHz BSSs
 and each passed three probes; reporting nevertheless omitted them. Native
-inventory versus adapter reconciliation remains unresolved, not an assumed
-RF/association loss. Manual restart of **Ext-4's native processes only** followed
+inventory versus adapter reconciliation was unresolved in that run, not an
+assumed RF/association loss. Manual restart of **Ext-4's native processes only** followed
 the failed run; subsequent room startup failed its inactive-client preflight.
 That manual action is not automatic recovery or test acceptance.
+The newer synchronized prpl run passes all three geometry rooms and Default
+restoration without changing native identities; it does not rewrite this failure.
 
 Evidence in each checkout remains under `test-results/guarded-load-followup/`:
 ordinary reports above; RDK `backhaul-rdk/`,
@@ -445,11 +447,14 @@ clean-source VM acceptance**. Preserve their identities and failed evidence.
 
 ### Next build and test gates
 
-1. Synchronize committed source before clean-suite acceptance. RDK's hot-installed
-   HAL/controller/CLI need newly built BPI images for reproducible future VMs.
-   prpl's client-path fix requires no new native artifacts or VM rebuild.
-2. Rerun affected ordinary rooms; current full-scale baselines and targeted
-   geometry passes do not require another full build or soak for diagnosis.
+1. Runtime sources are synchronized to RDK `2d64df1` and prpl `76b8569`, with
+   previous guest edits preserved in named stashes. New working-tree changes
+   still need a committed checkpoint before clean-suite acceptance. RDK's
+   hot-installed native components require newly built BPI images for future
+   reproducible VMs; current diagnosis reuses the existing VM.
+2. The synchronized prpl run passes all three geometry rooms, pressure and
+   rescue. RDK's native recovery/reporting qualification remains separate;
+   do not substitute those prpl passes for RDK evidence.
 3. Qualify RDK cold candidate completeness with the terminal-response contract;
    keep policy/deadlines unchanged. Browser expiry and full-roster preflight
    now pass bounded checks, not a new catalog or soak campaign.
@@ -466,6 +471,53 @@ native/fixture issues. Full-suite failures remain visible; no known-failure
 exemptions, longer convergence windows or relaxed assertions are added here.
 
 ## Cold room initialization
+
+### Native backhaul recovery follow-up
+
+The synchronized branch playback exposes a separate OneWifi recovery defect:
+an unrooted former parent and a usable gateway can tie at scan RSSI. After
+two timed-out connections, the global retry budget discarded the complete
+scan. Rescanning reset all per-candidate counters, repeatedly selecting the
+same unusable parent without trying the gateway. Root admission correctly
+rejected the former parent; disabling that protection is not the fix.
+
+OneWifi patch `0039-preserve-backhaul-recovery-candidate-budget.patch` retains
+the scan during autonomous reconnect timeouts. Existing per-candidate limits
+still bound attempts and exhaustion triggers a fresh scan. Explicit preferred
+parent/fallback transactions retain their existing limits and timers. Extracted
+native regressions fail four new cases before the patch and pass 30/30 after it.
+The extender binary builds and is installed on the four test extenders, but
+live recovery qualification is not yet complete. One follow-up fails initial
+fresh-candidate convergence before Play; the next passes initial readiness
+and plays, but only Ext-1/2/3 have rooted paths at the unchanged recovery gate.
+Ext-4 remains parentless. Do not credit partial recovery or unit coverage as
+successful live branch recovery.
+
+Restarting native extender processes also loses applied reporting policy.
+Controller policy readback remains populated, and posting identical policy
+through `/api/v1/wifipolicy` skips native dispatch: HTTP success is not proof
+of renewed agent delivery. During explicit baseline recovery, the AP reporting
+interval was temporarily changed from 5 to 6 seconds and restored to 5;
+steering thresholds were untouched. Native serving reports then return.
+The patched controller binary was retained; a deliberate controller restart
+during recovery changes its process identity, not its code. Held patch 0192
+was not enabled. Automatic restart-policy recovery remains a separate gap.
+
+Evidence is under `test-results/synchronized-rf/`: `branch-offhost/` records
+the original root-loss failure; `onewifi-recovery-before.json` and
+`onewifi-recovery-after.json` record native regressions;
+`geometry-recovery-policy-restored/` records the post-patch initial candidate
+failure with healthy ten-client links/APs, unchanged native identities during
+the check and successful converged Default-20 restoration. Its host trace
+averages 80.87% CPU busy (peak 88.47%) at at most 73 °C, with the browser on
+another host. Shared-host contention is recorded, not asserted as the sole
+cause or hidden by longer deadlines. Unrelated VMs remain untouched.
+`branch-recovery-ready-baseline/` records the subsequent partial branch recovery
+and missed Default convergence gate; native identities remain unchanged during
+that run. Default later has twenty active clients and six nodes, but this does
+not retroactively pass the candidate-completeness deadline.
+
+### Medium initialization cost
 
 Initializing 3,060 frequency overrides exposed a shared medium defect: its
 free-slot reservation repeatedly scanned all earlier reservations, taking
@@ -519,6 +571,37 @@ Guarded-load fixtures choose two native extender radios with known hop counts
 and a target with no additional backhaul hop. They prefer the original target
 when valid, otherwise select a compatible pair rather than requiring a star.
 They never force backhaul parents or alter the production steering policy.
+
+Pressure-only selection prefers the shallowest available native source, then
+equal-depth pairs, before historical AP preferences. Reports retain
+`pair_selection` and both actual hop counts. This avoids an unnecessary
+backhaul bottleneck without requiring a star or manufacturing overload;
+deeper-only labs still must meet every original qualification gate. Clear and
+rescue selection is unchanged. Both stacks pass 130 focused fixture tests.
+The synchronized RDK `pressure/report.json` chooses one-hop source and target,
+but remains **unqualified**: native utilization peaks at 199/255 and pressure
+lasts at most 5.056 s, below the unchanged 10-second hold. Five counter-pressure
+decisions are not five causal veto witnesses against a fully held unguarded
+opportunity. The test correctly fails; original RF/channels/associations,
+fresh Default-20 metrics and native identities restore. The prpl counterpart
+passes 22 causal veto witnesses with its independently recorded workload.
+The separate RDK `rescue/report.json` passes with two-hop source and target:
+native BTM verification takes 8.428 s and observed settling takes 25.001 s.
+The first sampled complete fresh snapshot is 19.245 s after verification;
+this is sampling/collection evidence, not the native metric arrival time.
+Restoration verifies fresh Default-20 metrics and unchanged native identities.
+This is a correctness pass, not proof of near-instant reporting or a fair
+cross-stack latency comparison under these host conditions.
+The synchronized `rf-rooms.json` passes both 30-second RF-property rooms,
+all seven native observations, real traffic and healthy Default restoration.
+Default-20 is also observed converged afterward. These targeted passes do
+not close the separate geometry or held-pressure failures above.
+
+Geometry reports retain browser/lab identities and a bounded host
+CPU/load/temperature/process trace. Use a separate browser machine with `--host`
+and reachable room/topology URLs to separate software-rendering overhead from
+lab work. Keep `host-monitor.jsonl` with the report; sampling errors fail the
+diagnostic gate, without changing native policy or convergence assertions.
 
 Load-action reports also retain production thresholds, evaluated and missing
 subject cycle counts, decision-reason counts, peak decision-evidence utilization

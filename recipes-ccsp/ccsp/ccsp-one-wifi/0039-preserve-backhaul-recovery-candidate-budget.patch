@@ -1,0 +1,30 @@
+Subject: [PATCH] Exhaust individual backhaul candidates before scanning again
+
+An autonomous reconnect can see an unrooted former parent and a working root
+at the same RSSI. The connect timeout discarded the entire scan after the
+global retry budget, before trying the next candidate. The next scan reset
+every per-candidate counter and selected the same former parent indefinitely.
+
+Keep the scan snapshot on a scan-list connection timeout. ext_try_connecting
+already bounds each candidate with STA_MAX_CONNECT_ATTEMPT and requests a new
+scan once no candidate remains. Explicit new-parent/last-parent transactions
+retain their existing global deadline and fallback. Do not change admission,
+RSSI preference, retry intervals, or retry limits.
+
+Upstream-Status: Pending
+
+--- a/source/core/services/vap_svc_mesh_ext.c
++++ b/source/core/services/vap_svc_mesh_ext.c
+@@ -525,6 +525,12 @@
+         return 0;
+     }
+ 
++    if (ext->conn_state == connection_state_connection_in_progress) {
++        ext->conn_retry = 0;
++        schedule_connect_sm(svc);
++        return 0;
++    }
++
+     if (ext->conn_retry >= STA_MAX_CONNECT_ATTEMPT) {
+         wifi_util_error_print(WIFI_CTRL, "%s:%d not received connection event\n", __func__,
+             __LINE__);
