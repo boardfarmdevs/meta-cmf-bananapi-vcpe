@@ -92,34 +92,26 @@ Chromium installation is already available, set `CHROMIUM_PATH` instead of
 downloading one. Screenshots and failed-test traces stay in ignored
 `test-results/`; generated output and npm dependencies are also ignored.
 
-## Publish without replacing the existing room viewer
+## Publish
 
-The existing site is served from the repository's `gh-pages` branch. Do not
-change its Pages configuration, replace the branch with `dist/`, or enable a
-second deployment workflow that would overwrite the viewer and world catalog.
+The site is built and published by the Pages workflow
+(`.github/workflows/pages.yml`) on every push to `main`: `pages/build` runs
+`npm ci`, `npm run build` and `npm test` here, and `pages/finish-site.py` adds the
+labs bar shared by the four lab sites. The Pages source is **GitHub Actions**.
 
-Use a separate, clean checkout of the existing `gh-pages` branch, update it
-from its current remote, then stage only this addition:
+`npm run build` writes the whole public site to `site/`: this explorer under
+`explorer/`, `pages-index.html` as the landing page, and the disconnected room
+viewer, manual and `golden/` rooms from `gen/wmediumd/configurator/worlds`.
+It refuses a viewer that does not default to the disconnected sandbox.
+
+To preview the finished site locally:
 
 ```sh
-npm run build
-npm test
-npm run stage-pages -- /absolute/path/to/gh-pages-checkout
-git -C /absolute/path/to/gh-pages-checkout diff --stat
-git -C /absolute/path/to/gh-pages-checkout status --short
+pages/build && python3 pages/finish-site.py
+python3 -m http.server -d dist/site 8000
 ```
 
-The staging command refuses a dirty destination or a different branch. It
-requires the existing `viewer/index.html` and `golden/`, replaces only the
-generated `explorer/` directory, copies `pages-index.html` to the site root,
-and retains `.nojekyll`. `viewer/` and `golden/` are not touched. The root
-page becomes a small navigation landing page instead of immediately redirecting
-to the room viewer; existing direct viewer and manual URLs stay unchanged.
-
-After review and authorization, commit source on `main` and the
-static publication on `gh-pages`, then push each to the existing upstream.
-Verify the Pages deployment and open the public `/explorer/` URL after it
-finishes. Never publish `node_modules/`, the ZIP, `.env` files, test output,
-or live-lab credentials.
+Never publish `node_modules/`, the ZIP, `.env` files, test output, or live-lab
+credentials.
 
 No thin tar, VirtualBox box, native build or live lab change is required.

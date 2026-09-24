@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { entries, revision } from '../app/system';
@@ -229,6 +230,10 @@ test('band inspector describes native measurements and bounded qualification', a
 test('new band rooms remain disconnected static previews and the manual explains them', async ({
   page,
 }) => {
+  // Every golden room is offered, however many the catalog holds.
+  const rooms = readdirSync(
+    fileURLToPath(new URL('../../wmediumd/configurator/worlds/golden', import.meta.url)),
+  ).filter((name) => name.endsWith('.world.json')).length;
   const requests: string[] = [];
   const errors: string[] = [];
   page.on('request', (requested) => requests.push(requested.url()));
@@ -240,7 +245,7 @@ test('new band rooms remain disconnected static previews and the manual explains
   ]) {
     await page.goto(`/meta-cmf-bananapi-vcpe/viewer/?world=${room}`);
     await expect(page.locator('#worldmeta')).toContainText(room);
-    await expect(page.locator('#world option')).toHaveCount(17);
+    await expect(page.locator('#world option')).toHaveCount(rooms);
     await expect(page.locator('meta[name="room-viewer-mode"]')).toHaveAttribute(
       'content',
       'no-connect',
