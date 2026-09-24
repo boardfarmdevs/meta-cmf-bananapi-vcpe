@@ -5,7 +5,7 @@
 **Status: Phases 0–2 and the bounded Phase 3 profile are qualified; Phase 4 is partially implemented.**
 The [supported profile](#124-implemented-phases-12-survey-and-native-bss-load)
 is legacy-rate, 20 MHz; optional visibility is not calibrated capacity or full DCF.
-Current development branch: `codex/0916-clean` in both repositories. The
+Current development branch: `main` in both repositories. The
 [property-to-room coverage and live gates](rf-property-coverage.md#native-load-action-qualification)
 separate implementation, measured behavior and remaining qualification failures.
 Bounded diagnostics do not replace clean-source release acceptance.

@@ -138,7 +138,7 @@ export default function Explorer() {
           <div className="version">
             <span className="version-dot" /> Documented system
             <span className="branch">
-              codex/0908-clean · {revision.slice(0, 7)}
+              main · {revision.slice(0, 7)}
             </span>
           </div>
         </section>
