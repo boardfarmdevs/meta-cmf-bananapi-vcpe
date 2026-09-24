@@ -15,7 +15,7 @@ gen/tests/run-easymesh-suite.sh all --yes-act
 
 Results go into timestamped `test-results/`: per-command logs,
 `results.tsv` scorecard and machine-readable `summary.json`. Nonzero exit means
-an executed test failed. **Skipped is not passed.**
+failure or blocked qualification. **Skipped/blocked is not passed.**
 
 ## Sections
 
@@ -39,27 +39,31 @@ gen/tests/run-easymesh-suite.sh rf-actions --yes-act
 gen/tests/run-easymesh-suite.sh live rooms --yes-act
 gen/tests/run-easymesh-suite.sh soak --yes-act --soak-duration 900
 gen/tests/run-easymesh-suite.sh live soak --yes-act --expected-clients 100
+gen/tests/run-easymesh-suite.sh soak --yes-act --soak-preflight-only
 ```
 
 Default soak: **43,200 seconds (12 hours)**. Shorter runs are shakedowns,
 not long-duration acceptance.
+
+`--soak-preflight-only` retains source matching, full-roster preparation and
+initial/final health/RF gates without churn. Its `p0-preflight` result records
+`acceptance_eligible=false`; `total_runtime_seconds` includes final checks.
+It is not a soak pass.
 
 See [RF action qualification](../reference/radio/rf-property-coverage.md#native-load-action-qualification).
 
 Client count is auto-detected; override with `--expected-clients COUNT` or
 `EASYMESH_EXPECTED_CLIENTS`. Checked-in policies remain unchanged.
 
-For 100 clients, room checks run first. The runner then guards/stops the
-room service, reconstructs the full roster (VM-restart-scale cold-start time),
-and waits up to two minutes for 100 live controller clients. This state persists
-through all live/soak checks. The prior room-service state is restored once at
-exit, including failure/interruption. No room-selection pre-step is needed;
-**do not operate the room during these checks.**
+For 100 clients, rooms run first. The runner guards/stops the room service,
+reconstructs the roster (VM-restart-scale cost), then waits two minutes for
+100 controller clients. This state spans all live/soak checks. Prior service
+state is restored once at exit, including interruption. No room-selection
+pre-step is needed; **do not operate the room during checks.**
 
-Only after the reconstructed lab passes its baseline audit, the runner archives
-any superseded room RF journal and checksum receipt under
-`/home/easymesh/easymesh-evidence/recovery-archives/`. It restarts the room only
-after all native live/soak work. Failed audits never remove the journal.
+Only successful baseline audits permit archiving superseded RF journals and
+checksum receipts under `/home/easymesh/easymesh-evidence/recovery-archives/`.
+Failed audits retain the journal. Room restart follows all native checks.
 
 The exclusive guard prevents concurrent suites and room-owned RF changes.
 Restoration failures count as failures.
@@ -76,9 +80,8 @@ python3 gen/tests/rf-access-smoke.py \
   --output "test-results/rf-access-$(date -u +%Y%m%dT%H%M%SZ).json"
 ```
 
-This checks access/freshness, not room convergence or new RF physics.
-Use `--require-backhaul-load` to require fresh native utilization on every
-reported wireless backhaul hop; unverified context fails.
+This checks access/freshness, not convergence. `--require-backhaul-load` requires
+fresh native utilization on every wireless hop; unverified context fails.
 
 ## Prerequisites
 

@@ -1,0 +1,358 @@
+Subject: [PATCH] Distinguish terminal candidate shortfall from transport timeout
+
+A correlated native response completes the transaction even when fewer
+measurements are reported than requested. Expose that terminal boundary to
+the CLI instead of waiting eight seconds for keys that will never arrive.
+Reuse the existing metric timestamp, MID, RUID and count; stamp valid empty
+responses too and serialize UnassociatedSTAQuery beside the metric rows.
+Validate the complete TLV sequence before replacing the retained snapshot.
+No data-model members, tracker semantics, retries or policy are changed.
+
+Under the existing per-AL admission gate, baseline completion before submission
+and require a fresh post-submission record with matching metric count. Native
+AL/MID correlation remains authoritative; rows and ACK rejections used with a
+completion must match its MID/RUID. Return HTTP 503 with success:false,
+native_completed:true, retained valid metrics and sorted missing_expected_keys
+for a terminal shortfall. Do not invent rejection codes or RCPI values.
+Complete responses and genuine ACK rejections retain their existing behavior;
+no completion record still uses the unchanged eight-second HTTP 504 timeout.
+This establishes the completion contract, not the underlying HAL failure cause.
+
+Upstream-Status: Pending
+
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -484,7 +484,8 @@
+     unsigned int tlv_len = 0;
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+ 
+-    if (m_unassoc_in_progress) {
++    if (m_unassoc_in_progress ||
++        len < sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) + sizeof(em_tlv_t)) {
+         return -1;
+     }
+ 
+@@ -519,6 +520,35 @@
+     }
+ 
+     dm_easy_mesh_t *dm = matched_em->get_data_model();
++
++    const unsigned char *cursor = buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
++    unsigned int remaining = len - static_cast<unsigned int>(cursor - buff);
++    unsigned int response_count = 0;
++    bool has_response = false;
++    bool has_end = false;
++    while (remaining >= sizeof(em_tlv_t)) {
++        const auto *entry = reinterpret_cast<const em_tlv_t *>(cursor);
++        const unsigned int payload_len = ntohs(entry->len);
++        if (sizeof(em_tlv_t) + payload_len > remaining) break;
++        if (entry->type == em_tlv_type_eom) {
++            has_end = payload_len == 0;
++            break;
++        }
++        if (entry->type == em_tlv_type_unassoc_sta_link_metric_rsp) {
++            if (payload_len < 2 || payload_len != 2U +
++                entry->value[1] * sizeof(em_unassoc_sta_metric_t)) break;
++            response_count += entry->value[1];
++            if (response_count > EM_MAX_UNASSOC_STA) break;
++            has_response = true;
++        }
++        const unsigned int entry_len = sizeof(em_tlv_t) + payload_len;
++        cursor += entry_len;
++        remaining -= entry_len;
++    }
++    if (!has_response || !has_end) {
++        m_unassoc_in_progress = false;
++        return -1;
++    }
+ 
+     memset(dm->m_unassoc_sta_metrics, 0, sizeof(dm->m_unassoc_sta_metrics));
+     dm->m_num_unassoc_sta_metrics = 0;
+@@ -550,17 +580,15 @@
+         tlv = reinterpret_cast<em_tlv_t *>(reinterpret_cast<unsigned char *>(tlv) + sizeof(em_tlv_t) + tlv_len);
+     }
+ 
+-    if (dm->m_num_unassoc_sta_metrics > 0) {
+-        struct timeval received_at;
+-
+-        gettimeofday(&received_at, NULL);
+-        dm->m_unassoc_sta_metrics_received_ms =
+-            static_cast<uint64_t>(received_at.tv_sec) * 1000ULL +
+-            static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
+-        dm->m_unassoc_sta_metrics_msg_id = response_msg_id;
+-        memcpy(dm->m_unassoc_sta_metrics_ruid, matched_em->get_radio_interface_mac(),
+-            sizeof(mac_address_t));
+-    }
++    struct timeval received_at;
++
++    gettimeofday(&received_at, NULL);
++    dm->m_unassoc_sta_metrics_received_ms =
++        static_cast<uint64_t>(received_at.tv_sec) * 1000ULL +
++        static_cast<uint64_t>(received_at.tv_usec) / 1000ULL;
++    dm->m_unassoc_sta_metrics_msg_id = response_msg_id;
++    memcpy(dm->m_unassoc_sta_metrics_ruid, matched_em->get_radio_interface_mac(),
++        sizeof(mac_address_t));
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
+     if (!orch->complete_command(em_cmd_type_unassoc_sta_query)) {
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4184,6 +4184,18 @@
+             if (agent_dm != NULL && agent_dm->m_unassoc_sta_metrics_received_ms != 0) {
+                 dm_easy_mesh_t::macbytes_to_string(
+                     agent_dm->m_unassoc_sta_metrics_ruid, ruid_str);
++                cJSON *completion = cJSON_AddObjectToObject(dev_obj,
++                    "UnassociatedSTAQuery");
++                char completed_at_ms[32] = {0};
++                snprintf(completed_at_ms, sizeof(completed_at_ms), "%llu",
++                    static_cast<unsigned long long>(
++                        agent_dm->m_unassoc_sta_metrics_received_ms));
++                cJSON_AddStringToObject(completion, "RUID", ruid_str);
++                cJSON_AddStringToObject(completion, "ReceivedAtMS", completed_at_ms);
++                cJSON_AddNumberToObject(completion, "MessageID",
++                    agent_dm->m_unassoc_sta_metrics_msg_id);
++                cJSON_AddNumberToObject(completion, "MetricCount",
++                    agent_dm->m_num_unassoc_sta_metrics);
+                 for (unsigned int metric_idx = 0;
+                      metric_idx < agent_dm->m_num_unassoc_sta_metrics; metric_idx++) {
+                     em_unassoc_sta_metric_entry_t *metric =
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4351,21 +4351,22 @@
+     return errors
+ }
+ 
+-func loadCandidateLinkState() ([]candidateLinkMetric, []candidateLinkError, error) {
++func loadCandidateLinkState() ([]candidateLinkMetric, []candidateLinkError, []candidateCompletion, error) {
+     cmd := C.CString("get_sta OneWifiMesh")
+     defer C.free(unsafe.Pointer(cmd))
+     tree := execEMCommand(cmd, nil)
+     if tree == nil {
+-        return nil, nil, fmt.Errorf("controller returned no candidate metrics data")
++        return nil, nil, nil, fmt.Errorf("controller returned no candidate metrics data")
+     }
+     defer C.free_network_tree(tree)
+ 
+     deviceList := getNetworkTreeByKey(tree, "DeviceList")
+     if deviceList == nil {
+-        return nil, nil, fmt.Errorf("controller STA tree has no DeviceList")
++        return nil, nil, nil, fmt.Errorf("controller STA tree has no DeviceList")
+     }
+     metrics := make([]candidateLinkMetric, 0)
+     rejected := make([]candidateLinkError, 0)
++    completions := make([]candidateCompletion, 0)
+     for deviceIndex := 0; deviceIndex < int(deviceList.num_children); deviceIndex++ {
+         device := deviceList.child[deviceIndex]
+         if device == nil {
+@@ -4376,6 +4377,22 @@
+         errorList := getNetworkTreeByKey(device, "UnassociatedSTAErrors")
+         if agentAL == "" {
+             continue
++        }
++        if item := getNetworkTreeByKey(device, "UnassociatedSTAQuery"); item != nil {
++            receivedAt, timeError := strconv.ParseUint(getTreeValue(item, "ReceivedAtMS"), 10, 64)
++            messageID := getNetworkTreeByKey(item, "MessageID")
++            metricCount := getNetworkTreeByKey(item, "MetricCount")
++            if timeError == nil && messageID != nil && metricCount != nil &&
++                C.get_node_type(messageID) == C.em_network_node_data_type_number &&
++                C.get_node_type(metricCount) == C.em_network_node_data_type_number {
++                completions = append(completions, candidateCompletion{
++                    AgentAL: agentAL,
++                    RUID: strings.ToLower(getTreeValue(item, "RUID")),
++                    ReceivedAt: receivedAt,
++                    MessageID: int(messageID.value_int),
++                    MetricCount: int(metricCount.value_int),
++                })
++            }
+         }
+         if candidateList != nil {
+             for metricIndex := 0; metricIndex < int(candidateList.num_children); metricIndex++ {
+@@ -4438,16 +4455,16 @@
+         }
+         return rejected[i].STA < rejected[j].STA
+     })
+-    return metrics, rejected, nil
++    return metrics, rejected, completions, nil
+ }
+ 
+ func loadCandidateLinkMetrics() ([]candidateLinkMetric, error) {
+-    metrics, _, err := loadCandidateLinkState()
++    metrics, _, _, err := loadCandidateLinkState()
+     return metrics, err
+ }
+ 
+ func unassocStaMetricsHandler(w http.ResponseWriter, r *http.Request) {
+-    metrics, rejected, err := loadCandidateLinkState()
++    metrics, rejected, _, err := loadCandidateLinkState()
+     if err != nil {
+         http.Error(w, err.Error(), http.StatusServiceUnavailable)
+         return
+@@ -4590,16 +4607,26 @@
+     }
+     defer release()
+     timing := &candidateTiming{}
+-    readState := func() ([]candidateLinkMetric, []candidateLinkError, error) {
++    readState := func() ([]candidateLinkMetric, []candidateLinkError, []candidateCompletion, error) {
+         var metrics []candidateLinkMetric
+         var rejected []candidateLinkError
++        var completions []candidateCompletion
+         var err error
+-        timing.nativeStep(func() { metrics, rejected, err = loadCandidateLinkState() })
+-        return metrics, rejected, err
++        timing.nativeStep(func() { metrics, rejected, completions, err = loadCandidateLinkState() })
++        return metrics, rejected, completions, err
+     }
+     baseline := make(map[string]uint64)
+     errorBaseline := make(map[string]uint64)
+-    if current, currentErrors, err := readState(); err == nil {
++    var completionBaseline uint64
++    baselineAvailable := false
++    if current, currentErrors, currentCompletions, err := readState(); err == nil {
++        baselineAvailable = true
++        for _, completion := range currentCompletions {
++            if strings.EqualFold(completion.AgentAL, req.AlMac) &&
++                completion.ReceivedAt > completionBaseline {
++                completionBaseline = completion.ReceivedAt
++            }
++        }
+         for _, metric := range current {
+             if strings.EqualFold(metric.AgentAL, req.AlMac) {
+                 baseline[candidateMetricKey(metric.STA, metric.OpClass,
+@@ -4642,7 +4669,11 @@
+         return
+     }
+ 
+-    timing.nativeStep(func() { err = submitCandidateQuery(jsonBytes) })
++    var submittedAt uint64
++    timing.nativeStep(func() {
++        submittedAt = uint64(time.Now().UnixMilli())
++        err = submitCandidateQuery(jsonBytes)
++    })
+     if err != nil {
+         timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
+         w.Header().Set("Content-Type", "application/json")
+@@ -4658,13 +4689,23 @@
+     var observedErrors []candidateLinkError
+     for time.Now().Before(deadline) {
+         if r.Context().Err() != nil { return }
+-        all, allErrors, err := readState()
++        all, allErrors, completions, err := readState()
+         if err == nil {
+             observed = observed[:0]
+             observedErrors = observedErrors[:0]
+             fresh := make(map[string]struct{})
++            now := uint64(time.Now().UnixMilli())
++            var completion *candidateCompletion
++            if baselineAvailable {
++                completion = freshCandidateCompletion(completions, all, req.AlMac,
++                    completionBaseline, submittedAt, now)
++            }
+             for _, metric := range all {
+                 if !strings.EqualFold(metric.AgentAL, req.AlMac) {
++                    continue
++                }
++                if completion != nil && (!completion.matches(metric.AgentAL, metric.RUID,
++                    metric.MessageID) || metric.ReceivedAt != completion.ReceivedAt) {
+                     continue
+                 }
+                 key := candidateMetricKey(metric.STA, metric.OpClass, metric.Channel)
+@@ -4673,7 +4714,6 @@
+                     observed = append(observed, metric)
+                 }
+             }
+-            now := uint64(time.Now().UnixMilli())
+             for _, candidateError := range allErrors {
+                 if !strings.EqualFold(candidateError.AgentAL, req.AlMac) ||
+                     !candidateErrorIsFresh(candidateError.ReceivedAt,
+@@ -4681,6 +4721,12 @@
+                     continue
+                 }
+                 keys, wanted := expectedBySTA[candidateError.STA]
++                if completion != nil && (!completion.matches(candidateError.AgentAL,
++                    candidateError.RUID, candidateError.MessageID) ||
++                    candidateError.ReceivedAt < submittedAt ||
++                    candidateError.ReceivedAt > completion.ReceivedAt) {
++                    continue
++                }
+                 if !wanted {
+                     continue
+                 }
+@@ -4700,6 +4746,29 @@
+                     "rejected": candidateErrorsForJSON(observedErrors),
+                     "provider": "hwsim-wmediumd-read-only",
+                     "simulated": true,
++                })
++                return
++            }
++            if completion != nil {
++                missing := make([]string, 0)
++                for key := range expected {
++                    if _, found := fresh[key]; !found {
++                        missing = append(missing, key)
++                    }
++                }
++                sort.Strings(missing)
++                timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
++                w.Header().Set("Content-Type", "application/json")
++                w.WriteHeader(http.StatusServiceUnavailable)
++                _ = json.NewEncoder(w).Encode(map[string]interface{}{
++                    "success": false,
++                    "message": "Native candidate query completed without all requested metrics",
++                    "native_completed": true,
++                    "completion": completion,
++                    "missing_expected_keys": missing,
++                    "metrics": candidateMetricsForJSON(observed),
++                    "rejected": candidateErrorsForJSON(observedErrors),
++                    "coordination": timing,
+                 })
+                 return
+             }
+--- /dev/null
++++ b/src/rdkb-cli/candidate_completion.go
+@@ -0,0 +1,46 @@
++package main
++
++import (
++	"net"
++	"strings"
++)
++
++type candidateCompletion struct {
++	AgentAL     string `json:"agent_al"`
++	RUID        string `json:"ruid"`
++	ReceivedAt  uint64 `json:"received_at_ms"`
++	MessageID   int    `json:"message_id"`
++	MetricCount int    `json:"metric_count"`
++}
++
++func (completion candidateCompletion) matches(agent, radio string, mid int) bool {
++	return strings.EqualFold(completion.AgentAL, agent) &&
++		strings.EqualFold(completion.RUID, radio) && completion.MessageID == mid
++}
++
++func freshCandidateCompletion(completions []candidateCompletion, metrics []candidateLinkMetric,
++	agent string, baseline, submittedAt, now uint64) *candidateCompletion {
++	for _, completion := range completions {
++		if !strings.EqualFold(completion.AgentAL, agent) ||
++			!candidateErrorIsFresh(completion.ReceivedAt, baseline, now) ||
++			completion.ReceivedAt < submittedAt || completion.MessageID < 0 ||
++			completion.MessageID > 65535 || completion.MetricCount < 0 {
++			continue
++		}
++		radio, err := net.ParseMAC(completion.RUID)
++		if err != nil || len(radio) != 6 {
++			continue
++		}
++		count := 0
++		for _, metric := range metrics {
++			if completion.matches(metric.AgentAL, metric.RUID, metric.MessageID) &&
++				metric.ReceivedAt == completion.ReceivedAt {
++				count++
++			}
++		}
++		if count == completion.MetricCount {
++			return &completion
++		}
++	}
++	return nil
++}

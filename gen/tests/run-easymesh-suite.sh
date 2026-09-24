@@ -6,6 +6,7 @@ sections=()
 yes_act=false
 install_browser=false
 soak_duration=43200
+soak_preflight_only=false
 expected_clients=auto
 output_root=
 
@@ -21,6 +22,7 @@ The rf-actions section qualifies guarded native load steering, veto and rescue.
 Options:
   --yes-act                 Permit tests that change room RF or associations.
   --soak-duration SECONDS   P0 churn-soak duration; default: 43200 (12 hours).
+  --soak-preflight-only     Run soak health gates without churn or soak acceptance.
   --expected-clients COUNT  Provisioned lab client profile; default: auto-detect.
   --output DIRECTORY        Store logs and scorecard here.
   --install-browser-deps    Install Playwright and Chromium below .cache/.
@@ -45,6 +47,7 @@ while (($#)); do
         --yes-act) yes_act=true ;;
         --install-browser-deps) install_browser=true ;;
         --soak-duration) shift; soak_duration=${1:-} ;;
+        --soak-preflight-only) soak_preflight_only=true ;;
         --expected-clients) shift; expected_clients=${1:-} ;;
         --output) shift; output_root=${1:-} ;;
         -h|--help) usage; exit 0 ;;
@@ -88,12 +91,13 @@ printf 'section\ttest\tresult\tseconds\tlog\tcommand\n' > "$results"
 passed=0
 failed=0
 skipped=0
+blocked=0
 
 record() {
     local section=$1 name=$2 outcome=$3 started=$4 log=$5 command=$6 elapsed
     elapsed=$(( $(date +%s) - started ))
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$section" "$name" "$outcome" "$elapsed" "$log" "$command" >> "$results"
-    case "$outcome" in passed) ((passed += 1)) ;; failed) ((failed += 1)) ;; skipped) ((skipped += 1)) ;; esac
+    case "$outcome" in passed) ((passed += 1)) ;; failed) ((failed += 1)) ;; skipped) ((skipped += 1)) ;; blocked) ((blocked += 1)) ;; esac
     printf '%-8s %-42s %s (%ss)\n' "[$outcome]" "$section/$name" "$outcome" "$elapsed"
 }
 
@@ -116,6 +120,12 @@ skip() {
 }
 
 have_command() { command -v "$1" >/dev/null 2>&1; }
+block() {
+    local section=$1 name=$2 reason=$3 log=$output_root/logs/"$1-$2.log"
+    printf 'BLOCKED: %s\n' "$reason" | tee "$log"
+    record "$section" "$name" blocked "$(date +%s)" "$log" "$reason"
+}
+
 have_modern_node() { have_command node && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; }
 
 webui_static_dir() {
@@ -401,22 +411,37 @@ run_rf() {
     run rf inspector "cd '$root' && node gen/tests/viewer-rf-inspector-test.js" || return
     run rf documentation "cd '$root' && python3 gen/tests/test_documentation.py" || return
     run rf rooms "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-tier-properties.json'" || return
-    run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/tests/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || return
+    run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/tests/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || {
+        block rf counter-shadow 'counter-manifest failed; subsequent RF mutation was not attempted'
+        return
+    }
     run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/wmediumd/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }
 
 run_rf_actions() {
-    local scenario destination
-    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/wmediumd/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || return
-    prepare_lab || { skip rf-actions prerequisites "LXD VM $vm or guest repository is unavailable"; return; }
+    local scenario destination workload_options failed_scenario=
+    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/wmediumd/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || failed_scenario=contracts
+    if [[ -z $failed_scenario ]] && ! prepare_lab; then
+        failed_scenario=prerequisites
+        skip rf-actions prerequisites "LXD VM $vm or guest repository is unavailable"
+    fi
     for scenario in clear pressure rescue; do
+        if [[ -n $failed_scenario ]]; then
+            block rf-actions "$scenario" "$failed_scenario failed; subsequent RF mutations were not attempted"
+            continue
+        fi
         destination="$guest_repo/test-results/rf-actions-$stamp-$scenario"
-        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/wmediumd/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --payload-bytes 1400 --counter-case '$scenario' --yes-change-lab --output '$destination'")" || return
+        case $scenario in
+            clear) workload_options='--payload-bytes 1400 --background-packets-per-second 200' ;;
+            pressure) workload_options='--payload-bytes 1200 --pressure-payload-bytes 1400 --pressure-access-category voice --pressure-snr 2 --background-packets-per-second 1000' ;;
+            rescue) workload_options='--payload-bytes 1200 --pressure-payload-bytes 512 --pressure-access-category voice --pressure-snr 2 --rescue-snr 32 --background-packets-per-second 500' ;;
+        esac
+        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/wmediumd/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --counter-case '$scenario' $workload_options --yes-change-lab --output '$destination'")" || failed_scenario=$scenario
     done
 }
 
 run_soak() {
-    local clients
+    local clients name=p0-churn options=
     prepare_lab || { skip soak prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     clients=$(lab_client_count) || { skip soak client-profile 'set --expected-clients to the provisioned client count'; return; }
     printf 'Using %s-client lab profile for P0 churn soak.\n' "$clients"
@@ -424,7 +449,8 @@ run_soak() {
         skip soak dependents "failed to establish $clients live clients; see client-profile log"
         return
     }
-    run soak p0-churn "$(guest_command "python3 gen/tests/p0-churn-soak.py --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
+    if "$soak_preflight_only"; then name=p0-preflight; options=--preflight-only; fi
+    run soak "$name" "$(guest_command "python3 gen/tests/p0-churn-soak.py $options --duration '$soak_duration' --expected-clients '$clients' --output-root '$guest_repo/test-results-p0-soak-$stamp'")"
 }
 
 for section_group in 'static webui browser rooms rf rf-actions' 'live soak'; do
@@ -455,7 +481,7 @@ if "$room_service_stopped" || "$room_service_guarded"; then
     record cleanup room-service "$cleanup_result" "$cleanup_started" "$output_root/logs/cleanup-room-service.log" 'restore prior room service state'
 fi
 
-python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" <<'PY'
+python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" "$blocked" <<'PY'
 import json
 import pathlib
 import sys
@@ -466,10 +492,10 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines()[1:]:
     rows.append({'section': section, 'test': name, 'outcome': outcome,
                  'seconds': int(seconds), 'log': log, 'command': command})
 pathlib.Path(sys.argv[2]).write_text(json.dumps({'passed': int(sys.argv[3]), 'failed': int(sys.argv[4]),
-    'skipped': int(sys.argv[5]), 'tests': rows}, indent=2) + '\n')
+    'skipped': int(sys.argv[5]), 'blocked': int(sys.argv[6]), 'tests': rows}, indent=2) + '\n')
 PY
 
 printf '\n===== EasyMesh suite summary =====\n'
-printf 'passed: %d  failed: %d  skipped: %d\n' "$passed" "$failed" "$skipped"
+printf 'passed: %d  failed: %d  skipped: %d  blocked: %d\n' "$passed" "$failed" "$skipped" "$blocked"
 printf 'results: %s\nsummary: %s\n' "$results" "$output_root/summary.json"
-((failed == 0))
+((failed == 0 && blocked == 0))

@@ -1,6 +1,8 @@
 from pathlib import Path
+import os
 import re
 import subprocess
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,14 +64,60 @@ def test_live_section_requires_explicit_mutation_consent():
         assert result.returncode == 2 and "--yes-act" in result.stderr
 
 
+@pytest.mark.parametrize('preflight', ['true', 'false'])
+def test_soak_preflight_retains_profile_guard_and_reports_distinct_scope(preflight):
+    script = '''
+vm=fixture
+guest_repo=/guest
+stamp=run
+soak_duration=43200
+soak_preflight_only=$PREFLIGHT
+prepare_lab() { return 0; }
+lab_client_count() { echo 100; }
+qualify_client_profile() { echo "guard $*"; }
+guest_command() { printf '%s' "$*"; }
+run() { printf 'run %s\\n' "$*"; }
+''' + function('run_soak') + '\nrun_soak\n'
+    result = subprocess.run(['bash', '-c', script], env={**os.environ, 'PREFLIGHT': preflight},
+                            capture_output=True, text=True, check=True)
+    expected = 'p0-preflight' if preflight == 'true' else 'p0-churn'
+    assert result.stdout.index('guard soak 100') < result.stdout.index('run soak ' + expected)
+    assert ('--preflight-only' in result.stdout) is (preflight == 'true')
+    assert '--expected-clients' in result.stdout
+
+
 def test_rf_actions_stop_on_failure_and_precede_shared_full_pool_guard():
     source = function("run_rf_actions")
     assert "for scenario in clear pressure rescue" in source
     assert "--counter-case" in source and "load-counter-guard-policy.yaml" in source
     assert "--payload-bytes 1400" in source
-    assert "--yes-change-lab" in source and "|| return" in source
+    assert "--background-packets-per-second 200" in source
+    assert "--pressure-payload-bytes 512 --pressure-access-category voice" in source
+    assert "--pressure-snr 2 --rescue-snr 32 --background-packets-per-second 500" in source
+    assert "--pressure-payload-bytes 1400 --pressure-access-category voice --pressure-snr 2 --background-packets-per-second 1000" in source
+    assert "--yes-change-lab" in source and "|| failed_scenario=$scenario" in source
     assert "qualify_client_profile" not in source
     assert "'static webui browser rooms rf rf-actions' 'live soak'" in SUITE
+
+
+@pytest.mark.parametrize('failed_step', ['contracts', 'clear', 'pressure'])
+def test_rf_action_failure_records_every_blocked_case(failed_step):
+    script = '''
+root=/fixture
+guest_repo=/guest
+stamp=run
+vm=fixture
+prepare_lab() { return 0; }
+guest_command() { printf '%s' "$*"; }
+run() { printf 'run %s %s\\n' "$1" "$2"; [[ $2 != $FAILED_STEP ]]; }
+block() { printf 'blocked %s %s\\n' "$1" "$2"; }
+''' + function("run_rf_actions") + '\nrun_rf_actions\n'
+    result = subprocess.run(["bash", "-c", script], env={**os.environ, 'FAILED_STEP': failed_step},
+                            capture_output=True, text=True, check=True)
+    steps = ['contracts', 'clear', 'pressure', 'rescue']
+    assert result.stdout.splitlines() == [
+        ('run' if index <= steps.index(failed_step) else 'blocked') + ' rf-actions ' + step
+        for index, step in enumerate(steps)]
 
 
 def test_native_audit_replaces_old_operator_owned_tmp_file():

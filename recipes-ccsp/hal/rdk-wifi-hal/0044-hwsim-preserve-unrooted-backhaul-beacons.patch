@@ -12,9 +12,6 @@ a verified down netdevice needs no kernel flush and cannot block STA startup.
 
 Upstream-Status: Pending
 
-Not enabled in the recipe: isolation/recovery passes, but branch-room
-convergence failed. Retain the original HAL until geometry qualification.
-
 --- a/wifi_hal.c
 +++ b/wifi_hal.c
 @@ -846,7 +846,7 @@

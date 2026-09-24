@@ -73,6 +73,15 @@ function ready(entry, healthNodes, clients = 10) {
     new Set(entry.topology.stations.map(station => station.mac)).size === clients;
 }
 
+function convergenceDiagnostics(entry) {
+  return {healthy: entry.health?.healthy, activeClients: entry.health?.api_active,
+    topologyNodes: entry.topology?.nodes.length, topologyClients: entry.topology?.stations.length,
+    fleet: entry.optimizer?.fleet,
+    nodes: Object.fromEntries(Object.entries(entry.native.nodes).map(([role, node]) => [role,
+      {apOperating: node.apOperating, fronthaulAps: node.fronthaulAps,
+        parentBssid: node.parentBssid, pingOk: node.pingOk, error: node.error}]))};
+}
+
 function interfaceState(raw) {
   const apInfo = raw.split(/Connected to|Not connected/)[0];
   return {apBssid: apInfo.match(/\baddr ([0-9a-f:]{17})/i)?.[1]?.toLowerCase(),
@@ -271,8 +280,10 @@ async function run(options) {
           await delay(1000);
           loaded = await sample('initial-client-convergence', true);
         }
+        currentRoom.initialReadiness = convergenceDiagnostics(loaded);
         assert.equal(ready(loaded, profile.healthNodes), true,
-          'The loaded ten-client room must converge before testing its movement');
+          'The loaded ten-client room must converge before testing its movement: ' +
+          JSON.stringify(currentRoom.initialReadiness));
         currentRoom.initialConvergenceVerified = true;
         currentRoom.initialKernel = await auditClients(loaded);
       }
@@ -334,7 +345,9 @@ async function run(options) {
           observation = await sample('midpoint-native-convergence', true);
         }
         currentRoom.nativeOutcome = {...summarizeNative([observation], id), convergenceVerified: verified(observation)};
-        assert.equal(currentRoom.nativeOutcome.convergenceVerified, true, 'Native handover/isolation was not verified');
+        currentRoom.nativeOutcome.nodes = convergenceDiagnostics(observation).nodes;
+        assert.equal(currentRoom.nativeOutcome.convergenceVerified, true,
+          'Native handover/isolation was not verified: ' + JSON.stringify(currentRoom.nativeOutcome));
       }
       currentRoom.relayApOperating = Object.fromEntries(Object.entries(currentRoom.samples.at(-1).native.nodes)
         .filter(([role]) => role !== 'gateway').map(([role, value]) => [role, value.apOperating]));
@@ -361,12 +374,21 @@ async function run(options) {
         currentRoom.returnKernel = await auditClients(currentRoom.returnObservation);
       }
       currentRoom.featureChecksPassed = true;
+      currentRoom.status = 'passed';
       save(id + '.json', currentRoom);
       console.log(JSON.stringify({room: id, featureChecksPassed: true, native: currentRoom.nativeOutcome}));
     }
     report.featureChecksPassed = report.rooms.every(entry => entry.featureChecksPassed) && report.errors.length === 0;
   } catch (error) {
     report.failure = error.stack;
+    if (currentRoom && !currentRoom.featureChecksPassed) {
+      currentRoom.status = 'failed';
+      currentRoom.failureReasons = [error.message];
+    }
+    for (const id of selectedRooms.filter(id => !report.rooms.some(room => room.id === id))) {
+      report.rooms.push({id, status: 'blocked', featureChecksPassed: false,
+        failureReasons: ['Earlier geometry check failed; no further RF mutation attempted']});
+    }
     console.error(error.message);
   } finally {
     if (changed && baseline) {
@@ -407,7 +429,7 @@ async function run(options) {
   return report;
 }
 
-module.exports = {summarizeNative, interfaceState, stackProfile, ready, parentPaths};
+module.exports = {summarizeNative, interfaceState, stackProfile, ready, parentPaths, convergenceDiagnostics};
 if (require.main === module) {
   let options;
   try { options = optionsFrom(process.argv.slice(2)); }
