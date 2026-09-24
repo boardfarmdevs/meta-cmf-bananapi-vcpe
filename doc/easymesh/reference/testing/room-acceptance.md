@@ -31,7 +31,12 @@ physical platforms/fronthauls are unchanged. Native builds and admission/beacon
 fixtures pass, including fail-closed flushing. Typed inventory errors pause
 interactive RDK steering; noninteractive checks fail.
 
-Latest bounded RDK evidence in `test-results/targeted-suite-repair/`:
+Later [native recovery/retry checks](../radio/rf-property-coverage.md#cold-room-initialization)
+still fail cold readiness and branch recovery. Held retry 0206 is not enabled;
+the UAF-patched baseline controller is restored. Those failures are not erased
+by the earlier targeted passes listed here.
+
+Earlier bounded RDK evidence in `test-results/targeted-suite-repair/`:
 
 - `counter-manifest/report.json`: passes with
   explicit, verified traffic-subject preparation and original-owner restoration.

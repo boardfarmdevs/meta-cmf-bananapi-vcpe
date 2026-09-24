@@ -517,6 +517,57 @@ and missed Default convergence gate; native identities remain unchanged during
 that run. Default later has twenty active clients and six nodes, but this does
 not retroactively pass the candidate-completeness deadline.
 
+The next bounded checks are retained in `test-results/rf-continuation/`.
+`branch-checkpoint/` again stops before Play because fresh candidates are
+incomplete. `branch-full/` passes initial readiness and recovers Ext-4 through
+Ext-2, but Ext-3 remains parentless at the unchanged gate. Both restore a
+converged Default-20 without native process changes during their checks.
+Thus the remaining recovery defect is not specific to Ext-4. Native logs show
+Ext-3 exhausting its two attempts at Ext-1 immediately before Ext-1 becomes
+rooted, then spending full timeouts on other candidates. Faster propagation
+of actual authentication/association failure is an investigation, not yet a
+qualified fix. Admission, beacons and convergence deadlines remain unchanged.
+
+### Candidate transport retry qualification
+
+The bounded branch packet capture proves that some client candidate queries
+receive neither ACK nor response during native backhaul disconnection. Do not
+attribute those timeouts to rendering or infer a missing response from
+rate-limited journal gaps alone. Backhaul-owned queries and all-rejected ACKs
+must be distinguished from missing client-query replies.
+
+Held retry patch 0206 additionally needed cancellation repair: after four
+local send failures its MID remained zero, so cancellation skipped clearing
+the exhausted retry counter and left the radio pending. The extracted native
+regression reproduces that failure and now passes cancellation/reset after
+both transmitted and unsent queries, while preserving unrelated radio states.
+The four-send/two-second bound, original command deadline and freshness gates
+are unchanged; this does not extend an HTTP request's eight-second deadline.
+
+An incremental diagnostic controller build missed header-dependent objects
+after the metrics class layout changed. Its handover report is an invalid
+artifact qualification attempt, not evidence about retry correctness. The
+known-good UAF-patched controller was restored and Default-20 reconverged.
+Use a clean native rebuild for header/ABI changes: this Yocto configuration
+disables automatic header dependency tracking. Keep 0206 out of normal image
+builds until a consistently rebuilt controller passes bounded coexistence
+qualification. No ASan campaign or VM rebuild is required for that check.
+
+The subsequent clean build recompiles all 106 controller objects and its
+AL-SAP dependency, retains UAF 0193, and passes Default-20 readiness before
+`rf-continuation/retry-clean-handover/`. That check still fails initial room
+readiness before Play: all mesh nodes have parent/root traffic and operating
+APs, but the model shows nine clients and only four complete client candidate
+sets. Default RF restores, but full recovery also misses its 60-second gate.
+Native identities remain unchanged throughout the check. This does not prove
+retry causality or return-handover safety; 0206 remains held, and the previously
+qualified UAF-patched controller is restored afterward. Retry/cancellation,
+admission, terminal completion/HTTP and documentation regressions all pass.
+After rollback, Default-20 again has a healthy complete model and converged
+fresh candidate coverage. That later recovery does not change the failed
+test verdict. Diagnostic source changes are reverted to the enabled recipe;
+clean rebuilding removes objects compiled against the held retry class layout.
+
 ### Medium initialization cost
 
 Initializing 3,060 frequency overrides exposed a shared medium defect: its
@@ -596,6 +647,14 @@ The synchronized `rf-rooms.json` passes both 30-second RF-property rooms,
 all seven native observations, real traffic and healthy Default restoration.
 Default-20 is also observed converged afterward. These targeted passes do
 not close the separate geometry or held-pressure failures above.
+
+The bounded `rf-continuation/pressure-held-1400/` experiment increases the
+ordinary workload/broadcast payload from 1200 to 1400 bytes, retaining the
+1000 packet/s cap, 1400-byte pressure stream and production policy. Utilization
+reaches 220/255, but a native candidate HTTP 504 interrupts qualification.
+It remains failed, not a pressure-veto pass; Default-20 RF, associations,
+fresh metrics and native identities restore. No higher packet-rate default
+or relaxed pressure hold is adopted from this experiment.
 
 Geometry reports retain browser/lab identities and a bounded host
 CPU/load/temperature/process trace. Use a separate browser machine with `--host`
