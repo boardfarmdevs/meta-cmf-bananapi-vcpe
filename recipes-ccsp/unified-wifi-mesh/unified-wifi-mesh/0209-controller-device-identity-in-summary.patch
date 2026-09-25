@@ -1,0 +1,33 @@
+Subject: [PATCH] Include the device's manufacturer and model in its summary
+
+The topology tree (get_network) and the device lists encode each device in
+summary form, which ended before Manufacturer and ManufacturerModel. A UI
+could not tell device kinds apart, e.g. an OpenSync pod onboarded through an
+EasyMesh adapter, which names itself in its M1 ("OpenSync via EMOSA"). Both
+fields now come before the summary cut-off; the full encoding still has them
+once. Nothing else changes.
+---
+--- a/src/dm/dm_device.cpp
++++ b/src/dm/dm_device.cpp
+@@ -211,6 +211,11 @@
+         uptime = static_cast<uint64_t>(now) - m_device_info.boot_time_epoch;
+     }
+     cJSON_AddNumberToObject(obj, "UptimeSeconds", static_cast<double>(uptime));
++    // Who the device is, from its M1: also in the summary, so the topology tree
++    // (get_network) lets a UI tell device kinds apart, e.g. an OpenSync pod
++    // onboarded through an adapter.
++    cJSON_AddStringToObject(obj, "Manufacturer", m_device_info.manufacturer);
++    cJSON_AddStringToObject(obj, "ManufacturerModel", m_device_info.manufacturer_model);
+ 
+     if (summary == true) {
+         return;
+@@ -221,9 +226,7 @@
+     cJSON_AddBoolToObject(obj, "ReportUnsuccessfulAssociations", m_device_info.report_unsuccess_assocs);
+     cJSON_AddNumberToObject(obj, "MaxReportingRate", m_device_info.max_reporting_rate);
+     cJSON_AddNumberToObject(obj, "APMetricsReportingInterval", m_device_info.ap_metrics_reporting_interval);
+-    cJSON_AddStringToObject(obj, "Manufacturer", m_device_info.manufacturer);
+     cJSON_AddStringToObject(obj, "SerialNumber", m_device_info.serial_number);
+-    cJSON_AddStringToObject(obj, "ManufacturerModel", m_device_info.manufacturer_model);
+     cJSON_AddStringToObject(obj, "SoftwareVersion", m_device_info.software_ver);
+     cJSON_AddStringToObject(obj, "ExecutionEnv", m_device_info.exec_env);
+     cJSON_AddStringToObject(obj, "DSCPMap", m_device_info.dscp_map);

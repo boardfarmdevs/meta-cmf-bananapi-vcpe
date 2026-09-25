@@ -205,6 +205,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0205-cli-expose-backhaul-ap-radio-context.patch \
     file://0207-reject-unready-candidate-before-admission.patch \
     file://0208-report-terminal-native-candidate-completion.patch \
+    file://0209-controller-device-identity-in-summary.patch \
+    file://0210-cli-mark-opensync-pods.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
@@ -738,7 +740,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg file://web-vendor.tar.gz"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg file://opensync-pod.svg file://web-vendor.tar.gz"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -783,6 +785,8 @@ do_install_append_qemux86bpibroadband() {
         ${D}/usr/ccsp/EasyMesh/static/
     install -m 0644 ${WORKDIR}/iot-device.svg \
         ${D}/usr/ccsp/EasyMesh/static/icons/iot-device.svg
+    install -m 0644 ${WORKDIR}/opensync-pod.svg \
+        ${D}/usr/ccsp/EasyMesh/static/icons/opensync-pod.svg
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
 
