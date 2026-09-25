@@ -6,7 +6,9 @@ therefore cause an HTTP timeout followed by busy rejections for other radios.
 Bound retransmission to four sends, two seconds apart, retaining the original
 MID and command. Do not extend the command timeout or measurement freshness.
 The agent correlates repeated work by MID and samples the native HAL again.
-Completion/cancellation resets the retry state.
+Apply after the native admission/cleanup changes in 0207.
+Completion/cancellation resets the retry state, including when every local
+send fails before a MID is published. Release only our pending radio state.
 
 Upstream-Status: Pending
 
@@ -64,7 +66,7 @@ fix until coexistence with native backhaul collection passes return handover.
      cmdu->last_frag_ind = 1;
      cmdu->relay_ind = 0;
  
-@@ -2958,12 +2962,14 @@
+@@ -2958,11 +2962,13 @@
          return -1;
      }
  
@@ -80,4 +82,20 @@ fix until coexistence with native backhaul collection passes return handover.
 +    em_printfout("Unassoc Query sent MID=%u attempt=%u", ntohs(cmdu->id), m_unassoc_sta_query_transmits);
  
      em->m_unassoc_sta_query_msg_id = ntohs(cmdu->id);
-     em_printfout("%s:%d Stored query msg_id=%u",
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -480,10 +480,12 @@
+         case em_cmd_type_unassoc_sta_query:
+             if (em->get_unassoc_sta_query_msg_id() != 0) {
+                 em_printfout("Candidate metrics query timed out after transmit; clearing outstanding MID");
+-                em->clear_unassoc_sta_query_msg_id();
+-                em->set_state(em_state_ctrl_configured);
+             } else {
+                 em_printfout("Candidate metrics query timed out before transmit in state %s",
+                     em_t::state_2_str(em->get_state()));
+             }
++            em->clear_unassoc_sta_query_msg_id();
++            if (em->get_state() == em_state_ctrl_unassoc_sta_link_metrics_pending) {
++                em->set_state(em_state_ctrl_configured);
++            }
+             break;

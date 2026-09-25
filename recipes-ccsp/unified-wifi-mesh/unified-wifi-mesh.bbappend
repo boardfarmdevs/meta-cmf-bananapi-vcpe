@@ -204,6 +204,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0204-report-client-steering-cancellation-state.patch \
     file://0205-cli-expose-backhaul-ap-radio-context.patch \
     file://0207-reject-unready-candidate-before-admission.patch \
+    file://0208-report-terminal-native-candidate-completion.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

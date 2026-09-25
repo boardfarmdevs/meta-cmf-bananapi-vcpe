@@ -4,6 +4,10 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const harness = fs.readFileSync(path.join(__dirname, 'room-backhaul-features.js'), 'utf8');
+assert.match(harness, /browserHost: os\.hostname\(\), labHost: options\.host, vm: options\.vm/);
+assert.match(harness, /hostMonitor = await startHostMonitor\(options\.host, directory, \{processes: true\}\);\s*report\.before = await identity\(\)/);
+assert.match(harness, /report\.hostMonitor = await hostMonitor\.stop\(\)/);
+assert.match(harness, /if \(report\.hostMonitor\.error\) report\.errors\.push/);
 assert.ok(harness.includes("document.fullscreenElement ? '#fullscreenPlay' : '#play'"));
 assert.match(harness, /async function load\(id\)[\s\S]*?fullscreenElement[\s\S]*?#roomFullscreen[\s\S]*?changed = true/);
 assert.match(harness, /await roomPage\.waitForFunction\(\(\) => !document\.fullscreenElement\);\s*changed = true/);
@@ -22,6 +26,13 @@ const healthy = {native: {
   optimizer: {fleet: {converged: true}},
   topology: {nodes: Array(6).fill({}), stations: Array.from({length: 10}, (_, index) => ({mac: String(index)}))}};
 assert.equal(ready(healthy, 5), true);
+const diagnostics = require('./room-backhaul-features.js').convergenceDiagnostics(healthy);
+assert.equal(diagnostics.healthy, true);
+assert.equal(diagnostics.activeClients, 10);
+assert.equal(diagnostics.fleet.converged, true);
+assert.equal(diagnostics.nodes.extender_4.apOperating, true);
+assert.equal(diagnostics.nodes.extender_4.pingOk, true);
+assert.equal(Object.keys(diagnostics.nodes).length, 5);
 assert.equal(ready(healthy, 6), false);
 assert.equal(ready({...healthy, native: {...healthy.native, nodes: {}}}, 5), false);
 assert.equal(ready({...healthy, native: {...healthy.native, parents: {...healthy.native.parents, extender_4: null}}}, 5), false);

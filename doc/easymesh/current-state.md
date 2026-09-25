@@ -7,7 +7,7 @@ deployment summary, not a live health monitor. See [operations](guide/operations
 
 | Item | Current value |
 | --- | --- |
-| Canonical branch | `codex/0916-clean` |
+| Canonical branch | `main` |
 | Development checkout | `rev150:/home/rev/git/meta-cmf-bananapi-vcpe-builddocs` |
 | Existing build checkout | `rev140:/home/rev/yocto/easymesh-bpi/meta-cmf-bananapi-vcpe` |
 | Last-tested VM | `rev140:demo-a` |

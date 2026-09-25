@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { entries, revision } from '../app/system';
@@ -72,6 +73,9 @@ for (const prefix of ['', '/meta-cmf-bananapi-vcpe', '/another-project']) {
 test('architecture inspectors, related components, and keyboard controls', async ({
   page,
 }, testInfo) => {
+  // Opens and closes every block's inspector (more than 20), each with its
+  // animations: more than the default 30 s on a busy runner.
+  test.setTimeout(120_000);
   await page.goto(explorerPath);
   const blocks = page.locator('.inner-block');
   const count = await blocks.count();
@@ -229,6 +233,10 @@ test('band inspector describes native measurements and bounded qualification', a
 test('new band rooms remain disconnected static previews and the manual explains them', async ({
   page,
 }) => {
+  // Every golden room is offered, however many the catalog holds.
+  const rooms = readdirSync(
+    fileURLToPath(new URL('../../wmediumd/configurator/worlds/golden', import.meta.url)),
+  ).filter((name) => name.endsWith('.world.json')).length;
   const requests: string[] = [];
   const errors: string[] = [];
   page.on('request', (requested) => requests.push(requested.url()));
@@ -240,7 +248,7 @@ test('new band rooms remain disconnected static previews and the manual explains
   ]) {
     await page.goto(`/meta-cmf-bananapi-vcpe/viewer/?world=${room}`);
     await expect(page.locator('#worldmeta')).toContainText(room);
-    await expect(page.locator('#world option')).toHaveCount(17);
+    await expect(page.locator('#world option')).toHaveCount(rooms);
     await expect(page.locator('meta[name="room-viewer-mode"]')).toHaveAttribute(
       'content',
       'no-connect',

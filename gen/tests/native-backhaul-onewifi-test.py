@@ -18,6 +18,8 @@ CASES = (
     "scan-wrong-state", "scan-invalid-radio", "scan-submission-failure", "scan-success",
     "connect-sync-failure", "connect-sync-nonzero", "connect-sync-existing-timer",
     "connect-sync-failure-bounded", "connect-success",
+    "recovery-timeout-alternative", "recovery-timeout-exhausted",
+    "recovery-sync-exhausted", "recovery-preferred-exhausted",
 )
 
 FUNCTIONS = (
@@ -380,6 +382,53 @@ int main(int argc, char **argv)
         assert(scan_calls == 1 && scanned_radio == 1 && scanned_channel == 36);
         assert(service.u.ext.conn_state == connection_state_connected_scan_list);
         assert(active_timer(process_connected_scan_result_timeout, EXT_SCAN_RESULT_TIMEOUT) == 1);
+    } else if (!strncmp(scenario, "recovery-", 9)) {
+        service.u.ext.conn_state = connection_state_connection_in_progress;
+        service.u.ext.ext_connected_scan_result_timeout_handler_id = 0;
+        memset(&service.u.ext.new_bss, 0, sizeof(bss_candidate_t));
+        service.u.ext.candidates_list.scan_count = 3;
+        service.u.ext.candidates_list.scan_list = calloc(3, sizeof(bss_candidate_t));
+        for (unsigned int index = 0; index < 3; index++) {
+            bss_candidate_t *candidate = &service.u.ext.candidates_list.scan_list[index];
+            candidate->external_ap = rows[index];
+            candidate->radio_freq_band = 2;
+            candidate->conn_attempt = connection_attempt_wait;
+        }
+        if (!strcmp(scenario, "recovery-preferred-exhausted")) {
+            service.u.ext.new_bss = service.u.ext.candidates_list.scan_list[2];
+            service.u.ext.last_connected_bss = service.u.ext.candidates_list.scan_list[1];
+        }
+        const bool synchronous = !strcmp(scenario, "recovery-sync-exhausted");
+        connect_return = synchronous ? RETURN_ERR : RETURN_OK;
+        const bool alternative = !strcmp(scenario, "recovery-timeout-alternative");
+        const unsigned int attempts = alternative ? STA_MAX_CONNECT_ATTEMPT + 1 : 3 * STA_MAX_CONNECT_ATTEMPT;
+        unsigned int counts[3] = {0};
+        for (unsigned int attempt = 0; attempt < attempts; attempt++) {
+            assert(service.u.ext.conn_state == connection_state_connection_in_progress);
+            ext_try_connecting(&service);
+            assert(connect_calls == attempt + 1);
+            const unsigned int candidate_index = connected_bss.bssid[5] - rows[0].bssid[5];
+            assert(candidate_index < 3);
+            assert(++counts[candidate_index] <= STA_MAX_CONNECT_ATTEMPT);
+            if (alternative && attempt + 1 == attempts) {
+                assert(candidate_index == 1);
+                assert(service.u.ext.candidates_list.scan_count == 3);
+                break;
+            }
+            if (!synchronous) {
+                assert(active_timer(process_ext_connect_event_timeout, EXT_IGNITE_CONN_STATUS_IND_TIMEOUT) == 1);
+                scheduler_cancel_timer_task(controller.sched, service.u.ext.ext_conn_status_ind_timeout_handler_id);
+                process_ext_connect_event_timeout(&service);
+            }
+            assert(active_timer(process_ext_connect_algorithm, EXT_CONNECT_ALGO_PROCESSOR_INTERVAL) == 1);
+        }
+        if (!alternative) {
+            ext_try_connecting(&service);
+            assert(connect_calls == attempts);
+            assert(service.u.ext.conn_state == connection_state_disconnected_scan_list_none);
+            for (unsigned int index = 0; index < 3; index++)
+                assert(counts[index] == STA_MAX_CONNECT_ATTEMPT);
+        }
     } else if (!strncmp(scenario, "connect-", 8)) {
         service.u.ext.conn_state = connection_state_connection_to_nb_in_progress;
         service.u.ext.ext_connected_scan_result_timeout_handler_id = 0;

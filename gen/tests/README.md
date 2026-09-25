@@ -48,6 +48,7 @@ python3 gen/tests/native-station-persistence-test.py "$NATIVE_SOURCE"
 python3 gen/tests/native-sta-link-metrics-test.py "$NATIVE_SOURCE" --output /tmp/native-sta-link-metrics.json
 python3 gen/tests/native-candidate-metadata-test.py "$NATIVE_SOURCE"
 python3 gen/tests/unassoc-radio-completion-test.py "$NATIVE_SOURCE"
+python3 gen/tests/native-candidate-completion-test.py "$NATIVE_SOURCE"
 python3 gen/tests/onewifi-nasta-query-test.py "$ONEWIFI_SOURCE" "$CJSON_TEST_DEPS"
 python3 gen/tests/ap-report-snapshot-test.py "$NATIVE_SOURCE" "$CJSON_TEST_DEPS" "$HEADER_SOURCE/inc/em_base.h"
 python3 gen/tests/ap-report-provider-age-test.py "$ONEWIFI_SOURCE"
@@ -58,6 +59,14 @@ python3 gen/tests/hal-candidate-identity-test.py "$HAL_SOURCE/src/wifi_hal.c"
 These exercise the policy, wire bounds, concurrent candidate-query ownership and
 actual controller/agent handler code with stubbed external dependencies. They do
 not replace Yocto builds or the live `room-backhaul-features.js` geometry gates.
+The optional native-candidate-completion fixture requires the 0208-patched Yocto
+source tree, host `g++` and Go; it is not part of the main suite. It extracts the
+controller response/serialization code and CLI handler, tests empty/partial
+completion as explicit HTTP 503 without fabricated RCPI or rejection codes,
+and checks per-AL admission, native MID correlation and stale-result isolation.
+It asserts the exact eight-second deadline in production source and exercises
+the real eight-second HTTP 504 path when no completion arrives. All external
+dependencies are stubbed; it does not query or mutate a VM.
 The station-persistence fixture compiles the actual native persistence block and
 station update methods. A deterministic concurrent departure cannot invalidate
 the lookup/DB/map transaction; an absent direct update cannot recreate a client.

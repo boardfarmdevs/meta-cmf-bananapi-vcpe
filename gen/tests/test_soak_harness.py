@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -35,12 +36,187 @@ def state(*, pid: int = 100, restarts: int = 0, processes: object = 100):
     }
 
 
+@pytest.mark.parametrize("timeout", [False, True])
+def test_command_failure_preserves_captured_output(timeout):
+    soak = load_script("p0-churn-soak.py")
+    command = ["python3", "candidate-rcpi-test.py"]
+    error = (subprocess.TimeoutExpired(command, 30, output=b"partial report", stderr=b"query stalled")
+             if timeout else subprocess.CalledProcessError(1, command, output="report", stderr="query rejected"))
+    result = soak.command_failure_details(error)
+    assert result["command"] == command
+    assert result["stdout"] == ("partial report" if timeout else "report")
+    assert result["stderr"] == ("query stalled" if timeout else "query rejected")
+    assert result["returncode"] == (None if timeout else 1)
+    assert result["timeout_seconds"] == (30 if timeout else None)
+    assert soak.command_failure_details(RuntimeError("other failure")) is None
+
+
 def test_service_validation_ignores_transient_cgroup_children():
     soak = load_script("p0-churn-soak.py")
 
     assert soak.validate_services(
         state(processes=100), state(processes="100,201,202")
     ) == []
+
+
+@pytest.fixture
+def soak_execution(tmp_path, monkeypatch):
+    soak = load_script("p0-churn-soak.py")
+    clients = ("wlan-client", "wlan-client-001")
+    probes = {
+        "provisioned_clients": clients,
+        "provisioned_ssid_counts": {"private_ssid": 2},
+        "service_states": state(),
+        "medium_snapshot": {"instance_id": "medium", "sha256": "baseline"},
+        "fetch_json": {},
+        "topology_counts": {"nodes": 6, "clients": 2, "edges": 5},
+        "model_counts": {"devices": 5, "radios": 15, "bss": 50, "associated": 6},
+        "association_consistency": [{"agreed": True}],
+        "traffic_check": [{"returncode": 0, "packet_loss_percent": 0}],
+        "journal_usage": {"bytes": 0},
+        "candidate_rcpi_check": {"outcome": "passed"},
+        "live_client_api_count": 2,
+        "topology_ssid_counts": {"private_ssid": 2},
+        "memory_sample": {
+            "em_ctrl": {"Rss": 100, "Pss": 80},
+            "em_cli": {"Rss": 100, "Pss": 80},
+            "wmediumd": {"Rss": 100, "cpu_percent": 0.0, "netlink_drops": 0},
+        },
+        "new_kernel_failures": {},
+        "new_coredumps": {},
+    }
+    for name, value in probes.items():
+        monkeypatch.setattr(soak, name, Mock(return_value=value))
+    monkeypatch.setattr(soak, "run", Mock(side_effect=AssertionError("unexpected live command")))
+    monkeypatch.setattr(soak.Soak, "run_workload", Mock(
+        side_effect=AssertionError("preflight must not run workloads")
+    ))
+    monkeypatch.setattr(soak.sys, "argv", [
+        "p0-churn-soak.py", "--preflight-only", "--expected-clients", "2",
+        "--output-root", str(tmp_path),
+    ])
+    return soak, tmp_path
+
+
+def test_preflight_runs_full_health_without_soak_acceptance(soak_execution, capsys):
+    soak, output = soak_execution
+    assert soak.main() == 0
+    summary_path, = output.glob("*-p0-preflight/summary.json")
+    summary = json.loads(summary_path.read_text())
+    assert summary["outcome"] == "passed"
+    assert summary["scope"] == "preflight"
+    assert summary["acceptance_eligible"] is False
+    assert summary["growth"]["acceptance_eligible"] is False
+    assert summary["workload_count"] == 0
+    assert summary["workloads"] == []
+    assert summary["final_health"]["errors"] == []
+    assert soak.candidate_rcpi_check.call_count == 2
+    assert soak.memory_sample.call_count == 2
+    soak.new_kernel_failures.assert_called_once()
+    soak.new_coredumps.assert_called_once()
+    soak.Soak.run_workload.assert_not_called()
+    assert "PREFLIGHT PASSED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("preflight_only", [False, True])
+def test_total_runtime_includes_final_checks_without_changing_growth_elapsed(
+    soak_execution, monkeypatch, preflight_only
+):
+    soak, output = soak_execution
+    clock_seconds = [1000.0]
+    growth_elapsed = []
+    original_health = soak.Soak.health
+    original_growth = soak.Soak.growth_result
+
+    def health(runner, elapsed, phase):
+        clock_seconds[0] += 70 if phase == "final" else 10
+        return original_health(runner, elapsed, phase)
+
+    def growth(runner, elapsed):
+        growth_elapsed.append(elapsed)
+        return original_growth(runner, elapsed)
+
+    def workload(runner, kind, index, started, sample_due):
+        clock_seconds[0] += 5
+        runner.workloads.append({"kind": kind, "index": index})
+        return sample_due
+
+    def final_probe(_started):
+        clock_seconds[0] += 2
+        return {}
+
+    monkeypatch.setattr(soak.time, "monotonic", lambda: clock_seconds[0])
+    monkeypatch.setattr(soak.Soak, "health", health)
+    monkeypatch.setattr(soak.Soak, "growth_result", growth)
+    monkeypatch.setattr(soak.Soak, "run_workload", workload)
+    soak.new_kernel_failures.side_effect = final_probe
+    soak.new_coredumps.side_effect = final_probe
+    if not preflight_only:
+        soak.sys.argv.remove("--preflight-only")
+        soak.sys.argv.extend(["--max-workloads", "1", "--settle", "0"])
+
+    assert soak.main() == 0
+    summary_path, = output.glob("*/summary.json")
+    summary = json.loads(summary_path.read_text())
+    expected_elapsed = 10 if preflight_only else 25
+    assert summary["elapsed_seconds"] == expected_elapsed
+    assert summary["final_health"]["elapsed_seconds"] == expected_elapsed
+    assert summary["total_runtime_seconds"] == expected_elapsed + 74
+    assert growth_elapsed == [expected_elapsed]
+    assert summary["growth"]["acceptance_eligible"] is False
+    assert summary["workload_count"] == (0 if preflight_only else 1)
+
+
+@pytest.mark.parametrize("failure", ["candidate", "topology", "oom", "coredump"])
+def test_preflight_preserves_failures_and_diagnostics(soak_execution, failure, capsys):
+    soak, output = soak_execution
+    if failure == "candidate":
+        soak.candidate_rcpi_check.side_effect = subprocess.CalledProcessError(
+            1, ["candidate-rcpi-test.py"], output="partial report", stderr="HTTP 504"
+        )
+    elif failure == "topology":
+        soak.topology_counts.return_value = {"nodes": 6, "clients": 1, "edges": 5}
+    elif failure == "oom":
+        soak.new_kernel_failures.return_value = {"controller": ["OOM"]}
+    else:
+        soak.new_coredumps.return_value = {"controller": ["core"]}
+    assert soak.main() == 2
+    summary_path, = output.glob("*-p0-preflight/summary.json")
+    summary = json.loads(summary_path.read_text())
+    assert summary["outcome"] == "failed"
+    assert summary["total_runtime_seconds"] == summary["elapsed_seconds"]
+    assert summary["scope"] == "preflight"
+    assert summary["acceptance_eligible"] is False
+    assert summary["workload_count"] == 0
+    soak.Soak.run_workload.assert_not_called()
+    if failure == "candidate":
+        details = json.loads((summary_path.parent / summary["command_failure_artifact"]).read_text())
+        assert details["stdout"] == "partial report"
+        assert details["stderr"] == "HTTP 504"
+        assert details["returncode"] == 1
+    assert "PREFLIGHT FAILED" in capsys.readouterr().err
+
+
+def test_normal_soak_still_runs_workload(soak_execution, monkeypatch, capsys):
+    soak, output = soak_execution
+    soak.sys.argv.remove("--preflight-only")
+    soak.sys.argv.extend(["--max-workloads", "1", "--settle", "0"])
+
+    def workload(runner, kind, index, started, sample_due):
+        runner.workloads.append({"kind": kind, "index": index})
+        return sample_due
+
+    monkeypatch.setattr(soak.Soak, "run_workload", workload)
+    assert soak.main() == 0
+    summary_path, = output.glob("*-p0-churn-soak/summary.json")
+    summary = json.loads(summary_path.read_text())
+    assert summary["outcome"] == "passed"
+    assert summary["workload_count"] == 1
+    assert summary["workloads"] == [{"kind": "carousel", "index": 1}]
+    assert "scope" not in summary
+    assert "acceptance_eligible" not in summary
+    assert soak.candidate_rcpi_check.call_count == 3
+    assert "PREFLIGHT" not in capsys.readouterr().out
 
 
 def test_service_validation_retains_restart_and_main_pid_gates():

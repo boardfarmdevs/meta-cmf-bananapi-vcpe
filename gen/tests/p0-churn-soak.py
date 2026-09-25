@@ -100,6 +100,16 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def command_failure_details(error):
+    if not isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        return None
+    def decoded(value):
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+    return {"command": error.cmd, "returncode": getattr(error, "returncode", None),
+            "timeout_seconds": getattr(error, "timeout", None),
+            "stdout": decoded(error.stdout), "stderr": decoded(error.stderr)}
+
+
 class Recorder:
     def __init__(self, path: Path):
         self.path = path
@@ -671,7 +681,8 @@ class Soak:
     def growth_result(self, total_elapsed: float) -> dict[str, object]:
         anchor_seconds = self.args.growth_anchor_hours * 3600
         eligible = (
-            total_elapsed >= self.args.duration
+            not self.args.preflight_only
+            and total_elapsed >= self.args.duration
             and self.args.duration >= 12 * 3600
             and self.args.max_workloads == 0
         )
@@ -706,7 +717,8 @@ class Soak:
 
     def execute(self) -> int:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        self.output = self.args.output_root / f"{stamp}-p0-churn-soak"
+        scope = "preflight" if self.args.preflight_only else "churn-soak"
+        self.output = self.args.output_root / f"{stamp}-p0-{scope}"
         self.output.mkdir(parents=True, exist_ok=False)
         self.recorder = Recorder(self.output / "events.jsonl")
         started_wall = int(time.time())
@@ -737,7 +749,8 @@ class Soak:
             sample_due = self.args.sample_interval
             index = 0
             while (
-                time.monotonic() - started < self.args.duration
+                not self.args.preflight_only
+                and time.monotonic() - started < self.args.duration
                 and not self.stop_requested
                 and (self.args.max_workloads == 0 or index < self.args.max_workloads)
             ):
@@ -776,6 +789,7 @@ class Soak:
                 "started_at_epoch": started_wall,
                 "completed_at": utc_now(),
                 "elapsed_seconds": round(elapsed, 3),
+                "total_runtime_seconds": round(time.monotonic() - started, 3),
                 "requested_seconds": self.args.duration,
                 "workload_count": len(self.workloads),
                 "workloads": self.workloads,
@@ -786,30 +800,48 @@ class Soak:
                 "coredumps": cores,
                 "final_health": final_health,
             }
+            if self.args.preflight_only:
+                summary.update(scope="preflight", acceptance_eligible=False)
             write_json(self.output / "summary.json", summary)
-            print(f"{outcome.upper()} artifacts={self.output}", flush=True)
+            label = f"PREFLIGHT {outcome.upper()}" if self.args.preflight_only else outcome.upper()
+            print(f"{label} artifacts={self.output}", flush=True)
             return 130 if self.stop_requested else 0
         except Exception as error:
             error_text = str(error)
+            command_failure = command_failure_details(error)
+            if command_failure is not None:
+                write_json(self.output / "command-failure.json", command_failure)
+                for stream in ("stdout", "stderr"):
+                    if command_failure[stream]:
+                        print(f"Failed command {stream}:\n{command_failure[stream]}", file=sys.stderr)
             self.recorder.write("failure", error=error_text)
             elapsed = time.monotonic() - started
             summary = {
                 "outcome": outcome,
                 "error": error_text,
+                "command_failure_artifact": "command-failure.json" if command_failure is not None else None,
                 "elapsed_seconds": round(elapsed, 3),
+                "total_runtime_seconds": round(elapsed, 3),
                 "requested_seconds": self.args.duration,
                 "workload_count": len(self.workloads),
                 "workloads": self.workloads,
                 "peak_rss_kib": self.peak_rss_kib,
                 "peak_cpu_percent": self.peak_cpu_percent,
             }
+            if self.args.preflight_only:
+                summary.update(scope="preflight", acceptance_eligible=False)
             write_json(self.output / "summary.json", summary)
-            print(f"FAILED artifacts={self.output}: {error_text}", file=sys.stderr)
+            label = "PREFLIGHT FAILED" if self.args.preflight_only else "FAILED"
+            print(f"{label} artifacts={self.output}: {error_text}", file=sys.stderr)
             return 2
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the duration-bound P0 RF churn soak")
+    parser.add_argument(
+        "--preflight-only", action="store_true",
+        help="run full health gates without churn; includes an RF override/restore probe, not soak acceptance",
+    )
     parser.add_argument("--duration", type=float, default=12 * 3600, help="seconds")
     parser.add_argument("--sample-interval", type=float, default=60)
     parser.add_argument("--settle", type=float, default=30)
