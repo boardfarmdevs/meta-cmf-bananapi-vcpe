@@ -337,3 +337,16 @@ def test_applied_snr_matches_actual_parent_band_and_channel_only():
         edge.update(changed)
         assert "applied_rf" not in conductor._network_payload(snapshot, room=room)["mesh"]["backhaul_edges"][0]
         edge.update(original)
+
+
+def test_rdk_backhaul_adapter_leaves_adapter_pods_out():
+    lab = {"gateway": "bpibroadband", "extender_1": "bpiap", "extender_2": "bpiap-001",
+           "extender_3": "bpiap-002", "extender_4": "bpiap-003"}
+    bindings = {role: {"role_type": "fronthaul_ap", "container": container,
+                       "fronthaul_frequencies_mhz": {"2.4": 2437, "5": 5180, "6": 5975}}
+                for role, container in lab.items()}
+    bindings["pod_1"] = {"role_type": "fronthaul_ap", "container": "pod-1", "adapter": "emosa",
+                         "fronthaul_frequencies_mhz": {"2.4": 2437}}
+    adapter = RdkBackhaulAdapter({"bindings": bindings})
+    assert adapter.containers == lab
+
