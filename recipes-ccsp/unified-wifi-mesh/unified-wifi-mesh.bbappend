@@ -208,6 +208,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0209-controller-device-identity-in-summary.patch \
     file://0210-cli-mark-opensync-pods.patch \
     file://0211-ctrl-topology-children-up-to-device-limit.patch \
+    file://0212-cli-number-opensync-pods-apart.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
