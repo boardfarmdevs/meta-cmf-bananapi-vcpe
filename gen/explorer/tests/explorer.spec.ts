@@ -73,6 +73,9 @@ for (const prefix of ['', '/meta-cmf-bananapi-vcpe', '/another-project']) {
 test('architecture inspectors, related components, and keyboard controls', async ({
   page,
 }, testInfo) => {
+  // Opens and closes every block's inspector (more than 20), each with its
+  // animations: more than the default 30 s on a busy runner.
+  test.setTimeout(120_000);
   await page.goto(explorerPath);
   const blocks = page.locator('.inner-block');
   const count = await blocks.count();
