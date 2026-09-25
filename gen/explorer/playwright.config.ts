@@ -8,7 +8,8 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   retries: 0,
-  reporter: 'list',
+  // In CI, failures also become GitHub annotations (readable without the logs).
+  reporter: process.env.CI ? [['list'], ['github']] : 'list',
   use: {
     baseURL: 'http://127.0.0.1:4178',
     browserName: 'chromium',
