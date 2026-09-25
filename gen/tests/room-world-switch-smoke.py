@@ -113,6 +113,10 @@ def main():
                           "generation": result["daemon_generation"]}), flush=True)
         return result
 
+    # the controller plus one topology node per mesh role the room binds
+    # (six for the lab's own rooms; OpenSync pods add theirs)
+    mesh_nodes = request("/api/demo/worlds").get("mesh_devices", 5) + 1
+
     def wait_for_world(name, expected, require_convergence=True):
         started = time.monotonic()
         stable_since = None
@@ -152,7 +156,7 @@ def main():
                          and fleet.get("clients_evaluated") == expected
                          and policy_checked and (best_ap_checked or not args.require_absolute_best)
                          and -5 <= evaluation_age <= 60 and backhaul_settled)
-            if (actual == desired and len(actual) == expected and len(topology["nodes"]) == 6
+            if (actual == desired and len(actual) == expected and len(topology["nodes"]) == mesh_nodes
                     and health.get("healthy") is True and health.get("expected_online_clients") == expected
                     and (converged or not require_convergence)):
                 offline = [role for role in mac_by_role if not current["roles"][role]["present"]]
@@ -202,7 +206,7 @@ def main():
     preflight_deadline = time.monotonic() + args.timeout
     while True:
         current = request("/api/demo/current")
-        if current.get("scenario") != "home-five-agent--private-client-room-walk":
+        if current.get("scenario") not in {"home-five-agent--private-client-room-walk", "home-five-agent-pods--private-client-room-walk"}:
             raise RuntimeError("start acceptance from the default room")
         mac_by_role = {client["role"]: client["sta_mac"].lower() for client in current.get("network", {}).get("clients", [])}
         containers_by_role = {client["role"]: client["container"] for client in current.get("network", {}).get("clients", [])}

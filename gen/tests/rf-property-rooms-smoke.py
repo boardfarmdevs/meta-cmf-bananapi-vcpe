@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -14,6 +15,9 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# The Golden Worlds the room runs: the lab's own, or the pod variant
+# (EASYMESH_ROOM_WORLDS_ROOT, as for run-easymesh-suite.sh).
+WORLDS = ROOT / (os.environ.get("EASYMESH_ROOM_WORLDS_ROOT") or "gen/wmediumd/configurator/worlds")
 ROOMS = ("rf-packet-size-counters", "rf-asymmetric-ack")
 COUNTERS = {"packets_per_second", "bytes_per_second", "retries_per_second",
             "tx_errors_per_second", "rx_errors_per_second"}
@@ -98,7 +102,8 @@ def preflight(room, current):
     if (room.get("lease", {}).get("held") or room.get("movement_active")
             or room.get("recording", {}).get("active")):
         raise RuntimeError("external owner/movement/recording active; leave the room untouched")
-    if (room.get("selected_world") not in {"default", "home-five-agent--private-client-room-walk"}
+    if (room.get("selected_world") not in {"default", "home-five-agent--private-client-room-walk",
+                                           "home-five-agent-pods--private-client-room-walk"}
             or room.get("playback", {}).get("time_ms") != 0
             or room.get("playback", {}).get("status") != "paused"
             or current.get("health", {}).get("healthy") is not True):
@@ -183,7 +188,7 @@ def main():
         for name in ROOMS:
             result = {"room": name, "passed": False, "samples": [], "errors": []}
             report["rooms"].append(result)
-            world = json.loads((ROOT / f"gen/wmediumd/configurator/worlds/golden/{name}.world.json").read_text())
+            world = json.loads((WORLDS / "golden" / f"{name}.world.json").read_text())
             result["world_sha256"] = world["golden_sha256"]
             result["applied"] = mutate("world/apply", {"world": name})
             result["initial"] = settle(10, 60)

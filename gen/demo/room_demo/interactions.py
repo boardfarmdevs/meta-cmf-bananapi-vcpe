@@ -1559,11 +1559,17 @@ class InteractiveMediumSession:
                 })
         if not updates:
             raise InteractionError(500, "no_links", f"role {role!r} resolved no live RF links")
-        if len(updates) > 30:
+        # Two directed keys per AP band: 30 for the five tri-band lab APs, more
+        # when adapter-managed APs (OpenSync pods) add their served bands.
+        limit = max(30, 2 * sum(
+            len(self.plan["bindings"][name].get("fronthaul_frequencies_mhz", {}))
+            for name, kind in self.world["roles"].items() if kind == "fronthaul_ap"
+        ))
+        if len(updates) > limit:
             raise InteractionError(
                 422,
                 "client_delta_too_large",
-                f"role {role!r} resolved {len(updates)} RF keys; client limit is 30",
+                f"role {role!r} resolved {len(updates)} RF keys; client limit is {limit}",
             )
         return updates, summary
 

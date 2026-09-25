@@ -107,6 +107,13 @@ def _completed_action_state(state, decision, config, success, reason, now):
     ))
 
 
+def _adapter_devices(plan) -> list[dict]:
+    """Adapter-managed mesh nodes (OpenSync pods) the compiled plan expects."""
+    expected = plan.get("expected_lab") if isinstance(plan, dict) else None
+    devices = expected.get("adapter_devices") if isinstance(expected, dict) else None
+    return list(devices) if isinstance(devices, list) else []
+
+
 def _world_device_name(role: str | None) -> str | None:
     if role == "gateway":
         return "Agent-1"
@@ -781,7 +788,8 @@ class LiveConductor:
         hero = payload["hero"]
         expected = self.manifest["health"]
         failures = []
-        if snapshot.health.devices != int(expected["expected_mesh_devices"]):
+        adapters = len(_adapter_devices(self.plan))
+        if snapshot.health.devices != int(expected["expected_mesh_devices"]) + adapters:
             failures.append(f"mesh devices={snapshot.health.devices}")
         if snapshot.health.clients != int(expected["expected_clients"]):
             failures.append(f"clients={snapshot.health.clients}")
@@ -1003,21 +1011,25 @@ class LiveConductor:
         interval = float(health["interval_seconds"])
         expected_devices = int(health["expected_mesh_devices"])
         expected_clients = int(health["expected_clients"])
+        adapters = _adapter_devices(self.plan)
         while not self.stop_event.is_set() and self._active():
             try:
                 room = self.room_state() if self.room_state else None
                 if room is not None:
                     expected_clients = int(room.get("expected_online_clients", expected_clients))
-                payload = mesh_health(expected_devices, expected_clients)
+                payload = mesh_health(expected_devices, expected_clients, adapters)
                 payload["pool_clients"] = int(health["expected_clients"])
                 payload["expected_online_clients"] = expected_clients
+                # adapter-managed nodes (OpenSync pods) carry their own radio and
+                # BSS counts and no backhaul station in the controller's model
+                pods = adapters
                 payload["healthy"] = (
                     payload.get("api_active") == expected_clients
-                    and payload.get("topology_nodes") == expected_devices + 1
-                    and payload.get("complete_nodes") == expected_devices + 1
-                    and payload.get("model_devices") == expected_devices
-                    and payload.get("model_radios") == expected_devices * 3
-                    and payload.get("model_bsses") == expected_devices * 10
+                    and payload.get("topology_nodes") == expected_devices + len(pods) + 1
+                    and payload.get("complete_nodes") == expected_devices + len(pods) + 1
+                    and payload.get("model_devices") == expected_devices + len(pods)
+                    and payload.get("model_radios") == expected_devices * 3 + sum(item["radios"] for item in pods)
+                    and payload.get("model_bsses") == expected_devices * 10 + sum(item["bsses"] for item in pods)
                     and payload.get("model_associated") == expected_clients + expected_devices - 1
                 )
                 payload["evidence_storage"] = self.store.storage_status()
