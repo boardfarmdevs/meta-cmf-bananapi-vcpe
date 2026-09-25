@@ -1,0 +1,56 @@
+Subject: [PATCH] Size the controller's topology children by the device limit
+
+A node of the controller's topology tree held at most EM_MAX_NETWORKS (5)
+children, a limit meant for EasyMesh networks. When the tree is rebuilt
+before the extenders' backhaul parent is known (after a controller
+restart), every agent hangs off the root; a lab with the gateway's own
+agent, four extenders and two OpenSync pods (added through an adapter) then
+lost two agents from the tree, the topology API and em_cli, although they
+were onboarded and answering. The children of a node are now bounded by
+EM_MAX_DEVICES (16), the number of devices the controller keeps. Nothing
+else changes; the bound check stays.
+---
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -37,6 +37,8 @@
+ #include "ec_base.h"
+ 
+ #define EM_MAX_NETWORKS	5
++/* children of one node in the controller's topology tree: every agent may hang off the root */
++#define EM_MAX_TOPO_CHILDREN	EM_MAX_DEVICES
+ #define EM_MAX_NET_SSIDS 5
+ #define EM_MAX_INTERFACES	8 
+ #define EM_MAX_DEVICES 16
+--- a/inc/em_network_topo.h
++++ b/inc/em_network_topo.h
+@@ -29,7 +29,7 @@
+ 
+ 	dm_easy_mesh_t	*m_data_model;
+ 	unsigned int m_num_topologies;	
+-	em_network_topo_t	*m_topology[EM_MAX_NETWORKS];
++	em_network_topo_t	*m_topology[EM_MAX_TOPO_CHILDREN];
+ 
+ public:
+ 	
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -9118,7 +9118,7 @@
+                 //Update the existing topology with the latest information.
+                 em_printfout("Update dev_mac:%s num_bss:%d already in topology.",
+                     dev_mac_str.c_str(), dm->get_num_bss());
+-                em_network_topo_t *child_topos[EM_MAX_NETWORKS];
++                em_network_topo_t *child_topos[EM_MAX_TOPO_CHILDREN];
+                 unsigned int num_child_topos = 0;
+                 memset(child_topos, 0, sizeof(child_topos));
+                 g_network_topology->remove(dm, child_topos, &num_child_topos);
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -233,7 +233,7 @@
+ void em_network_topo_t::add_network_topo(dm_easy_mesh_t *dm, em_network_topo_t **child_topos, unsigned int num_child_topos)
+ {
+ 	std::string dev_mac_str = util::mac_to_string(dm->m_device.m_device_info.intf.mac);
+-	if (m_num_topologies >= EM_MAX_NETWORKS) {
++	if (m_num_topologies >= EM_MAX_TOPO_CHILDREN) {
+ 		em_printfout("Cannot add more topologies, max limit reached");
+ 		return;
+ 	}
