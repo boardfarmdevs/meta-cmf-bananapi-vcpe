@@ -10,6 +10,10 @@ VERSION = 1
 HEADER = struct.Struct("!IHHIIQ")
 LINK = struct.Struct("!6s6shH")
 FREQUENCY_LINK = struct.Struct("!6s6sIhH")
+# The control socket's frame limit (wmediumd patch 0008, WMDC_MAX_FRAME): the
+# most frequency-qualified link updates one generation can carry.
+MAX_FRAME = 64 * 1024
+MAX_FREQUENCY_UPDATES_PER_FRAME = (MAX_FRAME - struct.calcsize("!IHHIIQ")) // FREQUENCY_LINK.size
 INFO = struct.Struct("!QQIIII")
 PAGE_REQUEST = struct.Struct("!QII")
 PAGE_HEADER = struct.Struct("!QQIIII")

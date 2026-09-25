@@ -243,8 +243,9 @@ class Runner:
                         for binding in self.plan["bindings"].values()
                     ),
                 ))
-                adapters = expected_lab.get("adapter_devices")
-                initial_health = mesh_health(expected_agents, expected_clients, adapters)
+                # adapter-managed mesh nodes (OpenSync pods), only when the lab has them
+                adapters = {"adapters": expected_lab["adapter_devices"]} if expected_lab.get("adapter_devices") else {}
+                initial_health = mesh_health(expected_agents, expected_clients, **adapters)
                 _append(health_log, {"event": "preflight", **initial_health})
                 self._require_healthy(initial_health, "preflight")
                 self._emit("runner.preflight", 0, health=initial_health)
@@ -375,7 +376,7 @@ class Runner:
                         )
                         if not restored:
                             raise ActuatorError("baseline restoration readback failed")
-                final_health = mesh_health(expected_agents, expected_clients, adapters)
+                final_health = mesh_health(expected_agents, expected_clients, **adapters)
                 _append(health_log, {"event": "postflight", **final_health})
                 self._require_healthy(final_health, "postflight")
                 self._emit(
