@@ -6,6 +6,13 @@ machine. The output is a `*.lxc.tar.bz2` rootfs that runs the same RDK-B userspa
 stack the physical Banana Pi runs (utopia, ccsp-*, RdkWanManager, ccsp-dhcp-mgr,
 hal-generic, rbus, sysevent, syscfg, telemetry, …) on x86 with no kernel modules.
 
+<!-- labs block: the same in the four lab repositories -->
+**Site:** <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/>. Part of the boardfarmdevs labs, which serve two
+goals: the EasyMesh optimizer ([RDK EasyMesh](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/),
+[prplMesh](https://boardfarmdevs.github.io/prplmesh-lab/)) and the OpenSync adapter
+([EMOSA](https://boardfarmdevs.github.io/emosa-lab/), [OpenSync](https://boardfarmdevs.github.io/opensync-lab/)), on the way to one
+EasyMesh system on wmediumd with native agents and OpenSync pods together.
+
 Wi-Fi is provided by `mac80211_hwsim` radios moved into the container as
 `nictype: physical` NICs instead of real hardware. That is what the
 `HWSIM_RADIO`-gated patches exist for — hwsim implements no MLO, requires
