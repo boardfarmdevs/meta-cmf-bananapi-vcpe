@@ -1,4 +1,10 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Network,
   Router,
@@ -99,6 +105,12 @@ export default function Explorer() {
           properties: [...extra.properties, ...baseItem.properties],
         }
       : baseItem;
+  // While the drawer animates closed, keep showing what it showed: clearing its
+  // content and colour mid-exit starts new transitions and can leave it stuck
+  // half-closed over the page.
+  const shownRef = useRef(item);
+  if (item) shownRef.current = item;
+  const shown = item ?? shownRef.current;
   const inspect: Inspect = (id, context) => {
     setExtra(context);
     setSelected(id);
@@ -137,9 +149,7 @@ export default function Explorer() {
           </div>
           <div className="version">
             <span className="version-dot" /> Documented system
-            <span className="branch">
-              main · {revision.slice(0, 7)}
-            </span>
+            <span className="branch">main · {revision.slice(0, 7)}</span>
           </div>
         </section>
         <Tabs
@@ -545,26 +555,26 @@ export default function Explorer() {
             if (!open) setSelected(null);
           }}
         >
-          <SheetContent className={`detail-sheet ${item?.color || 'blue'}`}>
+          <SheetContent className={`detail-sheet ${shown?.color || 'blue'}`}>
             <SheetHeader>
               <span className="eyebrow">COMPONENT INSPECTOR</span>
-              <SheetTitle>{item?.title}</SheetTitle>
-              <SheetDescription>{item?.summary}</SheetDescription>
+              <SheetTitle>{shown?.title}</SheetTitle>
+              <SheetDescription>{shown?.summary}</SheetDescription>
             </SheetHeader>
-            {item && (
+            {shown && (
               <div className="detail-body">
-                <div className="detail-tag">{item.kind}</div>
+                <div className="detail-tag">{shown.kind}</div>
                 <h3>Inside this block</h3>
-                <p>{item.description}</p>
+                <p>{shown.description}</p>
                 <dl>
-                  {item.properties.map(([k, v]) => (
+                  {shown.properties.map(([k, v]) => (
                     <div key={k}>
                       <dt>{k}</dt>
                       <dd>{v}</dd>
                     </div>
                   ))}
                 </dl>
-                {item.note && <div className="detail-note">{item.note}</div>}
+                {shown.note && <div className="detail-note">{shown.note}</div>}
                 {selected === 'cli' && (
                   <button
                     className="action-button"
@@ -578,7 +588,7 @@ export default function Explorer() {
                 )}
                 <h3>Connected components</h3>
                 <div className="related">
-                  {item.related.map((id) => (
+                  {shown.related.map((id) => (
                     <button key={id} onClick={() => inspect(id)}>
                       {entries[id].title}
                       <ChevronRight size={15} />
@@ -586,7 +596,7 @@ export default function Explorer() {
                   ))}
                 </div>
                 <h3>Source references</h3>
-                {item.sources.map((s) => (
+                {shown.sources.map((s) => (
                   <a
                     className="detail-source"
                     href={
