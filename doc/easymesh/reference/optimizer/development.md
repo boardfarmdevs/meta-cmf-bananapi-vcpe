@@ -220,7 +220,8 @@ em-optimizer recommend \
 ```
 
 The provider groups clients per Agent radio, splits each group into transactions
-of at most eight STAs (the controller data-model limit), and queries those
+of at most 64 STAs (the controller data-model limit, and OneWifi's per-channel
+limit with ccsp-one-wifi 0040), and queries those
 transactions sequentially. An all-client cycle is complete only when every
 eligible client in the current 20-client topology has a fresh associated-link
 sample and every required candidate transaction succeeds. Incomplete cycles
@@ -468,7 +469,7 @@ it against a lab.
 
 The controller provider in `optimizer/candidates.py` is the reference: it
 groups queries by `(Agent AL MAC, radio)`, maps response RUID to exact BSSID,
-checks RCPI and receipt time, splits requests at the eight-STA controller
+checks RCPI and receipt time, splits requests at the 64-STA controller
 limit, and rejects simulator results without explicit opt-in. It requires the
 complete expected response set; a partial batch invalidates the whole snapshot.
 
