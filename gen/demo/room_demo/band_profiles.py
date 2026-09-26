@@ -182,9 +182,43 @@ class ClientBandSettings:
         # previous room's RF can still count as fresh, and the client would join
         # that room's best AP; select from a scan of this room's RF instead.
         self._ok(record["container"], "bss_flush", "0")
+        self._scan_passive(record, initial_frequencies)
         self._ok(record["container"], "reassociate")
         self._wait_association(record, initial_frequencies, "initial")
         self.write(record, values)
+
+    def _bsses(self, container):
+        # BSS RANGE=ALL MASK=0x6: bssid= and freq= lines, one pair per BSS
+        found, bssid = {}, None
+        for line in self.control(container, "bss", "RANGE=ALL", "MASK=0x6").splitlines():
+            key, _, value = line.partition("=")
+            if key == "bssid":
+                bssid = value.lower()
+            elif key == "freq" and bssid and value.isdigit():
+                found[bssid] = int(value)
+        return found
+
+    def _scan_passive(self, record, frequencies):
+        # REASSOCIATE's own scan is active and short (about 40 ms on one channel): it
+        # sees only the APs whose probe responses arrive in time, and the client can
+        # join a distant AP while a much stronger one goes unheard. A passive scan
+        # listens for a beacon interval per channel and hears every AP in range;
+        # REASSOCIATE then selects from its results (fast associate, within 5 s).
+        container = record["container"]
+        known = self._bsses(container)
+        deadline = self.clock() + 3
+        request = ("scan", "TYPE=ONLY", "freq=" + ",".join(map(str, sorted(frequencies))), "passive=1")
+        while (reply := self.control(container, *request)) != "OK":
+            if reply != "FAIL-BUSY" or self.clock() >= deadline:
+                raise ActuatorError(f"{container}: passive band scan failed: {reply}")
+            self.sleep(0.1)
+        # The results enter the BSS table in one update, so the first new BSS on the
+        # scanned frequencies marks the scan complete.
+        while self.clock() < deadline:
+            if any(frequency in frequencies and bssid not in known
+                   for bssid, frequency in self._bsses(container).items()):
+                return
+            self.sleep(0.05)
 
     def _wait_association(self, record, frequencies, phase):
         deadline = self.clock() + 12

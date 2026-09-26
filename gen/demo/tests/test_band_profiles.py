@@ -159,10 +159,27 @@ def test_initial_association_selects_from_a_scan_of_the_new_rf():
     settings = ClientBandSettings(clock=Mock(return_value=0), sleep=Mock())
     settings.write = Mock()
     settings._ok = Mock()
-    settings.control = Mock(return_value="wpa_state=COMPLETED\nssid=private_ssid\nfreq=2437")
+    in_use = "bssid=02:00:00:f9:bd:e4\nfreq=5180"
+    settings.control = Mock(side_effect=[
+        in_use, "FAIL-BUSY", "OK", in_use, in_use + "\nbssid=02:00:00:02:34:fc\nfreq=2437",
+        "wpa_state=COMPLETED\nssid=private_ssid\nfreq=2437",
+    ])
     settings.initialize(RECORD, VALUES, [2437])
-    # results scanned under the previous room's RF are dropped before reassociating
+    # results scanned under the previous room's RF are dropped, and the client selects
+    # from a passive scan of the new RF, which hears every AP in range
     assert settings._ok.call_args_list == [call(CONTAINER, "bss_flush", "0"), call(CONTAINER, "reassociate")]
+    scans = [c for c in settings.control.call_args_list if c.args[1] == "scan"]
+    assert scans == [call(CONTAINER, "scan", "TYPE=ONLY", "freq=2437", "passive=1")] * 2
+    assert settings.control.call_count == 6
+
+
+def test_initial_passive_scan_rejection_fails_the_band_setup():
+    settings = ClientBandSettings(clock=Mock(return_value=0), sleep=Mock())
+    settings.write = Mock()
+    settings._ok = Mock()
+    settings.control = Mock(side_effect=["", "FAIL"])
+    with pytest.raises(ActuatorError, match="passive band scan failed"):
+        settings.initialize(RECORD, VALUES, [2437])
 
 
 def test_restore_does_not_reassociate_an_unavailable_client():
