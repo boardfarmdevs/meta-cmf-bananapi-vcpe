@@ -88,6 +88,23 @@ class ConductorProjectionTests(unittest.TestCase):
                     self.assertEqual(observed["healthy"], healthy)
                     self.assertEqual(observed["expected_online_clients"], 10)
 
+    def test_health_counts_adapter_pods_with_their_own_model_shape(self):
+        conductor, store = self._conductor()
+        conductor.manifest["health"] = {"interval_seconds": 1, "expected_mesh_devices": 5, "expected_clients": 100}
+        conductor.room_state = lambda: {"expected_online_clients": 10}
+        conductor.plan = {"expected_lab": {"mesh_devices": 5, "clients": 100, "adapter_devices": [
+            {"container": "pod-1", "radios": 1, "bsses": 5}, {"container": "pod-2", "radios": 1, "bsses": 5}]}}
+        pods = {"api_active": 10, "model_devices": 7, "model_radios": 17,
+                "model_bsses": 60, "model_associated": 14, "topology_nodes": 8, "complete_nodes": 8}
+        with patch.object(conductor, "_wait_for_run", return_value=True), \
+                patch.object(conductor, "_active", return_value=True), \
+                patch.object(conductor, "_sleep", return_value=True):
+            for payload, healthy in [(pods, True), ({**pods, "topology_nodes": 6, "complete_nodes": 6}, False),
+                                     ({**pods, "model_bsses": 70}, False)]:
+                with self.subTest(payload=payload), patch("room_demo.conductor.mesh_health", return_value=payload):
+                    conductor._health_worker()
+                    self.assertEqual(store.current()["latest"]["health.sample"]["payload"]["healthy"], healthy)
+
     def test_full_verification_queue_never_marks_unsent_clients_pending(self):
         conductor, store = self._conductor()
         conductor.action_attempts = 100

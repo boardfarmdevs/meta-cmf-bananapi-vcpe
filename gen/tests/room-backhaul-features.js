@@ -65,13 +65,18 @@ function parentPaths(parents) {
   }));
 }
 
+// AP roles beyond the lab's five (OpenSync pods through the EMOSA adapter),
+// from the room's catalog; each adds a topology and a health node.
+let adapterNodes = 0;
+
 function ready(entry, healthNodes, clients = 10) {
+  healthNodes += adapterNodes;
   return Object.keys(entry.native.nodes).length === 5 && Object.keys(entry.native.parents).length === 4 &&
     Object.values(entry.native.parents).every(Boolean) &&
     Object.values(parentPaths(entry.native.parents)).every(chain => chain.at(-1) === 'gateway') &&
     Object.values(entry.native.nodes).every(node => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
     entry.health?.healthy && entry.health.topology_nodes === healthNodes && entry.health.api_active === clients &&
-    entry.optimizer?.fleet?.converged === true && entry.topology.nodes.length === 6 &&
+    entry.optimizer?.fleet?.converged === true && entry.topology.nodes.length === 6 + adapterNodes &&
     new Set(entry.topology.stations.map(station => station.mac)).size === clients;
 }
 
@@ -261,6 +266,7 @@ async function run(options) {
     assert.equal(baseline.lease.held, false, 'Do not take another operator’s lease');
     save('baseline.json', {health: before.health, mesh: before.network.mesh, backhaul: baseline.backhaul_links, daemon: baseline.daemon});
     const catalog = await request('/api/demo/worlds');
+    adapterNodes = Math.max(0, (catalog.mesh_devices ?? 5) - 5);
     bindings = catalog.client_bindings;
     assert.equal(Object.keys(bindings).length, 100);
     for (const id of rooms) assert.equal(catalog.worlds.find(entry => entry.id === id)?.backhaul_rf, 'geometry');

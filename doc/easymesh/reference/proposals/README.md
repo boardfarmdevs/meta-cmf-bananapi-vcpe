@@ -15,6 +15,11 @@ belongs in its owning subsystem contract, not in an indefinitely growing plan.
 - [Neighbor-network rooms](neighbor-rooms/design.md): preserved design and
   illustration from the supplied archive; discovery/contention fidelity levels,
   external AP actors and scenario acceptance gates. **Proposed, not implemented.**
+- [A retail EasyMesh extender on the RDK controller](retail-easymesh-extender/design.md):
+  a TP-Link RE653BE seen searching for a controller over Ethernet (Profile 2,
+  captured on rev130); how to attach it to `rdk-emosa`'s wired LAN port, its
+  risks (its own DHCP server, real RF, Agent-1 naming, controller model rows)
+  and acceptance. **Proposed experiment, not run.**
 
 The [virtual RF assessment](../radio/virtual-rf-assessment.md) owns the current
 radio-capability audit and completed common/RDK/prpl implementation evidence.

@@ -67,13 +67,15 @@ def default_roster(health, clients, state):
     mesh = {"gateway", *(f"extender_{ordinal}" for ordinal in range(1, 5))}
     dormant = {f"sta_pool_{ordinal:03d}" for ordinal in range(21, 101)}
     roles = state.get("roles") or {}
+    # OpenSync pods through the EMOSA adapter (the pod room variant) are mesh roles too
+    mesh |= {role for role in roles if re.fullmatch(r"pod_\d+", role)}
     present = {role for role, value in roles.items() if value.get("present") is True}
     addresses = [client.get("sta_mac") for client in clients]
     return (health.get("api_total") == 20 and len(clients) == 20
             and all(isinstance(address, str) and address for address in addresses)
             and len({address.lower() for address in addresses}) == 20
             and {client.get("role") for client in clients} == stations
-            and state.get("selected_world") == "home-five-agent--private-client-room-walk"
+            and state.get("selected_world") in {"home-five-agent--private-client-room-walk", "home-five-agent-pods--private-client-room-walk"}
             and state.get("pool_clients") == 100 and state.get("expected_online_clients") == 20
             and set(roles) == stations | mesh | dormant and present == stations | mesh)
 

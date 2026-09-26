@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from wmdcfg.actuator import ActuatorError, ControlClient
+from wmdcfg.actuator import MAX_FREQUENCY_UPDATES_PER_FRAME, ActuatorError, ControlClient
 from wmdcfg.geometry import directed_link, quantize_position
 from wmdcfg.runner import FREQUENCY_CAPABILITIES
 from wmdcfg.world import _hash, backhaul_rf_policy, compile_world, playback_pause_points
@@ -1559,11 +1559,17 @@ class InteractiveMediumSession:
                 })
         if not updates:
             raise InteractionError(500, "no_links", f"role {role!r} resolved no live RF links")
-        if len(updates) > 30:
+        # Two directed keys per AP band: 30 for the five tri-band lab APs, more
+        # when adapter-managed APs (OpenSync pods) add their served bands.
+        limit = max(30, 2 * sum(
+            len(self.plan["bindings"][name].get("fronthaul_frequencies_mhz", {}))
+            for name, kind in self.world["roles"].items() if kind == "fronthaul_ap"
+        ))
+        if len(updates) > limit:
             raise InteractionError(
                 422,
                 "client_delta_too_large",
-                f"role {role!r} resolved {len(updates)} RF keys; client limit is 30",
+                f"role {role!r} resolved {len(updates)} RF keys; client limit is {limit}",
             )
         return updates, summary
 
@@ -1773,6 +1779,17 @@ class InteractiveMediumSession:
                 producer="interaction",
             )
             raise ActuatorError(reason)
+        # One control frame carries at most MAX_FREQUENCY_UPDATES_PER_FRAME
+        # updates. The lab's own rooms always fit one atomic generation; a room
+        # with more APs (OpenSync pods) can exceed it and is applied as
+        # consecutive generations, each recorded for recovery.
+        applied = []
+        for start in range(0, len(updates), MAX_FREQUENCY_UPDATES_PER_FRAME):
+            applied.extend(self._apply_one_generation(
+                updates[start:start + MAX_FREQUENCY_UPDATES_PER_FRAME]))
+        return applied
+
+    def _apply_one_generation(self, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         generation = self._generation + 1
         if self.recovery is not None:
             self.recovery.before_apply(self._generation, generation)

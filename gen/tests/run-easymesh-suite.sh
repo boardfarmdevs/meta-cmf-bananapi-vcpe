@@ -32,6 +32,8 @@ Environment:
   EASYMESH_LXD_NAME         Running appliance name; default: easymesh.
   EASYMESH_HOST_ADDRESS     Host address for VM proxy checks; default: 127.0.0.1.
   EASYMESH_SSH_HOST         SSH host used by room browser tests; default: localhost.
+  EASYMESH_ROOM_WORLDS_ROOT Golden World tree of the running room variant, relative
+                            to the checkout; default: gen/wmediumd/configurator/worlds.
   EASYMESH_EXPECTED_CLIENTS Override the auto-detected lab client profile.
   WEBUI_STATIC_DIR          Built unified-wifi-mesh static directory.
   PUBLIC_VIEWER_URL         Published static viewer base URL for its browser test.
@@ -384,7 +386,9 @@ run_live() {
 }
 
 run_rooms() {
-    local worlds=$root/gen/wmediumd/configurator/worlds/golden
+    # EASYMESH_ROOM_WORLDS_ROOT: the room's Golden World tree when the room runs a
+    # variant (worlds-pods: the lab's rooms with OpenSync pods through EMOSA)
+    local worlds=$root/${EASYMESH_ROOM_WORLDS_ROOT:-gen/wmediumd/configurator/worlds}/golden
     prepare_lab || { skip rooms prerequisites "LXD VM $vm or guest repository $guest_repo is unavailable"; return; }
     prepare_browser || { skip rooms browser 'install Playwright/Chromium before running room acceptance'; return; }
     if ! select_room_ssh_host; then

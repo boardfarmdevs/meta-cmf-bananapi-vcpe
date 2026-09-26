@@ -5,6 +5,7 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import os
 import signal
 import shutil
 import sys
@@ -40,6 +41,10 @@ DEMO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = DEMO_ROOT.parents[1]
 CONFIGURATOR = REPO_ROOT / "gen/wmediumd/configurator"
 DEFAULT_MANIFEST = DEMO_ROOT / "manifests/private-client-room-walk.json"
+# The room variant with OpenSync pods (EMOSA) is selected by manifest only:
+# EASYMESH_ROOM_MANIFEST (repository-relative or absolute) replaces the default.
+if os.environ.get("EASYMESH_ROOM_MANIFEST"):
+    DEFAULT_MANIFEST = REPO_ROOT / os.environ["EASYMESH_ROOM_MANIFEST"]
 DEFAULT_VIEWER = CONFIGURATOR / "worlds/viewer"
 
 
@@ -102,8 +107,14 @@ def _paths(args) -> tuple[dict, Path, Path]:
     return manifest, world, bindings
 
 
-def _layout_for(world: dict) -> tuple[dict, Path]:
-    path = CONFIGURATOR / "worlds/layouts" / f"{world['layout']}.json"
+def _worlds_root(manifest: dict) -> Path:
+    """The Golden World tree the room selects from: the manifest's worlds_root,
+    or the lab's own rooms."""
+    return REPO_ROOT / manifest["worlds_root"] if manifest.get("worlds_root") else CONFIGURATOR / "worlds"
+
+
+def _layout_for(world: dict, worlds_root: Path | None = None) -> tuple[dict, Path]:
+    path = (worlds_root or CONFIGURATOR / "worlds") / "layouts" / f"{world['layout']}.json"
     layout = load_json(path)
     if _hash(layout) != world.get("layout_sha256"):
         raise ScenarioError(f"{path}: layout hash does not match the signed Golden World")
@@ -284,11 +295,12 @@ def _run(args) -> int:
         lock_stream.close()
 
 
-def _interactive_preflight(conductor, expected_agents, expected_clients, recovered, stop_event):
+def _interactive_preflight(conductor, expected_agents, expected_clients, recovered, stop_event,
+                           adapters=None):
     deadline = time.monotonic() + (30 if recovered else 0)
     while True:
         try:
-            health = mesh_health(expected_agents, expected_clients)
+            health = mesh_health(expected_agents, expected_clients, adapters)
             Runner._require_healthy(health, "interactive preflight")
             conductor.preflight()
             return health
@@ -314,7 +326,7 @@ def _interactive(args) -> int:
     manifest, world_path, bindings_path = _paths(args)
     world, source, inventory, binding_doc, plan = _prepare(world_path, bindings_path, pool=True)
     manifest = pool_manifest(manifest, plan)
-    layout, layout_path = _layout_for(world)
+    layout, layout_path = _layout_for(world, _worlds_root(manifest))
     runtime_world = InteractiveMediumSession.runtime_world(world, layout)
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{timestamp}-{manifest['name']}-interactive"
@@ -334,7 +346,7 @@ def _interactive(args) -> int:
             traffic_target=manifest["traffic"]["target"],
             resume_steering=lambda revision: conductor.resume_steering(revision),
             worlds=BoundWorlds(
-                world, layout, CONFIGURATOR / "worlds",
+                world, layout, _worlds_root(manifest),
                 roles={role: binding["role_type"] for role, binding in plan["bindings"].items()},
             ),
             disconnect_client=lambda role: disconnected_client(plan, role, recovery),
@@ -411,7 +423,8 @@ def _interactive(args) -> int:
                 store.emit("room.recovery.completed", 0, recovery_result, producer="interaction")
                 recovered = True
         initial_health = _interactive_preflight(
-            conductor, expected_agents, expected_clients, recovered, stop_event)
+            conductor, expected_agents, expected_clients, recovered, stop_event,
+            expected.get("adapter_devices"))
         (runner.run_dir / "health-preflight.json").write_text(
             json.dumps(initial_health, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -501,6 +514,7 @@ def _interactive(args) -> int:
                     final_health = mesh_health(
                         int(expected.get("mesh_devices", 5)),
                         int(expected.get("clients", 20)),
+                        expected.get("adapter_devices"),
                     )
                     try:
                         Runner._require_healthy(final_health, "interactive postflight")

@@ -1,0 +1,66 @@
+Subject: [PATCH] cli: number OpenSync pods apart from the native agents
+
+em_cli names topology nodes by traversal order: Agent-N for Ethernet-attached
+agents, Extender-N for wireless ones. OpenSync pods onboarded through an
+adapter are Ethernet-attached too, so with pods the gateway's co-located
+agent was no longer Agent-1, the name the lab relies on (the room's gateway
+role, the topology layout's anchor, the backhaul channel resolution). A node
+of kind opensync-pod (0210) is now Pod-N from its own counter, in the
+topology API and the dashboard inventory; Agent-N and Extender-N count the
+native agents only, as without pods.
+---
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3356,7 +3356,7 @@
+ 	backhaulMetrics := collectBackhaulLinkMetrics(radioInventory)
+ 	var inventoryDevices []Device
+ 	var inventoryClients []Client
+-	agentCount, extenderCount := 1, 1
++	agentCount, extenderCount, podCount := 1, 1, 1
+ 	observedAt := time.Now()
+ 	localUptime := readLocalUptimeSeconds()
+ 	seenClients := make(map[string]struct{})
+@@ -3375,7 +3375,11 @@
+ 		backhaulMedia := getTreeValue(backhaul, "MediaType")
+ 
+ 		role := "Controller"
+-		if depth != 0 {
++		if _, _, kind := deviceIdentity(deviceNode, depth); kind == "opensync-pod" {
++			// numbered apart: Agent-1 stays the gateway's co-located agent
++			role = fmt.Sprintf("Pod-%d", podCount)
++			podCount++
++		} else if depth != 0 {
+ 			backhaulMAC := getTreeValue(backhaul, "MACAddress")
+ 			if backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet" {
+ 				role = fmt.Sprintf("Agent-%d", agentCount)
+@@ -5179,6 +5183,7 @@
+ 
+     agentCount := 1
+     extenderCount := 1
++    podCount := 1
+     var length float32 = 230.0
+     var  angleStep = 60.0
+ 
+@@ -5266,9 +5271,14 @@
+         backhaulMacAddr := getTreeValue(backhaulTree, "MACAddress")
+         backhaulMediaType := getTreeValue(backhaulTree, "MediaType")
+ 
++        manufacturer, model, kind := deviceIdentity(deviceNode, depth)
+         var deviceName string
+         if depth == 0 {
+             deviceName = "Controller"
++        } else if kind == "opensync-pod" {
++            // numbered apart: Agent-1 stays the gateway's co-located agent
++            deviceName = fmt.Sprintf("Pod-%d", podCount)
++            podCount++
+         } else {
+             if backhaulMacAddr == "00:00:00:00:00:00" || backhaulMediaType  == "Ethernet" {
+                 deviceName = fmt.Sprintf("Agent-%d", agentCount)
+@@ -5294,7 +5304,6 @@
+             y = parentY + float32(currentLength)*float32(math.Sin(theta))
+         }
+ 
+-        manufacturer, model, kind := deviceIdentity(deviceNode, depth)
+         nodes = append(nodes, map[string]interface{}{
+             "id":     deviceID,
+             "name":   deviceName,

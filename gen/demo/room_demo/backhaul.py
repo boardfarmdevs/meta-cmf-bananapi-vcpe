@@ -76,8 +76,10 @@ class RdkBackhaulAdapter:
     """Existing OneWifi lab BSSID control, not an EasyMesh backhaul-steering CMDU."""
 
     def __init__(self, plan):
+        # Adapter-managed APs (OpenSync pods through EMOSA) have no OneWifi
+        # backhaul in the room; this adapter controls the lab's own five.
         self.containers = {role: binding["container"] for role, binding in plan["bindings"].items()
-                           if binding["role_type"] == "fronthaul_ap"}
+                           if binding["role_type"] == "fronthaul_ap" and not binding.get("adapter")}
         expected = {"gateway": "bpibroadband", "extender_1": "bpiap", "extender_2": "bpiap-001",
                     "extender_3": "bpiap-002", "extender_4": "bpiap-003"}
         if self.containers != expected:

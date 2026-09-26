@@ -1,0 +1,105 @@
+Subject: [PATCH] CLI: show OpenSync pods onboarded through an adapter
+
+Topology nodes carry the device's manufacturer, model and a kind derived
+from the manufacturer ("opensync-pod" for "OpenSync..."; needs 0209). The
+topology view draws such a pod with its own icon and names its model and
+manufacturer on hover, escaped: the agent chose those strings. The dashboard
+lists a pod's own vendor and model. Node names stay as they are (Agent-N,
+Extender-N), since the lab's checks read them. The root is always the
+controller: its own record takes the last M1 the controller processed
+("Banana Pi - R4", or an adapter's), so it is never classified by it.
+---
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3415,8 +3415,12 @@
+ 		deviceSignal, legacySignal := classifyDeviceBackhaulSignal(
+ 			backhaulMetrics, getTreeValue(backhaul, "STAAddress"),
+ 			getTreeValue(backhaul, "MACAddress"), backhaulMedia, observedAt.UTC())
++		vendor, model := "RDK-B", "EasyMesh node"
++		if manufacturer, deviceModel, kind := deviceIdentity(deviceNode, depth); kind == "opensync-pod" {
++			vendor, model = manufacturer, deviceModel
++		}
+ 		inventoryDevices = append(inventoryDevices, Device{
+-			MAC: deviceID, Role: role, Vendor: "RDK-B", Model: "EasyMesh node",
++			MAC: deviceID, Role: role, Vendor: vendor, Model: model,
+ 			Status: "Online", LastSeen: observedAt, Uptime: uptimeText,
+ 			Signal: legacySignal, BackhaulSignal: deviceSignal,
+ 			BackhaulType: backhaulMedia,
+@@ -5290,9 +5294,13 @@
+             y = parentY + float32(currentLength)*float32(math.Sin(theta))
+         }
+ 
++        manufacturer, model, kind := deviceIdentity(deviceNode, depth)
+         nodes = append(nodes, map[string]interface{}{
+             "id":     deviceID,
+             "name":   deviceName,
++            "manufacturer": manufacturer,
++            "model":  model,
++            "kind":   kind,
+             "haulTypes":  haulTypes,
+             "x":      x,
+             "y":      y,
+@@ -7387,6 +7395,24 @@
+  * Description: helper function to get value for respective key
+  * Return: value of key in String format.
+  */
++// deviceIdentity is who an agent says it is in its M1 (the controller's
++// Manufacturer and ManufacturerModel). An OpenSync pod onboarded through the
++// EMOSA adapter names itself "OpenSync via EMOSA"; the UI draws its kind apart.
++// The controller's own record takes the last M1 it processed, so the root
++// (depth 0) is always the controller and never classified by it.
++func deviceIdentity(deviceNode *C.em_network_node_t, depth int) (manufacturer, model, kind string) {
++    if depth == 0 {
++        return "", "", "controller"
++    }
++    manufacturer = getTreeValue(deviceNode, "Manufacturer")
++    model = getTreeValue(deviceNode, "ManufacturerModel")
++    kind = "easymesh"
++    if strings.HasPrefix(manufacturer, "OpenSync") {
++        kind = "opensync-pod"
++    }
++    return manufacturer, model, kind
++}
++
+ func getTreeValue(tree *C.em_network_node_t, key string) string {
+     node := getNetworkTreeByKey(tree, key)
+     if node != nil {
+--- a/src/rdkb-cli/static/script.js
++++ b/src/rdkb-cli/static/script.js
+@@ -3875,7 +3875,7 @@
+ 
+       }
+ 
+-      const nodeIconUrl = self.getNodeIcon(d.name);
++      const nodeIconUrl = self.getNodeIcon(d.name, d.kind);
+       let isController = false;
+       if (d.name?.toLowerCase().includes('controller')) {
+         isController = true;
+@@ -3919,7 +3919,13 @@
+               tooltip.style('display', 'none');
+               return;
+             }
+-            const html = `<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}` +
++            // an adapter-onboarded OpenSync pod: its M1 identity, which the agent
++            // chose, so it is escaped before it becomes HTML
++            const text = value => String(value ?? '').replace(/[&<>"']/g,
++              c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
++            const identity = d.kind === 'opensync-pod'
++              ? `<br><b>${text(d.model || 'OpenSync pod')}</b> · ${text(d.manufacturer)}` : '';
++            const html = `<b>${d.name || d.id}</b>${identity}<br>AL MAC: ${d.id}${backhaul}` +
+               (self.roomLayout?.rfHTML(d) || '');
+             tooltip.style('display', 'block');
+             if (tooltip.html() !== html) tooltip.html(html);
+@@ -4461,9 +4467,11 @@
+   /**
+    * get the icon for nodes based on node name
+    */
+-  getNodeIcon(nodeName) {
++  getNodeIcon(nodeName, kind) {
+     const type = nodeName?.toLowerCase() || '';
+ 
++    // an OpenSync pod onboarded through an adapter (its M1 manufacturer)
++    if (kind === 'opensync-pod') return 'static/icons/opensync-pod.svg';
+     if (type.includes('controller') || type.includes('agent')) return'static/icons/controller.png';
+     return 'static/icons/extender.png';
+   }

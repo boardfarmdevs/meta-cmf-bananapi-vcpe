@@ -177,6 +177,13 @@ function bandSteeringSummary(world, events, verifications) {
     scanMeasurements: events.filter(record => record.event.kind === 'optimizer.band_scan' && record.event.payload.phase === 'received').length};
 }
 
+// Topology nodes a room shows: the controller plus one per AP role (six for
+// the lab's own rooms; OpenSync pods through the EMOSA adapter add theirs).
+function expectedMeshCount(world) {
+  const aps = Object.values(world?.roles || {}).filter(kind => kind === 'fronthaul_ap').length;
+  return aps ? 1 + aps : 6;  // a world without AP roles (a fixture) keeps the lab's six
+}
+
 function evaluate(current, interactions, view, world, bindings, now = Date.now()) {
   const expected = expectedFrame(world, interactions.playback.time_ms);
   const wanted = Object.entries(bindings).filter(([role]) => expected[role]?.present).map(([, client]) => lower(client.sta_mac)).sort();
@@ -226,7 +233,7 @@ function evaluate(current, interactions, view, world, bindings, now = Date.now()
   const complete = fleet.measurement_complete === true && fleet.clients_checked === wanted.length && fleet.clients_evaluated === wanted.length;
   const mediumFault = interactions.fault || current.error || null;
   const bandErrors = bandExpectations(world, interactions.playback.time_ms, clients, view);
-  const qualified = roster && viewMatchesRoom && viewMatchesModel && view.meshCount === 6 && meshConnected && meshViewMatches &&
+  const qualified = roster && viewMatchesRoom && viewMatchesModel && view.meshCount === expectedMeshCount(world) && meshConnected && meshViewMatches &&
     healthy && epochMatches && metricsFresh && complete && decisionCoverage &&
     evaluationAge >= -2 && evaluationAge <= 30 && scriptErrors.length === 0 && !mediumFault && !bandErrors.length;
   const policyConverged = qualified && fleet.converged === true;
@@ -672,7 +679,7 @@ async function run(args) {
     if (bandWorld.traffic_experiment) result.trafficExperiment = trafficExperimentSummary(bandWorld, relevant);
     result.scriptCorrect = during.length > 0 && during.every(sample => !sample.scriptErrors.length && !sample.mediumFault);
     result.sceneCorrect = during.length > 0 && during.every(sample => !sample.sceneErrors.length);
-    result.viewCorrect = during.every(sample => !sample.duplicates && sample.meshCount === 6 && sample.associations.every(client => client.visible && client.label)) && agreement.passed;
+    result.viewCorrect = during.every(sample => !sample.duplicates && sample.meshCount === expectedMeshCount(bandWorld) && sample.associations.every(client => client.visible && client.label)) && agreement.passed;
     const golden = JSON.parse(fs.readFileSync(path.join(args.worlds, result.id + '.world.json')));
     const presencePhases = [];
     for (const frame of golden.generations) {
