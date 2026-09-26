@@ -585,6 +585,16 @@ For a separate opt-in crash-recovery test, use
 `gen/tests/room-recovery-smoke.py --help`; it deliberately kills only the room
 process and must be scheduled, not silently included in a normal room pass.
 
+The images rate-limit em_ctrl and em_agent to 1000 journal lines per 30 s in a
+16 MB journal; under room load journald drops most controller lines, and a
+failed room cannot be read afterwards. For an evidence run, switch the lab to
+`gen/lab-journal-evidence.sh on` inside the VM before the test (no limits,
+256 MB volatile journal per container, about 25 minutes of the controller
+under load) and `off` afterwards. Both restart the EasyMesh daemons, the
+controller first, wait for the complete topology and restart the room service;
+`status` shows the limits and recent suppression. For longer runs, stream the
+journals out while the test runs.
+
 ## Opt-in load-policy qualification
 
 Run separately from the default catalog, as root **inside the lab VM** with
