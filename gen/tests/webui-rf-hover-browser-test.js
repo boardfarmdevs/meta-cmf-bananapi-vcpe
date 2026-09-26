@@ -40,10 +40,19 @@ const expectedRows = 6;
       await page.waitForFunction(() => /[0-9]+[.][0-9]+%/.test(document.querySelector('#custom-tooltip')?.textContent || ''));
       const text = await page.locator('#custom-tooltip').innerText();
       assert.match(text, /AP-reported BSS load/);
-      assert.match(text, /2.4 GHz/);
-      assert.match(text, /5 GHz/);
-      assert.match(text, /6 GHz/);
-      assert.ok(await page.locator('#custom-tooltip tbody tr').count() >= expectedRows);
+      if (node.role.startsWith('pod_')) {
+        // An OpenSync pod (EMOSA adapter) serves 2.4 GHz only: its rows are its own BSSes.
+        const own = snapshot.rf_observations.bss_loads.filter(load => load.device_id === node.device_id);
+        assert.ok(own.length > 0 && own.every(load => load.band === 0));
+        assert.match(text, /2.4 GHz/);
+        assert.doesNotMatch(text, /5 GHz|6 GHz/);
+        assert.ok(await page.locator('#custom-tooltip tbody tr').count() >= own.length);
+      } else {
+        assert.match(text, /2.4 GHz/);
+        assert.match(text, /5 GHz/);
+        assert.match(text, /6 GHz/);
+        assert.ok(await page.locator('#custom-tooltip tbody tr').count() >= expectedRows);
+      }
       results.push({role: node.role, device_id: node.device_id, text});
     }
     await page.locator('#follow-room-layout').uncheck();
