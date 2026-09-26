@@ -1,6 +1,6 @@
 import copy
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import call, Mock, patch
 
 import pytest
 
@@ -153,6 +153,16 @@ def test_restore_waits_for_completed_association_on_restored_frequency():
     settings._ok.assert_called_once_with(CONTAINER, "reassociate")
     assert settings.sleep.call_count == 2
     settings.write.assert_called_once_with(RECORD, VALUES)
+
+
+def test_initial_association_selects_from_a_scan_of_the_new_rf():
+    settings = ClientBandSettings(clock=Mock(return_value=0), sleep=Mock())
+    settings.write = Mock()
+    settings._ok = Mock()
+    settings.control = Mock(return_value="wpa_state=COMPLETED\nssid=private_ssid\nfreq=2437")
+    settings.initialize(RECORD, VALUES, [2437])
+    # results scanned under the previous room's RF are dropped before reassociating
+    assert settings._ok.call_args_list == [call(CONTAINER, "bss_flush", "0"), call(CONTAINER, "reassociate")]
 
 
 def test_restore_does_not_reassociate_an_unavailable_client():

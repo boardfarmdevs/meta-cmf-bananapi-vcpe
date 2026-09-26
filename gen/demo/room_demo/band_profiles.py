@@ -178,6 +178,10 @@ class ClientBandSettings:
     def _initialize(self, record, values, initial_frequencies):
         initial = " ".join(map(str, sorted(initial_frequencies)))
         self.write(record, {**values, "freq_list": initial, "scan_freq": initial})
+        # The world's RF has just changed. Scan results the client took under the
+        # previous room's RF can still count as fresh, and the client would join
+        # that room's best AP; select from a scan of this room's RF instead.
+        self._ok(record["container"], "bss_flush", "0")
         self._ok(record["container"], "reassociate")
         self._wait_association(record, initial_frequencies, "initial")
         self.write(record, values)
