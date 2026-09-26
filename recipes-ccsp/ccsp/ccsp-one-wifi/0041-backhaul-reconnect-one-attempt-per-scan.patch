@@ -1,0 +1,49 @@
+Subject: [PATCH] Backhaul reconnect: one attempt per scanned candidate
+
+After a backhaul link loss the extender tries each candidate of its last
+scan twice, 7 to 8 s per attempt, before scanning again. A parent that has
+itself lost its uplink quiesces its backhaul BSS (0037) and never answers,
+yet a scan taken right after the RF change still lists it. With four such
+candidates one pass took 60 s; a parent that recovered meanwhile was found
+only by the next scan (seen: extender_3 without backhaul for 80 s in the
+backhaul-branch-formation room, its new parent ready after 30 s).
+
+Try each scanned candidate once; one that did not connect is tried again
+after the next scan, which also shows which parents beacon. Explicit
+new-parent and last-parent transitions keep STA_MAX_CONNECT_ATTEMPT.
+Admission, RSSI preference and the per-attempt timeout are unchanged.
+
+Upstream-Status: Pending
+
+--- a/source/core/services/vap_svc.h
++++ b/source/core/services/vap_svc.h
+@@ -57,6 +57,9 @@
+ //sta connection 10 seconds retry
+ #define STA_CONN_RETRY_TIMEOUT                 9
+ #define STA_MAX_CONNECT_ATTEMPT                2
++/* attempts per candidate of one scan before scanning again (explicit new/last
++ * parent transitions keep STA_MAX_CONNECT_ATTEMPT) */
++#define STA_MAX_SCAN_CANDIDATE_ATTEMPT         1
+ #define STA_MAX_DISCONNECT_ATTEMPT             2
+ #define MAX_SCAN_RESULT_WAIT                   2
+ // max connection algoritham timeout 4 minutes
+--- a/source/core/services/vap_svc_mesh_ext.c
++++ b/source/core/services/vap_svc_mesh_ext.c
+@@ -1118,7 +1118,7 @@
+ 
+         for (i = 0; i < ext->candidates_list.scan_count; i++) {
+             if (temp == NULL && (candidate->conn_attempt == connection_attempt_wait) &&
+-                (candidate->conn_retry_attempt < STA_MAX_CONNECT_ATTEMPT)) {
++                (candidate->conn_retry_attempt < STA_MAX_SCAN_CANDIDATE_ATTEMPT)) {
+                 temp = candidate;
+             }
+             if (new_bss == NULL &&
+@@ -2355,7 +2355,7 @@
+         } else if (ext->conn_state == connection_state_connection_in_progress) {
+             candidate = ext->candidates_list.scan_list;
+             for (i = 0; i < ext->candidates_list.scan_count; i++) {
+-                if ((candidate->conn_attempt == connection_attempt_wait) && (candidate->conn_retry_attempt < STA_MAX_CONNECT_ATTEMPT)) {
++                if ((candidate->conn_attempt == connection_attempt_wait) && (candidate->conn_retry_attempt < STA_MAX_SCAN_CANDIDATE_ATTEMPT)) {
+                     found_candidate = true;
+                     break;
+                 }
