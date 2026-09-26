@@ -11,6 +11,9 @@ const {startHostMonitor} = require('./room-host-monitor.js');
 const execute = promisify(execFile);
 const rooms = ['backhaul-branch-formation', 'backhaul-parent-handover', 'backhaul-isolation-recovery'];
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+// A loaded geometry room converges like a catalog room (room-feature-acceptance
+// --initial-timeout, 90 s), and its load also re-parents the native backhaul.
+const INITIAL_CONVERGENCE_MS = 90000;
 
 function usage() {
   return 'usage: room-backhaul-features.js --yes-act true --host HOST --vm VM --room-url URL --topology-url URL --output DIRECTORY [--flavor rdk|prpl] [--room ROOM]';
@@ -286,7 +289,7 @@ async function run(options) {
       currentRoom.load = await load(id);
       let loaded = await sample('loaded', true);
       {
-        const deadline = Date.now() + 60000;
+        const deadline = Date.now() + INITIAL_CONVERGENCE_MS;
         while (!ready(loaded, profile.healthNodes) && Date.now() < deadline) {
           await delay(1000);
           loaded = await sample('initial-client-convergence', true);
