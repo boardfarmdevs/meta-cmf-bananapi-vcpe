@@ -247,13 +247,17 @@ def test_priority_collection_is_fresh_complete_for_selected_clients_and_falls_ba
 
     provider = ControllerCandidateProvider("http://controller", requester=request, allow_simulated=True,
         client_prioritizer=lambda selected, _time: selected.sta_mac == STA, progress=progress.append)
-    for repeat in range(2):
-        measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:01Z"))
-        assert {item.sta_mac for item in measured} == {STA}
-    assert len(calls) == 2
+    measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:01Z"))
+    assert {item.sta_mac for item in measured} == {STA}
     assert provider.last_selected_sta_macs == {STA}
     assert provider.last_selection == {"eligible_clients": 2, "selected_clients": 1, "priority_clients": 1, "deferred_clients": 1}
     assert progress[-1]["deferred_clients"] == 1
+    # the next round is a full one: deferred clients never go stale
+    measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:01Z"))
+    assert {item.sta_mac for item in measured} == {STA, other_sta}
+    assert provider.last_selection["deferred_clients"] == 0
+    measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:01Z"))
+    assert {item.sta_mac for item in measured} == {STA}
     provider.client_prioritizer = lambda *_args: False
     measured = list(provider(clients, candidates, bsses(), "2026-08-21T20:00:02Z"))
     assert {item.sta_mac for item in measured} == {STA, other_sta}

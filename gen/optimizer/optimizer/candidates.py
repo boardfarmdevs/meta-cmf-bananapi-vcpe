@@ -168,6 +168,7 @@ class ControllerCandidateProvider:
         self.busy_wait_seconds = busy_wait_seconds
         self.client_selector = client_selector
         self.client_prioritizer = client_prioritizer
+        self._full_round_due = False
         self.progress = progress
         self.result_ready = result_ready
         self.override_simulated_control_channels = (
@@ -230,7 +231,13 @@ class ControllerCandidateProvider:
             station: client for station, client in clients_by_mac.items()
             if self.client_prioritizer is not None and self.client_prioritizer(client, observed_at)
         }
-        if priority_clients:
+        # Priority rounds measure recently moved clients quickly, but alternate
+        # with full rounds: an exclusive priority window (up to two minutes)
+        # let every other client's candidates expire, and the fleet could not
+        # converge until it closed.
+        priority_round = bool(priority_clients) and not self._full_round_due
+        self._full_round_due = priority_round
+        if priority_round:
             clients_by_mac = priority_clients
         self.last_selection = {
             "eligible_clients": eligible_count,
