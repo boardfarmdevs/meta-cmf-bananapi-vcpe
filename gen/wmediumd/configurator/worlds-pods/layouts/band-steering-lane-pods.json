@@ -149,16 +149,16 @@
       "role": "pod_1",
       "kind": "fronthaul_ap",
       "position": [
-        22,
-        4
+        0,
+        0
       ]
     },
     {
       "role": "pod_2",
       "kind": "fronthaul_ap",
       "position": [
-        22,
-        20
+        0,
+        24
       ]
     }
   ]

@@ -19,6 +19,12 @@ What the pods change and what they do not:
   are skipped by the compiler (`adapter` in the inventory); its backhaul to the
   adapter's tunnel point is a fixed link outside the room
   (`user.wmediumd.links`, see `doc/easymesh/reference/radio/wmediumd-internals.md`).
+- A band-steered client's scripted band changes assume the native APs. A pod
+  near its path would hold it on 2.4 GHz (the pod is the stronger 2.4 GHz AP,
+  and no 5 GHz AP is then a safe band upgrade), so `build-goldens.py` refuses a
+  pod world where a pod comes within 3 dB of the best native 2.4 GHz AP of such
+  a client at any time. In the band-steering lane the pods stand in the corners
+  behind the gateway.
 - The controller's model gains one device, one radio and one BSS per operating
   AP interface per pod, and no backhaul station; the compiled plan describes
   them in `expected_lab.adapter_devices`, and every health check adds them.

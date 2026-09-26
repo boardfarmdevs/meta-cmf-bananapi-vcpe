@@ -20,6 +20,10 @@ sys.path.insert(0, str(HERE.parent))
 from wmdcfg.world import compile_world, load_json  # noqa: E402
 
 NATIVE = HERE.parent / "worlds"
+# A band-steered client's scripted band changes assume the native APs: a pod
+# (2.4 GHz only) near its path would hold it on 2.4 GHz. No pod may come within
+# this many dB of the best native 2.4 GHz AP of such a client, at any time.
+BAND_STEERING_MARGIN_DB = 3
 
 
 def pod_layout(native: dict, positions: dict) -> dict:
@@ -31,6 +35,23 @@ def pod_layout(native: dict, positions: dict) -> dict:
     return layout
 
 
+def pods_off_band_paths(world: dict) -> list[str]:
+    """Band-steered clients a pod would pull onto 2.4 GHz (empty when none)."""
+    problems = []
+    for index, generation in enumerate(world["generations"]):
+        for role in world.get("band_steering", {}):
+            snr = {}
+            for link in generation["links"]:
+                if role in (link["source_role"], link["destination_role"]):
+                    other = link["destination_role"] if link["source_role"] == role else link["source_role"]
+                    snr[other] = link["snr_db_by_band"]["2.4"]
+            native = max(v for k, v in snr.items() if not k.startswith(("pod_", "sta_")))
+            pod = max((v for k, v in snr.items() if k.startswith("pod_")), default=None)
+            if pod is not None and pod > native - BAND_STEERING_MARGIN_DB:
+                problems.append(f"{world['name']} generation {index}: {role} pod {pod} dB, native {native} dB")
+    return problems
+
+
 def build() -> dict[str, str]:
     positions = load_json(HERE / "pod-positions.json")["layouts"]
     files = {}
@@ -39,6 +60,9 @@ def build() -> dict[str, str]:
         layout = pod_layout(load_json(NATIVE / "layouts" / f"{native['layout']}.json"), positions[native["layout"]])
         files[f"layouts/{layout['name']}.json"] = json.dumps(layout, indent=2) + "\n"
         world = compile_world(layout, load_json(NATIVE / "mobility" / f"{native['mobility']}.json"))
+        problems = pods_off_band_paths(world)
+        if problems:
+            raise SystemExit("pods on a band-steered path:\n  " + "\n  ".join(problems[:5]))
         files[f"golden/{path.name}"] = json.dumps(world, separators=(",", ":"), sort_keys=True) + "\n"
     return files
 
