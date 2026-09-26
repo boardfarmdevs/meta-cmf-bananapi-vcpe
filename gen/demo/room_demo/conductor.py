@@ -1142,6 +1142,10 @@ class LiveConductor:
                                                                         original.load_settle_seconds))
         if self.profiling:
             policy_config = replace(policy_config, require_complete_client_roster=False)
+        pods = len(_adapter_devices(self.plan))
+        if pods:
+            # adapter-managed mesh nodes (OpenSync pods) are devices of this mesh too
+            policy_config = replace(policy_config, expected_devices=policy_config.expected_devices + pods)
         policy = policy_for(policy_config) if policy_config.load_aware_enabled else ThresholdPolicy(policy_config)
         self._start_rf_observation(policy_config.load_aware_enabled)
         self._rf_policy_enabled = policy_config.load_aware_enabled
