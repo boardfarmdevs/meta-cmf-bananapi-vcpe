@@ -209,6 +209,11 @@ EASYMESH_CORE_PATCHES = " \
     file://0210-cli-mark-opensync-pods.patch \
     file://0211-ctrl-topology-children-up-to-device-limit.patch \
     file://0212-cli-number-opensync-pods-apart.patch \
+    file://0213-tolerate-busy-medium-in-root-proof-renewal.patch \
+    file://0214-cli-prioritize-candidate-native-steps.patch \
+    file://0215-ctrl-complete-channel-scan-on-its-ack.patch \
+    file://0216-ctrl-learn-backhaul-sta-from-device-information.patch \
+    file://0217-cli-read-a-device-identity-from-its-own-keys.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

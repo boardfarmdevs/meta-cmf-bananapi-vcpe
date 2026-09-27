@@ -341,7 +341,8 @@ static void matcher_tests()
 static void renewal_tests()
 {
     check(rooted::proof_window_ms == 2000 && rooted::renewal_interval_ms == 500 &&
-        rooted::retry_interval_ms == 250 && rooted::initial_admission_ms == 10000,
+        rooted::retry_interval_ms == 250 && rooted::initial_admission_ms == 10000 &&
+        rooted::renewal_window_ms == 8000,
         "renewal.native-timing-contract");
     const auto current = context();
     rooted::transaction_matcher matcher;
@@ -372,6 +373,24 @@ static void renewal_tests()
     check(rooted::controller_reply(frame.data(), frame.size(), current.controller, reply) &&
         matcher.accept(reply.data(), reply.size(), current, 3502), "renewal.new-round-proof");
     check(!matcher.expired(current, 9000), "renewal.accepted-round-no-stale-expiry");
+
+    // an admitted link's renewal rides out a busy medium for renewal_window_ms
+    rooted::transaction_matcher admitted;
+    check(admitted.begin(current, 15, nonce(41), 1000, frame, rooted::renewal_window_ms),
+        "renewal-window.begin");
+    check(!admitted.expired(current, 3001) && admitted.observe(current, 3001),
+        "renewal-window.no-expiry-after-proof-window");
+    check(admitted.retry(3001, frame), "renewal-window.retries-past-proof-window");
+    check(!admitted.expired(current, 9000) && admitted.retry(9000, frame), "renewal-window.inclusive");
+    check(admitted.expired(current, 9001) && !admitted.retry(9001, frame), "renewal-window.expires-after-window");
+    rooted::transaction_matcher late;
+    check(late.begin(current, 16, nonce(42), 1000, frame, rooted::renewal_window_ms), "renewal-window.late-begin");
+    rooted::wire_frame late_reply{};
+    check(rooted::controller_reply(frame.data(), frame.size(), current.controller, late_reply) &&
+        late.accept(late_reply.data(), late_reply.size(), current, 6500), "renewal-window.late-reply-accepted");
+    rooted::transaction_matcher first;
+    check(first.begin(current, 17, nonce(43), 1000, frame) && first.expired(current, 3001),
+        "renewal-window.first-proof-keeps-proof-window");
 }
 
 static void generation_and_peer_tests()

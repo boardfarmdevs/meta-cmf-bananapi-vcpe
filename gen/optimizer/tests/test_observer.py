@@ -456,3 +456,37 @@ def test_rejected_candidate_is_excluded_for_one_cycle_then_retried():
         (sta, candidate_bssid)
     ]
     assert provider.calls == 2
+
+
+def _inventory_fetcher():
+    station = {"staMAC": "02:00:00:00:03:00", "bssid": "02:00:00:00:01:01", "band": 1, "ssid": "private_ssid"}
+    payloads = {
+        "topology": {"nodes": [{"id": "02:00:00:00:01:20", "name": "Agent-1", "STAList": [station]}]},
+        "clients": {"clients": []}, "devices": {"devices": []}, "bsses": {"bsses": []},
+    }
+    return Mock(side_effect=lambda url: payloads[url.rsplit("/", 1)[-1]])
+
+
+def test_inventory_is_read_on_every_observation_by_default():
+    fetcher = _inventory_fetcher()
+    observer = ControllerObserver("http://controller", fetcher=fetcher)
+    observer.observe()
+    observer.observe()
+    assert fetcher.call_count == 8
+
+
+def test_inventory_is_reused_within_its_maximum_age(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr("optimizer.observer.time.monotonic", lambda: now[0])
+    fetcher = _inventory_fetcher()
+    observer = ControllerObserver("http://controller", fetcher=fetcher, inventory_max_age_seconds=1.0)
+    first = observer.observe()
+    now[0] = 100.5
+    second = observer.observe()
+    assert fetcher.call_count == 4
+    assert second.clients == first.clients
+    assert observer.last_raw["inventory_reused_from"]
+    now[0] = 101.2
+    observer.observe()
+    assert fetcher.call_count == 8
+    assert "inventory_reused_from" not in observer.last_raw

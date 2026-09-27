@@ -1,0 +1,189 @@
+Subject: [PATCH] cli: candidate queries go first for the native lock and poll early
+
+A candidate (Unassociated STA Link Metrics) query spent about 530 ms
+per radio in fifty-client rooms: 181 ms waiting for the native lock
+behind topology, client and inventory reads, 185 ms in four or five
+native calls and 144 ms sleeping between polls, while the controller
+completes the query within about 10 ms. One candidate round over 16
+radios took 9 s.
+
+Candidate native steps now take the lock ahead of waiting ordinary
+requests (never preempting a running one), and the result is polled
+10, 20, 30 and 50 ms after submission before the 100 ms cadence.
+The coordination status reports candidate_native_priority.
+
+Upstream-Status: Pending
+---
+--- a/src/rdkb-cli/candidate_coordination.go
++++ b/src/rdkb-cli/candidate_coordination.go
+@@ -10,7 +10,55 @@
+ 	"time"
+ )
+ 
+-var apiRequestMutex sync.Mutex
++// apiRequestMutex serializes every native libemcli call. Candidate queries
++// (the optimizer's unassociated-STA measurements) take it with priority: an
++// ordinary API request already holding it finishes, but candidate steps
++// waiting for it go before ordinary requests waiting for it. A candidate
++// query is several short native steps; queued behind topology, client and
++// inventory reads it spent more time waiting than working.
++var apiRequestMutex = newNativeLock()
++
++type nativeLock struct {
++	mutex           sync.Mutex
++	changed         *sync.Cond
++	held            bool
++	priorityWaiting int
++}
++
++func newNativeLock() *nativeLock {
++	lock := &nativeLock{}
++	lock.changed = sync.NewCond(&lock.mutex)
++	return lock
++}
++
++func (lock *nativeLock) acquire(priority bool) {
++	lock.mutex.Lock()
++	if priority {
++		lock.priorityWaiting++
++	}
++	for lock.held || (!priority && lock.priorityWaiting > 0) {
++		lock.changed.Wait()
++	}
++	if priority {
++		lock.priorityWaiting--
++	}
++	lock.held = true
++	lock.mutex.Unlock()
++}
++
++// Lock takes the native lock behind any waiting candidate step.
++func (lock *nativeLock) Lock() { lock.acquire(false) }
++
++// LockPriority takes the native lock ahead of waiting ordinary requests.
++func (lock *nativeLock) LockPriority() { lock.acquire(true) }
++
++func (lock *nativeLock) Unlock() {
++	lock.mutex.Lock()
++	lock.held = false
++	lock.changed.Broadcast()
++	lock.mutex.Unlock()
++}
++
+ var candidateRequests = newCandidateCoordinator(1, 32)
+ 
+ const liveQueryCacheTTL = 100 * time.Millisecond
+@@ -77,7 +125,7 @@
+ 
+ func (timing *candidateTiming) nativeStep(action func()) {
+ 	queued := time.Now()
+-	apiRequestMutex.Lock()
++	apiRequestMutex.LockPriority()
+ 	started := time.Now()
+ 	defer apiRequestMutex.Unlock()
+ 	defer func() {
+@@ -98,6 +146,7 @@
+ 		"candidate_active_agents":                      len(candidateRequests.active),
+ 		"candidate_queue_limit":                        candidateRequests.maximumWaiting,
+ 		"candidate_wait_holds_native_lock":             false,
++		"candidate_native_priority":                    true,
+ 		"native_command_and_tree_ownership_serialized": true,
+ 		"native_read_cache_ttl_ms":                     liveQueryCacheTTL.Milliseconds(),
+ 		"http_peer_io_holds_native_lock":              false,
+@@ -113,3 +162,16 @@
+ 	writer.Header().Set("Cache-Control", "no-store")
+ 	_ = json.NewEncoder(writer).Encode(status)
+ }
++
++// candidatePollWait returns the pause before the next read of a submitted
++// candidate query. The controller usually completes a query within tens of
++// milliseconds, so the first reads come quickly; later reads back off to the
++// original 100 ms so a slow agent does not hold the native lock more often.
++func candidatePollWait(attempt int) time.Duration {
++	early := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond,
++		30 * time.Millisecond, 50 * time.Millisecond}
++	if attempt < len(early) {
++		return early[attempt]
++	}
++	return 100 * time.Millisecond
++}
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4695,7 +4695,7 @@
+     deadline := time.Now().Add(8 * time.Second)
+     var observed []candidateLinkMetric
+     var observedErrors []candidateLinkError
+-    for time.Now().Before(deadline) {
++    for attempt := 0; time.Now().Before(deadline); attempt++ {
+         if r.Context().Err() != nil { return }
+         all, allErrors, completions, err := readState()
+         if err == nil {
+@@ -4783,7 +4783,7 @@
+         }
+         select {
+         case <-r.Context().Done(): return
+-        case <-time.After(100 * time.Millisecond):
++        case <-time.After(candidatePollWait(attempt)):
+         }
+     }
+ 
+--- /dev/null
++++ b/src/rdkb-cli/candidate_priority_test.go
+@@ -0,0 +1,57 @@
++package main
++
++import (
++	"testing"
++	"time"
++)
++
++func TestCandidateStepGoesBeforeWaitingRequests(t *testing.T) {
++	lock := newNativeLock()
++	lock.Lock() // an ordinary request is running
++	order := make(chan string, 2)
++	ordinaryWaiting := make(chan struct{})
++	go func() {
++		close(ordinaryWaiting)
++		lock.Lock()
++		order <- "ordinary"
++		lock.Unlock()
++	}()
++	<-ordinaryWaiting
++	time.Sleep(20 * time.Millisecond)
++	go func() {
++		lock.LockPriority()
++		order <- "candidate"
++		lock.Unlock()
++	}()
++	time.Sleep(20 * time.Millisecond)
++	lock.Unlock()
++	if first := <-order; first != "candidate" {
++		t.Fatalf("first after release: %s, want candidate", first)
++	}
++	if second := <-order; second != "ordinary" {
++		t.Fatalf("second after release: %s, want ordinary", second)
++	}
++}
++
++func TestCandidateStepDoesNotPreemptRunningRequest(t *testing.T) {
++	lock := newNativeLock()
++	lock.Lock()
++	acquired := make(chan struct{})
++	go func() { lock.LockPriority(); close(acquired); lock.Unlock() }()
++	select {
++	case <-acquired:
++		t.Fatal("candidate step took the lock from a running request")
++	case <-time.After(30 * time.Millisecond):
++	}
++	lock.Unlock()
++	<-acquired
++}
++
++func TestCandidatePollWaitBacksOff(t *testing.T) {
++	want := []time.Duration{10, 20, 30, 50, 100, 100}
++	for attempt, ms := range want {
++		if got := candidatePollWait(attempt); got != ms*time.Millisecond {
++			t.Fatalf("attempt %d: %v, want %v", attempt, got, ms*time.Millisecond)
++		}
++	}
++}

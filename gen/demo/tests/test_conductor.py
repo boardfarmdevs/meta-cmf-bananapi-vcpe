@@ -19,6 +19,8 @@ from optimizer.observer import ControllerInventoryUnavailable
 from optimizer.policy import Decision, Evaluation, PolicyConfig, ThresholdPolicy
 from optimizer.state import ClientPolicyState, PolicyState
 from room_demo.conductor import (
+    PROFILE_IN_FLIGHT_SECONDS,
+    PROFILE_VERIFICATIONS,
     CANDIDATE_PRIORITY_WINDOW_SECONDS,
     LiveConductor,
     _action_measurements_fresh,
@@ -76,7 +78,9 @@ class ConductorProjectionTests(unittest.TestCase):
         conductor.manifest["health"] = {"interval_seconds": 1, "expected_mesh_devices": 5, "expected_clients": 100}
         conductor.room_state = lambda: {"expected_online_clients": 10}
         payload = {"api_active": 10, "model_devices": 5, "model_radios": 15,
-                   "model_bsses": 50, "model_associated": 14, "topology_nodes": 6, "complete_nodes": 6}
+                   "model_bsses": 50, "model_associated": 14, "topology_nodes": 6, "complete_nodes": 6,
+                   "expected_topology_nodes": 6, "expected_model_devices": 5, "expected_model_radios": 15,
+                   "expected_model_bsses": 50, "expected_model_associated": 14}
         with patch.object(conductor, "_wait_for_run", return_value=True), \
                 patch.object(conductor, "_active", return_value=True), \
                 patch.object(conductor, "_sleep", return_value=True):
@@ -95,17 +99,23 @@ class ConductorProjectionTests(unittest.TestCase):
         conductor.plan = {"expected_lab": {"mesh_devices": 5, "clients": 100, "adapter_devices": [
             {"container": "pod-1", "radios": 1, "bsses": 5}, {"container": "pod-2", "radios": 1, "bsses": 5}]}}
         pods = {"api_active": 10, "model_devices": 7, "model_radios": 17,
-                "model_bsses": 60, "model_associated": 14, "topology_nodes": 8, "complete_nodes": 8}
+                "model_bsses": 60, "model_associated": 14, "topology_nodes": 8, "complete_nodes": 8,
+                "expected_topology_nodes": 8, "expected_model_devices": 7, "expected_model_radios": 17,
+                "expected_model_bsses": 60, "expected_model_associated": 14}
+        # a pod on Wi-Fi backhaul: mesh_health expects its backhaul station row and association
+        wifi = {**pods, "model_bsses": 61, "model_associated": 15,
+                "expected_model_bsses": 61, "expected_model_associated": 15}
         with patch.object(conductor, "_wait_for_run", return_value=True), \
                 patch.object(conductor, "_active", return_value=True), \
                 patch.object(conductor, "_sleep", return_value=True):
             for payload, healthy in [(pods, True), ({**pods, "topology_nodes": 6, "complete_nodes": 6}, False),
-                                     ({**pods, "model_bsses": 70}, False)]:
+                                     ({**pods, "model_bsses": 70}, False), (wifi, True),
+                                     ({**wifi, "model_associated": 14}, False)]:
                 with self.subTest(payload=payload), patch("room_demo.conductor.mesh_health", return_value=payload):
                     conductor._health_worker()
                     self.assertEqual(store.current()["latest"]["health.sample"]["payload"]["healthy"], healthy)
 
-    def test_full_verification_queue_never_marks_unsent_clients_pending(self):
+    def _run_profiling_queue(self, futures, advance, clock=None):
         conductor, store = self._conductor()
         conductor.action_attempts = 100
         conductor.interactive = True
@@ -146,16 +156,8 @@ class ConductorProjectionTests(unittest.TestCase):
         actuator = Mock()
         actuator.execute.return_value.success = True
         actuator.execute.return_value.to_dict.return_value = {"success": True}
-        futures = [Future() for _index in range(6)]
-        waits = []
-
-        def advance(*_arguments):
-            waits.append(actuator.execute.call_count)
-            if len(waits) == 2:
-                decision = actuator.execute.call_args_list[0].args[0]
-                futures[0].set_result((decision, Mock(success=True), datetime.now(timezone.utc), None))
-            return len(waits) == 3
-
+        if clock is not None:
+            conductor._monotonic = clock
         with patch("room_demo.conductor.load_policy", return_value=policy.config), \
              patch("room_demo.conductor._simulated_bss_channels", return_value={}), \
              patch("room_demo.conductor.ThresholdPolicy", return_value=policy), \
@@ -165,8 +167,22 @@ class ConductorProjectionTests(unittest.TestCase):
              patch("room_demo.conductor.NativeSteerActuator", return_value=actuator), \
              patch.object(policy, "evaluate", wraps=policy.evaluate) as evaluate, \
              patch.object(conductor._verification_executor, "submit", side_effect=futures), \
-             patch.object(conductor, "_optimizer_wait", side_effect=advance):
+             patch.object(conductor, "_optimizer_wait", side_effect=lambda *arguments: advance(actuator, *arguments)):
             conductor._optimizer_worker()
+        return conductor, store, actuator, evaluate, clients
+
+    def test_full_verification_queue_never_marks_unsent_clients_pending(self):
+        futures = [Future() for _index in range(6)]
+        waits = []
+
+        def advance(actuator, *_arguments):
+            waits.append(actuator.execute.call_count)
+            if len(waits) == 2:
+                decision = actuator.execute.call_args_list[0].args[0]
+                futures[0].set_result((decision, Mock(success=True), datetime.now(timezone.utc), None))
+            return len(waits) == 3
+
+        conductor, store, actuator, evaluate, clients = self._run_profiling_queue(futures, advance)
         self.assertEqual(conductor.errors, [])
         self.assertEqual(waits, [5, 5, 6])
         self.assertEqual(conductor.action_attempts, 106)
@@ -179,6 +195,23 @@ class ConductorProjectionTests(unittest.TestCase):
             self.assertIsNone(pending.last_action_at)
             self.assertEqual(pending.failure_count, 0)
         self.assertEqual(actuator.execute.call_args_list[5].args[0].sta_mac, clients[5].sta_mac)
+
+    def test_a_steer_the_client_did_not_follow_frees_its_slot_after_the_in_flight_time(self):
+        # Five steers nobody follows: their verifications stay open, but after
+        # PROFILE_IN_FLIGHT_SECONDS they no longer hold the other clients back.
+        futures = [Future() for _index in range(PROFILE_VERIFICATIONS)]
+        waits, now = [], [100.0]
+
+        def advance(actuator, *_arguments):
+            waits.append(actuator.execute.call_count)
+            now[0] += PROFILE_IN_FLIGHT_SECONDS - 1 if len(waits) == 1 else 2
+            return len(waits) == 3
+
+        conductor, _store, actuator, _evaluate, clients = self._run_profiling_queue(futures, advance, lambda: now[0])
+        self.assertEqual(conductor.errors, [])
+        self.assertEqual(waits, [5, 5, 9])
+        self.assertEqual([call.args[0].sta_mac for call in actuator.execute.call_args_list[5:]],
+                         [client.sta_mac for client in clients[5:]])
 
     def test_cooldown_and_failure_backoff_start_at_actual_verification(self):
         now = datetime.now(timezone.utc)

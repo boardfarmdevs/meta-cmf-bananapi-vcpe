@@ -1,0 +1,90 @@
+Subject: [PATCH] Tolerate a busy medium in native root proof renewal
+
+An admitted backhaul revoked its root admission when one renewal stayed
+unanswered for 2 s. In geometry rooms a 2-3 s hiccup at an RF change (the
+medium, the controller or the agents busy) expired every extender's proof at
+once and dropped the whole mesh for about 45 s. Renewals of an admitted link
+now retry for 8 s; the first proof keeps its 2 s window. Link loss is still
+caught by 802.11 and the parent's quiesce of its backhaul APs.
+
+Upstream-Status: Pending
+
+
+--- a/inc/em_rooted_admission_probe.h
++++ b/inc/em_rooted_admission_probe.h
+@@ -22,6 +22,12 @@
+ constexpr std::uint64_t renewal_interval_ms = 500;
+ constexpr std::uint64_t retry_interval_ms = 250;
+ constexpr std::uint64_t initial_admission_ms = 10000;
++// An admitted link renews its proof every renewal_interval_ms. A renewal that
++// stays unanswered for proof_window_ms is often only a busy medium or a busy
++// controller or agent, and revoking then tears down every child backhaul: a
++// renewal keeps retrying for renewal_window_ms before the path counts as lost.
++// A lost link itself is still caught at once by 802.11 and the parent's quiesce.
++constexpr std::uint64_t renewal_window_ms = 8000;
+ 
+ using wire_frame = std::array<unsigned char, frame_size>;
+ 
+@@ -168,6 +174,7 @@
+     nonce_value m_last_nonce{};
+     std::uint64_t m_sent_ms = 0;
+     std::uint64_t m_last_transmit_ms = 0;
++    std::uint64_t m_window_ms = proof_window_ms;
+     bool m_active = false;
+     bool m_have_last_nonce = false;
+ 
+@@ -179,7 +186,7 @@
+     void cancel() { m_active = false; }
+ 
+     bool begin(const link_context &current, std::uint16_t mid, const nonce_value &nonce,
+-        std::uint64_t now_ms, wire_frame &output)
++        std::uint64_t now_ms, wire_frame &output, std::uint64_t window_ms = proof_window_ms)
+     {
+         if (m_active || !current.connected || (m_have_last_nonce && nonce == m_last_nonce)) return false;
+         message request{};
+@@ -196,6 +203,7 @@
+         m_have_last_nonce = true;
+         m_sent_ms = now_ms;
+         m_last_transmit_ms = now_ms;
++        m_window_ms = window_ms;
+         m_active = true;
+         return true;
+     }
+@@ -203,14 +211,14 @@
+     bool expired(const link_context &current, std::uint64_t now_ms) const
+     {
+         return m_active && same_link(m_pending, current) && now_ms >= m_sent_ms &&
+-            now_ms - m_sent_ms > proof_window_ms;
++            now_ms - m_sent_ms > m_window_ms;
+     }
+ 
+     bool retry(std::uint64_t now_ms, wire_frame &output)
+     {
+         if (!m_active || now_ms < m_last_transmit_ms ||
+             now_ms - m_last_transmit_ms < retry_interval_ms || now_ms < m_sent_ms ||
+-            now_ms - m_sent_ms > proof_window_ms || !encode(m_pending, output)) return false;
++            now_ms - m_sent_ms > m_window_ms || !encode(m_pending, output)) return false;
+         m_last_transmit_ms = now_ms;
+         return true;
+     }
+@@ -218,7 +226,7 @@
+     bool observe(const link_context &current, std::uint64_t now_ms)
+     {
+         if (m_active && (!same_link(m_pending, current) || now_ms < m_sent_ms ||
+-            now_ms - m_sent_ms > proof_window_ms)) cancel();
++            now_ms - m_sent_ms > m_window_ms)) cancel();
+         return m_active;
+     }
+ 
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -171,7 +171,8 @@
+     if (now < m_root_next_probe) return;
+     em_rooted_admission::nonce_value nonce{};
+     if (getrandom(nonce.data(), nonce.size(), 0) != static_cast<ssize_t>(nonce.size())) return;
+-    if (m_root_admission.begin(context, get_next_msg_id(), nonce, now, frame))
++    if (m_root_admission.begin(context, get_next_msg_id(), nonce, now, frame,
++            state[21] ? em_rooted_admission::renewal_window_ms : em_rooted_admission::proof_window_ms))
+         transport->send_native_backhaul_frame(frame.data(), frame.size());
+ }
+ 

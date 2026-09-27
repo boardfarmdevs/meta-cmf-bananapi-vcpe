@@ -1,0 +1,54 @@
+Subject: [PATCH] em_cli: read a device's identity from its own keys
+
+deviceIdentity (patch 0210) read Manufacturer and ManufacturerModel with
+getTreeValue, which searches the node's whole subtree depth first and by
+key prefix. Once an OpenSync pod joined the gateway's Wi-Fi backhaul it
+became a child of the gateway's agent, listed before that agent's own
+Manufacturer, so the agent was classified as a pod: named Pod-2, drawn
+as a pod, and every later Agent-N and Pod-N name shifted.
+
+Read the two keys from the node's own children, matched exactly.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -7413,8 +7413,8 @@
+     if depth == 0 {
+         return "", "", "controller"
+     }
+-    manufacturer = getTreeValue(deviceNode, "Manufacturer")
+-    model = getTreeValue(deviceNode, "ManufacturerModel")
++    manufacturer = ownTreeValue(deviceNode, "Manufacturer")
++    model = ownTreeValue(deviceNode, "ManufacturerModel")
+     kind = "easymesh"
+     if strings.HasPrefix(manufacturer, "OpenSync") {
+         kind = "opensync-pod"
+@@ -7422,6 +7422,27 @@
+     return manufacturer, model, kind
+ }
+ 
++// ownTreeValue is the value of one of the node's own keys, matched exactly.
++// getTreeValue searches the whole subtree depth first and by key prefix: for
++// an agent with a child device listed before its own Manufacturer (an
++// OpenSync pod on the agent's Wi-Fi backhaul), it returned the child's.
++func ownTreeValue(tree *C.em_network_node_t, key string) string {
++    if tree == nil {
++        return ""
++    }
++    for index := 0; index < int(tree.num_children); index++ {
++        child := tree.child[index]
++        if child == nil || C.GoString(&child.key[0]) != key {
++            continue
++        }
++        if C.get_node_type(child) == C.em_network_node_data_type_string {
++            return C.GoString(&child.value_str[0])
++        }
++        return ""
++    }
++    return ""
++}
++
+ func getTreeValue(tree *C.em_network_node_t, key string) string {
+     node := getNetworkTreeByKey(tree, key)
+     if node != nil {

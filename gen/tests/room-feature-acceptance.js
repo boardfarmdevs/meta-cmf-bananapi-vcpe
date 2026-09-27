@@ -659,7 +659,7 @@ async function run(args) {
       }
       for (const client of sample.associations) {
         const update = pending.get(client.mac);
-        if (update?.bssid === client.bssid) { viewLag.push((sample.monoMs - update.since) / 1000); pending.delete(client.mac); }
+        if (update && update.bssid === client.bssid) { viewLag.push((sample.monoMs - update.since) / 1000); pending.delete(client.mac); }
       }
     }
     result.performance = {

@@ -291,3 +291,114 @@ def test_progress_is_coalesced_off_the_native_request_thread():
     finally:
         delegate.release.set()
         provider.close()
+
+
+class RecordingDelegate(Delegate):
+    def __init__(self):
+        super().__init__()
+        self.inventories = []
+        self.release.set()
+
+    def __call__(self, clients, inventory, bsses, observed_at):
+        self.inventories.append({(item.sta_mac, item.bssid) for item in inventory})
+        return super().__call__(clients, inventory, bsses, observed_at)
+
+
+def _two_stations(sample):
+    other = "02:00:00:00:04:00"
+    return replace(sample, clients=(*sample.clients, replace(sample.clients[0], sta_mac=other)),
+                   candidates=(*sample.candidates, replace(sample.candidates[0], sta_mac=other))), other
+
+
+def test_incremental_round_asks_only_for_due_pairs():
+    delegate = RecordingDelegate()
+    provider = StreamingCandidateProvider(delegate, maximum_age_seconds=30, refresh_after_seconds=15)
+    try:
+        sample, other = _two_stations(snapshot(0))
+        collect(provider, sample)
+        provider._future.result(timeout=1)
+        assert len(collect(provider, sample)) == 2
+        # everything fresh: no round is started
+        assert provider._future is None and len(delegate.calls) == 1
+        # one station roams: the next round asks only for its pairs
+        roamed = replace(sample, clients=(replace(sample.clients[0], connected_bssid="02:00:00:aa:aa:02"),
+                                          sample.clients[1]))
+        collect(provider, roamed)
+        provider._future.result(timeout=1)
+        assert delegate.inventories[-1] == {(sample.clients[0].sta_mac, sample.candidates[0].bssid)}
+        assert delegate.calls[-1] == {sample.clients[0].sta_mac}
+    finally:
+        provider.close()
+
+
+def test_incremental_round_refreshes_aging_pairs():
+    delegate = RecordingDelegate()
+    provider = StreamingCandidateProvider(delegate, maximum_age_seconds=30, refresh_after_seconds=15)
+    try:
+        sample, other = _two_stations(snapshot(0))
+        collect(provider, sample)
+        provider._future.result(timeout=1)
+        collect(provider, sample)
+        later = replace(sample, observed_at=snapshot(16).observed_at)
+        collect(provider, later)
+        provider._future.result(timeout=1)
+        assert len(delegate.calls) == 2 and delegate.inventories[-1] == delegate.inventories[0]
+    finally:
+        provider.close()
+
+
+def test_refresh_age_must_lie_within_the_maximum_age():
+    with pytest.raises(ValueError):
+        StreamingCandidateProvider(Delegate(), maximum_age_seconds=30, refresh_after_seconds=31)
+
+
+def test_missing_pairs_go_before_a_refresh_wave():
+    delegate = RecordingDelegate()
+    provider = StreamingCandidateProvider(delegate, maximum_age_seconds=30, refresh_after_seconds=15)
+    try:
+        sample, other = _two_stations(snapshot(0))
+        collect(provider, sample)
+        provider._future.result(timeout=1)
+        collect(provider, sample)
+        # 16 s later both pairs are due for refresh, and one station has just moved
+        later = replace(sample, observed_at=snapshot(16).observed_at,
+                        clients=(replace(sample.clients[0], connected_bssid="02:00:00:aa:aa:02"),
+                                 sample.clients[1]))
+        collect(provider, later)
+        provider._future.result(timeout=1)
+        assert delegate.inventories[-1] == {(sample.clients[0].sta_mac, sample.candidates[0].bssid)}
+        # with nothing missing any more, the refresh follows (this fake delegate
+        # returns the 16 s old sample time, so the moved pair is due again too)
+        collect(provider, later)
+        provider._future.result(timeout=1)
+        assert (other, sample.candidates[1].bssid) in delegate.inventories[-1]
+    finally:
+        provider.close()
+
+
+def test_a_pair_that_is_never_answered_cannot_starve_refreshes():
+    class Silent(RecordingDelegate):
+        def __call__(self, clients, inventory, bsses, observed_at):
+            self.inventories.append({(item.sta_mac, item.bssid) for item in inventory})
+            selected = {client.sta_mac for client in clients if self.client_selector(client, observed_at)}
+            self.calls.append(selected)
+            measured = tuple(item for item in inventory
+                             if item.sta_mac in selected and item.sta_mac != "02:00:00:00:04:00")
+            self.result_ready(measured, frozenset(), {"finished_at": observed_at})
+            return measured
+    delegate = Silent()
+    provider = StreamingCandidateProvider(delegate, maximum_age_seconds=30, refresh_after_seconds=15)
+    try:
+        sample, other = _two_stations(snapshot(0))
+        collect(provider, sample)
+        provider._future.result(timeout=1)
+        later = replace(sample, observed_at=snapshot(16).observed_at)
+        rounds = []
+        for _ in range(3):
+            collect(provider, later)
+            provider._future.result(timeout=1)
+            rounds.append(delegate.inventories[-1])
+        refreshed = (sample.clients[0].sta_mac, sample.candidates[0].bssid)
+        assert any(refreshed in inventory for inventory in rounds)
+    finally:
+        provider.close()

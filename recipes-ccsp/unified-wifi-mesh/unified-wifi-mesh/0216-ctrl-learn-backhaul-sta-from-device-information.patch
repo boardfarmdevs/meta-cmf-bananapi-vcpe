@@ -1,0 +1,143 @@
+Subject: [PATCH] Learn a backhaul STA from standard Device Information
+
+The controller builds its backhaul tree from backhaul-STA rows, and only
+the RDK vendor operational BSS TLV creates them; patch 0091 then keeps
+their upstream BSSID current from the IEEE 1905 Device Information TLV.
+An agent that reports its backhaul station in standard TLVs only (an
+OpenSync pod through the EMOSA adapter: a station interface of media type
+802.11 with role non-AP STA and its network membership, the upstream
+BSSID) got no row, so the controller hung it off the root as if wired.
+
+When a Topology Response without the vendor snapshot reports such a
+station and no backhaul-STA row matches it, add one. Its radio is the
+station itself (the controller models no radio for it; the agent may
+operate it only as a station), and get_bsta_bss_info accepts it without
+a radio for that reason alone. The row is removed when the agent's
+Device Information no longer reports the station, so the device returns
+to its wired place. Like every row it is keyed by its BSSID, here the
+upstream one, so the database write finds it again. RDK agents, which
+send the vendor snapshot, are unchanged.
+
+Upstream-Status: Pending
+
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -2776,7 +2776,15 @@
+             continue;
+         }
+         auto radio = this->get_radio(bsta_info->ruid.mac);
+-        if (!radio) continue;
++        if (!radio) {
++            /* A station learned from standard Device Information only: its
++             * radio is the station itself, one the controller does not model. */
++            if (bsta_info->enabled &&
++                    memcmp(bsta_info->ruid.mac, bsta_info->sta_mac, sizeof(mac_address_t)) == 0) {
++                return bsta_info;
++            }
++            continue;
++        }
+         em_printfout("radio_mac:%s backhaul bss_mac:%s radio enabled:%d sta_info enabled:%d",
+             util::mac_to_string(bsta_info->ruid.mac).c_str(),
+             util::mac_to_string(bsta_info->id.bssid).c_str(),
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2716,6 +2716,32 @@
+     unsigned char *device_cursor = buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
+     unsigned int device_remaining = len -
+         static_cast<unsigned int>(sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
++    /* An RDK agent lists its backhaul station in the vendor operational BSS
++     * snapshot.  Another agent (an adapter such as EMOSA) reports it only in
++     * standard TLVs: a Device Information station interface with its network
++     * membership, which is then the only record of it.  Such a station is kept
++     * as a backhaul-STA row whose radio is the station itself (the controller
++     * models no radio for it) and removed when the interface is no longer
++     * reported. */
++    bool vendor_bss_snapshot = false;
++    {
++        unsigned char *scan = device_cursor;
++        unsigned int scan_remaining = device_remaining;
++        while (scan_remaining >= sizeof(em_tlv_t)) {
++            em_tlv_t *scan_tlv = reinterpret_cast<em_tlv_t *>(scan);
++            unsigned int scan_total = sizeof(em_tlv_t) + ntohs(scan_tlv->len);
++            if (scan_total > scan_remaining || scan_tlv->type == em_tlv_type_eom) {
++                break;
++            }
++            if (scan_tlv->type == em_tlv_type_vendor_operational_bss) {
++                vendor_bss_snapshot = true;
++                break;
++            }
++            scan += scan_total;
++            scan_remaining -= scan_total;
++        }
++    }
++    bool standard_bsta_reported = false;
+     while (device_remaining >= sizeof(em_tlv_t)) {
+         em_tlv_t *device_tlv = reinterpret_cast<em_tlv_t *>(device_cursor);
+         unsigned int value_len = ntohs(device_tlv->len);
+@@ -2816,6 +2842,43 @@
+                             "Ambiguous backhaul STA for sta=%s band=%u candidates=%u",
+                             util::mac_to_string(local_mac).c_str(), reported_band,
+                             band_matches);
++                    } else if (matched_bsta == NULL && !vendor_bss_snapshot &&
++                            dm->get_num_bss() < EM_MAX_BSSS) {
++                        matched_bsta_index = dm->get_num_bss();
++                        dm_bss_t *row = &dm->m_bss[matched_bsta_index];
++                        row->init();
++                        matched_bsta = &row->m_bss_info;
++                        strncpy(matched_bsta->id.net_id,
++                            dm->m_device.m_device_info.id.net_id,
++                            sizeof(em_long_string_t));
++                        memcpy(matched_bsta->id.dev_mac,
++                            dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t));
++                        memcpy(matched_bsta->id.ruid, local_mac, sizeof(mac_address_t));
++                        /* Keyed like every row, by its BSSID: here the upstream one. */
++                        memcpy(matched_bsta->id.bssid, upstream_bssid, sizeof(mac_address_t));
++                        memcpy(matched_bsta->ruid.mac, local_mac, sizeof(mac_address_t));
++                        memcpy(matched_bsta->sta_mac, local_mac, sizeof(mac_address_t));
++                        memcpy(matched_bsta->bssid.mac, upstream_bssid,
++                            sizeof(mac_address_t));
++                        matched_bsta->id.haul_type = em_haul_type_backhaul;
++                        matched_bsta->vap_mode = em_vap_mode_sta;
++                        matched_bsta->enabled = true;
++                        dm->set_num_bss(dm->get_num_bss() + 1);
++                        em_printfout(
++                            "Backhaul STA learned from Device Information: sta=%s parent=%s band=%u",
++                            util::mac_to_string(local_mac).c_str(),
++                            util::mac_to_string(upstream_bssid).c_str(), reported_band);
++                        ret = 1;
++                        dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++                    }
++                    if (matched_bsta != NULL && !vendor_bss_snapshot &&
++                            memcmp(matched_bsta->ruid.mac, local_mac,
++                                sizeof(mac_address_t)) == 0) {
++                        standard_bsta_reported = true;
++                        /* The model's key (id.bssid) follows a parent change, or
++                         * the database and the model disagree about the row. */
++                        memcpy(matched_bsta->id.bssid, matched_bsta->bssid.mac,
++                            sizeof(mac_address_t));
+                     }
+ 
+                     if (matched_bsta != NULL &&
+@@ -2879,6 +2942,22 @@
+         device_cursor += total_len;
+         device_remaining -= total_len;
+     }
++    if (!vendor_bss_snapshot && !standard_bsta_reported) {
++        for (int index = static_cast<int>(dm->get_num_bss()) - 1; index >= 0; index--) {
++            em_bss_info_t *row = dm->get_bss_info(static_cast<unsigned int>(index));
++            if (row == NULL || row->vap_mode != em_vap_mode_sta ||
++                    row->id.haul_type != em_haul_type_backhaul ||
++                    memcmp(row->ruid.mac, row->sta_mac, sizeof(mac_address_t)) != 0) {
++                continue;
++            }
++            em_printfout("Backhaul STA no longer reported: sta=%s parent=%s",
++                util::mac_to_string(row->sta_mac).c_str(),
++                util::mac_to_string(row->bssid.mac).c_str());
++            dm->remove_bss_by_index(static_cast<unsigned int>(index));
++            ret = 1;
++            dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++        }
++    }
+     if (em_mgr_t *mgr = get_mgr()) {
+         al_em = mgr->get_al_node();
+     }

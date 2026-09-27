@@ -1,0 +1,53 @@
+Subject: [PATCH] Complete a Channel Scan Request on its 1905 ACK
+
+Patch 0011 routes a 1905 ACK only to a radio with an unassociated metrics,
+steering or policy request outstanding under that MID; any other ACK is
+dropped ("find_em_for_msg_type failed"). A Channel Scan Request completes
+only on its ACK (em_channel_t::handle_1905_ack), so the radio stayed in
+channel_scan_pending and the request went out again every second, as long
+as the orchestration lasted (40 s and more after an OpenSync pod rejoined in
+a fifty-client room). A radio in that state is not configured: candidate
+queries to it were refused with Error_Not_Ready and steers waited, so the
+optimizer's snapshot stayed incomplete and the room missed its load window.
+
+Route the ACK to the radio whose scan request carries its MID, and record
+that MID before the frame is sent: the agent's ACK can arrive first.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1476,6 +1476,15 @@
+                     em = radio_em;
+                     break;
+                 }
++                /* The ACK is the only completion of a Channel Scan Request
++                 * (em_channel_t::handle_1905_ack); the report can follow much
++                 * later or carry a failure status. Dropped, the radio stayed in
++                 * channel_scan_pending and the request was resent every second. */
++                if ((radio_em->get_state() == em_state_ctrl_channel_scan_pending) &&
++                    (radio_em->m_chan_req_msg_id == response_msg_id)) {
++                    em = radio_em;
++                    break;
++                }
+             }
+ 
+             if (em == NULL) {
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -623,12 +623,14 @@
+         //return -1;
+     }
+ 
++    // Known before the frame leaves: the agent's 1905 ACK can arrive first.
++    m_chan_req_msg_id = ntohs(cmdu->id);
+     if (send_frame(buff, len)  < 0) {
+         em_printfout("Channel Scan Request msg failed, error:%d", errno);
++        m_chan_req_msg_id = 0;
+         return -1;
+     }
+ 
+-    m_chan_req_msg_id = ntohs(cmdu->id);
+     em_printfout("Channel Scan Request message sent (msg_id: 0x%04x)\n", m_chan_req_msg_id);
+ 
+     return  static_cast<int> (len);

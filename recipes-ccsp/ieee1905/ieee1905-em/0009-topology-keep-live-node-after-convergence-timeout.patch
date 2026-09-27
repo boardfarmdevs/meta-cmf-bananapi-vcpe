@@ -1,0 +1,129 @@
+Subject: [PATCH] topology: keep a live node when its convergence times out
+
+The garbage collector removed any node whose Topology Query stayed
+unanswered (or whose response we never sent) for 5 seconds, even while
+that node kept sending frames. Every CMDU addressed to a removed node is
+then dropped ("No destination_mac found for AL-MAC") until the node is
+learned again. In the RDK lab an extender's daemon removed the
+controller this way after a missed topology response; the extender's
+agent could not reach the controller, its root proof renewals were
+dropped and its backhaul was revoked 8 s later.
+
+A stalled query is not evidence that the node is gone. Keep a node with
+received evidence in the last 60 seconds and reset only the stalled
+convergence state, so the next discovery starts a new query. Nodes
+without recent evidence are removed as before; liveness stays with the
+60-second rule of patch 0004. Also let the existing expiry test compile
+(it used a moved value).
+
+Upstream-Status: Pending
+---
+--- a/ieee1905-core/src/topology_manager.rs
++++ b/ieee1905-core/src/topology_manager.rs
+@@ -696,28 +696,52 @@
+             let mut nodes = self.nodes.write().await;
+ 
+             nodes.retain(|al_mac, node| {
+-                // Remove nodes stuck in ConvergingLocal state
++                // An unanswered Topology Query (or a response we never got to
++                // send) is not evidence that the node is gone. Removing a node
++                // that is still sending us frames drops every CMDU addressed to
++                // it ("No destination_mac found") until it is learned again:
++                // an extender then loses its path to the controller for tens of
++                // seconds. Keep a node with recent received evidence and forget
++                // only the stalled exchange; liveness stays with the 60 s rule.
++                let alive =
++                    now.duration_since(node.metadata.last_seen) < Duration::from_secs(60);
++
+                 if let StateLocal::ConvergingLocal(when) = node.metadata.node_state_local
+                     && now.duration_since(when) >= Duration::from_secs(5)
+                 {
++                    if !alive {
++                        debug!(
++                            al_mac = ?al_mac,
++                            state = ?node.metadata.last_update,
++                            "Removing node stuck in local convergence for too long"
++                        );
++                        return false; // Remove from database
++                    }
+                     debug!(
+                         al_mac = ?al_mac,
+                         state = ?node.metadata.last_update,
+-                        "Removing node stuck in local convergence for too long"
++                        "Local convergence timed out; keeping live node"
+                     );
+-                    return false; // Remove from database
++                    node.metadata.node_state_local = StateLocal::Idle;
+                 }
+ 
+-                // Remove nodes stuck in ConvergingRemote state
+                 if let StateRemote::ConvergingRemote(when) = node.metadata.node_state_remote
+                     && now.duration_since(when) >= Duration::from_secs(5)
+                 {
++                    if !alive {
++                        debug!(
++                            al_mac = ?al_mac,
++                            state = ?node.metadata.last_update,
++                            "Removing node stuck in remote convergence for too long"
++                        );
++                        return false; // Remove from database
++                    }
+                     debug!(
+                         al_mac = ?al_mac,
+                         state = ?node.metadata.last_update,
+-                        "Removing node stuck in remote convergence for too long"
++                        "Remote convergence timed out; keeping live node"
+                     );
+-                    return false; // Remove from database
++                    node.metadata.node_state_remote = StateRemote::Idle;
+                 }
+ 
+                 // Remove nodes that have been inactive
+@@ -1472,7 +1496,7 @@
+ 
+         // Neither a local query transition nor the state reset after a local
+         // notification is evidence that the remote neighbor is alive.
+-        db.update_ieee1905_topology(device, UpdateType::QuerySent, Some(7), None, None)
++        db.update_ieee1905_topology(device.clone(), UpdateType::QuerySent, Some(7), None, None)
+             .await;
+         db.handle_notification_sent().await;
+         assert_eq!(db.get_last_seen(al_mac).await, Some(stale_at));
+@@ -1497,4 +1521,38 @@
+             TopologyChangeEvent::NeighborAdded { al_mac }
+         );
+     }
++
++    #[tokio::test]
++    async fn live_node_survives_unanswered_query() {
++        let db = TopologyDatabase::new(MacAddr::new(0, 0, 0, 0, 0, 0), "en1".to_string());
++        let al_mac = MacAddr::new(0, 0, 0, 0, 0, 3);
++        let device = Ieee1905DeviceData::new(al_mac, al_mac, None, *db.local_mac.read().await, None, None);
++        db.update_ieee1905_topology(device.clone(), UpdateType::DiscoveryReceived, None, None, None)
++            .await;
++        db.update_ieee1905_topology(device, UpdateType::QuerySent, Some(9), None, None)
++            .await;
++        let later = Instant::now() + Duration::from_secs(6);
++        db.garbage_collect_topology(later).await;
++        let nodes = db.nodes.read().await;
++        let node = nodes.get(&al_mac).expect("a live node must stay routable");
++        assert_eq!(node.metadata.node_state_local, crate::topology_manager::StateLocal::Idle);
++    }
++
++    #[tokio::test]
++    async fn silent_node_stuck_in_convergence_is_removed() {
++        let db = TopologyDatabase::new(MacAddr::new(0, 0, 0, 0, 0, 0), "en1".to_string());
++        let al_mac = MacAddr::new(0, 0, 0, 0, 0, 4);
++        let device = Ieee1905DeviceData::new(al_mac, al_mac, None, *db.local_mac.read().await, None, None);
++        db.update_ieee1905_topology(device.clone(), UpdateType::DiscoveryReceived, None, None, None)
++            .await;
++        db.update_ieee1905_topology(device, UpdateType::QuerySent, Some(9), None, None)
++            .await;
++        {
++            let mut nodes = db.nodes.write().await;
++            nodes.get_mut(&al_mac).unwrap().metadata.last_seen = Instant::now() - Duration::from_secs(61);
++        }
++        db.garbage_collect_topology(Instant::now() + Duration::from_secs(6)).await;
++        assert!(db.get_device(al_mac).await.is_none());
++    }
+ }
++

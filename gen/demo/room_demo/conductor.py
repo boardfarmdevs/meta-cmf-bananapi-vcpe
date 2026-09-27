@@ -83,6 +83,17 @@ def _priority_client(client, role, mac_by_role, ap_role_by_bssid, deadline, now)
     )
 
 
+# Profiling acts on up to PROFILE_ACTIONS_IN_FLIGHT steers the network has not
+# settled yet. A steer counts for PROFILE_IN_FLIGHT_SECONDS: a client that has not
+# followed by then rarely does (1058 verified steers: p99 5.8 s, slowest 10.5 s),
+# and its verification, still watched up to the steer timeout, must not hold a
+# slot for 40 s while every other client waits. PROFILE_VERIFICATIONS bounds the
+# verifications watched at once.
+PROFILE_ACTIONS_IN_FLIGHT = 5
+PROFILE_IN_FLIGHT_SECONDS = 8
+PROFILE_VERIFICATIONS = 16
+
+
 def _interactive_policy(config):
     return replace(config, current_rcpi_below=220, minimum_target_gain_rcpi=4,
                    condition_hold_seconds=0, minimum_dwell_seconds=0,
@@ -379,7 +390,9 @@ class LiveConductor:
         self._link_sample_lock = threading.Lock()
         self._client_sample_locks: dict[str, Any] = {}
         self._probe_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="room-link-probe")
-        self._verification_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="room-verification")
+        self._verification_executor = ThreadPoolExecutor(max_workers=PROFILE_VERIFICATIONS,
+                                                         thread_name_prefix="room-verification")
+        self._monotonic = time.monotonic
         self._network_lock = threading.Lock()
         self._network_clients = ()
         self._network_observed_at = 0.0
@@ -1020,17 +1033,15 @@ class LiveConductor:
                 payload = mesh_health(expected_devices, expected_clients, adapters)
                 payload["pool_clients"] = int(health["expected_clients"])
                 payload["expected_online_clients"] = expected_clients
-                # adapter-managed nodes (OpenSync pods) carry their own radio and
-                # BSS counts and no backhaul station in the controller's model
-                pods = adapters
+                # mesh_health's expectations: adapter-managed nodes (OpenSync pods)
+                # carry their own radio and BSS counts, and a backhaul station
+                # only while on a Wi-Fi backhaul
                 payload["healthy"] = (
                     payload.get("api_active") == expected_clients
-                    and payload.get("topology_nodes") == expected_devices + len(pods) + 1
-                    and payload.get("complete_nodes") == expected_devices + len(pods) + 1
-                    and payload.get("model_devices") == expected_devices + len(pods)
-                    and payload.get("model_radios") == expected_devices * 3 + sum(item["radios"] for item in pods)
-                    and payload.get("model_bsses") == expected_devices * 10 + sum(item["bsses"] for item in pods)
-                    and payload.get("model_associated") == expected_clients + expected_devices - 1
+                    and payload.get("topology_nodes") == payload.get("expected_topology_nodes")
+                    and payload.get("complete_nodes") == payload.get("expected_topology_nodes")
+                    and all(payload.get(f"model_{key}") == payload.get(f"expected_model_{key}")
+                            for key in ("devices", "radios", "bsses", "associated"))
                 )
                 payload["evidence_storage"] = self.store.storage_status()
                 self.store.emit("health.sample", self._time(), payload, producer="health")
@@ -1186,10 +1197,15 @@ class LiveConductor:
             current_metric_floor=(lambda client: self._current_metric_floor(client, room_before))
             if self.interactive and self.room_state else None,
             fallback_executor=self._probe_executor if self.interactive else None,
+            # Streaming wakes this loop on every candidate result; one controller
+            # inventory read per second serves those evaluations.
+            inventory_max_age_seconds=1.0 if self.profiling else 0,
         )
         if self.profiling:
+            candidate_age = min(30, policy.config.reject_stale_metrics_after_seconds)
             provider = StreamingCandidateProvider(provider, maximum_clients=64,
-                                                maximum_age_seconds=min(30, policy.config.reject_stale_metrics_after_seconds),
+                                                maximum_age_seconds=candidate_age,
+                                                refresh_after_seconds=candidate_age / 2,
                                                 identity=lambda: self._observation_key(room_before),
                                                 client_identity=lambda station: self._candidate_epoch(station, room_before),
                                                 updated=self._candidate_updated.set,
@@ -1219,6 +1235,7 @@ class LiveConductor:
         if self.profiling:
             interval = 0.25
         pending_verifications = {}
+        pending_started = {}
         pending_safety_tickets = {}
         action_window = [int(value) for value in optimizer["action_window_ms"]]
         maximum_actions = (
@@ -1240,12 +1257,14 @@ class LiveConductor:
                     policy_world_epoch = cycle_world_epoch
                     state = PolicyState()
                     pending_verifications.clear()
+                    pending_started.clear()
                     pending_safety_tickets.clear()
                 for station, future in list(pending_verifications.items()):
                     if not future.done():
                         continue
                     safety_ticket = pending_safety_tickets.pop(station, None)
                     del pending_verifications[station]
+                    pending_started.pop(station, None)
                     try:
                         completed_decision, verified, completed_at, completed_guard = future.result()
                     except Exception as error:
@@ -1480,8 +1499,11 @@ class LiveConductor:
                     if can_act else []
                 )
                 if self.profiling:
+                    started_before = self._monotonic() - PROFILE_IN_FLIGHT_SECONDS
+                    in_flight = sum(started > started_before for started in pending_started.values())
                     action_batch = [item for item in action_batch if item.sta_mac not in pending_verifications][
-                        :max(0, 5 - len(pending_verifications))]
+                        :max(0, min(PROFILE_ACTIONS_IN_FLIGHT - in_flight,
+                                    PROFILE_VERIFICATIONS - len(pending_verifications)))]
                 action_batch = [item for item in action_batch if not self._band_measurements.in_flight(item.sta_mac)]
                 if action_batch:
                     selected_action = action_batch[0]
@@ -1735,6 +1757,7 @@ class LiveConductor:
                                 pending_verifications[decision.sta_mac] = self._verification_executor.submit(
                                     self._verify_profile_action, verifier, decision, batch_guard, policy.config,
                                     batch_index, len(action_batch), action_context, action_started)
+                                pending_started[decision.sta_mac] = self._monotonic()
                             except Exception as error:
                                 pending_safety_tickets.pop(decision.sta_mac, None)
                                 self._complete_steering_safety(safety_ticket, False, str(error))

@@ -14,9 +14,18 @@ class StreamingCandidateProvider:
     """Single-flight native collection with nonblocking, identity-bound publication."""
 
     def __init__(self, provider, *, maximum_clients=8, maximum_age_seconds=30,
-                 identity=None, client_identity=None, updated=None, telemetry=None):
+                 identity=None, client_identity=None, updated=None, telemetry=None,
+                 refresh_after_seconds=None):
         if maximum_clients < 1 or maximum_age_seconds <= 0:
             raise ValueError("streaming collection requires positive bounds")
+        if refresh_after_seconds is not None and not 0 < refresh_after_seconds <= maximum_age_seconds:
+            raise ValueError("refresh age must be positive and within the maximum age")
+        # None: every round asks for every (station, candidate) pair of its cohort.
+        # A number: a round asks only for pairs without a measurement or rejection
+        # younger than this, so a round after a steer queries only the radios the
+        # moved station still needs instead of every radio for every station.
+        self.refresh_after_seconds = refresh_after_seconds
+        self._urgent_only_round = False
         self.provider = provider
         self.selector = provider.client_selector
         self.maximum_clients = maximum_clients
@@ -154,6 +163,34 @@ class StreamingCandidateProvider:
         self._rejections = {key: (version, timestamp) for key, (version, timestamp) in self._rejections.items()
                             if valid(key, version, timestamp)}
         eligible = [client for client in clients if self.selector is None or self.selector(client, observed_at)]
+        due_inventory = inventory
+        if self.refresh_after_seconds is not None:
+            def age(key):
+                # Seconds since the pair's newest valid evidence; None when it has none.
+                ages = []
+                cached = self._cache.get(key)
+                if cached is not None and cached[0] == self._versions.get(key[0]):
+                    ages.append((now - parse_time(cached[1].metric_observed_at)).total_seconds())
+                rejected = self._rejections.get(key)
+                if rejected is not None and rejected[0] == self._versions.get(key[0]):
+                    ages.append((now - parse_time(rejected[1])).total_seconds())
+                return min(ages) if ages else None
+            ages = {(item.sta_mac, item.bssid): age((item.sta_mac, item.bssid))
+                    for item in inventory if item.eligible}
+            # Missing evidence (a new or moved station) and evidence about to expire
+            # go first, in a round of their own: behind a refresh wave a steered
+            # station would wait a whole round of radios it does not need. At most
+            # one urgent-only round in a row: a pair that never gets an answer stays
+            # missing, and must not keep the refresh of every other pair waiting.
+            urgent_after = 0.8 * self.maximum_age_seconds
+            urgent = {key for key, value in ages.items() if value is None or value >= urgent_after}
+            aging = {key for key, value in ages.items()
+                     if value is not None and value >= self.refresh_after_seconds}
+            urgent_only = bool(urgent) and bool(aging - urgent) and not self._urgent_only_round
+            wanted = urgent if urgent_only else urgent | aging
+            due_inventory = tuple(item for item in inventory if (item.sta_mac, item.bssid) in wanted)
+            due_stations = {item.sta_mac for item in due_inventory}
+            eligible = [client for client in eligible if client.sta_mac in due_stations]
         eligible.sort(key=lambda client: (self._queried.get(client.sta_mac, -1), client.sta_mac))
         if not self._closed and self._future is None and eligible and time.monotonic() >= self._next_attempt:
             cohort = eligible[:self.maximum_clients]
@@ -165,7 +202,9 @@ class StreamingCandidateProvider:
                 self._queried[station] = self._round
             self._active_selected = selected
             self._cancel = threading.Event()
-            self._future = self._executor.submit(self._collect, clients, inventory, bsses, observed_at,
+            if self.refresh_after_seconds is not None:
+                self._urgent_only_round = urgent_only
+            self._future = self._executor.submit(self._collect, clients, due_inventory, bsses, observed_at,
                                                   selected, identity, dict(self._versions), self._cancel)
         fresh = {key: item for key, (version, item) in self._cache.items()
                  if valid(key, version, item.metric_observed_at)}

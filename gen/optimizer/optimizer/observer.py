@@ -96,8 +96,16 @@ class ControllerObserver:
         current_link_progress: Callable[[ClientObservation], None] | None = None,
         fallback_executor=None,
         clock: Callable[[], datetime] | None = None,
+        inventory_max_age_seconds: float = 0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # The controller inventory (topology, clients, devices, BSSes) changes on
+        # its metric reporting cadence, seconds. A loop woken by every candidate
+        # result may reuse one read for this long instead of reading it again,
+        # which kept the controller's single native lock busy ahead of the
+        # candidate queries themselves. 0 reads it on every observation.
+        self.inventory_max_age_seconds = inventory_max_age_seconds
+        self._inventory: tuple[float, str, dict[str, Any]] | None = None
         self.fetcher = fetcher or _default_fetch
         self.candidate_provider = candidate_provider
         self.ownership_observer = ownership_observer
@@ -218,10 +226,19 @@ class ControllerObserver:
             "collection_timing_schema": "easymesh.observer.collection.v1",
             "api_timings": {},
         }
-        for endpoint in ("topology", "clients", "devices", "bsses"):
-            self.last_raw[endpoint] = timed_call(
-                self.last_raw["api_timings"], endpoint, self._get, f"/api/v1/{endpoint}"
-            )
+        endpoints = ("topology", "clients", "devices", "bsses")
+        cached = self._inventory
+        if (cached is not None and self.inventory_max_age_seconds > 0
+                and time.monotonic() - cached[0] < self.inventory_max_age_seconds):
+            self.last_raw.update(cached[2])
+            self.last_raw["inventory_reused_from"] = cached[1]
+        else:
+            for endpoint in endpoints:
+                self.last_raw[endpoint] = timed_call(
+                    self.last_raw["api_timings"], endpoint, self._get, f"/api/v1/{endpoint}"
+                )
+            self._inventory = (time.monotonic(), sample_started_at,
+                               {endpoint: self.last_raw[endpoint] for endpoint in endpoints})
         topology = self.last_raw["topology"]
         clients_payload = self.last_raw["clients"]
         devices_payload = self.last_raw["devices"]
