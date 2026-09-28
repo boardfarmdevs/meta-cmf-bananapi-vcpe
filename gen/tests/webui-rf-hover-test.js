@@ -38,6 +38,13 @@ assert.doesNotMatch(render({}, {...observations, error: '<bad>'}), /<bad>/);
 assert.doesNotMatch(render({device_id: 'other'}), /50.2%/);
 assert.match(render({station_count: null}), /<td>—<\/td>/);
 assert.match(render({observed_at: new Date(now - 6000).toISOString()}), /6.0 s · stale/);
+// An OpenSync pod: one group for all its BSSes, named after whichever came first.
+const pod = {id: 'AP', haulTypes: [{name: 'Fronthaul', ssid: 'mesh_backhaul', BSSList: [
+  {BSSID: 'BH', Band: 0, ssid: 'mesh_backhaul', haulType: 'Fronthaul'},
+  {BSSID: 'BSS', Band: 0, ssid: 'private_ssid', haulType: 'Fronthaul'}]}]};
+const podHTML = rfHTML(pod, {...observations, bss_loads: [report]}, now);
+assert.match(podHTML, /&quot;private&quot;<small>2.4 GHz/);
+assert.doesNotMatch(podHTML, /mesh_backhaul/);
 assert.doesNotMatch(render({observed_at: new Date(now - 6000).toISOString()}, {...observations, maximum_age_seconds: 999}), /50.2%/);
 assert.equal(rfHTML({id: 'controller'}, observations, now), '');
 assert.match(rfHTML({...node, haulTypes: [{ssid: '<img src=x>', BSSList: [{BSSID: 'bss', Band: 1}]}]}, observations, now), /&lt;img src=x&gt;/);

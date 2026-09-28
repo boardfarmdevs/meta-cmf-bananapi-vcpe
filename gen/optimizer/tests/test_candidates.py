@@ -969,3 +969,18 @@ def test_rejection_must_match_agent_radio_and_requested_sta():
         list(provider(
             (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
         ))
+
+
+def test_a_reply_for_another_query_is_discarded_and_retryable():
+    # seen live, rarely: a reply measuring a station this query did not ask for
+    result = response()
+    result["metrics"][0]["sta"] = "02:00:00:00:99:00"
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=lambda _url, _payload: result,
+        allow_simulated=True,
+    )
+
+    with pytest.raises(CandidateMetricsUnavailable, match="unexpected measurement"):
+        list(provider(
+            (client(),), (inventory(),), bsses(), "2026-08-21T20:00:01.000Z"
+        ))

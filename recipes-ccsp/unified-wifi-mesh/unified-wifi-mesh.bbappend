@@ -214,6 +214,10 @@ EASYMESH_CORE_PATCHES = " \
     file://0215-ctrl-complete-channel-scan-on-its-ack.patch \
     file://0216-ctrl-learn-backhaul-sta-from-device-information.patch \
     file://0217-cli-read-a-device-identity-from-its-own-keys.patch \
+    file://0218-cli-name-a-wired-extender-as-an-extender.patch \
+    file://0219-ctrl-send-the-metric-reporting-policy-at-topology-sync.patch \
+    file://0220-ctrl-keep-a-learned-backhaul-sta-across-a-restart.patch \
+    file://0221-agent-keep-radios-in-an-empty-station-snapshot.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
@@ -538,7 +542,9 @@ do_install_append() {
     # em_agent` to try again.
     #
     # Hold the unit until a station-mode interface is both associated and a bridge port,
-    # which is exactly the condition for its 1905 frames to reach the controller. Bounded,
+    # which is exactly the condition for its 1905 frames to reach the controller, or, for an
+    # extender on a wired backhaul, until an Ethernet port of brlan0 (not the veth to the 1905
+    # daemon) has carrier: the same condition over a wire. Bounded,
     # and deliberately exits 0 on timeout so a leaf that never gets a backhaul still starts
     # the agent rather than failing the unit.
     # Extender only, for the same reason the bounded setup_ext_pre above is: the
@@ -549,7 +555,7 @@ do_install_append() {
     # 300s timeout on every start and never ran long enough to configure the
     # controller's own radios.
     if [ -f "$f" ] && grep -q setup_ext_pre "$f" && ! grep -q phy80211 "$f"; then
-        sed -i "\@^ExecStart=@i ExecStartPre=/bin/sh -c 'i=0; while [ \$i -lt 150 ]; do for d in /sys/class/net/*/phy80211; do n=\$(basename \$(dirname \$d)); if iw dev \"\$n\" link 2>/dev/null | grep -q \"Connected to\" && [ -e \"/sys/class/net/\$n/master\" ]; then exit 0; fi; done; i=\$((i+1)); sleep 2; done; exit 0'" "$f"
+        sed -i "\@^ExecStart=@i ExecStartPre=/bin/sh -c 'i=0; while [ \$i -lt 150 ]; do for d in /sys/class/net/*/phy80211; do n=\$(basename \$(dirname \$d)); if iw dev \"\$n\" link 2>/dev/null | grep -q \"Connected to\" && [ -e \"/sys/class/net/\$n/master\" ]; then exit 0; fi; done; for p in /sys/class/net/brlan0/brif/eth*; do n=\$(basename \$p); case \$n in *virt*) continue;; esac; [ \"\$(cat /sys/class/net/\$n/carrier 2>/dev/null)\" = 1 ] \&\& exit 0; done; i=\$((i+1)); sleep 2; done; exit 0'" "$f"
         bbnote "meta-cmf-bananapi-vcpe: em_agent.service waits for a bridged backhaul before starting"
     fi
     # OneWifi holds its own fronthaul/radio configuration only in memory: it is pushed to it,

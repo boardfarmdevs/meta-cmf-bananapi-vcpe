@@ -178,11 +178,15 @@
 
   function rfHTML(node, observations = {}, now = Date.now(), available = true) {
     const expected = new Map();
+    // Backhaul BSSes are left out one by one: an OpenSync pod lists all of its BSSes in one
+    // group, whose SSID is whichever BSS came first (mesh_backhaul, at times).
     for (const haul of node.haulTypes || []) {
-      if (/backhaul/i.test(haul.name || '') || haul.ssid === 'mesh_backhaul') continue;
-      for (const bss of haul.BSSList || []) expected.set(identity(bss.BSSID), {
-        bssid: bss.BSSID, ssid: bss.ssid || haul.ssid, band: bss.Band
-      });
+      if (/backhaul/i.test(haul.name || '')) continue;
+      for (const bss of haul.BSSList || []) {
+        const ssid = bss.ssid || haul.ssid;
+        if (ssid === 'mesh_backhaul' || /backhaul/i.test(bss.haulType || '')) continue;
+        expected.set(identity(bss.BSSID), {bssid: bss.BSSID, ssid, band: bss.Band});
+      }
     }
     const reports = new Map();
     for (const row of observations.bss_loads || []) {

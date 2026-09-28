@@ -53,6 +53,12 @@ class CandidateMetricsUnavailable(CandidateMetricsError):
     """A temporary transport failure prevented a candidate measurement."""
 
 
+class CandidateResponseMismatch(CandidateMetricsUnavailable):
+    """A reply measured something this query did not ask for (seen live: a reply that
+    belonged to another query). It is discarded, never used, and the query retried;
+    it is not a reason to stop the collector."""
+
+
 class CandidateMetricsBusy(CandidateMetricsUnavailable):
     """The native controller explicitly rejected an unsubmitted command as busy."""
 
@@ -462,7 +468,7 @@ class ControllerCandidateProvider:
                         raise CandidateMetricsError(f"candidate RCPI is invalid: {rcpi}")
                     response_key = (metric_agent, radio, sta, opclass, channel)
                     if response_key not in expected:
-                        raise CandidateMetricsError(
+                        raise CandidateResponseMismatch(
                             "candidate response contains an unexpected measurement: "
                             f"{sta}@{radio} opclass={opclass} channel={channel}"
                         )

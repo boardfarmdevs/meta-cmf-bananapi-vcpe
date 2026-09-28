@@ -125,6 +125,14 @@ def _adapter_devices(plan) -> list[dict]:
     return list(devices) if isinstance(devices, list) else []
 
 
+def _wired_devices(plan) -> int:
+    """The lab's own extenders on a wired backhaul the compiled plan expects, beyond
+    the manifest's mesh devices (gen/wired-extender.sh): no backhaul station."""
+    expected = plan.get("expected_lab") if isinstance(plan, dict) else None
+    count = expected.get("wired_devices") if isinstance(expected, dict) else None
+    return int(count) if isinstance(count, int) else 0
+
+
 def _world_device_name(role: str | None) -> str | None:
     if role == "gateway":
         return "Agent-1"
@@ -801,7 +809,7 @@ class LiveConductor:
         hero = payload["hero"]
         expected = self.manifest["health"]
         failures = []
-        adapters = len(_adapter_devices(self.plan))
+        adapters = len(_adapter_devices(self.plan)) + _wired_devices(self.plan)
         if snapshot.health.devices != int(expected["expected_mesh_devices"]) + adapters:
             failures.append(f"mesh devices={snapshot.health.devices}")
         if snapshot.health.clients != int(expected["expected_clients"]):
@@ -1022,7 +1030,8 @@ class LiveConductor:
             return
         health = self.manifest["health"]
         interval = float(health["interval_seconds"])
-        expected_devices = int(health["expected_mesh_devices"])
+        wired = _wired_devices(self.plan)
+        expected_devices = int(health["expected_mesh_devices"]) + wired
         expected_clients = int(health["expected_clients"])
         adapters = _adapter_devices(self.plan)
         while not self.stop_event.is_set() and self._active():
@@ -1030,7 +1039,7 @@ class LiveConductor:
                 room = self.room_state() if self.room_state else None
                 if room is not None:
                     expected_clients = int(room.get("expected_online_clients", expected_clients))
-                payload = mesh_health(expected_devices, expected_clients, adapters)
+                payload = mesh_health(expected_devices, expected_clients, adapters, wired)
                 payload["pool_clients"] = int(health["expected_clients"])
                 payload["expected_online_clients"] = expected_clients
                 # mesh_health's expectations: adapter-managed nodes (OpenSync pods)
@@ -1153,9 +1162,9 @@ class LiveConductor:
                                                                         original.load_settle_seconds))
         if self.profiling:
             policy_config = replace(policy_config, require_complete_client_roster=False)
-        pods = len(_adapter_devices(self.plan))
+        pods = len(_adapter_devices(self.plan)) + _wired_devices(self.plan)
         if pods:
-            # adapter-managed mesh nodes (OpenSync pods) are devices of this mesh too
+            # adapter-managed mesh nodes (OpenSync pods) and wired extenders are devices of this mesh too
             policy_config = replace(policy_config, expected_devices=policy_config.expected_devices + pods)
         policy = policy_for(policy_config) if policy_config.load_aware_enabled else ThresholdPolicy(policy_config)
         self._start_rf_observation(policy_config.load_aware_enabled)

@@ -1,0 +1,33 @@
+Subject: [PATCH] agent: keep the radios in an empty station snapshot
+
+analyze_sta_list copies the agent's radios into the command's model but
+not their count; the OneWifi translator sets the count only while it
+walks associated clients. A full associated-clients snapshot with no
+client left the model without radios, so every reporting RUID was
+unknown and orchestration rejected the snapshot ("Rejecting STA snapshot
+with missing, invalid, or unknown reporting RUID").
+
+Such a snapshot is exactly the withdrawal of an AP's last client. The
+agent kept that client and reported it again in its Topology Responses
+until the station aged out (about 3 minutes); once the client left its
+new AP, the controller took the stale report as its association (the
+wired extender at the edge of the RDK lab rooms, which usually serves
+one client: home-a-flash-crowd failed in every suite run). Copy the
+count with the radios.
+
+Upstream-Status: Pending
+
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -150,6 +150,11 @@
+     for (unsigned int i = 0; i < m_num_radios; i++) {
+         dm.m_radio[i] = m_radio[i];
+     }
++    /* The translator sets the radio count only while it walks associated
++     * clients: a full snapshot with none left the command's model without
++     * radios, every reporting RUID unknown, and the snapshot (the withdrawal
++     * of the AP's last client) rejected. */
++    dm.set_num_radios(m_num_radios);
+ 
+     dm.m_num_bss = m_num_bss;
+     for (unsigned int i = 0; i < EM_MAX_BSSS; i++) {

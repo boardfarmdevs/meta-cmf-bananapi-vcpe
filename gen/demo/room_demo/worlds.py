@@ -91,9 +91,14 @@ class BoundWorlds:
             first = world["generations"][0]
             if first["time_ms"] != 0:
                 raise ValueError("world must start at time zero")
+            # an AP on a wired backhaul has no mesh-peer (backhaul) links
+            wired = set(world.get("wired_backhaul", []))
+            if not wired <= {role for role, kind in roles.items() if kind == "fronthaul_ap"}:
+                raise ValueError("wired_backhaul names a role that is not an AP")
             expected_links = {
                 (source, destination) for source in roles for destination in roles
                 if source != destination and "fronthaul_ap" in (roles[source], roles[destination])
+                and not (roles[source] == roles[destination] == "fronthaul_ap" and wired & {source, destination})
             }
             links = first.get("links")
             if not isinstance(links, list) or len(links) != len(expected_links):

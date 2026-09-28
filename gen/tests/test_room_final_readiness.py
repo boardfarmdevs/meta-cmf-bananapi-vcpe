@@ -114,6 +114,24 @@ def test_default_room_has_twenty_online_and_eighty_dormant(fault):
     assert readiness().default_roster({"api_total": 20}, clients, state) == (not fault)
 
 
+@pytest.mark.parametrize("world, extra, expected", [
+    ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], True),
+    ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2"], False),
+    ("home-five-agent-pods--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], False),
+])
+def test_the_wired_extender_variant_has_one_more_mesh_role(world, extra, expected):
+    stations = [f"sta_{kind}_{ordinal:02d}" for kind in ("mobile", "static")
+                for ordinal in range(1, 11)]
+    online = stations + ["gateway", *(f"extender_{ordinal}" for ordinal in range(1, 5)), *extra]
+    roles = {role: {"present": True} for role in online}
+    roles.update({f"sta_pool_{ordinal:03d}": {"present": False} for ordinal in range(21, 101)})
+    state = {"roles": roles, "pool_clients": 100, "expected_online_clients": 20,
+             "selected_world": world}
+    clients = [{"role": role, "sta_mac": f"02:00:00:00:00:{ordinal:02x}"}
+               for ordinal, role in enumerate(stations)]
+    assert readiness().default_roster({"api_total": 20}, clients, state) is expected
+
+
 @pytest.mark.parametrize("timestamp", [None, 3, "", "invalid", "2026-09-17T00:00:00"])
 def test_invalid_metric_timestamp_is_explicitly_not_fresh(timestamp):
     module = readiness()

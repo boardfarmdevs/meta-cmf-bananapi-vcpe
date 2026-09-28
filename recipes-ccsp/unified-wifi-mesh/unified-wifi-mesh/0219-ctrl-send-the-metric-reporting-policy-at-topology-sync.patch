@@ -1,0 +1,197 @@
+Subject: [PATCH] Send the metric reporting policy at topology sync
+
+em_config sends the Multi-AP Policy Config only after the channel
+preference exchange, as its fifth step. In the RDK lab the RDK agents
+never complete that exchange (their em_agent drops the Channel Preference
+Query), so they never got a policy through onboarding; and a known agent
+onboarding again (its em_agent or OneWifi restarted) finds its radios
+configured already, so the steps are skipped. The agent then reports no
+associated STA link metrics (RCPI 0) until a posted policy changes, the
+only other time the controller sends one.
+
+Every onboarding reaches topology sync. When em_config moves on to the AP
+capability query, send the agent its Metric Reporting Policy (with the
+vendor TLV a posted metrics change carries), once per agent and
+onboarding (each of its radios runs em_config); nothing waits for the ACK
+(the controller drops an ACK no radio waits for). Only that policy: the
+full one this early (traffic separation, 802.1Q, backhaul BSS settings)
+made the gateway's co-located agent reconfigure a radio in the middle of
+its WSC exchange, and the radio stayed unconfigured. The policy step
+later in em_config is unchanged.
+
+Upstream-Status: Pending
+
+--- a/inc/em_policy_cfg.h
++++ b/inc/em_policy_cfg.h
+@@ -371,6 +371,9 @@
+ 
+ 	//stores MultiAP Policy config req msg_id
+ 	unsigned short m_policy_req_msg_id = 0;
++	// Send the Metric Reporting Policy alone (with its vendor TLV), as a posted
++	// metrics change would: to an agent onboarding again, outside em_config's steps
++	bool m_policy_metrics_only = false;
+ };
+ 
+ #endif
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -47,6 +47,8 @@
+ #include <openssl/dh.h>
+ #include <sys/types.h>
+ #include <ifaddrs.h>
++#include <map>
++#include <string>
+ #include "em.h"
+ #include "em_cmd.h"
+ #include "em_cmd_exec.h"
+@@ -62,6 +64,29 @@
+ extern MacAddress g_al_mac_sap;
+ #endif
+ 
++/* em_config sends the Multi-AP Policy Config only after the channel preference
++ * exchange, which an agent may never complete (an RDK agent drops the query in
++ * this lab), and never to a known agent onboarding again (its em_agent or
++ * OneWifi restarted: its radios are configured already, so the steps are
++ * skipped). Such an agent reports no associated STA link metrics until a posted
++ * policy changes. Every onboarding reaches topology sync: its Metric Reporting
++ * Policy goes out there, alone as a posted metrics change would (the full policy
++ * this early made the gateway's agent reconfigure a radio in the middle of its
++ * WSC exchange), once per agent and onboarding (each of its radios runs
++ * em_config); nothing waits for the ACK. */
++static bool policy_resend_due(const mac_address_t al_mac)
++{
++    static std::map<std::string, time_t> last_sent;
++    const time_t now = time(NULL);
++    std::string key = util::mac_to_string(al_mac);
++    auto it = last_sent.find(key);
++    if (it != last_sent.end() && now - it->second < EM_MAX_CMD_GEN_TTL + EM_MAX_CMD_EXT_TTL) {
++        return false;
++    }
++    last_sent[key] = now;
++    return true;
++}
++
+ ec_manager_t &em_t::get_ec_mgr()
+ {
+     if (m_ec_manager == nullptr) {
+@@ -163,6 +188,17 @@
+             em_printfout("%s(%s) state: %s radio mac:%s", em_cmd_t::get_orch_op_str(pcmd->get_orch_op()),
+                     em_cmd_t::get_cmd_type_str(pcmd->m_type), em_t::state_2_str(get_state()),
+                     util::mac_to_string(em_t::get_radio_interface_mac()).c_str());
++            if ((pcmd->get_orch_op() == dm_orch_type_ap_cap_query) &&
++                    ((m_sm.get_state() == em_state_ctrl_topo_synchronized) || (m_sm.get_state() == em_state_ctrl_configured)) &&
++                    policy_resend_due(get_data_model()->get_agent_al_interface_mac())) {
++                em_printfout("Agent %s topology synchronized: sending its metric reporting policy",
++                    util::mac_to_string(get_data_model()->get_agent_al_interface_mac()).c_str());
++                m_policy_metrics_only = true;
++                if (send_policy_cfg_request_msg() < 0) {
++                    em_printfout("Metric reporting policy after topology sync failed");
++                }
++                m_policy_metrics_only = false;
++            }
+             if ((pcmd->get_orch_op() == dm_orch_type_topo_sync) && (m_sm.get_state() == em_state_ctrl_wsc_m2_sent)) {
+                 m_sm.set_state(em_state_ctrl_topo_sync_pending);
+             } else if ((pcmd->get_orch_op() == dm_orch_type_ap_cap_query) && (m_sm.get_state() == em_state_ctrl_topo_synchronized)) {
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -491,6 +491,12 @@
+     // For onboarding (em_config / autoconfig renew): always include all TLVs.
+     bool is_set_policy = (get_current_cmd()->get_type() == em_cmd_type_set_policy);
+     dm_easy_mesh_t *cmd_dm = is_set_policy ? get_current_cmd()->get_data_model() : nullptr;
++    auto included = [&](em_policy_id_type_t policy_type) {
++        if (m_policy_metrics_only) {
++            return policy_type == em_policy_id_type_ap_metrics_rep;
++        }
++        return !is_set_policy || cmd_dm->has_policy_type(policy_type);
++    };
+ 
+     memcpy(tmp, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
+     tmp += sizeof(mac_address_t);
+@@ -516,9 +522,8 @@
+     len += sizeof(em_cmdu_t);
+ 
+     // Zero or one Steering Policy TLV (see section 17.2.11).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_steering_local)
+-            || cmd_dm->has_policy_type(em_policy_id_type_steering_btm)
+-            || cmd_dm->has_policy_type(em_policy_id_type_steering_param)) {
++    if (included(em_policy_id_type_steering_local) || included(em_policy_id_type_steering_btm)
++            || included(em_policy_id_type_steering_param)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_steering_policy;
+         sz = create_steering_policy_tlv(tlv->value);
+@@ -528,8 +533,7 @@
+     }
+ 
+     // Zero or one Metric Reporting Policy TLV (see section 17.2.12).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_ap_metrics_rep)
+-            || cmd_dm->has_policy_type(em_policy_id_type_radio_metrics_rep)) {
++    if (included(em_policy_id_type_ap_metrics_rep) || included(em_policy_id_type_radio_metrics_rep)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_metric_reporting_policy;
+         sz = create_metrics_rep_policy_tlv(tlv->value);
+@@ -539,7 +543,7 @@
+     }
+ 
+     // Zero or one Default 802.1Q Settings TLV (see section 17.2.49).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_default_8021q_settings)) {
++    if (included(em_policy_id_type_default_8021q_settings)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_dflt_8021q_settings;
+         sz = create_def_8021q_settings_policy_tlv(tlv->value);
+@@ -550,7 +554,7 @@
+ 
+     // Zero or one Traffic Separation Policy TLV (see section 17.2.50).
+     // Built from SSID/VLAN data; included only during onboarding.
+-    if (!is_set_policy) {
++    if (!is_set_policy && !m_policy_metrics_only) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_traffic_separation_policy;
+         sz = static_cast<short>(create_traffic_separation_policy_tlv(tlv->value));
+@@ -560,7 +564,7 @@
+     }
+ 
+     // Zero or one Channel Scan Reporting Policy TLV (see section 17.2.37).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_channel_scan)) {
++    if (included(em_policy_id_type_channel_scan)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_channel_scan_rprt_policy;
+         sz = create_chan_scan_report_policy_tlv(tlv->value);
+@@ -570,7 +574,7 @@
+     }
+ 
+     // Zero or one Unsuccessful Association Policy TLV (see section 17.2.58).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_unsuccess_assoc)) {
++    if (included(em_policy_id_type_unsuccess_assoc)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_unsucc_assoc_policy;
+         sz = create_unsucc_assoc_policy_tlv(tlv->value);
+@@ -581,7 +585,7 @@
+ 
+     // Zero or more Backhaul BSS Configuration TLVs (spec 17.2.66): one TLV per BSSID entry.
+     dm_easy_mesh_t *bh_dm = is_set_policy ? cmd_dm : dm;
+-    for (unsigned int pi = 0; pi < bh_dm->get_num_policy(); pi++) {
++    for (unsigned int pi = 0; !m_policy_metrics_only && pi < bh_dm->get_num_policy(); pi++) {
+         dm_policy_t *bh_pol = &bh_dm->m_policy[pi];
+         if (bh_pol->m_policy.id.type != em_policy_id_type_backhaul_bss_config) {
+             continue;
+@@ -607,7 +611,7 @@
+ 
+     // Zero or more QoS Management Policy TLVs (spec 17.2.92): one TLV per entry.
+     dm_easy_mesh_t *qos_dm = is_set_policy ? cmd_dm : dm;
+-    for (unsigned int pi = 0; pi < qos_dm->get_num_policy(); pi++) {
++    for (unsigned int pi = 0; !m_policy_metrics_only && pi < qos_dm->get_num_policy(); pi++) {
+         dm_policy_t *qos_pol = &qos_dm->m_policy[pi];
+         if (qos_pol->m_policy.id.type != em_policy_id_type_qos_mgt) {
+             continue;
+@@ -625,9 +629,8 @@
+     }
+ 
+     // Vendor-specific TLV (alarm threshold / client filters / managed STA marker).
+-    if (!is_set_policy || cmd_dm->has_policy_type(em_policy_id_type_alarm_threshold)
+-            || cmd_dm->has_policy_type(em_policy_id_type_client_filters)
+-            || cmd_dm->has_policy_type(em_policy_id_type_ap_metrics_rep)) {
++    if (included(em_policy_id_type_alarm_threshold) || included(em_policy_id_type_client_filters)
++            || included(em_policy_id_type_ap_metrics_rep)) {
+         tlv = reinterpret_cast<em_tlv_t *> (tmp);
+         tlv->type = em_tlv_type_vendor_specific;
+         sz = create_vendor_policy_cfg_tlv(tlv->value);

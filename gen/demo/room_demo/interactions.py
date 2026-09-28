@@ -1644,8 +1644,11 @@ class InteractiveMediumSession:
             )
             for ap_role in ap_roles:
                 backhaul_present[ap_role] = True
+            # an AP on a wired backhaul has no RF to any other AP: its Wi-Fi
+            # backhaul station must never make a second path into the LAN
+            wired = set(self.world.get("wired_backhaul", []))
             for peer_role in ap_roles:
-                if peer_role == role:
+                if peer_role == role or wired & {role, peer_role}:
                     continue
                 peer = self._nodes[peer_role]
                 peer_binding = self.plan["bindings"][peer_role]

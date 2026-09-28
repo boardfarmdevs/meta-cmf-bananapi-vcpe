@@ -103,7 +103,8 @@ def preflight(room, current):
             or room.get("recording", {}).get("active")):
         raise RuntimeError("external owner/movement/recording active; leave the room untouched")
     if (room.get("selected_world") not in {"default", "home-five-agent--private-client-room-walk",
-                                           "home-five-agent-pods--private-client-room-walk"}
+                                           "home-five-agent-pods--private-client-room-walk",
+                                           "home-five-agent-pods-wired--private-client-room-walk"}
             or room.get("playback", {}).get("time_ms") != 0
             or room.get("playback", {}).get("status") != "paused"
             or current.get("health", {}).get("healthy") is not True):

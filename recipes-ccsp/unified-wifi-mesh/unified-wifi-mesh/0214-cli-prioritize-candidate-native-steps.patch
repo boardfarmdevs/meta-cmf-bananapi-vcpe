@@ -12,101 +12,12 @@ requests (never preempting a running one), and the result is polled
 10, 20, 30 and 50 ms after submission before the 100 ms cadence.
 The coordination status reports candidate_native_priority.
 
+The lock ordering itself is in the layer's candidate_coordination.go:
+the recipe copies that file into the tree after the patches, so a patch
+cannot change it.
+
 Upstream-Status: Pending
 ---
---- a/src/rdkb-cli/candidate_coordination.go
-+++ b/src/rdkb-cli/candidate_coordination.go
-@@ -10,7 +10,55 @@
- 	"time"
- )
- 
--var apiRequestMutex sync.Mutex
-+// apiRequestMutex serializes every native libemcli call. Candidate queries
-+// (the optimizer's unassociated-STA measurements) take it with priority: an
-+// ordinary API request already holding it finishes, but candidate steps
-+// waiting for it go before ordinary requests waiting for it. A candidate
-+// query is several short native steps; queued behind topology, client and
-+// inventory reads it spent more time waiting than working.
-+var apiRequestMutex = newNativeLock()
-+
-+type nativeLock struct {
-+	mutex           sync.Mutex
-+	changed         *sync.Cond
-+	held            bool
-+	priorityWaiting int
-+}
-+
-+func newNativeLock() *nativeLock {
-+	lock := &nativeLock{}
-+	lock.changed = sync.NewCond(&lock.mutex)
-+	return lock
-+}
-+
-+func (lock *nativeLock) acquire(priority bool) {
-+	lock.mutex.Lock()
-+	if priority {
-+		lock.priorityWaiting++
-+	}
-+	for lock.held || (!priority && lock.priorityWaiting > 0) {
-+		lock.changed.Wait()
-+	}
-+	if priority {
-+		lock.priorityWaiting--
-+	}
-+	lock.held = true
-+	lock.mutex.Unlock()
-+}
-+
-+// Lock takes the native lock behind any waiting candidate step.
-+func (lock *nativeLock) Lock() { lock.acquire(false) }
-+
-+// LockPriority takes the native lock ahead of waiting ordinary requests.
-+func (lock *nativeLock) LockPriority() { lock.acquire(true) }
-+
-+func (lock *nativeLock) Unlock() {
-+	lock.mutex.Lock()
-+	lock.held = false
-+	lock.changed.Broadcast()
-+	lock.mutex.Unlock()
-+}
-+
- var candidateRequests = newCandidateCoordinator(1, 32)
- 
- const liveQueryCacheTTL = 100 * time.Millisecond
-@@ -77,7 +125,7 @@
- 
- func (timing *candidateTiming) nativeStep(action func()) {
- 	queued := time.Now()
--	apiRequestMutex.Lock()
-+	apiRequestMutex.LockPriority()
- 	started := time.Now()
- 	defer apiRequestMutex.Unlock()
- 	defer func() {
-@@ -98,6 +146,7 @@
- 		"candidate_active_agents":                      len(candidateRequests.active),
- 		"candidate_queue_limit":                        candidateRequests.maximumWaiting,
- 		"candidate_wait_holds_native_lock":             false,
-+		"candidate_native_priority":                    true,
- 		"native_command_and_tree_ownership_serialized": true,
- 		"native_read_cache_ttl_ms":                     liveQueryCacheTTL.Milliseconds(),
- 		"http_peer_io_holds_native_lock":              false,
-@@ -113,3 +162,16 @@
- 	writer.Header().Set("Cache-Control", "no-store")
- 	_ = json.NewEncoder(writer).Encode(status)
- }
-+
-+// candidatePollWait returns the pause before the next read of a submitted
-+// candidate query. The controller usually completes a query within tens of
-+// milliseconds, so the first reads come quickly; later reads back off to the
-+// original 100 ms so a slow agent does not hold the native lock more often.
-+func candidatePollWait(attempt int) time.Duration {
-+	early := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond,
-+		30 * time.Millisecond, 50 * time.Millisecond}
-+	if attempt < len(early) {
-+		return early[attempt]
-+	}
-+	return 100 * time.Millisecond
-+}
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
 @@ -4695,7 +4695,7 @@

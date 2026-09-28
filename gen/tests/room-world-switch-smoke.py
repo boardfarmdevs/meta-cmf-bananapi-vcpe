@@ -206,7 +206,9 @@ def main():
     preflight_deadline = time.monotonic() + args.timeout
     while True:
         current = request("/api/demo/current")
-        if current.get("scenario") not in {"home-five-agent--private-client-room-walk", "home-five-agent-pods--private-client-room-walk"}:
+        if current.get("scenario") not in {"home-five-agent--private-client-room-walk",
+                                           "home-five-agent-pods--private-client-room-walk",
+                                           "home-five-agent-pods-wired--private-client-room-walk"}:
             raise RuntimeError("start acceptance from the default room")
         mac_by_role = {client["role"]: client["sta_mac"].lower() for client in current.get("network", {}).get("clients", [])}
         containers_by_role = {client["role"]: client["container"] for client in current.get("network", {}).get("clients", [])}

@@ -64,7 +64,9 @@ restart() {
     local container=$1 unit
     in_container "$container" "systemctl daemon-reload && systemctl restart systemd-journald"
     for unit in "${units[@]}"; do
-        in_container "$container" "! systemctl cat $unit.service >/dev/null 2>&1 || systemctl restart $unit.service"
+        # --no-block: em_agent's start waits for a backhaul (up to 5 min), longer than
+        # in_container allows; wait_topology waits for the result
+        in_container "$container" "! systemctl cat $unit.service >/dev/null 2>&1 || systemctl restart --no-block $unit.service"
     done
 }
 
@@ -96,7 +98,7 @@ settle_topology() {
     local container
     wait_topology && return 0
     for container in "${targets[@]}"; do
-        in_container "$container" "systemctl restart em_agent.service"
+        in_container "$container" "systemctl restart --no-block em_agent.service"
         sleep 3
     done
     wait_topology && return 0

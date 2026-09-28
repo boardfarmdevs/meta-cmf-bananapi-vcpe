@@ -296,11 +296,11 @@ def _run(args) -> int:
 
 
 def _interactive_preflight(conductor, expected_agents, expected_clients, recovered, stop_event,
-                           adapters=None):
+                           adapters=None, wired=0):
     deadline = time.monotonic() + (30 if recovered else 0)
     while True:
         try:
-            health = mesh_health(expected_agents, expected_clients, adapters)
+            health = mesh_health(expected_agents, expected_clients, adapters, wired)
             Runner._require_healthy(health, "interactive preflight")
             conductor.preflight()
             return health
@@ -424,7 +424,7 @@ def _interactive(args) -> int:
                 recovered = True
         initial_health = _interactive_preflight(
             conductor, expected_agents, expected_clients, recovered, stop_event,
-            expected.get("adapter_devices"))
+            expected.get("adapter_devices"), int(expected.get("wired_devices", 0)))
         (runner.run_dir / "health-preflight.json").write_text(
             json.dumps(initial_health, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -515,6 +515,7 @@ def _interactive(args) -> int:
                         int(expected.get("mesh_devices", 5)),
                         int(expected.get("clients", 20)),
                         expected.get("adapter_devices"),
+                        int(expected.get("wired_devices", 0)),
                     )
                     try:
                         Runner._require_healthy(final_health, "interactive postflight")

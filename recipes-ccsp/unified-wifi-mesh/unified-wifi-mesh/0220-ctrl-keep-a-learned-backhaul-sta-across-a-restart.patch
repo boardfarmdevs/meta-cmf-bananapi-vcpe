@@ -1,0 +1,66 @@
+Subject: [PATCH] Keep a learned backhaul STA across a controller restart
+
+Patch 0216 keeps a backhaul station an agent reports only in standard
+Device Information (an OpenSync pod through EMOSA) as a backhaul-STA row
+whose radio is the station itself. The database keeps neither the row's
+mode nor its station, so after a controller restart the row came back as
+an AP row: 0216 no longer matched it (the device fell back to Ethernet,
+its row counted as one more BSS) and never removed it.
+
+Such a row is recognised by what the database does keep: a backhaul row
+whose radio the controller does not model. When the agent reports the
+station again, the row whose radio is that station gets its mode, station
+and enabled flag back; when the agent no longer reports one, every such
+row is removed. Both run only for an agent without the vendor snapshot,
+whose radios are modeled from its M1 before any Topology Response.
+
+Upstream-Status: Pending
+
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2802,8 +2802,23 @@
+                     for (unsigned int bss_idx = 0;
+                             bss_idx < dm->get_num_bss(); bss_idx++) {
+                         em_bss_info_t *bsta = dm->get_bss_info(bss_idx);
+-                        if (bsta == NULL || bsta->vap_mode != em_vap_mode_sta ||
+-                                bsta->id.haul_type != em_haul_type_backhaul) {
++                        if (bsta == NULL || bsta->id.haul_type != em_haul_type_backhaul) {
++                            continue;
++                        }
++                        /* A station learned from Device Information, reloaded from
++                         * the database after a controller restart: the database
++                         * keeps neither its mode nor its station, only its radio,
++                         * which is the station itself. */
++                        if (!vendor_bss_snapshot && bsta->vap_mode != em_vap_mode_sta &&
++                                dm->get_radio(bsta->ruid.mac) == NULL &&
++                                memcmp(bsta->ruid.mac, local_mac, sizeof(mac_address_t)) == 0) {
++                            bsta->vap_mode = em_vap_mode_sta;
++                            memcpy(bsta->sta_mac, local_mac, sizeof(mac_address_t));
++                            bsta->enabled = true;
++                            em_printfout("Backhaul STA restored from the database: sta=%s",
++                                util::mac_to_string(local_mac).c_str());
++                        }
++                        if (bsta->vap_mode != em_vap_mode_sta) {
+                             continue;
+                         }
+                         if (memcmp(bsta->sta_mac, local_mac,
+@@ -2945,13 +2960,15 @@
+     if (!vendor_bss_snapshot && !standard_bsta_reported) {
+         for (int index = static_cast<int>(dm->get_num_bss()) - 1; index >= 0; index--) {
+             em_bss_info_t *row = dm->get_bss_info(static_cast<unsigned int>(index));
+-            if (row == NULL || row->vap_mode != em_vap_mode_sta ||
+-                    row->id.haul_type != em_haul_type_backhaul ||
+-                    memcmp(row->ruid.mac, row->sta_mac, sizeof(mac_address_t)) != 0) {
++            /* Every backhaul row whose radio the controller does not model is
++             * such a station, also one reloaded from the database without its
++             * mode or station (see above). */
++            if (row == NULL || row->id.haul_type != em_haul_type_backhaul ||
++                    dm->get_radio(row->ruid.mac) != NULL) {
+                 continue;
+             }
+             em_printfout("Backhaul STA no longer reported: sta=%s parent=%s",
+-                util::mac_to_string(row->sta_mac).c_str(),
++                util::mac_to_string(row->ruid.mac).c_str(),
+                 util::mac_to_string(row->bssid.mac).c_str());
+             dm->remove_bss_by_index(static_cast<unsigned int>(index));
+             ret = 1;

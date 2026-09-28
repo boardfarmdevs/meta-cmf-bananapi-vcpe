@@ -1,0 +1,94 @@
+Subject: [PATCH] em_cli: name a native agent on a wired backhaul an extender
+
+em_cli named every agent attached over Ethernet "Agent-N" in traversal
+order, which assumed the gateway's co-located agent was the only one. A
+native extender on a wired backhaul (its LAN port bridged into the
+controller's LAN) took "Agent-1" and pushed the gateway's agent to
+"Agent-2", while the lab relies on Agent-1 being the gateway.
+
+The network's CollocatedAgentID names the co-located agent: it alone is an
+Agent; any other wired native agent is an Extender like its Wi-Fi peers.
+Without a known co-located agent the naming is as before.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/device_naming_test.go
++++ b/src/rdkb-cli/device_naming_test.go
+@@ -0,0 +1,21 @@
++package main
++
++import "testing"
++
++func TestWiredAgentRole(t *testing.T) {
++	const gateway = "00:60:2f:da:68:e4"
++	cases := []struct {
++		device, collocated, want string
++	}{
++		{gateway, gateway, "Agent"},                    // the gateway's co-located agent
++		{"00:60:2F:DA:68:E4", gateway, "Agent"},        // IDs compare without case
++		{"02:00:00:00:6f:20", gateway, "Extender"},     // a native extender on a wired backhaul
++		{"02:00:00:00:6f:20", "", "Agent"},             // no co-located agent known: as before
++		{"02:00:00:00:6f:20", "00:00:00:00:00:00", "Agent"},
++	}
++	for _, c := range cases {
++		if got := wiredAgentRole(c.device, c.collocated); got != c.want {
++			t.Errorf("wiredAgentRole(%q, %q) = %q, want %q", c.device, c.collocated, got, c.want)
++		}
++	}
++}
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3348,6 +3348,7 @@
+ 	if root == nil {
+ 		return nil, nil, fmt.Errorf("controller network tree has no Device root")
+ 	}
++	collocated := getTreeValue(tree, "CollocatedAgentID")
+ 
+     radioInventory, err := loadLiveRadioInventory()
+     if err != nil {
+@@ -3381,7 +3382,8 @@
+ 			podCount++
+ 		} else if depth != 0 {
+ 			backhaulMAC := getTreeValue(backhaul, "MACAddress")
+-			if backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet" {
++			if (backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet") &&
++				wiredAgentRole(deviceID, collocated) == "Agent" {
+ 				role = fmt.Sprintf("Agent-%d", agentCount)
+ 				agentCount++
+ 			} else {
+@@ -5206,6 +5208,7 @@
+         http.Error(w, "Controller topology unavailable", http.StatusServiceUnavailable)
+         return
+     }
++    collocated := getTreeValue(topologyTree, "CollocatedAgentID")
+ 
+     radioInventory, err := loadLiveRadioInventory()
+     if err != nil {
+@@ -5280,7 +5283,8 @@
+             deviceName = fmt.Sprintf("Pod-%d", podCount)
+             podCount++
+         } else {
+-            if backhaulMacAddr == "00:00:00:00:00:00" || backhaulMediaType  == "Ethernet" {
++            if (backhaulMacAddr == "00:00:00:00:00:00" || backhaulMediaType  == "Ethernet") &&
++                wiredAgentRole(deviceID, collocated) == "Agent" {
+                 deviceName = fmt.Sprintf("Agent-%d", agentCount)
+                 agentCount++
+             } else {
+@@ -7409,6 +7413,17 @@
+ // EMOSA adapter names itself "OpenSync via EMOSA"; the UI draws its kind apart.
+ // The controller's own record takes the last M1 it processed, so the root
+ // (depth 0) is always the controller and never classified by it.
++// wiredAgentName names an agent attached over Ethernet. The gateway's co-located
++// agent (the network's CollocatedAgentID) is an Agent; any other native agent on a
++// wired backhaul is an extender like its Wi-Fi peers. Without a known co-located
++// agent every wired agent stays an Agent, as before.
++func wiredAgentRole(deviceID, collocated string) string {
++	if collocated == "" || collocated == "00:00:00:00:00:00" || strings.EqualFold(deviceID, collocated) {
++		return "Agent"
++	}
++	return "Extender"
++}
++
+ func deviceIdentity(deviceNode *C.em_network_node_t, depth int) (manufacturer, model, kind string) {
+     if depth == 0 {
+         return "", "", "controller"

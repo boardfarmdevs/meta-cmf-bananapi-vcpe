@@ -217,14 +217,23 @@ function evaluate(current, interactions, view, world, bindings, now = Date.now()
     return Number.isFinite(client.rcpi) && client.rcpi > 0 && age >= -2 && age <= 30;
   });
   const parents = Object.fromEntries((current.network?.mesh?.backhaul_edges || []).map(edge => [edge.child_role, edge.parent_role]));
-  const meshConnected = Object.keys(parents).length === 4 && Object.keys(parents).every(role => {
-    const visited = new Set();
-    while (role !== 'gateway') {
-      if (!parents[role] || visited.has(role)) return false;
-      visited.add(role); role = parents[role];
-    }
-    return true;
-  });
+  // The lab's own extenders hang off the Wi-Fi backhaul, except one on a wired backhaul
+  // (the world's wired_backhaul: no backhaul edge); an OpenSync pod (pod_N) has a backhaul
+  // edge only while it is on Wi-Fi backhaul, none on its wired (GTP) path. Every edge there
+  // is must lead to the gateway.
+  const wired = new Set(world?.wired_backhaul || []);
+  const extenders = Object.entries(world?.roles || {})
+    .filter(([role, kind]) => kind === 'fronthaul_ap' && role !== 'gateway' && !role.startsWith('pod_') && !wired.has(role))
+    .map(([role]) => role);
+  const meshConnected = (extenders.length ? extenders.every(role => role in parents) : Object.keys(parents).length === 4) &&
+    Object.keys(parents).every(role => {
+      const visited = new Set();
+      while (role !== 'gateway') {
+        if (!parents[role] || visited.has(role)) return false;
+        visited.add(role); role = parents[role];
+      }
+      return true;
+    });
   const meshNodes = new Map((current.network?.mesh?.nodes || []).map(node => [node.role, String(node.device_id)]));
   const meshViewMatches = Object.entries(parents).every(([child, parent]) => view.edges.some(edge =>
     edge.to === meshNodes.get(child) && edge.from === meshNodes.get(parent)));
