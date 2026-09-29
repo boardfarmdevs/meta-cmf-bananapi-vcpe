@@ -5,9 +5,10 @@ native world (../worlds) plus extender_5, a tri-band fronthaul_ap with backhaul
 
     python3 worlds-wired/build-goldens.py [--check|--write]
 
-Same world IDs, layouts NAME-wired, mobility as the native world. The pod rooms
-with the wired extender (../worlds-pods-wired) take its position and checks from
-here.
+Same world IDs, layouts NAME-wired, mobility as the native world; and the rooms
+about the wired extender itself (WIRED_ROOMS), whose scripts are in the shared
+mobility tree. The pod rooms with the wired extender (../worlds-pods-wired) take
+its position and checks from here.
 """
 import copy
 import json
@@ -21,6 +22,15 @@ from wmdcfg.world import compile_world, load_json  # noqa: E402
 
 NATIVE = HERE.parent / "worlds"
 POSITIONS = HERE / "wired-positions.json"
+# Rooms about the wired extender itself, only in this set: (native layout, mobility in the
+# shared tree, world file). A client steered onto and off it, its loss and recovery, and a
+# Wi-Fi extender taking it as its backhaul parent (geometry).
+WIRED_ROOMS = (
+    ("home-five-agent", "wired-walk-in", "home-a-wired-walk-in"),
+    ("home-five-agent", "wired-walk-out", "home-a-wired-walk-out"),
+    ("home-five-agent", "wired-extender-loss-recovery", "home-a-wired-extender-loss-recovery"),
+    ("backhaul-branches", "backhaul-wired-parent", "backhaul-wired-parent"),
+)
 # A band-steered client's scripted band changes assume the native APs: the wired
 # extender may come no closer than this to its best native AP, on any band.
 BAND_STEERING_MARGIN_DB = 3
@@ -74,6 +84,10 @@ def build() -> dict[str, str]:
         if problems:
             raise SystemExit("the wired extender on a band-steered path:\n  " + "\n  ".join(problems[:5]))
         files[f"golden/{path.name}"] = json.dumps(world, separators=(",", ":"), sort_keys=True) + "\n"
+    for name, mobility, output in WIRED_ROOMS:
+        layout = wired_layout(load_json(NATIVE / "layouts" / f"{name}.json"), where[name])
+        world = compile_world(layout, load_json(NATIVE / "mobility" / f"{mobility}.json"))
+        files[f"golden/{output}.world.json"] = json.dumps(world, separators=(",", ":"), sort_keys=True) + "\n"
     return files
 
 

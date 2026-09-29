@@ -10,6 +10,8 @@ const {kernelClientAudit} = require('./room-feature-acceptance.js');
 const {startHostMonitor} = require('./room-host-monitor.js');
 const execute = promisify(execFile);
 const rooms = ['backhaul-branch-formation', 'backhaul-parent-handover', 'backhaul-isolation-recovery'];
+// Only in the room sets with the wired extender (worlds-wired): run when the catalog has it.
+const wiredRooms = ['backhaul-wired-parent'];
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 // A loaded geometry room converges like a catalog room (room-feature-acceptance
 // --initial-timeout, 90 s), and its load also re-parents the native backhaul.
@@ -87,10 +89,14 @@ function ready(entry, healthNodes, clients = 10) {
   const wired = Object.keys(wiredContainers);
   return Object.keys(entry.native.nodes).length === 5 + wired.length &&
     Object.keys(entry.native.parents).length === 4 + wired.length &&
-    wired.every(role => entry.native.nodes[role]?.wiredUplink === true) &&
+    wired.every(role => entry.native.nodes[role]?.wiredUplink === true && entry.native.nodes[role].fronthaulAps === 6) &&
     Object.values(entry.native.parents).every(Boolean) &&
     Object.values(parentPaths(entry.native.parents)).every(chain => chain.at(-1) === 'gateway') &&
-    Object.values(entry.native.nodes).every(node => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
+    // A wired extender's own backhaul BSS and LAN address come with its Ethernet uplink,
+    // which RDK's extender mode does not yet act on (alignment plan 1.2): its readiness is
+    // its fronthaul, its LAN port in the bridge and no Wi-Fi parent.
+    Object.entries(entry.native.nodes).filter(([role]) => !wired.includes(role))
+      .every(([, node]) => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
     entry.health?.healthy && entry.health.topology_nodes === healthNodes && entry.health.api_active === clients &&
     entry.optimizer?.fleet?.converged === true && entry.topology.nodes.length === 6 + adapterNodes &&
     new Set(entry.topology.stations.map(station => station.mac)).size === clients;
@@ -122,7 +128,9 @@ function summarizeNative(samples, room) {
     ? {branchObserved: parents.some(value => value.extender_3 === 'extender_1' && value.extender_4 === 'extender_2')}
     : room === 'backhaul-parent-handover'
       ? {lowerRelayObserved: parents.some(value => value.extender_3 === 'extender_2')}
-      : {upstreamOutageObserved: isolated};
+      : room === 'backhaul-wired-parent'
+        ? {wiredParentObserved: parents.some(value => value.extender_3 === 'extender_5')}
+        : {upstreamOutageObserved: isolated};
 }
 
 async function run(options) {
@@ -130,11 +138,11 @@ async function run(options) {
   assert.equal(options['yes-act'], 'true', 'Explicit --yes-act true is required; these rooms change live RF and can interrupt service');
   assert.match(options['room-url'], /^https?:\/\/.+/, usage());
   assert.match(options['topology-url'], /^https?:\/\/.+/, usage());
-  const selectedRooms = options.room ? [options.room] : rooms;
+  let selectedRooms = options.room ? [options.room] : [...rooms, ...wiredRooms];
   const flavor = options.flavor || 'rdk';
   const profile = stackProfile(flavor);
   const containers = profile.containers;
-  assert.ok(selectedRooms.every(id => rooms.includes(id)), 'Unknown geometry room');
+  assert.ok(selectedRooms.every(id => rooms.includes(id) || wiredRooms.includes(id)), 'Unknown geometry room');
   const directory = path.resolve(options.output);
   assert.ok(!fs.existsSync(directory), 'Use a new output directory');
   fs.mkdirSync(directory, {recursive: true});
@@ -198,7 +206,7 @@ async function run(options) {
     // has a Wi-Fi parent (that would be a second path into the LAN)
     for (const role of Object.keys(wiredContainers)) {
       const node = nodes[role];
-      if (node) node.wiredUplink = node.eth1Master === profile.bridge && !node.parentBssid && node.pingOk === true;
+      if (node) node.wiredUplink = node.eth1Master === profile.bridge && !node.parentBssid;
     }
     const parents = Object.fromEntries(readings.filter(([role]) => role !== 'gateway')
       .map(([role, value]) => [role, role in wiredContainers ? (value.wiredUplink ? 'gateway' : null)
@@ -296,6 +304,8 @@ async function run(options) {
     bindings = catalog.client_bindings;
     assert.equal(Object.keys(bindings).length, 100);
     for (const id of rooms) assert.equal(catalog.worlds.find(entry => entry.id === id)?.backhaul_rf, 'geometry');
+    if (!options.room) selectedRooms = selectedRooms.filter(id => rooms.includes(id) ||
+      catalog.worlds.some(entry => entry.id === id && entry.backhaul_rf === 'geometry'));
     await roomPage.goto(base + '/');
     await roomPage.waitForFunction(() => window.__viewer && !document.getElementById('world').disabled, null, {timeout: 60000});
     await topologyPage.goto(options['topology-url']);
@@ -335,7 +345,9 @@ async function run(options) {
         currentRoom.initialUpstreamVerified = true;
       }
       assert.ok(Object.values(loaded.native.nodes).every(node => !node.error), 'Missing out-of-band native observations');
-      assert.ok(Object.values(loaded.native.nodes).every(node => node.apOperating && node.fronthaulAps === 6),
+      // (a wired extender's own backhaul BSS waits for RDK to act on its Ethernet uplink, plan 1.2)
+      assert.ok(Object.entries(loaded.native.nodes).every(([role, node]) =>
+        (node.apOperating || role in wiredContainers) && node.fronthaulAps === 6),
         'Geometry rooms require operating backhaul and client-facing APs, not only configured BSS records');
       assert.equal(loaded.interactions.backhaul_policy, 'modeled');
       assert.equal(loaded.interactions.backhaul_authority, 'native');
@@ -376,6 +388,10 @@ async function run(options) {
         const verified = entry => id === 'backhaul-parent-handover' ?
           summarizeNative([entry], id).lowerRelayObserved && ready(entry, profile.healthNodes) &&
             entry.mesh?.backhaul_edges?.some(edge => edge.child_role === 'extender_3' && edge.parent_role === 'extender_2') :
+          id === 'backhaul-wired-parent' ?
+            // extender_3 on the wired extender's backhaul BSS, natively and in the controller's model
+            summarizeNative([entry], id).wiredParentObserved && ready(entry, profile.healthNodes) &&
+              entry.mesh?.backhaul_edges?.some(edge => edge.child_role === 'extender_3' && edge.parent_role === 'extender_5') :
           summarizeNative([entry], id).upstreamOutageObserved && entry.native.nodes.extender_4.apOperating &&
             entry.native.nodes.extender_4.fronthaulAps === 6;
         while (!verified(observation) && Date.now() < deadline) {

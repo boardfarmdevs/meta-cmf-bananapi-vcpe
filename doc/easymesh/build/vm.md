@@ -92,6 +92,33 @@ LAB_MONITORING_ALLOW_RESTART=1 \
   gen/vm/lxd/observability/enable.sh "$EASYMESH_LXD_NAME" "$host_ip"
 ```
 
+## The wired extender
+
+Next to the gateway and its four Wi-Fi extenders, every new VM has one extender
+on a wired backhaul (`EASYMESH_WIRED_EXTENDERS=1`, the default; `0` builds the
+Wi-Fi extenders only). It is the extender image as `bpiap-004`, its LAN port
+bridged into the controller's LAN through the lab's wired LAN port (`br-wired`,
+a port `eth2` of `bpibroadband`'s `brlan0`), made by `gen/wired-extender.sh`
+(`lanport`, `up 4`, `status`, `down 4`):
+
+- Its HAL never connects its backhaul station (rdk-wifi-hal 0045, flag
+  `/nvram/lab_wired_backhaul`), so it can never make a second path into the
+  LAN, and its backhaul BSSs stay open to Wi-Fi extenders that take it as their
+  parent. `wired-extender.sh` records that as `user.easymesh.wired_guard=hal`;
+  only then does the medium give it RF to the other mesh nodes. An extender
+  image without the patch keeps it isolated on the medium.
+- The runtime starts it with the Wi-Fi extenders and checks it once the medium
+  runs: its fronthaul up, its ten BSSes in the controller's model, its LAN port
+  in its `brlan0`, the gateway's `eth2` in the gateway's `brlan0`, no station up.
+  The controller's model then counts six devices (18 radios, 60 BSSes) and one
+  association fewer than devices, clients plus the four Wi-Fi extenders.
+- The health audit wants it as an Ethernet child of the controller in the
+  topology and never a Wi-Fi child.
+- The room service runs the lab's own rooms with it
+  (`gen/wmediumd/configurator/worlds-wired`: the 27 rooms, the wired extender
+  as `extender_5`, plus four rooms about it); the room suite takes that set from
+  the room.
+
 ## Estimated build phases and time
 
 Use **about 55 minutes** as a planning reference for a fresh 100-client VM

@@ -67,6 +67,8 @@ assert.equal(interfaceState('Not connected.\nPROBE_EXIT=1\n').pingOk, false);
 const observed = [{native: {parents: {extender_3: 'extender_1', extender_4: 'extender_2'}, nodes: {extender_4: {pingOk: true}}}}];
 assert.equal(summarizeNative(observed, 'backhaul-branch-formation').branchObserved, true);
 assert.equal(summarizeNative(observed, 'backhaul-parent-handover').lowerRelayObserved, false);
+assert.equal(summarizeNative(observed, 'backhaul-wired-parent').wiredParentObserved, false);
+assert.equal(summarizeNative([{native: {parents: {extender_3: 'extender_5'}, nodes: {}}}], 'backhaul-wired-parent').wiredParentObserved, true);
 assert.equal(summarizeNative([{native: {parents: {}, nodes: {extender_4: {pingOk: null}}}}],
   'backhaul-isolation-recovery').upstreamOutageObserved, false, 'Missing observations are not successful isolation');
 assert.equal(summarizeNative([{native: {parents: {extender_4: null}, nodes: {extender_4: {pingOk: false}}}}],

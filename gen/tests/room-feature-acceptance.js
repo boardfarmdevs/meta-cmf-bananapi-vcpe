@@ -85,6 +85,19 @@ function udpByteAccounting(sender, receiver, payloadBytes) {
     senderBytes: sender.bytes, receiverBytes: receiver.bytes, excessBytes, payloadBytes};
 }
 
+// A world's ap_expectations: at a checkpoint or at the final settle, each named client on
+// its AP (by the room's association at the settled sample).
+function apExpectations(world, result) {
+  return (world.ap_expectations || []).map(expectation => {
+    const settled = expectation.at === 'final' ? result.final :
+      result.checkpoints?.find(checkpoint => checkpoint.timeMs === expectation.at);
+    const on = Object.fromEntries((settled?.final?.roomAssociations || []).map(client => [client.role, client.ap]));
+    const misses = Object.entries(expectation.roles).filter(([role, ap]) => on[role] !== ap)
+      .map(([role, ap]) => ({role, expected: ap, observed: on[role] ?? null}));
+    return {at: expectation.at, settled: Boolean(settled), misses, passed: Boolean(settled) && !misses.length};
+  });
+}
+
 function qualificationFailures(result, browserErrors = []) {
   const checks = {
     load: result.load?.passed,
@@ -101,6 +114,7 @@ function qualificationFailures(result, browserErrors = []) {
     kernelClients: result.kernel?.passed,
     bandSteering: result.bandSteering?.passed !== false,
     trafficExperiment: result.trafficExperiment?.passed !== false,
+    apExpectations: (result.apExpectations || []).every(item => item.passed),
     roomErrors: !result.errors.length,
     browserErrors: !browserErrors.some(error => error.room === result.id)
   };
@@ -706,6 +720,7 @@ async function run(args) {
         firstVerifiedRoomTimeMs: matches[0]?.playback.time_ms ?? null};
     });
     result.fronthaulOutages = fronthaulOutages(golden, result.samples);
+    result.apExpectations = apExpectations(golden, result);
     result.failureReasons = qualificationFailures(result, report.errors);
     result.passed = result.failureReasons.length === 0;
     result.sampleCount = result.samples.length;
@@ -898,6 +913,6 @@ function kernelClientAudit(bindings, wanted, associations, links) {
   return {onlineCount: online.size, offlineCount: bound.size - online.size, passed: errors.length === 0, errors, links};
 }
 
-module.exports = {worldApplyResponse, expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors, kernelClientAudit, trafficExperimentSummary, qualificationFailures};
+module.exports = {worldApplyResponse, expectedFrame, evaluate, distribution, eventPerformance, viewAgreement, recordedEventKind, fronthaulOutages, bandExpectations, bandSteeringSummary, bandNativeErrors, kernelClientAudit, trafficExperimentSummary, qualificationFailures, apExpectations};
 if (require.main === module) run(argumentsFrom(process.argv.slice(2))).then(report => { process.exitCode = report.passed ? 0 : 1; })
   .catch(error => { console.error(error); process.exitCode = 2; });

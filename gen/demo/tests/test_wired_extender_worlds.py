@@ -22,6 +22,14 @@ WIRED = CONFIGURATOR / "worlds-pods-wired"
 MANIFEST = REPO / "gen/demo/manifests/private-client-room-walk-pods-wired.json"
 NATIVE_WIRED = CONFIGURATOR / "worlds-wired"
 NATIVE_WIRED_MANIFEST = REPO / "gen/demo/manifests/private-client-room-walk-wired.json"
+# the rooms about the wired extender itself, only in worlds-wired
+WIRED_ONLY = {"home-a-wired-walk-in", "home-a-wired-walk-out", "home-a-wired-extender-loss-recovery",
+              "backhaul-wired-parent"}
+
+
+def mirrored(root):
+    return [path for path in sorted((root / "golden").glob("*.world.json"))
+            if path.name.removesuffix(".world.json") not in WIRED_ONLY]
 
 
 def catalog(root):
@@ -72,26 +80,40 @@ class NativeWiredExtenderWorldTests(unittest.TestCase):
         self.assertFalse([role for role in bindings if role.startswith("pod_")])
 
     def test_every_room_is_the_native_room_plus_the_wired_extender(self):
-        for path in sorted((NATIVE_WIRED / "golden").glob("*.world.json")):
+        for path in mirrored(NATIVE_WIRED):
             wired, native = load_json(path), load_json(NATIVE / "golden" / path.name)
             self.assertEqual(set(wired["roles"]) - set(native["roles"]), {"extender_5"}, path.name)
             self.assertEqual(wired["layout"], native["layout"] + "-wired", path.name)
             self.assertEqual(wired["mobility"], native["mobility"], path.name)
 
     def test_the_pod_rooms_with_it_stand_it_where_the_native_rooms_do(self):
-        for path in sorted((NATIVE_WIRED / "golden").glob("*.world.json")):
+        for path in mirrored(NATIVE_WIRED):
             ours, pods = load_json(path), load_json(WIRED / "golden" / path.name)
             for index, (a, b) in enumerate(zip(ours["generations"], pods["generations"])):
                 self.assertEqual(a["positions"]["extender_5"], b["positions"]["extender_5"], f"{path.name} {index}")
 
-    def test_a_room_bound_with_it_offers_the_native_rooms(self):
+    def test_a_room_bound_with_it_offers_the_native_rooms_and_its_own(self):
         wired, native = catalog(NATIVE_WIRED), catalog(NATIVE)
-        self.assertEqual([entry["id"] for entry in wired["worlds"]], [entry["id"] for entry in native["worlds"]])
+        self.assertEqual(sorted(entry["id"] for entry in wired["worlds"]),
+                         sorted([entry["id"] for entry in native["worlds"]] + list(WIRED_ONLY)))
+        geometry = {entry["id"] for entry in wired["worlds"] if entry["backhaul_rf"] == "geometry"}
+        self.assertIn("backhaul-wired-parent", geometry)
         self.assertEqual(wired["mesh_devices"], native["mesh_devices"] + 1)
 
     def test_the_catalog_names_its_tree_for_the_suite(self):
         self.assertEqual(catalog(NATIVE_WIRED)["worlds_root"], "gen/wmediumd/configurator/worlds-wired")
         self.assertEqual(catalog(NATIVE)["worlds_root"], "gen/wmediumd/configurator/worlds")
+
+    def test_its_own_rooms_expect_clients_on_it(self):
+        for name in ("home-a-wired-walk-in", "home-a-wired-extender-loss-recovery"):
+            world = load_json(NATIVE_WIRED / "golden" / f"{name}.world.json")
+            final = next(item for item in world["ap_expectations"] if item["at"] == "final")
+            self.assertEqual(set(final["roles"].values()), {"extender_5"}, name)
+        out = load_json(NATIVE_WIRED / "golden/home-a-wired-walk-out.world.json")
+        self.assertEqual([item["at"] for item in out["ap_expectations"]], [3000, "final"])
+        loss = load_json(NATIVE_WIRED / "golden/home-a-wired-extender-loss-recovery.world.json")
+        self.assertEqual([generation["present"]["extender_5"] for generation in loss["generations"]
+                          if generation["time_ms"] in (10000, 40000, 70000)], [True, False, True])
 
     def test_the_goldens_match_their_layouts_and_positions(self):
         result = subprocess.run([sys.executable, str(NATIVE_WIRED / "build-goldens.py"), "--check"],

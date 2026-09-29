@@ -15,9 +15,10 @@ client_count=$(printf '%s\n' $clients | sed '/^$/d' | wc -l)
 [ "$client_count" -gt 0 ] || { echo 'no provisioned WLAN clients found' >&2; exit 1; }
 expected_associated=$((client_count + 4))
 # The lab's extenders on a wired backhaul (gen/wired-extender.sh): one more device each
-# (three radios, ten BSSes) without a backhaul station association. They start after the
-# medium: before it the kernel's flat medium lets every radio hear every other, and a
-# wired extender's backhaul station must never join a second path into the LAN.
+# (three radios, ten BSSes) without a backhaul station association. They start with the
+# Wi-Fi extenders (the medium needs every managed container's radios), and their HAL never
+# connects a backhaul station (rdk-wifi-hal 0045), so the flat pre-medium medium cannot
+# give them a second path into the LAN. They are checked once the medium runs.
 wired_extenders=$(for container in $(lxc list -c n --format csv 2>/dev/null \
         | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
     [ "$(lxc config get "$container" user.easymesh.backhaul 2>/dev/null)" = wired ] \
@@ -846,12 +847,12 @@ start)
         end_phase
 
         begin_phase extenders
-        start_instances_bounded "$extender_start_parallelism" $extenders
+        start_instances_bounded "$extender_start_parallelism" $extenders $wired_extenders
         run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
         ;;
     overlap)
         begin_phase mesh_launch
-        start_instances_bounded "$extender_start_parallelism" $mesh
+        start_instances_bounded "$extender_start_parallelism" $mesh $wired_extenders
         end_phase
 
         begin_phase controller
@@ -863,7 +864,7 @@ start)
         ;;
     burst)
         begin_phase all_container_launch
-        start_instances_bounded "$burst_start_parallelism" $mesh $clients
+        start_instances_bounded "$burst_start_parallelism" $mesh $wired_extenders $clients
         end_phase
 
         begin_phase controller
@@ -904,7 +905,6 @@ start)
 
     if [ "$wired_count" -gt 0 ]; then
         begin_phase wired_extenders
-        start_instances_bounded "$extender_start_parallelism" $wired_extenders
         run_bounded "$extender_ready_parallelism" wait_wired_extender_live $wired_extenders
         end_phase
     fi
