@@ -617,6 +617,7 @@ class LiveConductor:
                 "available": False,
                 "nodes": [],
                 "backhaul_edges": [],
+                "wired_edges": [],
                 "unresolved_edges": 0,
             }
 
@@ -655,8 +656,18 @@ class LiveConductor:
             })
 
         edges = []
+        wired_edges = []
         unresolved = 0
         for edge in topology.get("edges", []) or []:
+            if str(edge.get("mediaType") or "").lower() == "ethernet":
+                # An AP on a wired backhaul is an Ethernet child of the logical controller,
+                # which the room has no object for: its parent is the gateway (co-located).
+                child = role_by_device_id.get(str(edge.get("to") or "").lower())
+                if child and child != "gateway":
+                    parent = role_by_device_id.get(str(edge.get("from") or "").lower()) or "gateway"
+                    wired_edges.append({"parent_role": parent, "child_role": child,
+                                        "media_type": edge.get("mediaType")})
+                continue
             if str(edge.get("mediaType") or "").lower() != "wireless lan":
                 continue
             parent = role_by_device_id.get(str(edge.get("from") or "").lower())
@@ -691,6 +702,9 @@ class LiveConductor:
             "nodes": sorted(nodes, key=lambda item: item["role"]),
             "backhaul_edges": sorted(
                 edges, key=lambda item: (item["parent_role"], item["child_role"])
+            ),
+            "wired_edges": sorted(
+                wired_edges, key=lambda item: (item["parent_role"], item["child_role"])
             ),
             "unresolved_edges": unresolved,
         }
@@ -1212,9 +1226,15 @@ class LiveConductor:
         )
         if self.profiling:
             candidate_age = min(30, policy.config.reject_stale_metrics_after_seconds)
+            # A client counts as measured only while all its candidates are younger
+            # than candidate_age. Refreshed at half of it (7.5 s), a candidate whose
+            # query met a busy radio waited for the next round (rounds 5 to 10 s
+            # apart under a 50-client load) and expired first: the fifty-client
+            # room's coverage flapped around 210 of 250 for half a minute. A round
+            # takes about 3.5 s since 0222/0231; refresh at a third.
             provider = StreamingCandidateProvider(provider, maximum_clients=64,
                                                 maximum_age_seconds=candidate_age,
-                                                refresh_after_seconds=candidate_age / 2,
+                                                refresh_after_seconds=candidate_age / 3,
                                                 identity=lambda: self._observation_key(room_before),
                                                 client_identity=lambda station: self._candidate_epoch(station, room_before),
                                                 updated=self._candidate_updated.set,

@@ -1,0 +1,65 @@
+Subject: [PATCH] agent: answer every channel preference query
+
+The Channel Preference Query reaches the agent's AL node, which turned it
+into a command whose only candidate is the AL node in ap_cap_report. Since
+the AP capability report advances the radios instead (0180), no node is a
+candidate: the agent dropped every query without a word, and the
+controller's radios stayed in channel_query_pending (em_config never got
+past its fourth step, and every unassociated STA query to such a radio was
+refused as not ready).
+
+Answer each query at once from the AL node, as the AP capability query is
+answered, with the query's MID. The report only reads the data model:
+radio states are left alone.
+
+Upstream-Status: Pending
+
+--- a/inc/em_channel.h
++++ b/inc/em_channel.h
+@@ -468,6 +468,8 @@
+ 	 * this function.
+ 	 */
+ 	int send_channel_pref_report_msg();
++	// Sends the report answering the query with CMDU id msg_id, outside any command
++	int send_channel_pref_report_msg(unsigned short msg_id);
+     
+ 	/**!
+ 	 * @brief Sends an inquiry message to check available spectrum.
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1463,8 +1463,12 @@
+ 
+ int em_channel_t::send_channel_pref_report_msg()
+ {
++    return send_channel_pref_report_msg(get_current_cmd()->get_data_model()->get_msg_id());
++}
++
++int em_channel_t::send_channel_pref_report_msg(unsigned short msg_id)
++{
+     unsigned char buff[MAX_EM_BUFF_SZ];
+-    unsigned short msg_id = get_current_cmd()->get_data_model()->get_msg_id();
+     unsigned short  msg_type = em_msg_type_channel_pref_rprt;
+     unsigned int len = 0, radio_index = 0;
+     short sz;
+@@ -1947,14 +1951,15 @@
+ 
+ int em_channel_t::handle_channel_pref_query(unsigned char *buff, unsigned int len)
+ {
+-    em_bus_event_type_channel_pref_query_params_t params;
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+ 
+-    params.msg_id = ntohs(cmdu->id);
+-   
+-	get_mgr()->io_process(em_bus_event_type_channel_pref_query, reinterpret_cast<unsigned char *> (&params), sizeof(em_bus_event_type_channel_pref_query_params_t)); 
+-
+-	return 0;
++    /* Answer every query at once from the AL node, as the AP capability
++     * query is answered. The command path needed the AL node in
++     * ap_cap_report, a state only radios reach now, so it dropped every
++     * query and the controller's radios stayed in channel_query_pending.
++     * The report only reads the data model: radio states are left alone. */
++    em_printfout("Channel Preference Query (msg_id 0x%04x), sending the report", ntohs(cmdu->id));
++    return (send_channel_pref_report_msg(ntohs(cmdu->id)) < 0) ? -1 : 0;
+ }
+ 
+ int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len)

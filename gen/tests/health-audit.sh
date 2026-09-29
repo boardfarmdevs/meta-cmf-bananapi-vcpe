@@ -11,11 +11,17 @@ ping_interval=${HEALTH_PING_INTERVAL:-1}
 ping_max_loss=${HEALTH_PING_MAX_LOSS:-0}
 ping_exec_attempts=${HEALTH_PING_EXEC_ATTEMPTS:-2}
 ping_exec_timeout=${HEALTH_PING_EXEC_TIMEOUT:-20}
-expected_devices=${HEALTH_EXPECT_DEVICES:-5}
-expected_radios=${HEALTH_EXPECT_RADIOS:-15}
-expected_bsses=${HEALTH_EXPECT_BSSES:-50}
+# The lab's extenders on a wired backhaul (gen/wired-extender.sh): one more device each,
+# with three radios and ten BSSes, but no backhaul station association and no Wi-Fi edge.
+wired=$(for c in $(lxc list -c n --format csv | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
+    [ "$(lxc config get "$c" user.easymesh.backhaul)" = wired ] && echo "$c"; done || true)
+wired_count=$(printf '%s\n' $wired | sed '/^$/d' | wc -l)
+mesh_containers="bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003 $wired"
+expected_devices=${HEALTH_EXPECT_DEVICES:-$((5 + wired_count))}
+expected_radios=${HEALTH_EXPECT_RADIOS:-$((3 * expected_devices))}
+expected_bsses=${HEALTH_EXPECT_BSSES:-$((10 * expected_devices))}
 expected_clients=${HEALTH_EXPECT_CLIENTS:-20}
-expected_associated=$((expected_clients + expected_devices - 1))
+expected_associated=$((expected_clients + expected_devices - 1 - wired_count))
 
 [[ "$ping_count" =~ ^[1-9][0-9]*$ ]] \
     || { echo "HEALTH_PING_COUNT must be a positive integer" >&2; exit 2; }
@@ -61,14 +67,34 @@ read -r wireless_edges fresh_edges < <(jq -r '
      [$edges[] | select(.signal.status == "fresh")] | length] | @tsv
 ' "$topology_json")
 echo "fresh=$fresh_edges/$wireless_edges"
-[ "$wireless_edges" = "$((expected_devices - 1))" ] || model_fail=1
+[ "$wireless_edges" = "$((expected_devices - 1 - wired_count))" ] || model_fail=1
 [ "$fresh_edges" = "$wireless_edges" ] || model_fail=1
+
+echo WIRED_BACKHAUL
+# each wired extender an Ethernet child of the controller, and never a Wi-Fi child
+for container in $wired; do
+    # the AL MAC is eth1_virt_peer's address, as for every bpiap extender
+    al=$(lxc exec "$container" -- cat /sys/class/net/eth1_virt_peer/address 2>/dev/null |
+        tr '[:upper:]' '[:lower:]')
+    media=$(jq -r --arg al "$al" '[.edges[]? | select((.to | ascii_downcase) == $al) | .mediaType] | join(",")' \
+        "$topology_json")
+    bridged=$(lxc exec "$container" -- sh -c 'basename "$(readlink /sys/class/net/eth1/master)"' 2>/dev/null || true)
+    stations=$(lxc exec "$container" -- sh -c 'for n in /sys/class/net/*; do [ -e "$n/phy80211" ] || continue
+        iw dev "${n##*/}" info 2>/dev/null | grep -q "type managed" || continue
+        [ "$(cat "$n/operstate")" = down ] || echo "${n##*/}"; done' 2>/dev/null || true)
+    if [ "$media" = Ethernet ] && [ "$bridged" = brlan0 ] && [ -z "$stations" ]; then
+        echo "$container al=$al edge=$media eth1=$bridged OK"
+    else
+        echo "$container al=${al:-?} edge=${media:-none} eth1=${bridged:-none} stations_up=${stations:-none} FAIL"
+        model_fail=1
+    fi
+done
 
 status_section "Identity persistence"
 status_action "Checking every mesh node's preserved NVRAM binding."
 echo NVRAM_BINDINGS
 nvram_fail=0
-for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+for container in $mesh_containers; do
     nvram_source=$(lxc config show "$container" --expanded 2>/dev/null |
         awk '
             /^  nvram:$/ {in_nvram=1; next}
@@ -138,7 +164,7 @@ status_section "Service stability"
 status_action "Checking EasyMesh and OneWifi restart counters."
 echo RESTARTS
 restart_fail=0
-for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+for container in $mesh_containers; do
     for unit in onewifi em_agent; do
         restarts=$(lxc exec "$container" -- systemctl show "$unit" \
             -p NRestarts --value)

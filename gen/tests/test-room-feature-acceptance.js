@@ -102,13 +102,22 @@ assert.equal(podMesh(extenderEdges), true);  // pods on their wired path
 assert.equal(podMesh([...extenderEdges, ['pod_1', 'gateway'], ['pod_2', 'extender_1']]), true);  // on Wi-Fi
 assert.equal(podMesh([...extenderEdges, ['pod_1', 'nowhere']]), false);
 assert.equal(podMesh(extenderEdges.slice(1)), false);
-// a wired extender has no backhaul edge
+// a wired extender: an Ethernet child of the gateway, never a Wi-Fi child; a Wi-Fi
+// extender may hang off it
 const wiredWorld = {...podWorld, roles: {...podWorld.roles, extender_5: 'fronthaul_ap'}, wired_backhaul: ['extender_5']};
-const wiredMesh = edges => evaluate({...current, network: {...current.network, mesh: {...current.network.mesh,
-  backhaul_edges: edges.map(([child_role, parent_role]) => ({child_role, parent_role}))}}},
+const toGateway = [['extender_5', 'gateway']];
+const wiredMesh = (edges, wiredEdges = toGateway) => evaluate({...current, network: {...current.network, mesh: {...current.network.mesh,
+  backhaul_edges: edges.map(([child_role, parent_role]) => ({child_role, parent_role})),
+  wired_edges: wiredEdges.map(([child_role, parent_role]) => ({child_role, parent_role, media_type: 'Ethernet'}))}}},
   interactions, view, wiredWorld, bindings, now).meshConnected;
 assert.equal(wiredMesh(extenderEdges), true);
 assert.equal(wiredMesh(extenderEdges.slice(1)), false);
+assert.equal(wiredMesh(extenderEdges, []), false);  // not seen as wired at all
+assert.equal(wiredMesh([...extenderEdges, ['extender_5', 'gateway']]), false);  // a Wi-Fi child too: a second path
+assert.equal(wiredMesh([['extender_1', 'gateway'], ['extender_2', 'extender_5'], ['extender_3', 'extender_2'],
+  ['extender_4', 'gateway']]), true);  // a branch off the wired extender
+assert.equal(wiredMesh([['extender_1', 'gateway'], ['extender_2', 'extender_5'], ['extender_3', 'extender_2'],
+  ['extender_4', 'gateway']], []), false);
 assert.equal(check(current, {...interactions, roles: {client: {position: [5, 0], present: true}}}).converged, false);
 assert.equal(check(current, interactions, {...view, edges: []}).meshViewMatches, false);
 assert.deepEqual(distribution([1, 2, 4, 3]), {count: 4, p50: 2, p95: 4, max: 4});

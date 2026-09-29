@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000045 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Mon, 28 Sep 2026 18:20:00 -0700
+Subject: [PATCH] lab: an extender on a wired backhaul never connects its station
+
+A lab extender whose backhaul is its LAN port (bridged into the
+controller's LAN) must never connect its backhaul station: that would be
+a second path into the LAN, an L2 loop. Until now the lab kept the
+station away from every other mesh node on the medium, which also kept
+the extender from ever being a Wi-Fi extender's backhaul parent. And
+each connect attempt from OneWifi closed the extender's root admission
+first, taking its own backhaul BSSs down to children, though it could
+never root itself over Wi-Fi.
+
+With /nvram/lab_wired_backhaul present (meta-cmf gen/wired-extender.sh
+sets it), wifi_hal_connect refuses a mesh station before the root
+admission closes: the backhaul station never associates and the
+extender's backhaul BSSs stay open, so it can be a parent on the medium.
+Every other extender is unchanged.
+
+Upstream-Status: Inappropriate [lab]
+---
+ wifi_hal.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/wifi_hal.c
++++ b/wifi_hal.c
+@@ -53,6 +53,8 @@
+ #define MAC_ADDRESS_LEN 6
+ 
+ #define EASYMESH_OFF_FLAG "/nvram/rdkb_user_easymesh_off"
++/* set in a lab extender whose backhaul is its LAN port (meta-cmf gen/wired-extender.sh) */
++#define LAB_WIRED_BACKHAUL_FLAG "/nvram/lab_wired_backhaul"
+ 
+ #ifdef CONFIG_WIFI_EMULATOR
+ #define RADIO_INDEX_ASSERT_RC(radioIndex, retcode) \
+@@ -1445,6 +1447,16 @@
+         return WIFI_HAL_INVALID_ARGUMENTS;    // RDKB-45724 - Returns -4 when the ap index is not suitable for station mode
+     }
+ 
++    /* A lab extender on a wired backhaul (its LAN port a port of the controller's LAN)
++     * must never connect its backhaul station: that would be a second path into the
++     * LAN, an L2 loop. Refuse before the root admission closes, so its own backhaul
++     * BSSs stay open to the Wi-Fi extenders that take it as their parent. */
++    if (is_wifi_hal_vap_mesh_sta(ap_index) && access(LAB_WIRED_BACKHAUL_FLAG, F_OK) == 0) {
++        wifi_hal_info_print("%s:%d: vap index %d: wired backhaul (%s), no station connect\n",
++            __func__, __LINE__, ap_index, LAB_WIRED_BACKHAUL_FLAG);
++        return RETURN_ERR;
++    }
++
+     if (is_wifi_hal_vap_mesh_sta(ap_index) &&
+         wifi_hal_backhaul_root_close(ap_index) != RETURN_OK) return RETURN_ERR;
+ 

@@ -9,7 +9,11 @@ set -euo pipefail
 # them ("Suppressed N messages") and a failed room cannot be read afterwards.
 #
 # `on` lifts the two units' rate limits and allows a 256 MB volatile journal
-# per container (about 25 minutes of em_ctrl under load). `off` removes both
+# per extender and 96 MB on the gateway (about 9 minutes of em_ctrl under
+# load): the journal lives in /run, which counts against the container's
+# 1 GiB memory limit, and the gateway's daemons take 450 to 700 MB of it. With
+# 256 MB there it reached the limit and thrashed (VM load 100, every lxc exec
+# and wpa_cli timing out). `off` removes both
 # and returns to the image's bounds. The settings are drop-ins in each
 # container's /etc, so they survive a container restart. A unit's rate limit
 # takes effect when it starts: both commands stop the room service, restart
@@ -41,9 +45,10 @@ in_container() {
 }
 
 apply() {
-    local container=$1 unit
+    local container=$1 unit journal=256M
+    [[ $container == bpibroadband ]] && journal=96M
     in_container "$container" "mkdir -p /etc/systemd/journald.conf.d && printf '%s\n' '[Journal]' \
-        'RuntimeMaxUse=256M' 'RuntimeMaxFileSize=32M' > /etc/systemd/journald.conf.d/$name"
+        'RuntimeMaxUse=$journal' 'RuntimeMaxFileSize=16M' > /etc/systemd/journald.conf.d/$name"
     for unit in "${units[@]}"; do
         in_container "$container" "[ -f /lib/systemd/system/$unit.service ] || exit 0
             mkdir -p /etc/systemd/system/$unit.service.d

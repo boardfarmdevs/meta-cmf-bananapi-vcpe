@@ -118,6 +118,10 @@ def test_default_room_has_twenty_online_and_eighty_dormant(fault):
     ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], True),
     ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2"], False),
     ("home-five-agent-pods--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], False),
+    ("home-five-agent-wired--private-client-room-walk", ["extender_5"], True),
+    ("home-five-agent-wired--private-client-room-walk", [], False),
+    ("home-five-agent--private-client-room-walk", ["extender_5"], False),
+    ("home-five-agent-shifted--private-client-room-walk", [], False),
 ])
 def test_the_wired_extender_variant_has_one_more_mesh_role(world, extra, expected):
     stations = [f"sta_{kind}_{ordinal:02d}" for kind in ("mobile", "static")

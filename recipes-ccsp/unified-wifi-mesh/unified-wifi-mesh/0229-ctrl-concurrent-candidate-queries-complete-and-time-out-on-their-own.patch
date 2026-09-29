@@ -1,0 +1,123 @@
+Subject: [PATCH] ctrl: concurrent candidate queries complete and time out on their own
+
+0222 lets queries to different agents run at once. Two paths still assumed
+one query of the type at a time, and in the room some radios' queries were
+refused as not ready for minutes (candidate measurement never complete):
+
+- A reply (metrics or an all-rejected Ack) completed the active query of the
+  type found first, not the one of the radio that answered: the answering
+  radio's command stayed active, another agent's was destroyed early.
+- The generic timeout reads the type's time, the longest any query took
+  since the type was last idle. With four agents queried continuously the
+  type never went idle, so after 10 s every check cancelled every agent's
+  query.
+
+A reply completes the command of the radio that answered, and a candidate
+query times out from its own start and cancels only itself.
+
+Upstream-Status: Pending
+
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -218,7 +218,12 @@
+      */
+     void cancel_command(em_cmd_type_t type, std::vector<em_t*> &em_radios);
+ 
+-    bool complete_command(em_cmd_type_t type);
++    /* Completes the active command of this type; with an owner, the one whose
++     * candidates include it (commands of a type may run at once, 0222) */
++    bool complete_command(em_cmd_type_t type, em_t *owner = nullptr);
++
++    /* Cancels one active command (its candidates only) */
++    void cancel_command(em_cmd_t *pcmd);
+ 
+ 	/**!
+ 	 * @brief Cancels a command of the specified type.
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -200,7 +200,7 @@
+     delete pcmd;
+ }
+ 
+-bool em_orch_t::complete_command(em_cmd_type_t type)
++bool em_orch_t::complete_command(em_cmd_type_t type, em_t *owner)
+ {
+     auto command_lock = lock_commands();
+     em_cmd_t *pcmd;
+@@ -212,6 +212,13 @@
+         if (pcmd == nullptr || pcmd->m_type != type) {
+             continue;
+         }
++        bool owned = (owner == nullptr);
++        for (unsigned int j = 0; !owned && j < queue_count(pcmd->m_em_candidates); j++) {
++            owned = queue_peek(pcmd->m_em_candidates, j) == owner;
++        }
++        if (!owned) {
++            continue;
++        }
+ 
+         queue_remove(m_active, static_cast<unsigned int>(i));
+         pop_stats(pcmd);
+@@ -326,6 +333,18 @@
+     reset_cmd_time(m_cmd_map, em_cmd_type_em_config);
+ }
+ 
++void em_orch_t::cancel_command(em_cmd_t *pcmd)
++{
++    auto command_lock = lock_commands();
++    for (int j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; j >= 0; j--) {
++        em_t *em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, static_cast<unsigned int>(j)));
++        em_printfout("Setting em:%s State set to cancel",
++            util::mac_to_string(em->get_radio_interface_mac()).c_str());
++        pre_process_cancel(pcmd, em);
++        em->set_orch_state(em_orch_state_cancel);
++    }
++}
++
+ void em_orch_t::cancel_command(em_cmd_type_t type)
+ {
+     auto command_lock = lock_commands();
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -154,6 +154,21 @@
+             break;
+         }
+ 
++        case em_cmd_type_unassoc_sta_query:
++        {
++            /* Queries to different agents run at once (0222), so the type's
++             * time (the longest of any query since the type was last idle)
++             * says nothing about this one, and cancelling the type ended every
++             * agent's query. Time each query from its own start. */
++            struct timeval now;
++            gettimeofday(&now, NULL);
++            if ((now.tv_sec - pcmd->m_start_time.tv_sec) > EM_MAX_CMD_GEN_TTL) {
++                em_printfout("Canceling cmd: %s because time limit exceeded", pcmd->get_cmd_name());
++                cancel_command(pcmd);
++            }
++            break;
++        }
++
+         default:
+         if (stats->time > EM_MAX_CMD_GEN_TTL)
+         {
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -598,7 +598,7 @@
+         sizeof(mac_address_t));
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
+-    if (!orch->complete_command(em_cmd_type_unassoc_sta_query)) {
++    if (!orch->complete_command(em_cmd_type_unassoc_sta_query, matched_em)) {
+         em_printfout("Candidate metrics response MID %u had no active command",
+             response_msg_id);
+     }
+@@ -2552,7 +2552,7 @@
+ 
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
+-    if (!orch->complete_command(em_cmd_type_unassoc_sta_query)) {
++    if (!orch->complete_command(em_cmd_type_unassoc_sta_query, matched_em)) {
+         em_printfout("All-rejected candidate ACK MID %u had no active command",
+             response_msg_id);
+     }

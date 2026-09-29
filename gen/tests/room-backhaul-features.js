@@ -14,6 +14,13 @@ const delay = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 // A loaded geometry room converges like a catalog room (room-feature-acceptance
 // --initial-timeout, 90 s), and its load also re-parents the native backhaul.
 const INITIAL_CONVERGENCE_MS = 90000;
+// From a star a native branch forms in about 30 s. In this layout extender_1 and
+// extender_2 hear extender_3 and extender_4 better than the gateway (20 against 13 dB
+// on 5 GHz), so the native tree may start with them hanging off extender_3 and
+// extender_4; the midpoint then inverts the whole tree, every extender loses its path
+// at once, and re-forming took 62 s (28 Sep). The agents then onboard again and the
+// optimizer needs fresh candidates for all ten clients.
+const BRANCH_CONVERGENCE_MS = 150000;
 
 function usage() {
   return 'usage: room-backhaul-features.js --yes-act true --host HOST --vm VM --room-url URL --topology-url URL --output DIRECTORY [--flavor rdk|prpl] [--room ROOM]';
@@ -68,13 +75,19 @@ function parentPaths(parents) {
   }));
 }
 
-// AP roles beyond the lab's five (OpenSync pods through the EMOSA adapter),
-// from the room's catalog; each adds a topology and a health node.
+// AP roles beyond the lab's five (OpenSync pods through the EMOSA adapter, an extender on
+// a wired backhaul), from the room's catalog; each adds a topology and a health node.
 let adapterNodes = 0;
+// The APs on a wired backhaul (role -> container), from the room's catalog: read like the
+// lab's own nodes; each is a child of the gateway over its LAN port, never over Wi-Fi.
+let wiredContainers = {};
 
 function ready(entry, healthNodes, clients = 10) {
   healthNodes += adapterNodes;
-  return Object.keys(entry.native.nodes).length === 5 && Object.keys(entry.native.parents).length === 4 &&
+  const wired = Object.keys(wiredContainers);
+  return Object.keys(entry.native.nodes).length === 5 + wired.length &&
+    Object.keys(entry.native.parents).length === 4 + wired.length &&
+    wired.every(role => entry.native.nodes[role]?.wiredUplink === true) &&
     Object.values(entry.native.parents).every(Boolean) &&
     Object.values(parentPaths(entry.native.parents)).every(chain => chain.at(-1) === 'gateway') &&
     Object.values(entry.native.nodes).every(node => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
@@ -97,6 +110,7 @@ function interfaceState(raw) {
   return {apBssid: apInfo.match(/\baddr ([0-9a-f:]{17})/i)?.[1]?.toLowerCase(),
     apOperating: /\bssid mesh_backhaul\b/.test(apInfo) && /\bchannel 36 \(5180 MHz\)/.test(apInfo),
     fronthaulAps: Number(raw.match(/FRONTHAUL_APS=(\d+)/)?.[1] ?? NaN),
+    eth1Master: raw.match(/ETH1_MASTER=(\S*)/)?.[1] || null,
     parentBssid: raw.match(/Connected to ([0-9a-f:]{17})/i)?.[1]?.toLowerCase() || null,
     pingOk: /PROBE_EXIT=0\b/.test(raw)};
 }
@@ -169,8 +183,8 @@ async function run(options) {
   }
 
   async function native() {
-    const readings = await Promise.all(Object.entries(containers).map(async ([role, container]) => {
-      const script = 'iw dev wifi1.1 info; iw dev wifi1.3 link 2>/dev/null; ping -I brlan0 -q -c 1 -W 1 10.0.0.1 >/dev/null 2>&1; printf "\\nPROBE_EXIT=%s\\n" "$?"; printf "FRONTHAUL_APS=%s\\n" "$(iw dev | grep -Ec \"ssid (private_ssid|iot_ssid)$\")"';
+    const readings = await Promise.all(Object.entries({...containers, ...wiredContainers}).map(async ([role, container]) => {
+      const script = 'iw dev wifi1.1 info; iw dev wifi1.3 link 2>/dev/null; ping -I brlan0 -q -c 1 -W 1 10.0.0.1 >/dev/null 2>&1; printf "\\nPROBE_EXIT=%s\\n" "$?"; printf "FRONTHAUL_APS=%s\\n" "$(iw dev | grep -Ec \"ssid (private_ssid|iot_ssid)$\")"; printf "ETH1_MASTER=%s\\n" "$(basename \"$(readlink /sys/class/net/eth1/master)\")"';
       try {
         const result = await execute('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', options.host,
           'lxc exec ' + options.vm + ' -- lxc exec ' + container + " -- sh -c '" + script.replace('wifi1.1', profile.ap).replace('wifi1.3', profile.station).replace('brlan0', profile.bridge).replace('10.0.0.1', profile.gateway) + "'"],
@@ -180,8 +194,15 @@ async function run(options) {
     }));
     const nodes = Object.fromEntries(readings);
     const owners = Object.fromEntries(readings.filter(([, value]) => value.apBssid).map(([role, value]) => [value.apBssid, role]));
+    // a wired AP's parent is the gateway over its LAN port, and only while no station of it
+    // has a Wi-Fi parent (that would be a second path into the LAN)
+    for (const role of Object.keys(wiredContainers)) {
+      const node = nodes[role];
+      if (node) node.wiredUplink = node.eth1Master === profile.bridge && !node.parentBssid && node.pingOk === true;
+    }
     const parents = Object.fromEntries(readings.filter(([role]) => role !== 'gateway')
-      .map(([role, value]) => [role, owners[value.parentBssid] || null]));
+      .map(([role, value]) => [role, role in wiredContainers ? (value.wiredUplink ? 'gateway' : null)
+        : owners[value.parentBssid] || null]));
     return {nodes, parents, paths: parentPaths(parents)};
   }
 
@@ -270,6 +291,8 @@ async function run(options) {
     save('baseline.json', {health: before.health, mesh: before.network.mesh, backhaul: baseline.backhaul_links, daemon: baseline.daemon});
     const catalog = await request('/api/demo/worlds');
     adapterNodes = Math.max(0, (catalog.mesh_devices ?? 5) - 5);
+    wiredContainers = catalog.wired_bindings || {};
+    for (const container of Object.values(wiredContainers)) assert.match(String(container), /^[a-zA-Z0-9_.-]+$/);
     bindings = catalog.client_bindings;
     assert.equal(Object.keys(bindings).length, 100);
     for (const id of rooms) assert.equal(catalog.worlds.find(entry => entry.id === id)?.backhaul_rf, 'geometry');
@@ -300,6 +323,7 @@ async function run(options) {
           JSON.stringify(currentRoom.initialReadiness));
         currentRoom.initialConvergenceVerified = true;
         currentRoom.initialKernel = await auditClients(loaded);
+        currentRoom.initialParents = loaded.native.parents;
       }
       if (id === 'backhaul-isolation-recovery') {
         const deadline = Date.now() + 15000;
@@ -332,7 +356,7 @@ async function run(options) {
       }
       currentRoom.nativeOutcome = summarizeNative(currentRoom.samples.filter(entry => entry.label.startsWith('midpoint')), id);
       if (id === 'backhaul-branch-formation') {
-        const deadline = Date.now() + 60000;
+        const deadline = Date.now() + BRANCH_CONVERGENCE_MS;
         let observation = currentRoom.samples.at(-1);
         const converged = entry => summarizeNative([entry], id).branchObserved && ready(entry, profile.healthNodes) &&
           entry.mesh?.backhaul_edges?.some(edge => edge.child_role === 'extender_3' && edge.parent_role === 'extender_1') &&

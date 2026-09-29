@@ -1,0 +1,36 @@
+Subject: [PATCH] ctrl: answer an M1 sent again after its M2
+
+After a controller restart the co-located agent renews all three radios at
+once. Their M2s arrive in the same second; the agent pushes one OneWifi
+subdoc at a time, so the others queue, and a queued radio re-arms and sends
+M1 again to get a fresh M2 (0021). The controller ignored an M1 for a radio
+in wsc_m2_sent ("Autoconf wsc msg sent already"): when the radio's node had
+not moved on yet, all eight M1s went unanswered and the radio stayed in
+wsc_m2_pending (Agent-1 with 4 of its 10 BSSes) until the agent restarted.
+
+An agent sends M1 again only while it still waits for its M2: answer it.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1265,10 +1265,15 @@
+         
+             if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) != NULL) {
+                 printf("%s:%d: Found existing radio:%s\n", __func__, __LINE__, mac_str1);
+-                if(em->get_state() != em_state_ctrl_wsc_m2_sent)
+-                    em->set_state(em_state_ctrl_wsc_m1_pending);
+-                else
+-                    printf("%s:%d: Autoconf wsc msg sent already. Incorrect state = (%d)\n", __func__, __LINE__, em->get_state());
++                /* An agent sends M1 again only while it still waits for its M2
++                 * (0021): the M2 this radio was sent was lost, or not applied
++                 * (its OneWifi subdoc queued behind another radio's). Answer
++                 * it; ignoring it in wsc_m2_sent left the radio unconfigured
++                 * until the agent restarted. */
++                if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
++                    em_printfout("Radio %s sent M1 again after its M2: answering it", mac_str1);
++                }
++                em->set_state(em_state_ctrl_wsc_m1_pending);
+             } else {
+                 if ((dm = get_data_model(GLOBAL_NET_ID, const_cast<const unsigned char *> (hdr->src))) == NULL) {
+                     printf("%s:%d: Can not find data model\n", __func__, __LINE__);

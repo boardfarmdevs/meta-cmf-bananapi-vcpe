@@ -1,0 +1,28 @@
+Subject: [PATCH] cli: candidate polls share one recent read of the candidate tables
+
+A candidate query polls the controller's candidate tables (get_sta, the whole
+station tree, about 70 ms with 50 clients) under the native lock every 10 to
+100 ms until its reply arrives. With queries to four agents at once the
+polls kept the lock busy: in the fifty-client room a round took 6.6 s at the
+median, queries queued 0.6 s for the lock and some timed out (HTTP 504).
+
+A poll takes a read no older than 100 ms, and polls arriving together wait
+for one read (candidate_coordination.go). The query's baseline stays its own
+read, so a shared read can only delay seeing a reply, never make an older
+measurement look new.
+
+Upstream-Status: Pending
+
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4699,7 +4699,9 @@
+     var observedErrors []candidateLinkError
+     for attempt := 0; time.Now().Before(deadline); attempt++ {
+         if r.Context().Err() != nil { return }
+-        all, allErrors, completions, err := readState()
++        // polls share one recent read of the candidate tables (candidate_coordination.go)
++        state := sharedCandidateState.read(timing, candidateStateShareAge, time.Now)
++        all, allErrors, completions, err := state.metrics, state.rejected, state.completions, state.err
+         if err == nil {
+             observed = observed[:0]
+             observedErrors = observedErrors[:0]

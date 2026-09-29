@@ -1,0 +1,117 @@
+Subject: [PATCH] ctrl: order conflicting claims by when the association began
+
+A Topology Response claim for a station another BSS already holds is taken
+only if its association is strictly younger. The ages compared were taken
+at different times: the existing claim keeps the age of its AP's last
+report (a station that left stops being reported, its age with it). A
+station that spent a few seconds on B and went back to A kept B's small
+frozen age, and A's growing age never counted as younger: the controller
+kept the station on B (native_owner_mismatch) until B's own snapshot
+withdrew it.
+
+Keep when each claim's association began, on the boot clock (the agents'
+assoc_start_boottime_sec, never serialized): from a Topology Response age,
+the associated STA link metrics' uptime, or now for an association event.
+Compare the two starts when both are known, within the ages' one-second
+resolution; otherwise the ages as before (a claim loaded from the database
+has no start).
+
+Upstream-Status: Pending
+
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -91,6 +91,18 @@
+     return true;
+ }
+ 
++/* When an association now `age` seconds old began, on the boot clock (0: unknown). A
++ * claim keeps it: an age is only comparable with one observed at the same moment. */
++static uint64_t association_start(uint64_t age)
++{
++    struct timespec now = {};
++    if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec <= 0 ||
++            static_cast<uint64_t>(now.tv_sec) <= age) {
++        return 0;
++    }
++    return static_cast<uint64_t>(now.tv_sec) - age;
++}
++
+ static bool update_sta_map_assoc_row(hash_map_t *sta_assoc_map, em_sta_info_t *row)
+ {
+     mac_addr_str_t row_sta_str, row_bssid_str, row_radio_str;
+@@ -2251,6 +2263,9 @@
+             memcpy(sta_info.bssid, assoc_evt_tlv->bssid, sizeof(mac_address_t));
+             memcpy(sta_info.radiomac, get_radio_interface_mac(), sizeof(mac_address_t));
+             sta_info.associated = assoc_event;
++            if (assoc_event) {
++                sta_info.assoc_start_boottime_sec = association_start(0);
++            }
+ 
+             std::unique_lock<std::recursive_mutex> topology_lock(
+                 g_network_topology_mutex);
+@@ -2527,6 +2542,9 @@
+                 memcpy(sta_info.radiomac, bss_info->ruid.mac, sizeof(mac_address_t));
+                 sta_info.associated = true;
+                 sta_info.last_conn_time = assoc_time;
++                /* 0 and 65535 (saturated) give no start */
++                sta_info.assoc_start_boottime_sec = (assoc_time == 0 || assoc_time == 65535) ?
++                        0 : association_start(assoc_time);
+ 
+                 mac_addr_str_t sta_mac_str, bssid_str, radio_mac_str;
+                 em_long_string_t snapshot_key;
+@@ -2559,15 +2577,27 @@
+                             conflicting_claim = true;
+                             const unsigned int claim_time =
+                                     claim->m_sta_info.last_conn_time;
+-                            if (claim_time == 0 || assoc_time == 65535 ||
++                            const uint64_t claim_start =
++                                    claim->m_sta_info.assoc_start_boottime_sec;
++                            if (claim_start != 0 && sta_info.assoc_start_boottime_sec != 0) {
++                                /* A claim's age stops at its AP's last report
++                                 * (a station that left keeps the age it had
++                                 * then): compare when the associations began,
++                                 * within the ages' one-second resolution. */
++                                if (sta_info.assoc_start_boottime_sec <= claim_start + 2) {
++                                    incoming_is_newer = false;
++                                }
++                            } else if (claim_time == 0 || assoc_time == 65535 ||
+                                     claim_time == 65535 ||
+                                     assoc_time >= claim_time) {
+                                 incoming_is_newer = false;
+                             }
+                             em_printfout(
+-                                    "Topology Response owner evidence sta=%s incoming_age=%u existing_age=%u newer=%d",
++                                    "Topology Response owner evidence sta=%s incoming_age=%u existing_age=%u incoming_start=%llu existing_start=%llu newer=%d",
+                                     util::mac_to_string(sta_info.id).c_str(),
+                                     assoc_time, claim_time,
++                                    static_cast<unsigned long long>(sta_info.assoc_start_boottime_sec),
++                                    static_cast<unsigned long long>(claim_start),
+                                     incoming_is_newer ? 1 : 0);
+                             /* Check every conflicting claim before accepting
+                              * the incoming association, including another BSS
+@@ -2596,6 +2626,9 @@
+                     /* Keep the comparison clock live without scheduling a
+                      * database write for every periodic snapshot. */
+                     existing->last_conn_time = assoc_time;
++                    if (sta_info.assoc_start_boottime_sec != 0) {
++                        existing->assoc_start_boottime_sec = sta_info.assoc_start_boottime_sec;
++                    }
+                     continue;
+                 }
+ 
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -231,6 +231,13 @@
+     if (sta != NULL) {
+         strncpy(sta->m_sta_info.sta_client_type, sta_metrics->sta_client_type, sizeof(sta->m_sta_info.sta_client_type));
+         sta->m_sta_info.last_conn_time = ntohl(sta_metrics->association_uptime_seconds);
++        /* when the association began, on the boot clock, for comparing claims */
++        struct timespec now = {};
++        if (clock_gettime(CLOCK_BOOTTIME, &now) == 0 && now.tv_sec > 0 &&
++                static_cast<uint64_t>(now.tv_sec) > sta->m_sta_info.last_conn_time) {
++            sta->m_sta_info.assoc_start_boottime_sec =
++                    static_cast<uint64_t>(now.tv_sec) - sta->m_sta_info.last_conn_time;
++        }
+     }
+ 
+     return 0;

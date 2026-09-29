@@ -59,9 +59,65 @@ func (lock *nativeLock) Unlock() {
 	lock.mutex.Unlock()
 }
 
-var candidateRequests = newCandidateCoordinator(1, 32)
+// One query in flight per agent, and up to four agents at a time: the controller
+// admits an Unassociated STA Link Metrics Query per agent (unified-wifi-mesh 0222),
+// each reply is matched by its MID and read back by the agent's AL MAC, and a query
+// holds the native lock only for its short native steps, not while it waits.
+var candidateRequests = newCandidateCoordinator(4, 32)
 
 const liveQueryCacheTTL = 100 * time.Millisecond
+
+// Queries to up to four agents poll the controller's candidate tables at once,
+// each reading the whole station tree (get_sta, about 70 ms with 50 clients)
+// under the native lock every 10 to 100 ms: the reads alone kept the lock busy,
+// and candidate rounds under load took 6 to 10 s. A poll reuses a read no older
+// than candidateStateShareAge, and polls arriving together wait for one read
+// instead of making their own. Only polls share: a query's baseline is its own
+// read, so a shared read can delay seeing a reply but never make an older
+// measurement look new.
+const candidateStateShareAge = 100 * time.Millisecond
+
+type candidateState struct {
+	metrics     []candidateLinkMetric
+	rejected    []candidateLinkError
+	completions []candidateCompletion
+	err         error
+}
+
+type candidateStateShare struct {
+	mutex sync.Mutex
+	at    time.Time
+	state candidateState
+	load  func() candidateState
+}
+
+var sharedCandidateState = &candidateStateShare{load: func() candidateState {
+	metrics, rejected, completions, err := loadCandidateLinkState()
+	return candidateState{metrics, rejected, completions, err}
+}}
+
+// read returns a state read no older than maxAge (from when the read ran),
+// making the read, one native step counted in timing, when there is none. A
+// failed read is not kept.
+func (share *candidateStateShare) read(timing *candidateTiming, maxAge time.Duration, now func() time.Time) candidateState {
+	share.mutex.Lock()
+	defer share.mutex.Unlock()
+	if !share.at.IsZero() && now().Sub(share.at) <= maxAge {
+		return share.state
+	}
+	var state candidateState
+	var readAt time.Time
+	timing.nativeStep(func() {
+		readAt = now()
+		state = share.load()
+	})
+	if state.err != nil {
+		share.at = time.Time{}
+		return state
+	}
+	share.state, share.at = state, readAt
+	return state
+}
 
 type candidateCoordinator struct {
 	mutex          sync.Mutex
@@ -141,7 +197,7 @@ func coordinationHandler(writer http.ResponseWriter, request *http.Request) {
 	status := map[string]interface{}{
 		"schema":                                       "easymesh.cli.coordination.v1",
 		"candidate_parallel_agents":                    candidateRequests.maximumActive,
-		"candidate_limit_reason":                       "native_controller_command_type_single_flight",
+		"candidate_limit_reason":                       "native_controller_single_flight_per_agent",
 		"candidate_waiting":                            candidateRequests.waiting,
 		"candidate_active_agents":                      len(candidateRequests.active),
 		"candidate_queue_limit":                        candidateRequests.maximumWaiting,

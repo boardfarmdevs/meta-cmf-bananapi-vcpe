@@ -135,6 +135,18 @@ gen/vm/lxd/build.sh delete
 pool intact. To remove a lab permanently, stop/delete its VM, review the exact
 pool name, then delete that pool with LXD. Never delete a pool shared by a VM.
 
+New images in a running lab (the Banana Pi images built again, the VM kept): copy
+both into the VM's `/home/easymesh/easymesh-assets` and, as root in the VM, run
+
+```sh
+gen/lab-redeploy.sh X86EMLTRBPIBB_rdk-next_<stamp>.rootfs.lxc.tar.bz2 X86EMLTRBPIAP_rdk-next_<stamp>.rootfs.lxc.tar.bz2
+```
+
+It deploys the gateway and every extender again, each keeping its identity (its
+nvram), restores em_cli, a wired LAN port and a wired extender where the lab has
+them, then brings the lab up with `gen/lab-bringup.sh up`. Never while a room suite
+runs.
+
 For a portable appliance, use `export-thin` only after the appropriate VM test
 tier passes. The exported bundle can be imported under another lab name by
 sourcing `lab-config.sh` before running its `import.sh`; the importer follows

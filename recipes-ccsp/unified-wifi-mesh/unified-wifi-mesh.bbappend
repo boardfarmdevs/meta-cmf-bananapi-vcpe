@@ -218,6 +218,16 @@ EASYMESH_CORE_PATCHES = " \
     file://0219-ctrl-send-the-metric-reporting-policy-at-topology-sync.patch \
     file://0220-ctrl-keep-a-learned-backhaul-sta-across-a-restart.patch \
     file://0221-agent-keep-radios-in-an-empty-station-snapshot.patch \
+    file://0222-ctrl-single-flight-unassociated-sta-queries-per-agent.patch \
+    file://0223-agent-answer-every-channel-preference-query.patch \
+    file://0224-agent-keep-the-channel-on-a-selection-without-preferences.patch \
+    file://0225-ctrl-no-default-channel-preferences.patch \
+    file://0226-ctrl-a-policy-ack-configures-every-radio-of-the-agent.patch \
+    file://0227-ctrl-order-conflicting-claims-by-when-the-association-began.patch \
+    file://0228-ctrl-answer-an-m1-sent-again-after-its-m2.patch \
+    file://0229-ctrl-concurrent-candidate-queries-complete-and-time-out-on-their-own.patch \
+    file://0230-ctrl-each-agents-em-config-times-out-on-its-own.patch \
+    file://0231-cli-candidate-polls-share-one-recent-read.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

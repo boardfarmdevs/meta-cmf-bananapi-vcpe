@@ -97,7 +97,7 @@ downloading one. Screenshots and failed-test traces stay in ignored
 The site is built and published by the Pages workflow
 (`.github/workflows/pages.yml`) on every push to `main`: `pages/build` runs
 `npm ci`, `npm run build` and `npm test` here, and `pages/finish-site.py` adds the
-labs bar shared by the four lab sites. The Pages source is **GitHub Actions**.
+labs bar shared by the five lab sites. The Pages source is **GitHub Actions**.
 
 `npm run build` writes the whole public site to `site/`: this explorer under
 `explorer/`, `pages-index.html` as the landing page, and the disconnected room

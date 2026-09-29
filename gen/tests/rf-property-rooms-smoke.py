@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # (EASYMESH_ROOM_WORLDS_ROOT, as for run-easymesh-suite.sh).
 WORLDS = ROOT / (os.environ.get("EASYMESH_ROOM_WORLDS_ROOT") or "gen/wmediumd/configurator/worlds")
 ROOMS = ("rf-packet-size-counters", "rf-asymmetric-ack")
+# The default room of each room set (worlds, worlds-wired, worlds-pods, worlds-pods-wired).
+DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods|pods-wired))?--private-client-room-walk")
 COUNTERS = {"packets_per_second", "bytes_per_second", "retries_per_second",
             "tx_errors_per_second", "rx_errors_per_second"}
 
@@ -102,9 +104,7 @@ def preflight(room, current):
     if (room.get("lease", {}).get("held") or room.get("movement_active")
             or room.get("recording", {}).get("active")):
         raise RuntimeError("external owner/movement/recording active; leave the room untouched")
-    if (room.get("selected_world") not in {"default", "home-five-agent--private-client-room-walk",
-                                           "home-five-agent-pods--private-client-room-walk",
-                                           "home-five-agent-pods-wired--private-client-room-walk"}
+    if ((room.get("selected_world") != "default" and not DEFAULT_WORLD.fullmatch(room.get("selected_world") or ""))
             or room.get("playback", {}).get("time_ms") != 0
             or room.get("playback", {}).get("status") != "paused"
             or current.get("health", {}).get("healthy") is not True):

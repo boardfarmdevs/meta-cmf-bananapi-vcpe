@@ -1,0 +1,73 @@
+Subject: [PATCH] ctrl: single-flight unassociated STA queries per agent
+
+em_orch_t::is_cmd_type_in_progress admits one command per type, so an
+Unassociated STA Link Metrics Query to one agent waited for the query in
+flight to any other agent. Collecting candidate measurements for 20 radios
+took about 12 s a round that way, longer than the 7.5 s refresh of the
+candidate stream. The query goes to one agent and its reply is matched to
+the querying radio by MID, so queries to different agents are independent:
+only a query to the same agent (its AlMac, from the event's subdoc) waits
+for the one in flight. An event without an AlMac keeps the single flight of
+its type. em_cli's candidate coordinator runs four agents at a time.
+
+Upstream-Status: Pending
+
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -33,6 +33,7 @@
+ #include <sys/uio.h>
+ #include <unistd.h>
+ #include <assert.h>
++#include <cjson/cJSON.h>
+ #include "em_base.h"
+ #include "em_cmd.h"
+ #include "em_orch.h"
+@@ -550,6 +551,23 @@
+ }
+ 
+ 
++/* The agent an Unassociated STA Link Metrics Query event is for (its AlMac). */
++static bool unassoc_query_agent(em_bus_event_t *evt, mac_address_t al_mac)
++{
++    cJSON *obj = cJSON_Parse(evt->u.subdoc.buff);
++    cJSON *query = obj == NULL ? NULL : cJSON_GetObjectItem(obj, "wfa-dataelements:UnassocSTAQuery");
++    const char *text = cJSON_GetStringValue(query == NULL ? NULL : cJSON_GetObjectItem(query, "AlMac"));
++    bool found = text != NULL && strlen(text) == 17;
++
++    if (found) {
++        char buffer[18] = {0};
++        memcpy(buffer, text, 17);
++        dm_easy_mesh_t::string_to_macbytes(buffer, al_mac);
++    }
++    cJSON_Delete(obj);
++    return found;
++}
++
+ bool em_orch_t::is_cmd_type_in_progress(em_bus_event_t *evt)
+ {
+     auto command_lock = lock_commands();
+@@ -571,6 +589,24 @@
+                (type == em_cmd_type_set_policy)) {
+         return is_cmd_in_progress_by_type(evt);
+     }
++    /* A query goes to one agent and its reply is matched to the querying radio
++     * by MID: queries to different agents are independent, and only a query to
++     * the same agent waits for the one in flight. An event without an AlMac
++     * keeps the single flight of its type. */
++    mac_address_t al_mac;
++    if ((type == em_cmd_type_unassoc_sta_query) && unassoc_query_agent(evt, al_mac)) {
++        queue_t *queues[] = {m_pending, m_active};
++        for (queue_t *queue : queues) {
++            for (unsigned int i = 0; i < queue_count(queue); i++) {
++                em_cmd_t *pcmd = static_cast<em_cmd_t *>(queue_peek(queue, i));
++                if ((pcmd->m_type == type) &&
++                    (memcmp(pcmd->m_param.u.unassoc_sta_query_params.al_mac, al_mac, sizeof(mac_address_t)) == 0)) {
++                    return true;
++                }
++            }
++        }
++        return false;
++    }
+     if ((stats = static_cast<em_cmd_stats_t *>(hash_map_get(m_cmd_map, key))) != NULL) {
+         //em_printfout("Command of type: %d actively executing", type);
+         return true;

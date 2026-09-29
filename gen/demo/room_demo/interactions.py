@@ -593,6 +593,11 @@ class InteractiveMediumSession:
                 for role, binding in self.plan["bindings"].items()
                 if binding["role_type"] == "station"
             },
+            # the APs on a wired backhaul and their containers: the geometry rooms read them too
+            "wired_bindings": {
+                role: self.plan["bindings"].get(role, {}).get("container")
+                for role in self.world.get("wired_backhaul", [])
+            },
         }
 
     def _room_updates(self) -> list[dict[str, Any]]:
@@ -1644,9 +1649,14 @@ class InteractiveMediumSession:
             )
             for ap_role in ap_roles:
                 backhaul_present[ap_role] = True
-            # an AP on a wired backhaul has no RF to any other AP: its Wi-Fi
-            # backhaul station must never make a second path into the LAN
-            wired = set(self.world.get("wired_backhaul", []))
+            # An AP on a wired backhaul has RF to the other APs, and so can be a Wi-Fi
+            # extender's backhaul parent, only when its HAL never connects its backhaul
+            # station (wired_guard, rdk-wifi-hal 0045); without that guard it has none, as a
+            # station of it must never make a second path into the LAN.
+            wired = {
+                name for name in self.world.get("wired_backhaul", [])
+                if self.plan["bindings"].get(name, {}).get("wired_guard") != "hal"
+            }
             for peer_role in ap_roles:
                 if peer_role == role or wired & {role, peer_role}:
                     continue

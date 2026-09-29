@@ -14,6 +14,18 @@ clients=$(lxc list -c n --format csv 2>/dev/null \
 client_count=$(printf '%s\n' $clients | sed '/^$/d' | wc -l)
 [ "$client_count" -gt 0 ] || { echo 'no provisioned WLAN clients found' >&2; exit 1; }
 expected_associated=$((client_count + 4))
+# The lab's extenders on a wired backhaul (gen/wired-extender.sh): one more device each
+# (three radios, ten BSSes) without a backhaul station association. They start after the
+# medium: before it the kernel's flat medium lets every radio hear every other, and a
+# wired extender's backhaul station must never join a second path into the LAN.
+wired_extenders=$(for container in $(lxc list -c n --format csv 2>/dev/null \
+        | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
+    [ "$(lxc config get "$container" user.easymesh.backhaul 2>/dev/null)" = wired ] \
+        && echo "$container"
+done | paste -sd' ' - || true)
+wired_count=$(printf '%s\n' $wired_extenders | sed '/^$/d' | wc -l)
+model_devices=$((5 + wired_count))
+model_expected="$model_devices/$((3 * model_devices))/$((10 * model_devices))"
 state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-lab/reboot-acceptance}
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-userspace}
 kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
@@ -315,7 +327,7 @@ stop_client_instances() {
 }
 
 stop_mesh_instances() {
-    run_bounded "$extender_stop_parallelism" stop_extender_instance $extenders
+    run_bounded "$extender_stop_parallelism" stop_extender_instance $wired_extenders $extenders
     stop_instance bpibroadband "$mesh_stop_timeout"
     lxc config set bpibroadband boot.autostart false
 }
@@ -429,17 +441,50 @@ wait_extender_live() {
     return 1
 }
 
+wait_wired_extender_live() {
+    # its fronthaul up, its model complete, eth1 (its LAN port) in its brlan0, the
+    # gateway's wired LAN port in the gateway's brlan0, and no Wi-Fi station up
+    local container=$1 attempt private_count iot_count bss_count stations
+    for attempt in $(seq 1 48); do
+        private_count=$(lxc exec "$container" -- iw dev 2>/dev/null \
+            | grep -c 'ssid private_ssid' || true)
+        iot_count=$(lxc exec "$container" -- iw dev 2>/dev/null \
+            | grep -c 'ssid iot_ssid' || true)
+        bss_count=$(model_bss_for "$container")
+        stations=$(lxc exec "$container" -- sh -c \
+            'for n in /sys/class/net/*; do [ -e "$n/phy80211" ] || continue
+                iw dev "${n##*/}" info 2>/dev/null | grep -q "type managed" || continue
+                [ "$(cat "$n/operstate")" = down ] || echo "${n##*/}"; done' \
+            2>/dev/null || echo unknown)
+        if [ "$private_count" -eq 3 ] && [ "$iot_count" -eq 3 ] \
+            && [ "${bss_count:-0}" -eq 10 ] && [ -z "$stations" ] \
+            && lxc exec "$container" -- systemctl is-active --quiet \
+                onewifi em_agent lab-wired-backhaul 2>/dev/null \
+            && lxc exec "$container" -- sh -c \
+                '[ "$(basename "$(readlink /sys/class/net/eth1/master)")" = brlan0 ]' \
+            && lxc exec bpibroadband -- sh -c 'brctl show brlan0 | grep -qw eth2'; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "$container did not come up on its wired backhaul (stations up: ${stations:-none})" >&2
+    return 1
+}
+
 wait_mesh_model() {
-    local attempt counts complete container
+    # wifi: the controller and the Wi-Fi extenders, before any wired extender runs (the
+    # model may still hold a wired extender's rows); final: every mesh node, exact totals
+    local scope=${1:-final} attempt counts complete container
     for attempt in $(seq 1 48); do
         counts=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
             'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList))' \
             2>/dev/null || true)
         complete=1
-        for container in $mesh; do
+        for container in $mesh $([ "$scope" = wifi ] || echo "$wired_extenders"); do
             [ "$(model_bss_for "$container")" = 10 ] || complete=0
         done
-        if [ "$counts" = 5/15/50 ] && [ "$complete" -eq 1 ]; then
+        if [ "$complete" -eq 1 ] && { [ "$counts" = "$model_expected" ] \
+                || { [ "$scope" = wifi ] && [ "$wired_count" -gt 0 ]; }; }; then
             return 0
         fi
         sleep 5
@@ -449,13 +494,17 @@ wait_mesh_model() {
 }
 
 enable_metrics_reporting() {
-    local attempt response
+    # wifi: at least the Wi-Fi mesh (a wired extender may not run yet); final: every device
+    local scope=${1:-final} attempt response devices=$model_devices
+    [ "$scope" = final ] || devices=5
     for attempt in $(seq 1 12); do
         response=$(curl -fsS --max-time 45 -X POST \
             http://127.0.0.1:8888/api/v1/metricsreporting/enable 2>/dev/null || true)
-        if jq -e '.success == true and .devices == 5 and .radios == 15' \
+        if jq -e --argjson devices "$devices" --arg scope "$scope" \
+                '.success == true and .radios == 3 * .devices
+                 and (if $scope == "final" then .devices == $devices else .devices >= $devices end)' \
                 >/dev/null 2>&1 <<< "$response"; then
-            echo 'metrics policy active on 5 devices / 15 radios'
+            echo "metrics policy active on $(jq -r .devices <<< "$response") devices / $(jq -r .radios <<< "$response") radios"
             return 0
         fi
         sleep 5
@@ -593,7 +642,7 @@ wait_clients() {
 
 restart_report() {
     local container units
-    for container in $mesh; do
+    for container in $mesh $wired_extenders; do
         units='onewifi em_agent'
         [ "$container" = bpibroadband ] && units="$units em_ctrl em_cli"
         # One namespace crossing per container is materially faster than one
@@ -627,7 +676,7 @@ verify_stability_window() {
             'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
             2>/dev/null || true)
         topology_clients=$(live_client_count || true)
-        [ "$model" = "5/15/50/$expected_associated" ] \
+        [ "$model" = "$model_expected/$expected_associated" ] \
             && [ "$topology_clients" = "$client_count" ]
         assert_zero_restarts >/dev/null
         [ "$SECONDS" -ge "$deadline" ] && break
@@ -825,11 +874,11 @@ start)
         run_bounded "$extender_ready_parallelism" wait_extender_live $extenders
         ;;
     esac
-    wait_mesh_model
+    wait_mesh_model wifi
     end_phase
 
     begin_phase initial_metrics_policy
-    enable_metrics_reporting
+    enable_metrics_reporting wifi
     end_phase
 
     begin_phase clients
@@ -853,6 +902,13 @@ start)
     fi
     end_phase
 
+    if [ "$wired_count" -gt 0 ]; then
+        begin_phase wired_extenders
+        start_instances_bounded "$extender_start_parallelism" $wired_extenders
+        run_bounded "$extender_ready_parallelism" wait_wired_extender_live $wired_extenders
+        end_phase
+    fi
+
     begin_phase convergence_and_acceptance
     wait_clients
     verify_client_ipv4_ownership
@@ -875,7 +931,7 @@ start)
     end_phase
     write_lifecycle_timing "$result"
     trap - EXIT
-    echo "EasyMesh cold-boot reconstruction PASS: model=5/15/50 clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
+    echo "EasyMesh cold-boot reconstruction PASS: model=$model_expected clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
     ;;
 stop)
     begin_phase medium
@@ -901,13 +957,13 @@ stop)
 status)
     systemctl is-active --quiet docker.service snap.lxd.daemon.service
     docker inspect -f '{{.State.Running}}' dhcp-cpe1 wan-cpe1 | grep -vx true && exit 1 || true
-    for container in $mesh $clients; do
+    for container in $mesh $wired_extenders $clients; do
         [ "$(instance_state "$container")" = RUNNING ] || exit 1
     done
     verify_medium_backend
     [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
         'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
-        2>/dev/null)" = "5/15/50/$expected_associated" ]
+        2>/dev/null)" = "$model_expected/$expected_associated" ]
     [ "$(live_client_count)" = "$client_count" ]
     [ "$(live_client_metrics_count)" = "$client_count" ]
     verify_client_ipv4_ownership >/dev/null

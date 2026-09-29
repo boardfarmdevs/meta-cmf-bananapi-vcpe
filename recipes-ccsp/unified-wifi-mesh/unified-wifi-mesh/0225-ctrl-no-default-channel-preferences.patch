@@ -1,0 +1,81 @@
+Subject: [PATCH] ctrl: no default channel preferences
+
+Every device's data model got three anticipated channel preferences (op
+class 83 channel 6, 128 channel 42, 135 channel 7, preference 14), and
+em_config's Channel Selection Request carries them. An agent that completes
+the channel preference exchange then moves its radios to those channels
+and widths: in the lab, off the world's 20 MHz channels 6, 36 and 37.
+Channel preferences are the operator's to set; without one the request
+carries none and the agent keeps its channel.
+
+The controller stored the defaults with each device and loads them at
+start: ignore those rows (exactly the three defaults) when loading.
+
+Upstream-Status: Pending
+
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -1667,10 +1667,11 @@
+ 					};
+     unsigned int i;
+     bool colocated = false;
+-	dm_op_class_t	op_class[EM_MAX_PRE_SET_CHANNELS] 	= 	{
+-		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_anticipated, 83}, 83, 0, 0, 0, 1, {6}, {0xe0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0}),
+-		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_anticipated, 128}, 128, 0, 0, 0, 1, {42},{0xe0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0}),
+-		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_anticipated, 135}, 135, 0, 0, 0, 1, {7}, {0xe0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0}),
++	/* No anticipated channel preferences by default: the presets here (op
++	 * classes 83/6, 128/42, 135/7) made every agent's Channel Selection
++	 * Request move its radios to those channels and widths. Preferences are
++	 * the operator's to set. */
++	dm_op_class_t	op_class[] 	= 	{
+ 		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_scan_param, 81}, 81, 0, 0, 0, 3, {3, 6, 9},{0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0}),
+ 		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_scan_param, 115}, 115, 0, 0, 0, 9, {36, 40, 44, 48, 149, 153, 157, 161, 165}, {0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0}),
+ 		dm_op_class_t({{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, em_op_class_type_scan_param, 131}, 131, 0, 0, 0, 1, {1}, {0}, EM_CH_PREF_ENTRY_VALID, 0, 0, 0})
+@@ -1736,7 +1737,7 @@
+         em_printfout("dm->get_id():%d", dm->get_id());
+     }
+     dev->m_device_info.profile = profile;
+-	dm->set_channels_list(op_class, EM_MAX_PRE_SET_CHANNELS);
++	dm->set_channels_list(op_class, sizeof(op_class) / sizeof(op_class[0]));
+ 	
+ 	for (i = 0; i < sizeof(em_policy)/sizeof(em_policy_t); i++) {
+ 		dm->set_policy(policy[i]);
+--- a/src/dm/dm_op_class_list.cpp
++++ b/src/dm/dm_op_class_list.cpp
+@@ -318,6 +318,24 @@
+     return false;
+ }
+ 
++// An anticipated channel preference earlier builds stored for every device
++// (the removed defaults of dm_easy_mesh_list_t::create_data_model)
++static bool is_former_default_preference(const em_op_class_info_t& info)
++{
++    static const unsigned int defaults[][2] = {{83, 6}, {128, 42}, {135, 7}};
++
++    if ((info.id.type != em_op_class_type_anticipated) || (info.num_channels != 1) ||
++            (info.channel_pref[0] != 0xe0)) {
++        return false;
++    }
++    for (const auto &preference : defaults) {
++        if ((info.op_class == preference[0]) && (info.channels[0] == preference[1])) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ int dm_op_class_list_t::sync_db(db_client_t& db_client, void *ctx)
+ {
+     em_op_class_info_t info;
+@@ -384,6 +402,11 @@
+         info.sec_remain_non_occ_dur = static_cast<short unsigned int>(db_client.get_number(ctx, 10));
+         info.countdown_cac_comp = static_cast<unsigned int>(db_client.get_number(ctx, 11));
+ 
++        if (is_former_default_preference(info)) {
++            em_printfout("Ignoring stored default channel preference %s", id);
++            continue;
++        }
++
+         update_list(dm_op_class_t(&info), dm_orch_type_db_insert);
+     }
+ 

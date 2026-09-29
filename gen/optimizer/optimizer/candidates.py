@@ -564,22 +564,48 @@ class ControllerCandidateProvider:
                 except CandidateMetricsError as error:
                     failures[agent] = error
         elif jobs_by_agent:
-            with ThreadPoolExecutor(
-                max_workers=min(self.max_parallel_agents, len(jobs_by_agent)),
-                thread_name_prefix="candidate-agent",
-            ) as executor:
-                future_agents = {
-                    executor.submit(query_agent, agent, jobs): agent
-                    for agent, jobs in jobs_by_agent.items()
-                }
-                for future in as_completed(future_agents):
-                    agent = future_agents[future]
+            def query_agent_jobs(agent, jobs, defer_busy):
+                # As the serial path: a query the controller did not admit
+                # (busy, a radio not ready) waits for a second pass instead of
+                # failing the agent and dropping its other radios' results.
+                agent_measured, agent_rejected, busy = [], set(), []
+                for job in jobs:
                     try:
-                        measured, rejected = future.result()
-                        measured_by_agent[agent] = measured
-                        rejected_by_agent[agent] = rejected
-                    except CandidateMetricsError as error:
-                        failures[agent] = error
+                        measured, rejected = query_agent(agent, [job])
+                    except CandidateMetricsBusy:
+                        if not defer_busy:
+                            raise
+                        busy.append(job)
+                        continue
+                    agent_measured.extend(measured)
+                    agent_rejected.update(rejected)
+                return agent_measured, agent_rejected, busy
+
+            pending = jobs_by_agent
+            for defer_busy in (True, False):
+                deferred_by_agent = {}
+                with ThreadPoolExecutor(
+                    max_workers=min(self.max_parallel_agents, len(pending)),
+                    thread_name_prefix="candidate-agent",
+                ) as executor:
+                    future_agents = {
+                        executor.submit(query_agent_jobs, agent, jobs, defer_busy): agent
+                        for agent, jobs in pending.items()
+                    }
+                    for future in as_completed(future_agents):
+                        agent = future_agents[future]
+                        try:
+                            measured, rejected, busy = future.result()
+                        except CandidateMetricsError as error:
+                            failures[agent] = error
+                            continue
+                        measured_by_agent.setdefault(agent, []).extend(measured)
+                        rejected_by_agent.setdefault(agent, set()).update(rejected)
+                        if busy:
+                            deferred_by_agent[agent] = busy
+                pending = deferred_by_agent
+                if not pending or collection_cancelled.is_set():
+                    break
 
         self.last_raw = [
             transaction

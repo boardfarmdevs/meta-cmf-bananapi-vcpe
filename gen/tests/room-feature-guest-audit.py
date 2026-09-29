@@ -64,7 +64,7 @@ def links(mapping):
             r"prpl-client-[0-9]{2,3}|wlan-client(?:-[0-9]{3})?", container)
             for container in mapping.values()):
         raise ValueError("link audit requires one to 100 bound WLAN clients")
-    instances = json.loads(command("lxc", "query", "/1.0/instances?recursion=2", timeout=5))
+    instances = json.loads(command("lxc", "query", "/1.0/instances?recursion=2", timeout=20))
     processes = {item["name"]: item["state"]["pid"] for item in instances
                  if item["state"]["status"] == "Running"}
 
@@ -121,7 +121,9 @@ def band_links(request):
         raise ValueError("band probes require one to four bound WLAN clients")
     def inspect(item):
         role, container = item
-        state = json.loads(command("lxc", "query", f"/1.0/instances/{container}/state", timeout=5))
+        # The local LXD API answers in milliseconds, but under a rooms suite it took
+        # longer than 5 s once (received-discovery-recovery, 28 Sep)
+        state = json.loads(command("lxc", "query", f"/1.0/instances/{container}/state", timeout=20))
         process = state.get("pid")
         if state.get("status") != "Running" or type(process) is not int or process <= 1:
             raise RuntimeError(f"{container}: native client namespace is unavailable")

@@ -15,8 +15,9 @@ set -euo pipefail
 # station is down (every one of them after a wmediumd restart) does not recover on its
 # own: its OneWifi restarts first. Then every extender's agent restarts, and the
 # controller's topology must become complete (ten BSSes per agent, five per OpenSync
-# pod); some agents come back registered without their BSSes, so every agent restarts
-# once more if it does not. The room service then starts and must settle.
+# pod); some agents come back registered without their BSSes (the gateway's agent with a
+# radio stuck in WSC), so every agent restarts again, up to three times in all. The room
+# service then starts and must settle.
 #
 # Never while a room suite runs: it restarts services the suite measures.
 
@@ -64,6 +65,16 @@ sys.exit(0 if len(agents) == int(os.environ["EXPECTED"]) and all(bss(n) == 10 fo
          and all(bss(n) == 5 for n in pods) else 1)' 2>/dev/null
 }
 
+incomplete() {    # the topology's nodes short of their BSSes, e.g. "Agent-1:2 Extender-3:0"
+    curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | python3 -c '
+import json, sys
+nodes = json.load(sys.stdin).get("nodes", [])
+bss = lambda n: sum(len(h.get("BSSList") or []) for h in (n.get("haulTypes") or []))
+want = lambda n: 5 if n.get("kind") == "opensync-pod" else 10
+print(" ".join("%s:%d" % (n.get("name"), bss(n)) for n in nodes
+               if n.get("kind") != "controller" and bss(n) != want(n)) or "none")' 2>/dev/null || echo unknown
+}
+
 wait_topology() {
     local expected=$1 i
     for i in $(seq 36); do
@@ -81,7 +92,7 @@ restart_agents() {
 }
 
 up() {
-    local container expected recovered=
+    local container expected attempt recovered=
     lxc info bpibroadband >/dev/null 2>&1 || die "no gateway container bpibroadband"
     expected=$(( $(extenders | grep -c .) + 1 ))
     systemctl stop "$ROOM_UNIT" 2>/dev/null || true
@@ -99,11 +110,12 @@ up() {
     cx bpibroadband "systemctl restart em_ctrl"
     sleep 20
     restart_agents
-    if ! wait_topology "$expected"; then
-        log "topology incomplete: restarting every agent once more"
+    for attempt in 1 2 3; do
+        wait_topology "$expected" && break
+        [ "$attempt" -lt 3 ] || die "controller topology incomplete after three agent restarts: $(incomplete)"
+        log "topology incomplete ($(incomplete)): restarting every agent again"
         restart_agents
-        wait_topology "$expected" || die "controller topology incomplete after two agent restarts (lab-bringup.sh status)"
-    fi
+    done
     log "topology complete: $expected agents"
     room
 }

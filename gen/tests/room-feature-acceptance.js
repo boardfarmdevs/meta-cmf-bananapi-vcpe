@@ -218,17 +218,21 @@ function evaluate(current, interactions, view, world, bindings, now = Date.now()
   });
   const parents = Object.fromEntries((current.network?.mesh?.backhaul_edges || []).map(edge => [edge.child_role, edge.parent_role]));
   // The lab's own extenders hang off the Wi-Fi backhaul, except one on a wired backhaul
-  // (the world's wired_backhaul: no backhaul edge); an OpenSync pod (pod_N) has a backhaul
-  // edge only while it is on Wi-Fi backhaul, none on its wired (GTP) path. Every edge there
-  // is must lead to the gateway.
+  // (the world's wired_backhaul): that one is an Ethernet child of the gateway in the
+  // controller's topology and never a Wi-Fi child, and a Wi-Fi extender may hang off it. An
+  // OpenSync pod (pod_N) has a backhaul edge only while it is on Wi-Fi backhaul, none on its
+  // wired (GTP) path. Every edge there is must lead to the gateway.
   const wired = new Set(world?.wired_backhaul || []);
+  const wiredParents = Object.fromEntries((current.network?.mesh?.wired_edges || []).map(edge => [edge.child_role, edge.parent_role]));
+  const wiredConnected = [...wired].every(role => wiredParents[role] === 'gateway' && !(role in parents));
   const extenders = Object.entries(world?.roles || {})
     .filter(([role, kind]) => kind === 'fronthaul_ap' && role !== 'gateway' && !role.startsWith('pod_') && !wired.has(role))
     .map(([role]) => role);
-  const meshConnected = (extenders.length ? extenders.every(role => role in parents) : Object.keys(parents).length === 4) &&
+  const meshConnected = wiredConnected &&
+    (extenders.length ? extenders.every(role => role in parents) : Object.keys(parents).length === 4) &&
     Object.keys(parents).every(role => {
       const visited = new Set();
-      while (role !== 'gateway') {
+      while (role !== 'gateway' && !wired.has(role)) {
         if (!parents[role] || visited.has(role)) return false;
         visited.add(role); role = parents[role];
       }
@@ -249,7 +253,7 @@ function evaluate(current, interactions, view, world, bindings, now = Date.now()
   const strongestApConverged = qualified && sameBandBest && fleet.clients_with_stronger_ap === 0;
   const converged = policyConverged;
   return {converged, roster, viewMatchesRoom, viewMatchesModel, duplicates, scriptErrors, healthy, epochMatches,
-    complete, sameBandBest, metricsFresh, evaluationAge, meshConnected, meshViewMatches, meshCount: view.meshCount,
+    complete, sameBandBest, metricsFresh, evaluationAge, meshConnected, wiredConnected, meshViewMatches, meshCount: view.meshCount,
     expectedClients: wanted.length, actualClients: actual.length, candidates: fleet.candidate_measurements,
     strongerClients: fleet.clients_with_stronger_ap, policyConverged, strongestApConverged,
     optimizerPolicySatisfied: fleet.converged === true, decisionCoverage, strongerClientGaps,

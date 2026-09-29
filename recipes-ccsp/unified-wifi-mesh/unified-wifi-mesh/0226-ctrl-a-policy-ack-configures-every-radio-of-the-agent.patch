@@ -1,0 +1,29 @@
+Subject: [PATCH] ctrl: a policy ACK configures every radio of the agent
+
+em_config sends the Multi-AP Policy Config Request once per agent, from its
+first radio; the agent's other radios wait in set_policy_pending. The ACK
+moved only the sending radio to configured, so the others never left the
+step (and never ran channel selection, scan or topology publish).
+
+Upstream-Status: Pending
+
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -980,6 +980,17 @@
+ 		    break;
+ 	    }
+     }
++    // The policy is the agent's: em_config sends it once, from the agent's
++    // first radio, and the others wait in the same step. The ACK configures
++    // them too, or they stay in set_policy_pending.
++    if (match_found) {
++        for (auto &em : em_radios) {
++            if (em->get_state() == em_state_ctrl_set_policy_pending) {
++                em->m_policy_req_msg_id = 0;
++                em->set_state(em_state_ctrl_configured);
++            }
++        }
++    }
+     
+     if (!match_found) {
+ 	    em_printfout("No radio waiting for policy config ack for given msg_id");

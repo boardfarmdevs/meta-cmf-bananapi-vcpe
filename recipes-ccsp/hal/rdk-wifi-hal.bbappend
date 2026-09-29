@@ -334,3 +334,8 @@ SRC_URI += "file://0044-hwsim-preserve-unrooted-backhaul-beacons.patch"
 # aggregate signal attribute so EasyMesh associated-STA and backhaul metrics
 # do not become invalid RCPI 255 on drivers that omit per-chain samples.
 SRC_URI += "file://0025-read-standard-station-signal-when-chain-signal-is-absent.patch"
+
+# A lab extender on a wired backhaul (meta-cmf gen/wired-extender.sh sets
+# /nvram/lab_wired_backhaul) never connects its backhaul station, and so never
+# closes its root admission: it can be a Wi-Fi extender's backhaul parent.
+SRC_URI += "file://0045-lab-wired-backhaul-never-connects-its-station.patch"

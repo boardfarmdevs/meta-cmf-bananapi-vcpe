@@ -28,7 +28,10 @@ curl -fsS http://127.0.0.1:8888/api/v1/topology \
 
 echo RESTARTS
 restart_fail=0
-for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003; do
+# every mesh node, the lab's extenders on a wired backhaul (gen/wired-extender.sh) too
+wired=$(for c in $(lxc list -c n --format csv | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
+    [ "$(lxc config get "$c" user.easymesh.backhaul)" = wired ] && echo "$c"; done || true)
+for container in bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003 $wired; do
     for unit in onewifi em_agent; do
         restarts=$(lxc exec "$container" -- systemctl show "$unit" \
             -p NRestarts --value)

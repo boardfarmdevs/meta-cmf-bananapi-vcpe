@@ -55,7 +55,7 @@ def _mobility():
 
 
 class WorldTests(unittest.TestCase):
-    def test_a_wired_ap_has_no_backhaul_links_and_is_listed(self):
+    def test_a_wired_ap_is_listed_and_a_possible_backhaul_parent(self):
         layout = _layout()
         layout["nodes"].append({"role": "agent_3", "kind": "fronthaul_ap", "position": [5, 4],
                                 "backhaul": "wired"})
@@ -64,7 +64,8 @@ class WorldTests(unittest.TestCase):
         for generation in world["generations"]:
             backhaul = [(link["source_role"], link["destination_role"])
                         for link in generation["links"] if link["link_class"] == "backhaul"]
-            self.assertEqual(sorted(backhaul), [("agent_1", "agent_2"), ("agent_2", "agent_1")])
+            self.assertEqual(sorted(backhaul), [("agent_1", "agent_2"), ("agent_1", "agent_3"), ("agent_2", "agent_1"),
+                                                ("agent_2", "agent_3"), ("agent_3", "agent_1"), ("agent_3", "agent_2")])
             fronthaul = {link["source_role"] for link in generation["links"] if link["link_class"] == "fronthaul"}
             self.assertIn("agent_3", fronthaul)  # its clients are in the room like any AP's
         # without a wired AP the world is unchanged: no new key

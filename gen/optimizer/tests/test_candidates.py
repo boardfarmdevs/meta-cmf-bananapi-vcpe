@@ -649,6 +649,56 @@ def test_queries_for_two_radios_are_not_combined():
     assert {item.bssid for item in measured} == {BSSID, second_bssid}
 
 
+@pytest.mark.parametrize("busy_answers", [1, 2])
+def test_parallel_collection_retries_an_unready_radio_after_the_other_queries(busy_answers):
+    from optimizer.candidates import CandidateMetricsBusy
+
+    other_radio, other_bssid = "02:00:00:00:09:01", "02:00:00:aa:aa:03"
+    second_agent, second_radio = "02:00:00:00:0a:20", "02:00:00:00:0a:00"
+    second_bssid = "02:00:00:cc:cc:01"
+    raw = bsses() + [
+        {**bsses()[0], "bssid": other_bssid, "radio_id": other_radio, "channel": 40},
+        {**bsses()[0], "bssid": second_bssid, "device_id": second_agent, "radio_id": second_radio},
+    ]
+    candidates = (
+        inventory(),
+        replace(inventory(), bssid=other_bssid),
+        replace(inventory(), bssid=second_bssid, device_id=second_agent, device_name="Extender-2"),
+    )
+    radios = {(AGENT, 36): RADIO, (AGENT, 40): other_radio, (second_agent, 36): second_radio}
+    calls = []
+    calls_lock = Lock()
+
+    def request(_url, payload):
+        agent = payload["AlMac"]
+        query = payload["UnassocStaQueryList"][0]
+        channel = query["channels"][0]["channel"]
+        with calls_lock:
+            calls.append((agent, channel))
+            answered = calls.count((agent, channel))
+        if (agent, channel) == (AGENT, 36) and answered <= busy_answers:
+            raise CandidateMetricsBusy("Error_Not_Ready")
+        result = response()
+        result["metrics"][0].update({
+            "agent_al": agent, "ruid": radios[(agent, channel)],
+            "opclass": query["opclass"], "channel": channel,
+        })
+        return result
+
+    provider = ControllerCandidateProvider(
+        "http://controller", requester=request, allow_simulated=True, max_parallel_agents=2,
+    )
+    if busy_answers == 2:
+        with pytest.raises(CandidateMetricsBusy, match="Error_Not_Ready"):
+            provider((client(),), candidates, raw, "2026-08-21T20:00:01.000Z")
+    else:
+        measured = provider((client(),), candidates, raw, "2026-08-21T20:00:01.000Z")
+        assert {item.bssid for item in measured} == {BSSID, other_bssid, second_bssid}
+    # The unready radio waits for the other agent's and its own agent's other radio
+    assert sorted(calls[:3]) == [(AGENT, 36), (AGENT, 40), (second_agent, 36)]
+    assert calls[3:] == [(AGENT, 36)]
+
+
 def test_different_agents_are_queried_concurrently_with_stable_results():
     second_agent = "02:00:00:00:0a:20"
     second_radio = "02:00:00:00:0a:00"

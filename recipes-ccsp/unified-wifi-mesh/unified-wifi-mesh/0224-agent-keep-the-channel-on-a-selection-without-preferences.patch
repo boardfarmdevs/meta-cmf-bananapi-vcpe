@@ -1,0 +1,30 @@
+Subject: [PATCH] agent: keep the channel on a selection without preferences
+
+A Channel Selection Request whose Channel Preference TLV has no operating
+class for the radio's band leaves the choice to the agent. The agent still
+pushed a Radio subdoc to OneWifi and moved the radio to
+channel_select_configuration_pending, which only a channel change it never
+asked for would end. Accept it (the response is unchanged) and keep the
+operating channel and the radio's state.
+
+Upstream-Status: Pending
+
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1986,6 +1986,16 @@
+     }
+ 
+ 	op_class.freq_band = get_band();
++
++    /* No preference for this radio's band leaves the choice to the agent:
++     * keep the operating channel. Pushing a radio subdoc or waiting for a
++     * channel change that never comes would park the radio in
++     * channel_select_configuration_pending. */
++    if (op_class.num == 0) {
++        em_printfout("Channel Selection Request without preferences for radio %s, keeping its channel",
++            util::mac_to_string(get_radio_interface_mac()).c_str());
++        return 0;
++    }
+    
+ 	get_mgr()->io_process(em_bus_event_type_channel_sel_req, reinterpret_cast<unsigned char *> (&op_class), sizeof(op_class_channel_sel));
+     
