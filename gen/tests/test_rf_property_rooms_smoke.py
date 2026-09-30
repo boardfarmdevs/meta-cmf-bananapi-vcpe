@@ -52,7 +52,7 @@ def test_external_lease_and_active_movement_block_preflight():
     current = {"health": {"healthy": True}}
     MODULE.preflight(room, current)
     MODULE.preflight({**room, "selected_world": "home-five-agent--private-client-room-walk"}, current)
-    MODULE.preflight({**room, "selected_world": "home-five-agent-pods-wired--private-client-room-walk"}, current)
+    MODULE.preflight({**room, "selected_world": "home-five-agent-pods--private-client-room-walk"}, current)
     MODULE.preflight({**room, "selected_world": "home-five-agent-wired--private-client-room-walk"}, current)
     for change in ({"lease": {"held": True}}, {"movement_active": True},
                    {"recording": {"active": True}}, {"selected_world": "rf-asymmetric-ack"}):

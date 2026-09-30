@@ -40,7 +40,7 @@ cleanup()
 }
 trap cleanup EXIT
 
-cd "$root/gen/wmediumd/configurator"
+cd "$root/gen/medium/configurator"
 status_section "Closed-loop optimizer: $mode"
 status_action "Discovering live radio identities and association state."
 python3 -m wmdcfg.cli inventory -o "$inventory"

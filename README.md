@@ -6,13 +6,21 @@ machine. The output is a `*.lxc.tar.bz2` rootfs that runs the same RDK-B userspa
 stack the physical Banana Pi runs (utopia, ccsp-*, RdkWanManager, ccsp-dhcp-mgr,
 hal-generic, rbus, sysevent, syscfg, telemetry, …) on x86 with no kernel modules.
 
-<!-- labs block: the same in the five lab repositories -->
-**Site:** <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/>. Part of the boardfarmdevs labs, which serve three
-goals: the EasyMesh optimizer ([RDK EasyMesh](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/),
-[prplMesh](https://boardfarmdevs.github.io/prplmesh-lab/)), the OpenSync adapter
-([EMOSA](https://boardfarmdevs.github.io/emosa-lab/), [OpenSync](https://boardfarmdevs.github.io/opensync-lab/))
-and EasyMesh on physical hardware ([Protocol lab](https://boardfarmdevs.github.io/easymesh-lab/)),
-on the way to one EasyMesh system on wmediumd with native agents and OpenSync pods together.
+<!-- labs block: the same in every repository of the EasyMesh labs, but for the Site line -->
+**Site:** <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/>.
+The [EasyMesh labs](https://boardfarmdevs.github.io/easymesh-labs/) serve three
+goals: EasyMesh optimizer development in a rich virtual lab, on both stacks
+([RDK EasyMesh](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/),
+[prplMesh](https://boardfarmdevs.github.io/prplmesh-lab/)); unchanged OpenSync
+pods as EasyMesh agents under a local controller, without the OpenSync cloud
+([EMOSA](https://boardfarmdevs.github.io/emosa-lab/), with the
+[OpenSync lab](https://boardfarmdevs.github.io/opensync-lab/)'s pods); and
+EasyMesh on physical hardware
+([Protocol lab](https://boardfarmdevs.github.io/easymesh-lab/)). Two core
+components carry them: the RF medium
+([easymesh-medium](https://github.com/boardfarmdevs/easymesh-medium)) and EMOSA's
+OVSDB ⇄ EasyMesh conversion. The rest is infrastructure and learning around them.
+<!-- /labs block -->
 
 Wi-Fi is provided by `mac80211_hwsim` radios moved into the container as
 `nictype: physical` NICs instead of real hardware. That is what the

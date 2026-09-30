@@ -59,7 +59,7 @@ policy test double, not evidence that the controller reported a measurement.
 `configs/load-counter-guard-policy.yaml` additionally requires fresh native
 retry, TX-failure and RX-drop rates before load balancing; missing counters
 abstain and rates over explicit limits veto balancing. Signal rescue remains
-unchanged. See [RF coverage](../../doc/easymesh/reference/radio/rf-property-coverage.md)
+unchanged. See [RF coverage](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md)
 for the limits, decision reasons, demonstration rooms and focused validation.
 The checked-in `gen/demo/manifests/native-counter-guard-room-profile.json`
 operates `rf-asymmetric-ack` with this guard; select it with
@@ -183,7 +183,7 @@ Run a deterministic band-walk with one client ignoring BTM requests:
 
 ```sh
 python3 -m optimizer.cli simulate \
-  --world ../wmediumd/configurator/worlds/golden/home-a-band-walk-small.world.json \
+  --world ../medium/configurator/worlds/golden/home-a-band-walk-small.world.json \
   --policy configs/band-upgrade-policy.yaml \
   --initial-band 2.4 \
   --client-behavior sta_static_01=ignore \

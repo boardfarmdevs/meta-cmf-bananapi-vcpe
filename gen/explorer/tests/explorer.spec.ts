@@ -235,7 +235,7 @@ test('new band rooms remain disconnected static previews and the manual explains
 }) => {
   // Every golden room is offered, however many the catalog holds.
   const rooms = readdirSync(
-    fileURLToPath(new URL('../../wmediumd/configurator/worlds/golden', import.meta.url)),
+    fileURLToPath(new URL('../../medium/configurator/worlds/golden', import.meta.url)),
   ).filter((name) => name.endsWith('.world.json')).length;
   const requests: string[] = [];
   const errors: string[] = [];

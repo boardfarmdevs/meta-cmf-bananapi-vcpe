@@ -41,7 +41,7 @@ test "$(sha256sum "$CONTROLLER_IMAGE" | awk '{print $1}')" = \
     "$CONTROLLER_SHA256"
 test "$(sha256sum "$EXTENDER_IMAGE" | awk '{print $1}')" = \
     "$EXTENDER_SHA256"
-test "$(sha256sum "$EASYMESH_REPO/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
+test "$(sha256sum "$EASYMESH_REPO/gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')" = \
     "$EXPECTED_WMEDIUMD_SHA256"
 test "$(systemctl is-active boardfarm-lab.service)" = active
 ip link show br-wan101 >/dev/null

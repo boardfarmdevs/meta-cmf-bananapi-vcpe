@@ -1,8 +1,8 @@
 {
   "schema": "easymesh.room-demo.v1",
   "name": "private-client-room-walk-pods",
-  "description": "One private 5 GHz client walks from Extender-1 toward Extender-4. With two OpenSync pods (pod_1, pod_2) managed through the EMOSA adapter; the lab's own rooms with the pods added (gen/wmediumd/configurator/worlds-pods).",
-  "world": "gen/wmediumd/configurator/worlds-pods/golden/home-a-private-client-room-walk.world.json",
+  "description": "One private 5 GHz client walks from Extender-1 toward Extender-4. The lab's standard rooms (the four Wi-Fi extenders and extender_5 on a wired backhaul: bpiap-004, gen/wired-extender.sh) with two OpenSync pods (pod_1, pod_2) managed through the EMOSA adapter (gen/medium/configurator/worlds-pods).",
+  "world": "gen/medium/configurator/worlds-pods/golden/home-a-private-client-room-walk.world.json",
   "bindings": "gen/demo/bindings/private-client-room-walk-pods.json",
   "policy": "gen/optimizer/configs/threshold-policy.yaml",
   "hero": {
@@ -61,5 +61,5 @@
       "label": "Action window closed; verify and cool down"
     }
   ],
-  "worlds_root": "gen/wmediumd/configurator/worlds-pods"
+  "worlds_root": "gen/medium/configurator/worlds-pods"
 }

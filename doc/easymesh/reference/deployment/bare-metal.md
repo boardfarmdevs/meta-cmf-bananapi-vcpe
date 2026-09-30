@@ -11,8 +11,8 @@ LXD VM for normal demonstrations. Never share an hwsim pool with another lab.
 Build the role images with [the source guide](../../../build/README.md).
 Prepare LXD storage/management networking, Boardfarm's `br-wan101` WAN/DHCP
 path, the WNM-capable client image, patched
-[hwsim](../../../../gen/hwsim/README.md) and
-[wmediumd](../radio/wmediumd-internals.md).
+[hwsim](https://github.com/boardfarmdevs/easymesh-medium/blob/main/hwsim/README.md) and
+[wmediumd](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/wmediumd-internals.md).
 LXD image conversion may need `fakeroot`; record original archive hashes.
 
 The twenty-client RDK profile uses a 32-radio pool with `channels=3 regtest=5`
@@ -28,7 +28,7 @@ Run from `gen/` on the prepared host:
 ./bpi.sh -F -b br-wan101 /absolute/path/controller.rootfs.lxc.tar.bz2
 ./bpi.sh -F /absolute/path/extender.rootfs.lxc.tar.bz2
 lxc exec bpiap -- systemctl is-active onewifi
-SNR=40 ./wmediumd/wmediumd-up.sh up
+SNR=40 ./medium/wmediumd/wmediumd-up.sh up
 lxc exec bpiap -- iw dev wifi1.3 link
 lxc exec bpiap -- systemctl is-active em_agent
 ```

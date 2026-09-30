@@ -409,7 +409,7 @@ HAL fallback, and idle associated clients do not expire. Downlink PHY ACKs
 cannot create or replace ownership: successful association responses and
 station-originated ToDS data establish it. The existing `-T` self-test exercises
 departure, stale downlink rejection, reconnect and the actual socket response;
-`gen/wmediumd/tests/test-association-ownership.sh` also compiles HAL precedence.
+`gen/medium/wmediumd/tests/test-association-ownership.sh` also compiles HAL precedence.
 
 Clean component builds replay the series against pristine pinned source.
 Compiled source-extraction regressions take the fully
@@ -527,7 +527,7 @@ wmediumd patches, in order:
 | `0018` | page large configured-link dumps so control responses remain bounded at 50/100-client scale |
 | `0019` | return the original transmit frequency with TX status for multichannel radios whose legacy global channel pointer is unset |
 
-`gen/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
+`gen/medium/wmediumd/build-wmediumd.sh` applies this series to pinned upstream source;
 `wmediumd-up.sh` runs the medium's internal acceptance suite before launch.
 
 ## Build and acceptance

@@ -152,7 +152,7 @@ def test_band_links_enters_bound_native_namespace_once(monkeypatch, container):
 
     monkeypatch.setattr(AUDIT, "command", command)
     assert AUDIT.band_links({"target": "10.0.0.1", "mapping": {"client": container}}) == {"client": evidence}
-    assert calls == [(("lxc", "query", f"/1.0/instances/{container}/state"), {"timeout": 5}),
+    assert calls == [(("lxc", "query", f"/1.0/instances/{container}/state"), {"timeout": 20}),
                      (("nsenter", "--target", "1234", "--net", "--", AUDIT.sys.executable,
                        str(Path(AUDIT.__file__).resolve()), "band-probe", "10.0.0.1"), {"timeout": 15})]
 
@@ -199,7 +199,7 @@ def test_full_pool_links_uses_one_inventory_and_native_network_namespaces(monkey
 
     monkeypatch.setattr(AUDIT, "command", command)
     assert AUDIT.links(mapping) == dict.fromkeys(mapping, LINK)
-    assert calls[0] == (("lxc", "query", "/1.0/instances?recursion=2"), {"timeout": 5})
+    assert calls[0] == (("lxc", "query", "/1.0/instances?recursion=2"), {"timeout": 20})
     assert len(calls) == 101
     assert all(arguments[0] == "nsenter" and arguments[3:] == ("--net", "--", "iw", "dev", "wlan0", "link")
                and options == {"timeout": 3} for arguments, options in calls[1:])

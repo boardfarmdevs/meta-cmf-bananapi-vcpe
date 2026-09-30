@@ -64,6 +64,21 @@ fi
 test "$(sudo -u easymesh git -C "$meta_workspace/meta-cmf-bananapi-vcpe" rev-parse HEAD)" = \
     "$expected_meta_head"
 
+# The RF medium (gen/medium, easymesh-medium at the commit the lab pins): the
+# submodule from its bundle, then the daemon and console the host built from it.
+lab_repo=$meta_workspace/meta-cmf-bananapi-vcpe
+medium_bundle=$assets/easymesh-medium.bundle
+if [ -f "$medium_bundle" ]; then
+    sudo -u easymesh git -C "$lab_repo" config submodule.gen/medium.url "$medium_bundle"
+fi
+sudo -u easymesh git -c protocol.file.allow=always -C "$lab_repo" submodule update --init gen/medium
+test "$(sudo -u easymesh git -C "$lab_repo/gen/medium" rev-parse HEAD)" = \
+    "$(sudo -u easymesh git -C "$lab_repo" rev-parse HEAD:gen/medium)"
+sudo -u easymesh install -D -m 0755 "$assets/wmediumd" "$lab_repo/gen/medium/wmediumd/build/wmediumd"
+sudo -u easymesh install -m 0644 "$assets/wmediumd.provenance.env" \
+    "$lab_repo/gen/medium/wmediumd/build/wmediumd.provenance.env"
+sudo -u easymesh install -m 0755 "$assets/wmediumd-console" "$lab_repo/gen/medium/observer/wmediumd-console"
+
 clone_pinned_repo() {
     local name=$1 branch=$2 expected=$3
     local destination="$boardfarm_workspace/$name"
@@ -134,7 +149,7 @@ if [ ! -f /etc/apt/sources.list.d/easymesh-ubuntu-src.sources ]; then
         > /etc/apt/sources.list.d/easymesh-ubuntu-src.sources
 fi
 apt-get update
-REFETCH=1 "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build-hwsim.sh" \
+REFETCH=1 "$meta_workspace/meta-cmf-bananapi-vcpe/gen/medium/hwsim/build-hwsim.sh" \
     --6ghz --install
 hwsim_module=$(modinfo -k "$expected_kernel" -F filename mac80211_hwsim)
 case "$hwsim_module" in
@@ -144,7 +159,7 @@ esac
 grep -aq 'EXPERIMENTAL wmediumd' "$hwsim_module"
 sha256sum "$hwsim_module" \
     > /var/lib/easymesh-lab/mac80211_hwsim.sha256
-rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/hwsim/build"
+rm -rf "$meta_workspace/meta-cmf-bananapi-vcpe/gen/medium/hwsim/build"
 
 # Start a tri-band pool only after installing the multichannel registration
 # patch and confirming that no copied runtime state is present in this guest.

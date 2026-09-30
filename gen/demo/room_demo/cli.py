@@ -34,12 +34,12 @@ from .worlds import BoundWorlds
 from .rf_manifest import annotate_manifest
 from .pool import bind_client_pool, pool_manifest
 from .client_wifi import disconnected_client, resume_bound_client
-from .backhaul import BackhaulManager, RdkBackhaulAdapter
+from .backhaul import BackhaulManager, PodBackhaul, RdkBackhaulAdapter
 
 
 DEMO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = DEMO_ROOT.parents[1]
-CONFIGURATOR = REPO_ROOT / "gen/wmediumd/configurator"
+CONFIGURATOR = REPO_ROOT / "gen/medium/configurator"
 DEFAULT_MANIFEST = DEMO_ROOT / "manifests/private-client-room-walk.json"
 # The room variant with OpenSync pods (EMOSA) is selected by manifest only:
 # EASYMESH_ROOM_MANIFEST (repository-relative or absolute) replaces the default.
@@ -335,6 +335,7 @@ def _interactive(args) -> int:
     recovery = RecoveryJournal(args.recovery_file, run_id, _hash(inventory),
                                inventory_identity_sha256=inventory_identity(inventory))
     backhaul_radios = RdkBackhaulAdapter(plan)
+    pods = PodBackhaul(plan)
     backhaul_adapter = backhaul_radios if args.adaptive_backhaul and args.mode == "act" else None
     if args.adaptive_backhaul and backhaul_adapter is None:
         raise ActuatorError("--adaptive-backhaul requires interactive --mode act --yes-act")
@@ -356,6 +357,7 @@ def _interactive(args) -> int:
             adaptive_backhaul=backhaul_adapter is not None,
             model_backhaul=args.model_backhaul,
             prepare_backhaul=backhaul_radios.prepare_radios,
+            pod_backhaul=pods.arrange if pods.pods else None,
         )
     )
     maximum_actions = args.max_actions

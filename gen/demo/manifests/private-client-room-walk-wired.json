@@ -1,8 +1,8 @@
 {
   "schema": "easymesh.room-demo.v1",
   "name": "private-client-room-walk-wired",
-  "description": "One private 5 GHz client walks from Extender-1 toward Extender-4. With the lab's extender on a wired backhaul (extender_5: bpiap-004, gen/wired-extender.sh); the lab's own rooms with it added (gen/wmediumd/configurator/worlds-wired).",
-  "world": "gen/wmediumd/configurator/worlds-wired/golden/home-a-private-client-room-walk.world.json",
+  "description": "One private 5 GHz client walks from Extender-1 toward Extender-4. With the lab's extender on a wired backhaul (extender_5: bpiap-004, gen/wired-extender.sh); the lab's own rooms with it added (gen/medium/configurator/worlds-wired).",
+  "world": "gen/medium/configurator/worlds-wired/golden/home-a-private-client-room-walk.world.json",
   "bindings": "gen/demo/bindings/private-client-room-walk-wired.json",
   "policy": "gen/optimizer/configs/threshold-policy.yaml",
   "hero": {
@@ -61,5 +61,5 @@
       "label": "Action window closed; verify and cool down"
     }
   ],
-  "worlds_root": "gen/wmediumd/configurator/worlds-wired"
+  "worlds_root": "gen/medium/configurator/worlds-wired"
 }

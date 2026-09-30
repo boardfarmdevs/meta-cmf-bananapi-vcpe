@@ -101,7 +101,7 @@ labs bar shared by the five lab sites. The Pages source is **GitHub Actions**.
 
 `npm run build` writes the whole public site to `site/`: this explorer under
 `explorer/`, `pages-index.html` as the landing page, and the disconnected room
-viewer, manual and `golden/` rooms from `gen/wmediumd/configurator/worlds`.
+viewer, manual and `golden/` rooms from `gen/medium/configurator/worlds`.
 It refuses a viewer that does not default to the disconnected sandbox.
 
 To preview the finished site locally:

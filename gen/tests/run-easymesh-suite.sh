@@ -34,7 +34,7 @@ Environment:
   EASYMESH_SSH_HOST         SSH host used by room browser tests; default: localhost.
   EASYMESH_ROOM_WORLDS_ROOT Golden World tree of the running room variant, relative
                             to the checkout; default: the one the room service reports
-                            (/api/demo/worlds), else gen/wmediumd/configurator/worlds.
+                            (/api/demo/worlds), else gen/medium/configurator/worlds.
   EASYMESH_EXPECTED_CLIENTS Override the auto-detected lab client profile.
   WEBUI_STATIC_DIR          Built unified-wifi-mesh static directory.
   PUBLIC_VIEWER_URL         Published static viewer base URL for its browser test.
@@ -301,12 +301,12 @@ run_static() {
     local test
     if have_command python3 && have_command pytest; then
         run static documentation "cd '$root' && python3 gen/tests/test_documentation.py"
-        run static python "cd '$root' && PYTHONPATH='$root/gen/wmediumd/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib gen/wmediumd/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests"
+        run static python "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib gen/medium/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests"
     else
         skip static python 'install python3 and pytest for Python and documentation tests'
     fi
     if have_modern_node; then
-        run static console-ng-model "cd '$root' && node --test gen/wmediumd/observer/web/ng/model.test.mjs"
+        run static console-ng-model "cd '$root' && node --test gen/medium/observer/web/ng/model.test.mjs"
         for test in "$root"/gen/tests/viewer-*-test.js "$root"/gen/tests/test-*.js "$root"/gen/tests/fullscreen-control-test.js "$root"/gen/tests/signal-meter-test.js; do
             case $(basename "$test") in
                 *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
@@ -388,13 +388,13 @@ run_live() {
 
 run_rooms() {
     # EASYMESH_ROOM_WORLDS_ROOT: the room's Golden World tree when the room runs a variant
-    # (worlds-wired: with the wired extender; worlds-pods: with OpenSync pods through EMOSA;
-    # worlds-pods-wired: both). Unset, the tree the room service reports. Exported, so every
+    # (worlds-wired: the standard rooms, with the wired extender; worlds-pods: those with
+    # OpenSync pods through EMOSA). Unset, the tree the room service reports. Exported, so every
     # room test selects from the tree the room runs.
     if [ -z "${EASYMESH_ROOM_WORLDS_ROOT:-}" ]; then
         EASYMESH_ROOM_WORLDS_ROOT=$(curl -fsS --max-time 15 "$room_url/api/demo/worlds" 2>/dev/null |
             python3 -c 'import json, sys; print(json.load(sys.stdin).get("worlds_root", ""))' 2>/dev/null || true)
-        EASYMESH_ROOM_WORLDS_ROOT=${EASYMESH_ROOM_WORLDS_ROOT:-gen/wmediumd/configurator/worlds}
+        EASYMESH_ROOM_WORLDS_ROOT=${EASYMESH_ROOM_WORLDS_ROOT:-gen/medium/configurator/worlds}
     fi
     export EASYMESH_ROOM_WORLDS_ROOT
     echo "rooms: worlds $EASYMESH_ROOM_WORLDS_ROOT"
@@ -420,7 +420,7 @@ run_rooms() {
 }
 
 run_rf() {
-    run rf contracts "cd '$root' && PYTHONPATH='$root/gen/wmediumd/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib -o addopts='' -q gen/optimizer/tests/test_counter_guard.py gen/optimizer/tests/test_counter_shadow.py gen/tests/test_native_retry_counters.py gen/optimizer/tests/test_load_policy.py gen/optimizer/tests/test_policy.py gen/optimizer/tests/test_owner_observation.py gen/optimizer/tests/test_rf_observations.py gen/demo/tests/test_rf_property_coverage.py gen/demo/tests/test_rf_rooms.py gen/demo/tests/test_world_switch.py gen/demo/tests/test_traffic_experiment.py gen/demo/tests/test_rf_observation.py gen/tests/test_rf_property_rooms_smoke.py gen/tests/test_counter_guard_room_smoke.py gen/tests/test_frequency_slot_allocation.py gen/tests/test_console_ng_contract.py gen/wmediumd/configurator/tests/test_rf_contract.py" || return
+    run rf contracts "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib -o addopts='' -q gen/optimizer/tests/test_counter_guard.py gen/optimizer/tests/test_counter_shadow.py gen/tests/test_native_retry_counters.py gen/optimizer/tests/test_load_policy.py gen/optimizer/tests/test_policy.py gen/optimizer/tests/test_owner_observation.py gen/optimizer/tests/test_rf_observations.py gen/demo/tests/test_rf_property_coverage.py gen/demo/tests/test_rf_rooms.py gen/demo/tests/test_world_switch.py gen/demo/tests/test_traffic_experiment.py gen/demo/tests/test_rf_observation.py gen/tests/test_rf_property_rooms_smoke.py gen/tests/test_counter_guard_room_smoke.py gen/tests/test_frequency_slot_allocation.py gen/tests/test_console_ng_contract.py gen/medium/configurator/tests/test_rf_contract.py" || return
     run rf viewer "cd '$root' && node gen/tests/viewer-room-guide-test.js" || return
     run rf inspector "cd '$root' && node gen/tests/viewer-rf-inspector-test.js" || return
     run rf documentation "cd '$root' && python3 gen/tests/test_documentation.py" || return
@@ -429,12 +429,12 @@ run_rf() {
         block rf counter-shadow 'counter-manifest failed; subsequent RF mutation was not attempted'
         return
     }
-    run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/wmediumd/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
+    run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/medium/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }
 
 run_rf_actions() {
     local scenario destination workload_options failed_scenario=
-    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/wmediumd/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || failed_scenario=contracts
+    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/medium/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || failed_scenario=contracts
     if [[ -z $failed_scenario ]] && ! prepare_lab; then
         failed_scenario=prerequisites
         skip rf-actions prerequisites "LXD VM $vm or guest repository is unavailable"
@@ -450,7 +450,7 @@ run_rf_actions() {
             pressure) workload_options='--payload-bytes 1200 --pressure-payload-bytes 1400 --pressure-access-category voice --pressure-snr 2 --background-packets-per-second 1000' ;;
             rescue) workload_options='--payload-bytes 1200 --pressure-payload-bytes 512 --pressure-access-category voice --pressure-snr 2 --rescue-snr 32 --background-packets-per-second 500' ;;
         esac
-        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/wmediumd/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --counter-case '$scenario' $workload_options --yes-change-lab --output '$destination'")" || failed_scenario=$scenario
+        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/medium/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --counter-case '$scenario' $workload_options --yes-change-lab --output '$destination'")" || failed_scenario=$scenario
     done
 }
 

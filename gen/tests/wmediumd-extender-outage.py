@@ -14,11 +14,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGURATOR = ROOT / "wmediumd" / "configurator"
+CONFIGURATOR = ROOT / "medium" / "configurator"
 if not CONFIGURATOR.is_dir():
     CONFIGURATOR = Path(
         os.environ.get("EASYMESH_REPO", "/home/easymesh/git/meta-cmf-bananapi-vcpe")
-    ) / "gen" / "wmediumd" / "configurator"
+    ) / "gen" / "medium" / "configurator"
 sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ControlClient  # noqa: E402

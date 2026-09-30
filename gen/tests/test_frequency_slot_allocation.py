@@ -7,7 +7,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCHES = ROOT / "gen/wmediumd/patches"
+PATCHES = ROOT / "gen/medium/wmediumd/patches"
 BASE = PATCHES / "0012-wmediumd-add-frequency-qualified-snr-control.patch"
 FIX = PATCHES / "0034-wmediumd-linear-frequency-slot-allocation.patch"
 

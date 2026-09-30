@@ -9,7 +9,7 @@ has no chronological release-report or raw-results archive.
 | Subsystem | Contents |
 | --- | --- |
 | [Platform](platform/README.md) | Native stack, radio identity and patch ownership |
-| [Radio](radio/README.md) | RF delivery, configurator and Console |
+| [Radio](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/README.md) | RF delivery, configurator and Console |
 | [Optimizer](optimizer/README.md) | Observations, policy and native actuation |
 | [Rooms](rooms/README.md) | World semantics, controls and transport |
 | [Observability](observability/README.md) | Topology, metrics and infrastructure monitoring |

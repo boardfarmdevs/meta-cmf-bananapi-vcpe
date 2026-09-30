@@ -106,7 +106,9 @@ a port `eth2` of `bpibroadband`'s `brlan0`), made by `gen/wired-extender.sh`
   LAN, and its backhaul BSSs stay open to Wi-Fi extenders that take it as their
   parent. `wired-extender.sh` records that as `user.easymesh.wired_guard=hal`;
   only then does the medium give it RF to the other mesh nodes. An extender
-  image without the patch keeps it isolated on the medium.
+  image without the patch keeps it isolated on the medium. Its unit brings up
+  its 5 GHz backhaul BSS, which OneWifi never starts on its own there, and
+  gives its `brlan0` an address from the gateway.
 - The runtime starts it with the Wi-Fi extenders and checks it once the medium
   runs: its fronthaul up, its ten BSSes in the controller's model, its LAN port
   in its `brlan0`, the gateway's `eth2` in the gateway's `brlan0`, no station up.
@@ -115,9 +117,24 @@ a port `eth2` of `bpibroadband`'s `brlan0`), made by `gen/wired-extender.sh`
 - The health audit wants it as an Ethernet child of the controller in the
   topology and never a Wi-Fi child.
 - The room service runs the lab's own rooms with it
-  (`gen/wmediumd/configurator/worlds-wired`: the 27 rooms, the wired extender
+  (`gen/medium/configurator/worlds-wired`: the 27 rooms, the wired extender
   as `extender_5`, plus four rooms about it); the room suite takes that set from
   the room.
+
+## The EMOSA option
+
+`EASYMESH_EMOSA=1` on a build, or `build.sh emosa` on an accepted VM, adds
+emosa-lab's OpenSync adapter to the lab: EMOSA, its fleet, the pods' gateway
+(GTP) on the wired LAN port, two OpenSync pods from the pinned image
+(`EMOSA_POD_IMAGE`, `.../out/mvx-pod-STAMP`), their telemetry and their Wi-Fi
+backhaul, and the room service on the rooms with the pods
+(`gen/medium/configurator/worlds-pods`: the standard rooms plus `pod_1`,
+`pod_2`). emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`;
+`EMOSA_LAB` names its checkout). It needs the wired extender. After a reboot,
+`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` starts the
+pods' agents on emosa-lab's C lab prototype instead of the Python reference
+(`python`, the default); the two take the same configuration, and
+`lab.sh agent POD python|c` in the VM swaps one pod's agent later.
 
 ## Estimated build phases and time
 

@@ -64,7 +64,7 @@ for index in 2 3; do
         ./bpi.sh -F -i "$index" "$extender_image"
         # A running wmediumd has a fixed registration matrix. Include the new
         # extender radios immediately, before waiting for EasyMesh onboarding.
-        SNR=40 ./wmediumd/wmediumd-up.sh up
+        SNR=40 ./medium/wmediumd/wmediumd-up.sh up
         wait_for_extender "$container" "$expected"
     else
         echo "$container already present in model $counts; validating live backhaul"

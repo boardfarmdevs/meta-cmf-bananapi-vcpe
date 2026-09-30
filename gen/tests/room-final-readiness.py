@@ -61,10 +61,10 @@ def convergence_state(optimizer, clients):
     }
 
 
-# The default room of each room set: the lab's own rooms (worlds), with the wired
-# extender (worlds-wired), with the OpenSync pods (worlds-pods) or with both
-# (worlds-pods-wired). The same world, the set's suffix on its layout.
-DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods|pods-wired))?--private-client-room-walk")
+# The default room of each room set: the lab's own rooms (worlds), the standard rooms
+# with the wired extender (worlds-wired), or those with the OpenSync pods as well
+# (worlds-pods). The same world, the set's suffix on its layout.
+DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods))?--private-client-room-walk")
 
 
 def default_roster(health, clients, state):
@@ -77,7 +77,7 @@ def default_roster(health, clients, state):
     mesh |= {role for role in roles if re.fullmatch(r"pod_\d+", role)}
     world = state.get("selected_world")
     variant = DEFAULT_WORLD.fullmatch(world or "")
-    if variant and "wired" in (variant.group(1) or ""):
+    if variant and variant.group(1) in ("wired", "pods"):
         mesh.add("extender_5")  # the lab's extender on a wired backhaul
     present = {role for role, value in roles.items() if value.get("present") is True}
     addresses = [client.get("sta_mac") for client in clients]

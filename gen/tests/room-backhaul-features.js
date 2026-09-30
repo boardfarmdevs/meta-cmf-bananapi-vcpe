@@ -23,6 +23,14 @@ const INITIAL_CONVERGENCE_MS = 90000;
 // at once, and re-forming took 62 s (28 Sep). The agents then onboard again and the
 // optimizer needs fresh candidates for all ten clients.
 const BRANCH_CONVERGENCE_MS = 150000;
+// With OpenSync pods (worlds-pods) the load first moves them onto native extenders, and
+// every re-parenting of such an extender drops its pod: OneWifi takes an extender's BSSs
+// down with its uplink, the pod's OVSDB connection to EMOSA closes, and its agent onboards
+// again (about 20 s) once the extender is back. From the default star the first room's
+// pods onboarded three times and the last ended 5 s before the 90 s ran out (29 Sep), so a loaded
+// room with pods gets the branch window.
+const initialConvergenceMs = () =>
+  adapterNodes > Object.keys(wiredContainers).length ? BRANCH_CONVERGENCE_MS : INITIAL_CONVERGENCE_MS;
 
 function usage() {
   return 'usage: room-backhaul-features.js --yes-act true --host HOST --vm VM --room-url URL --topology-url URL --output DIRECTORY [--flavor rdk|prpl] [--room ROOM]';
@@ -92,9 +100,9 @@ function ready(entry, healthNodes, clients = 10) {
     wired.every(role => entry.native.nodes[role]?.wiredUplink === true && entry.native.nodes[role].fronthaulAps === 6) &&
     Object.values(entry.native.parents).every(Boolean) &&
     Object.values(parentPaths(entry.native.parents)).every(chain => chain.at(-1) === 'gateway') &&
-    // A wired extender's own backhaul BSS and LAN address come with its Ethernet uplink,
-    // which RDK's extender mode does not yet act on (alignment plan 1.2): its readiness is
-    // its fronthaul, its LAN port in the bridge and no Wi-Fi parent.
+    // A wired extender's readiness is its fronthaul, its LAN port in the bridge and no Wi-Fi
+    // parent; its own backhaul BSS and LAN address come from its unit (gen/wired-extender.sh),
+    // and a Wi-Fi extender taking it as its parent is the wired room's own check.
     Object.entries(entry.native.nodes).filter(([role]) => !wired.includes(role))
       .every(([, node]) => node.pingOk && node.fronthaulAps === 6 && node.apOperating) &&
     entry.health?.healthy && entry.health.topology_nodes === healthNodes && entry.health.api_active === clients &&
@@ -255,7 +263,8 @@ async function run(options) {
     await roomPage.waitForFunction(() => !document.fullscreenElement);
     changed = true;
     const [response] = await Promise.all([
-      roomPage.waitForResponse(response => response.url().endsWith('/api/demo/world/apply') && response.request().method() === 'POST', {timeout: 60000}),
+      // up to 150 s: before a geometry room the OpenSync pods move to their parents in it
+      roomPage.waitForResponse(response => response.url().endsWith('/api/demo/world/apply') && response.request().method() === 'POST', {timeout: 150000}),
       id === 'default' ? roomPage.locator('#defaultWorld').click() : roomPage.locator('#world').selectOption(id),
     ]);
     const result = await response.json();
@@ -322,7 +331,7 @@ async function run(options) {
       currentRoom.load = await load(id);
       let loaded = await sample('loaded', true);
       {
-        const deadline = Date.now() + INITIAL_CONVERGENCE_MS;
+        const deadline = Date.now() + initialConvergenceMs();
         while (!ready(loaded, profile.healthNodes) && Date.now() < deadline) {
           await delay(1000);
           loaded = await sample('initial-client-convergence', true);

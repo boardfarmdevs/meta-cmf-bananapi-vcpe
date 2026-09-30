@@ -18,7 +18,7 @@ def main():
             (project / "index.html").symlink_to(source / "pages-index.html")
             for directory in ("viewer", "golden"):
                 (project / directory).symlink_to(
-                    source.parent / "wmediumd/configurator/worlds" / directory,
+                    source.parent / "medium/configurator/worlds" / directory,
                     target_is_directory=True,
                 )
         handler = partial(SimpleHTTPRequestHandler, directory=str(root))

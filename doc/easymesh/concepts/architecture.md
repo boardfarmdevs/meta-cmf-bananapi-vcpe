@@ -40,6 +40,6 @@ The RDK single-wiphy/VAP model and stable MAC mapping are detailed in
 prplMesh uses its own radio inventory and NBAPI adapter; do not copy RDK
 container/BSSID assumptions into that backend.
 
-See [RF simulation](rf-simulation.md), [steering policy](steering-policy.md),
+See [RF simulation](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/concepts/rf-simulation.md), [steering policy](steering-policy.md),
 [room coordination](../reference/rooms/architecture.md) and
 [patch ownership](../reference/platform/patch-set.md) for the relevant boundary.

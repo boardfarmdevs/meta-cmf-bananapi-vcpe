@@ -15,7 +15,7 @@ boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-lab/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 expected_repo_head=${EXPECTED_REPO_HEAD:-$(git -C "$repo" rev-parse HEAD)}
-expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')}
+expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-$(sha256sum "$gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')}
 
 mkdir -p "$state" "$nvram_root"
 export BPI_NVRAM_ROOT="$nvram_root"
@@ -23,7 +23,7 @@ test -f "$boardfarm_status"
 test "$(systemctl is-active boardfarm-lab.service 2>/dev/null)" = active
 ip link show br-wan101 >/dev/null
 test "$(sudo -u easymesh git -C "$repo" rev-parse HEAD)" = "$expected_repo_head"
-test "$(sha256sum "$gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
+test "$(sha256sum "$gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 
 model_counts() {
@@ -91,7 +91,7 @@ lab_is_complete() {
         lxc exec "$client" -- sh -c \
             "ip -4 -o address show wlan0 2>/dev/null | grep -q 'inet '" || return 1
     done
-    [[ "$("$gen/wmediumd/wmediumd-up.sh" status)" == *'wmediumd running'* ]]
+    [[ "$("$gen/medium/wmediumd/wmediumd-up.sh" status)" == *'wmediumd running'* ]]
 }
 
 if lab_is_complete; then
@@ -101,7 +101,7 @@ fi
 
 rm -f "$state/deploy.status"
 cd "$gen"
-./wmediumd/wmediumd-up.sh down >/dev/null 2>&1 || true
+./medium/wmediumd/wmediumd-up.sh down >/dev/null 2>&1 || true
 while read -r client; do
     suffix=${client#wlan-client}
     if [ -n "$suffix" ]; then
@@ -150,7 +150,7 @@ wait_for_extender bpiap-001 3/9/30
 # step creates immediately after this three-node gate.  Final runtime startup
 # does not set this override and therefore still requires every managed radio.
 export WMEDIUMD_ALLOW_INCOMPLETE_RADIOS=1
-SNR=40 ./wmediumd/wmediumd-up.sh up
+SNR=40 ./medium/wmediumd/wmediumd-up.sh up
 if ! lxc image info wlan-client-base >/dev/null 2>&1; then
     ./wlan-client.sh build-image
 fi

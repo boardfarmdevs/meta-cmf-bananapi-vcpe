@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import copy
 from contextlib import nullcontext
 import datetime as dt
@@ -20,6 +21,95 @@ from .recovery import RecoveryJournal
 from .pool import expand_initial_world
 from .traffic_experiment import TrafficExperiment, phase_at
 from wmdcfg.traffic_profile import validate_traffic
+
+
+def pod_station_keys(ap_binding, peer_binding, outgoing, incoming):
+    """RF keys between an OpenSync pod's backhaul station and a native AP's 5 GHz radio.
+
+    A pod (adapter, EMOSA) serves 2.4 GHz only; its backhaul station joins a
+    native AP's 5 GHz backhaul BSS. ``outgoing`` and ``incoming`` are the AP
+    pair's links as seen from ``ap_binding``. None between two pods: a pod is
+    never another pod's parent.
+    """
+    keys = []
+    for pod, native, to_native, from_native in (
+        (ap_binding, peer_binding, outgoing, incoming),
+        (peer_binding, ap_binding, incoming, outgoing),
+    ):
+        station = pod.get("backhaul_station")
+        radio = native.get("band_radios", {}).get("5")
+        frequency = native.get("fronthaul_frequencies_mhz", {}).get("5")
+        if not station or native.get("adapter") or radio is None or frequency is None:
+            continue
+        native_mac = str(radio.get("tx_mac") or native["radio_tx_mac"])
+        keys += [
+            {"source": station["tx_mac"], "destination": native_mac, "frequency_mhz": int(frequency),
+             "value": int(to_native["snr_db_by_band"]["5"]), "override": True},
+            {"source": native_mac, "destination": station["tx_mac"], "frequency_mhz": int(frequency),
+             "value": int(from_native["snr_db_by_band"]["5"]), "override": True},
+        ]
+    return keys
+
+
+class FairRLock:
+    """A reentrant lock granted in arrival order.
+
+    The session's lock serializes every room operation. After a world loads the
+    optimizer runs its steering transactions back to back, each holding the lock
+    for its whole BTM action, and threading.RLock hands the lock to whichever
+    thread wins the race: a viewer's snapshot or lease renewal could wait behind
+    all of them, its lease expired and the room's world selector stayed disabled
+    (prpl-0929, 29 Sep). Waiting in order bounds that wait to the transactions
+    already queued.
+    """
+
+    def __init__(self):
+        self._condition = threading.Condition(threading.Lock())
+        self._owner = None
+        self._count = 0
+        self._queue: collections.deque = collections.deque()
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        me = threading.get_ident()
+        with self._condition:
+            if self._owner == me:
+                self._count += 1
+                return True
+            if self._owner is None and not self._queue:
+                self._owner, self._count = me, 1
+                return True
+            if not blocking:
+                return False
+            ticket = object()
+            self._queue.append(ticket)
+            deadline = None if timeout is None or timeout < 0 else time.monotonic() + timeout
+            while not (self._owner is None and self._queue[0] is ticket):
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    self._queue.remove(ticket)
+                    self._condition.notify_all()
+                    return False
+                self._condition.wait(remaining)
+            self._queue.popleft()
+            self._owner, self._count = me, 1
+            return True
+
+    def release(self) -> None:
+        with self._condition:
+            if self._owner != threading.get_ident():
+                raise RuntimeError("cannot release an unowned lock")
+            self._count -= 1
+            if self._count == 0:
+                self._owner = None
+                self._condition.notify_all()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
 
 
 class InteractionError(RuntimeError):
@@ -62,6 +152,7 @@ class InteractiveMediumSession:
         model_backhaul: bool = False,
         band_profiles: Any = None,
         prepare_backhaul: Callable[[], Any] | None = None,
+        pod_backhaul: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self.store = store
         validate_traffic(world)
@@ -87,9 +178,11 @@ class InteractiveMediumSession:
         self.reconnect_client = reconnect_client
         self.band_profiles = band_profiles
         self.prepare_backhaul = prepare_backhaul
+        # The OpenSync pods' parents in rooms that model the backhaul (backhaul.PodBackhaul)
+        self.pod_backhaul = pod_backhaul
         self._selected_roles = set(world["roles"])
         self._selected_world = world["name"]
-        self._lock = threading.RLock()
+        self._lock = FairRLock()
         self._client: ControlClient | None = None
         self._instance_id: str | None = None
         self._generation = 0
@@ -111,6 +204,12 @@ class InteractiveMediumSession:
         self._baseline: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._applied_values: dict[tuple[str, str, int], tuple[int, bool]] = {}
         self._protected_backhaul: dict[tuple[str, str, int], tuple[int, bool]] = {}
+        # OpenSync pods' backhaul stations (pod_station_keys): the room's only where it
+        # models the backhaul
+        self._pod_station_macs = {
+            binding["backhaul_station"]["tx_mac"] for binding in plan["bindings"].values()
+            if binding.get("adapter") and binding.get("backhaul_station")
+        }
         self._restored = False
         self._faulted: str | None = None
         self._closing = False
@@ -257,6 +356,7 @@ class InteractiveMediumSession:
                         f"daemon limit is {status.max_updates}"
                     )
                 self._capture_baseline(initial_updates)
+                self._hold_pod_stations(initial_updates)
                 if self.recovery is not None:
                     self.recovery.prepare(
                         self._instance_id, self._generation, self._baseline
@@ -619,9 +719,54 @@ class InteractiveMediumSession:
         self.store.emit("backhaul.radios.prepared", self._playback_time_ms, readiness,
                         producer="interaction")
 
+    def _arrange_pods(self, selection: Any, token: str, expected_revision: Any) -> None:
+        """The pods onto their parents before a room that models the backhaul takes their
+        current one away: moved under the current RF, where every native AP is within
+        their reach. Outside the lock, which a move would hold for up to a minute."""
+        with self._lock:
+            self._validate_mutation(
+                "gateway", token, expected_revision, allowed_roles=self._movable_roles
+            )
+            world, _ = self.worlds.select(selection)
+        if not (backhaul_rf_policy(world) == "geometry" or self.model_backhaul or self.adaptive_backhaul):
+            return
+        # The moves take up to a minute, longer than a lease, and the viewer waits for this
+        # request: the requester's lease is kept while they run.
+        self.renew(token)
+        done = threading.Event()
+
+        def keep_lease():
+            while not done.wait(10):
+                try:
+                    self.renew(token)
+                except InteractionError:
+                    return
+
+        keeper = threading.Thread(target=keep_lease, name="pod-moves-lease", daemon=True)
+        keeper.start()
+        try:
+            # the native APs' backhaul BSSs first: a Wi-Fi extender starts its own only for a child
+            self._prepare_backhaul_radios()
+            # and the pods' stations on the lab's own links, where every native AP is within
+            # their reach: the room loaded before may be another geometry room
+            self._release_pod_stations()
+            result = self.pod_backhaul(world)
+        except InteractionError:
+            raise
+        except Exception as error:
+            raise InteractionError(503, "pod_backhaul_unavailable",
+                                   f"Cannot move the pods' backhaul: {error}") from error
+        finally:
+            done.set()
+            keeper.join(1)
+        self.store.emit("backhaul.pods.arranged", self._playback_time_ms, result,
+                        producer="interaction")
+
     def apply_world(
         self, selection: Any, *, token: str, expected_revision: Any
     ) -> dict[str, Any]:
+        if self.pod_backhaul is not None and self.worlds is not None:
+            self._arrange_pods(selection, token, expected_revision)
         with self._lock:
             self._validate_mutation(
                 "gateway", token, expected_revision, allowed_roles=self._movable_roles
@@ -1657,6 +1802,7 @@ class InteractiveMediumSession:
                 name for name in self.world.get("wired_backhaul", [])
                 if self.plan["bindings"].get(name, {}).get("wired_guard") != "hal"
             }
+            station_key_count = 0
             for peer_role in ap_roles:
                 if peer_role == role or wired & {role, peer_role}:
                     continue
@@ -1670,6 +1816,9 @@ class InteractiveMediumSession:
                     peer, ap, positions, backhaul_present, self.layout,
                     {"seed": 0}, self._revision + 1, "backhaul",
                 )
+                station_keys = pod_station_keys(ap_binding, peer_binding, outgoing, incoming)
+                updates.extend(station_keys)
+                station_key_count += len(station_keys)
                 for band in ("2.4", "5", "6"):
                     radio = ap_binding.get("band_radios", {}).get(band)
                     peer_radio = peer_binding.get("band_radios", {}).get(band)
@@ -1723,7 +1872,7 @@ class InteractiveMediumSession:
                     kind == "fronthaul_ap"
                     for kind in self.world["roles"].values()
                 ) - 1
-            ) * 3 * 2
+            ) * 3 * 2 + station_key_count
         if not updates:
             raise InteractionError(
                 500, "no_links", f"mesh AP {role!r} resolved no live RF links"
@@ -1739,7 +1888,41 @@ class InteractiveMediumSession:
             protected = self._protected_backhaul.get((item["source"], item["destination"], item["frequency_mhz"]))
             if protected is not None and self.backhaul_policy() == "fixed-startup-mesh":
                 item["value"], item["override"] = protected
+        self._hold_pod_stations(updates)
         return updates, summary
+
+    def _release_pod_stations(self) -> None:
+        """The pods' stations back on the values the room captured before touching them."""
+        with self._lock:
+            if self._client is None or not self._pod_station_macs:
+                return
+            updates = [
+                {"source": key[0], "destination": key[1], "frequency_mhz": key[2],
+                 "value": value, "override": override}
+                for key, (value, override) in self._baseline.items()
+                if (key[0] in self._pod_station_macs or key[1] in self._pod_station_macs)
+                and self._applied_values.get(key) != (value, override)
+            ]
+            if not updates:
+                return
+            for item in self._apply_generation(updates):
+                key = (item["source"], item["destination"], item["frequency_mhz"])
+                self._applied_values[key] = (item["value"], item["override"])
+            self.store.emit("backhaul.pods.released", self._playback_time_ms,
+                            {"links": len(updates)}, producer="interaction")
+
+    def _hold_pod_stations(self, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Outside the rooms that model the backhaul, a pod's backhaul station keeps the
+        lab's own links (a fixed 50 dB to its upstream, the medium's default to the rest):
+        the values the room captured before it touched them."""
+        if not self._pod_station_macs or self.backhaul_policy() != "fixed-startup-mesh":
+            return updates
+        for item in updates:
+            if item["source"] in self._pod_station_macs or item["destination"] in self._pod_station_macs:
+                held = self._baseline.get((item["source"], item["destination"], item["frequency_mhz"]))
+                if held is not None:
+                    item["value"], item["override"] = held
+        return updates
 
     def _links_for_role(
         self, role: str, *, change: str = "position"

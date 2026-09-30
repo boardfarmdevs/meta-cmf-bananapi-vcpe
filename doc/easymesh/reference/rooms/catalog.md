@@ -2,7 +2,7 @@
 
 [Room reference](README.md) · [Acceptance](../testing/room-acceptance.md)
 
-[RF property coverage](../radio/rf-property-coverage.md) maps every supported,
+[RF property coverage](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md) maps every supported,
 diagnostic and unsupported field to rooms and explicit policy/observation checks.
 
 These are expected features, not claims that every deployed backend passes.
@@ -22,7 +22,7 @@ The guide covers every bundled room, not arbitrary uploaded world files. Its
 shared RF explanation distinguishes synthetic candidate RCPI from native
 association evidence and explains why presence changes are not controlled
 channel-load tests. For implementation details, see the
-[virtual RF assessment](../radio/virtual-rf-assessment.md). Guide expectations
+[virtual RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md). Guide expectations
 are not a claim that a particular live run has passed.
 
 | World ID | Script | Clients / expected behavior |

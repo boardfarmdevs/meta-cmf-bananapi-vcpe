@@ -12,7 +12,7 @@ changing RF settings or room deadlines. No coherent sample means failure.
 Offline check: `python3 -m pytest -q gen/tests/test_room_feature_rf_audit.py`.
 
 Phase 0 RF contract/provenance tests and the short read-only live audit are in
-the [RF assessment](../../doc/easymesh/reference/radio/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
+the [RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
 
 This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
@@ -21,9 +21,9 @@ unless a section says otherwise.
 Run the Python suites together without a live lab:
 
 ```sh
-PYTHONPATH="$PWD/gen/wmediumd/configurator:$PWD/gen/optimizer:$PWD/gen/demo:$PWD/gen/demo/tests:$PWD/gen/tests" \
+PYTHONPATH="$PWD/gen/medium/configurator:$PWD/gen/optimizer:$PWD/gen/demo:$PWD/gen/demo/tests:$PWD/gen/tests" \
   python3 -m pytest --import-mode=importlib \
-  gen/wmediumd/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests
+  gen/medium/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests
 ```
 
 The test directories on `PYTHONPATH` supply shared fixtures and

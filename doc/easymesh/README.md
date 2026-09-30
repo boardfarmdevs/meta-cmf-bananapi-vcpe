@@ -1,8 +1,12 @@
 # RDK EasyMesh lab
 
 Run real RDK-B controller, agent and client software in LXD containers, with
-hwsim radios and wmediumd providing reproducible RF conditions. Start with one
-guide; the reference is for implementation details, not required reading.
+hwsim radios and wmediumd providing reproducible RF conditions. The RF medium
+(hwsim, wmediumd, the configurator and its rooms, the Console) is
+[easymesh-medium](https://github.com/boardfarmdevs/easymesh-medium), checked out
+as `gen/medium` at the commit this lab pins; its documents are the medium's, for
+both labs, and this lab's are below. Start with one guide; the reference is for
+implementation details, not required reading.
 
 ## Start here
 
@@ -17,10 +21,10 @@ guide; the reference is for implementation details, not required reading.
 | Understand the processes and radio model | [Architecture](concepts/architecture.md) |
 | Use the room and network topology | [Room manual](live-room-demo/README.md) |
 | Choose a demonstration | [Room catalog](reference/rooms/catalog.md) |
-| Match RF properties to rooms and policy checks | [RF coverage](reference/radio/rf-property-coverage.md) |
+| Match RF properties to rooms and policy checks | [RF coverage](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md) |
 | Understand or develop steering policy | [Optimizer](concepts/optimizer.md) |
-| Diagnose RF and measurements | [RF simulation](concepts/rf-simulation.md), [radio reference](reference/radio/README.md) |
-| Observe medium activity and RF state | [Console NG manual](guide/wmediumd-console-ng.md), [implementation design](concepts/wmediumd-console-design.md) |
+| Diagnose RF and measurements | [RF simulation](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/concepts/rf-simulation.md), [radio reference](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/README.md) |
+| Observe medium activity and RF state | [Console NG manual](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/console/guide.md), [implementation design](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/console/design.md) |
 | Open LXD UI or Grafana, including outer-VM metrics | [Monitoring](reference/observability/monitoring.md) |
 | Test changes and measure convergence | [Testing](experiments/README.md) |
 | Find detailed contracts or proposed work | [Categorized reference](reference/README.md) |

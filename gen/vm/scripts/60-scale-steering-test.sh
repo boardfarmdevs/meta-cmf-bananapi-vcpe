@@ -32,7 +32,7 @@ restore_medium() {
     if [ "$medium_restored" -eq 1 ]; then
         return 0
     fi
-    if SNR=40 "$repo/gen/wmediumd/wmediumd-up.sh" up >/dev/null; then
+    if SNR=40 "$repo/gen/medium/wmediumd/wmediumd-up.sh" up >/dev/null; then
         medium_restored=1
         return 0
     fi

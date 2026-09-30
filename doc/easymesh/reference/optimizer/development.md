@@ -139,7 +139,7 @@ python3 -m venv .venv
 python -m pip install -e '.[test]'
 python -m pytest -q
 
-cd "$EM_REPO/gen/wmediumd/configurator"
+cd "$EM_REPO/gen/medium/configurator"
 python3 -m pytest -q
 ```
 
@@ -176,7 +176,7 @@ curl -fsS http://127.0.0.1:8888/api/v1/clients |
 curl -fsS http://127.0.0.1:8888/api/v1/bsses |
   jq '[.bsses[] | select(.haul_type == "Fronthaul")] | length'
 
-cd "$EM_REPO/gen/wmediumd/configurator"
+cd "$EM_REPO/gen/medium/configurator"
 python3 -m wmdcfg.cli status
 ```
 
@@ -533,7 +533,7 @@ The isolated five-AP crossover makes one target unambiguous while keeping
 three alternates weak:
 
 ```sh
-cd "$EM_REPO/gen/wmediumd/configurator"
+cd "$EM_REPO/gen/medium/configurator"
 python3 -m wmdcfg.cli inventory -o /tmp/inventory.json
 python3 -m wmdcfg.cli compile scenarios/optimizer-five-ap-crossover.wmd \
   --inventory /tmp/inventory.json \
@@ -586,7 +586,7 @@ For a new `.wmd` test:
 5. Run live in recommend mode and require complete restore.
 
 For larger pseudo-homes, edit layouts/worlds under
-`gen/wmediumd/configurator/worlds`, rebuild goldens with
+`gen/medium/configurator/worlds`, rebuild goldens with
 `worlds/build-goldens.sh --check`, and regenerate the case matrix:
 
 ```sh

@@ -285,3 +285,115 @@ class BackhaulManager:
 
     def blocks_client_measurement(self, room):
         return self.snapshot(room)["status"] == "switching"
+
+
+def _run(arguments, timeout=10):
+    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(f"{' '.join(arguments[:4])}: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
+
+
+class PodBackhaul:
+    """The OpenSync pods' backhaul parents where the room models the backhaul.
+
+    A pod (EMOSA) keeps its backhaul station on the gateway's 5 GHz backhaul BSS,
+    the fleet's configured upstream, at a fixed 50 dB, and hears every other native
+    AP at the medium's default SNR. Where the room models the backhaul (geometry),
+    the pod's station gets the room's links to every native AP (pod_station_keys)
+    and the gateway may be out of its reach. So before such a room's RF is applied,
+    each pod is moved to the native AP with the strongest 5 GHz backhaul link in
+    the room's first generation, through the controller's Backhaul Steering
+    (SteerWiFiBackhaul(), which EMOSA carries out). Elsewhere a pod stays where it
+    is: every native AP is within its reach there. A parent is always a native AP:
+    never another pod, nor a wired extender without its HAL guard.
+    """
+
+    def __init__(self, plan, *, controller="bpibroadband", timeout=90, run=_run, sleep=time.sleep,
+                 clock=time.monotonic):
+        bindings = plan["bindings"]
+        self.pods = {role: binding for role, binding in bindings.items()
+                     if binding.get("adapter") and binding.get("backhaul_station")}
+        self.parents = {role: binding["container"] for role, binding in bindings.items()
+                        if binding.get("role_type") == "fronthaul_ap" and not binding.get("adapter")
+                        and (binding.get("backhaul") != "wired" or binding.get("wired_guard") == "hal")}
+        self.controller, self.timeout = controller, timeout
+        self.run, self.sleep, self.clock = run, sleep, clock
+        self.bssids = {}
+
+    def targets(self, world):
+        """Each pod's parent in the room: the strongest 5 GHz backhaul link at its start."""
+        best = {}
+        for link in world["generations"][0]["links"]:
+            pod, peer = link["source_role"], link["destination_role"]
+            snr = link.get("snr_db_by_band", {}).get("5")
+            if (link.get("link_class") != "backhaul" or pod not in self.pods
+                    or peer not in self.parents or snr is None):
+                continue
+            if pod not in best or snr > best[pod][1]:
+                best[pod] = (peer, snr)
+        return {pod: best[pod][0] for pod in sorted(best)}
+
+    def bssid(self, role):
+        """A native AP's 5 GHz backhaul BSS."""
+        if role not in self.bssids:
+            self.bssids[role] = self.run(["lxc", "exec", self.parents[role], "--", "cat",
+                                          "/sys/class/net/wifi1.1/address"]).strip().lower()
+        return self.bssids[role]
+
+    def parent(self, pod):
+        binding = self.pods[pod]
+        output = self.run(["lxc", "exec", binding["container"], "--", "iw", "dev",
+                           binding["backhaul_station"]["interface"], "link"])
+        match = re.search(r"Connected to ([0-9a-f:]{17})", output, re.I)
+        return match.group(1).lower() if match else None
+
+    def device(self, pod):
+        """The controller's DataElements index of the pod's agent.
+
+        The controller keeps the pod's backhaul station as a backhaul-STA row of the
+        agent's device (unified-wifi-mesh 0216): its ID names the agent's AL MAC.
+        """
+        station = str(self.pods[pod]["backhaul_station"]["station_mac"]).lower()
+        rows = self.run(["lxc", "exec", self.controller, "--", "mysql", "-N", "-ubpi", "-proot",
+                         "OneWifiMesh", "-e", f"select ID from BSSList where ID like '%{station}%'"])
+        agents = {row.split("@")[1].lower() for row in rows.split() if row.count("@") >= 2}
+        if len(agents) != 1:
+            raise RuntimeError(f"{pod}: the controller has {len(agents)} agents with station {station}")
+        agent = agents.pop()
+        count = self._value("Device.WiFi.DataElements.Network.DeviceNumberOfEntries")
+        for index in range(1, int(count or 0) + 1):
+            if (self._value(f"Device.WiFi.DataElements.Network.Device.{index}.ID") or "").lower() == agent:
+                return index
+        raise RuntimeError(f"{pod}: the controller's data model has no device {agent}")
+
+    def _value(self, name):
+        output = self.run(["lxc", "exec", self.controller, "--", "rbuscli", "get", name]).replace("\r", "")
+        match = re.search(r"Value\s*:\s*(\S+)", output)
+        return match.group(1) if match else None
+
+    def move(self, pod, target):
+        """Move ``pod`` to ``target``'s backhaul BSS and wait until its station is there."""
+        started = self.clock()
+        bssid = self.bssid(target)
+        if self.parent(pod) == bssid:
+            return {"pod": pod, "parent": target, "bssid": bssid, "moved": False}
+        index = self.device(pod)
+        self.run(["lxc", "exec", self.controller, "--", "rbuscli", "method_values",
+                  f"Device.WiFi.DataElements.Network.Device.{index}.MultiAPDevice.Backhaul.SteerWiFiBackhaul()",
+                  "TargetBSS", "string", bssid, "Channel", "int32", "36", "TimeOut", "int32", "30"], timeout=20)
+        while self.clock() - started < self.timeout:
+            if self.parent(pod) == bssid:
+                return {"pod": pod, "parent": target, "bssid": bssid, "moved": True,
+                        "seconds": round(self.clock() - started, 1)}
+            self.sleep(2)
+        raise RuntimeError(f"{pod} did not move to {target} ({bssid}) within {self.timeout} s")
+
+    def arrange(self, world):
+        """Every pod on its parent in ``world`` (a room that models the backhaul)."""
+        targets = self.targets(world)
+        if not targets:
+            return {"pods": []}
+        with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+            return {"pods": list(executor.map(lambda item: self.move(*item), targets.items()))}

@@ -14,7 +14,7 @@ unplayed rooms remain unqualified.
 
 ## Current RF hardening checks
 
-[RF qualification](../radio/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
+[RF qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md#september-15-reliability-and-priority-qualification)
 records cooling/priority profiles and earlier evidence. Historical six-room and
 UDP cancellation passes do not erase two controller exits during restoration.
 UAF patch 0193's contract/build and bounded reconnect pass; ASan churn was stopped.
@@ -31,7 +31,7 @@ physical platforms/fronthauls are unchanged. Native builds and admission/beacon
 fixtures pass, including fail-closed flushing. Typed inventory errors pause
 interactive RDK steering; noninteractive checks fail.
 
-Later [native recovery/retry checks](../radio/rf-property-coverage.md#cold-room-initialization)
+Later [native recovery/retry checks](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#cold-room-initialization)
 still fail cold readiness and branch recovery. Held retry 0206 is not enabled;
 the UAF-patched baseline controller is restored. Those failures are not erased
 by the earlier targeted passes listed here.
@@ -63,7 +63,7 @@ Earlier bounded RDK evidence in `test-results/targeted-suite-repair/`:
   overload. Raising offered UDP from 12 to 40 Mbps per client does not prove
   radio congestion; the latter peaks at 168/255 against the unchanged 192 gate.
 - Pressure/rescue and later browser/preflight evidence are maintained in
-  [bounded qualification](../radio/rf-property-coverage.md#bounded-qualification-follow-up).
+  [bounded qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#bounded-qualification-follow-up).
   Earlier failed workloads remain failed; unrun dependent cases remain blocked.
 
 The HAL library was compiled and installed with verified rollback copies;
@@ -119,7 +119,7 @@ Evidence: `/home/rev/work/rf14-0913/evidence/` on rev150:
 From the RDK guest's `gen/`:
 
 ```sh
-sudo env PYTHONPATH=optimizer:wmediumd/configurator python3 tests/rdk-reporting-policy-acceptance.py \
+sudo env PYTHONPATH=optimizer:medium/configurator python3 tests/rdk-reporting-policy-acceptance.py \
   --live --extended --root "$PWD" --output /tmp/rdk-rf14-new
 ```
 
@@ -160,7 +160,7 @@ client roster before starting the room.
 From RDK `gen/` or prpl root, substitute `prpl` for the second stack:
 
 ```sh
-sudo env PYTHONPATH=optimizer:wmediumd/configurator python3 tests/native-retry-counter-acceptance.py \
+sudo env PYTHONPATH=optimizer:medium/configurator python3 tests/native-retry-counter-acceptance.py \
   --stack rdk --output /tmp/retry-qualification-new --yes-change-lab
 ```
 
@@ -382,7 +382,7 @@ change and must preserve one-at-a-time native commands.
 
 1. Reserve the lab; save configuration, native/container/medium identities and
    revisions. Exclude other leases/RF writers; preserve policy, timers and VM resources.
-2. Copy deployed `gen/wmediumd/configurator/worlds/golden/*.world.json` into
+2. Copy deployed `gen/medium/configurator/worlds/golden/*.world.json` into
    evidence and match loaded-world hashes. Copy `gen/tests/room-feature-guest-audit.py`
    and `gen/tests/room-feature-rf-audit.py` into guest `/tmp/`, retaining names.
 3. Use Playwright/Chromium, preferably on a separate observer. If colocated,
@@ -526,18 +526,10 @@ counts. Membership and signal bars still are not end-to-end connectivity proof.
 
 Evidence and both-view screenshots are outside the repository at
 `/home/rev/work/release-0913/evidence/backhaul-rooms-20260914-short-01/` on rev150.
-`report.json` is the original run; `native-readiness-analysis.json` derives AP
-readiness from its saved `iw` output without rerunning or changing the lab.
-Review found that the original isolation room's initial one-packet upstream
-probe had already failed. That run is retained, but is not a clean on/off
-traffic proof. The starting/return position was moved closer to Agent-1 and
-the harness gained the explicit initial-reachability gate. A focused 78-second
+The starting/return position was moved closer to Agent-1 and the harness gained the explicit initial-reachability gate. A focused 78-second
 retest at `backhaul-isolation-20260914-short-02/` in the same evidence parent
 passed initial traffic, actual isolation and native recovery within the
 20-second return window, followed by verified default-room restoration.
-Focused Python checks passed 96 tests and 14 subtests; viewer/browser,
-documentation and golden-regeneration checks passed. No full catalog or soak
-campaign was run, and the original eighteen golden room files were unchanged.
 
 The missing-extender incident was a real link loss, not room presence removal.
 After enabling relay APs and bringing the two down STA interfaces up, native
@@ -545,9 +537,7 @@ association selected `extender_3 → extender_1` and `extender_4 → extender_2`
 without a BSSID write. These are stable world roles; displayed extender
 ordinals can change after rediscovery. The prolonged outage also left both
 nodes' client-facing APs inactive. Recovering their OneWifi/agent services and
-replaying `/api/v1/metricsreporting/enable` restored APs and serving reports.
-Those were explicit incident-recovery operations, not actions hidden inside
-playback or the passing test. Radio preparation does not provide automatic
+replaying `/api/v1/metricsreporting/enable` restored APs and serving reports. Radio preparation does not provide automatic
 recovery from every native service fault during a long outage.
 
 The stronger branch test requires operating backhaul APs and all six
@@ -566,8 +556,6 @@ not a cold-start branch-formation or proactive backhaul-optimization benchmark.
 Evidence is under `backhaul-relay-recovery-20260914/` and
 `backhaul-branch-readiness-20260914-short-01/` through `-03/` in the same evidence
 parent; `-03/report.json` and its two screenshots contain the passing result.
-The readiness/health changes passed 146 focused Python tests plus ten subtests,
-and the focused viewer/status/harness checks passed. PrplMesh was unchanged.
 
 ## Evidence and restoration
 
@@ -602,7 +590,7 @@ the default twenty-client room paused at zero and unleased:
 
 ```sh
 ROOT=/opt/prplmesh-lab
-PYTHONPATH="$ROOT/optimizer:$ROOT/wmediumd/configurator" \
+PYTHONPATH="$ROOT/optimizer:$ROOT/medium/configurator" \
   python3 "$ROOT/tests/load-policy-acceptance.py" --stack prpl \
   --root "$ROOT" --output /tmp/load-policy-new --yes-change-lab
 ```

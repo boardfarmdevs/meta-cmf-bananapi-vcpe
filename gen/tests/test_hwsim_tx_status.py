@@ -7,7 +7,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCH = ROOT / "hwsim/patches/0010-mac80211_hwsim-complete-aggregation-feedback.patch"
+PATCH = ROOT / "medium/hwsim/patches/0010-mac80211_hwsim-complete-aggregation-feedback.patch"
 
 
 def feedback_source():
@@ -77,5 +77,5 @@ int main(void)
 def test_both_tx_completion_paths_report_feedback():
     content = Path(os.environ["HWSIM_TEST_SOURCE"]).read_text() if os.environ.get("HWSIM_TEST_SOURCE") else PATCH.read_text()
     assert content.count("mac80211_hwsim_complete_ampdu_status(txi);") == 2
-    builder = (ROOT / "hwsim/build-hwsim.sh").read_text()
+    builder = (ROOT / "medium/hwsim/build-hwsim.sh").read_text()
     assert PATCH.name in builder

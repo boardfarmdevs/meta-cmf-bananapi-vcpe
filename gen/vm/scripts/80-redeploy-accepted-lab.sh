@@ -42,7 +42,7 @@ test "$(sha256sum "$controller_image" | awk '{print $1}')" = \
     "$controller_sha256"
 test "$(sha256sum "$extender_image" | awk '{print $1}')" = \
     "$extender_sha256"
-test "$(sha256sum "$repo/gen/wmediumd/wmediumd.patched" | awk '{print $1}')" = \
+test "$(sha256sum "$repo/gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 
 room_state=$(sudo systemctl show easymesh-room-demo.service -p ActiveState --value)
@@ -65,7 +65,7 @@ sudo systemctl reset-failed easymesh-lab.service 2>/dev/null || true
 sudo systemctl start docker.service snap.lxd.daemon.service
 
 cd "$repo/gen"
-./wmediumd/wmediumd-up.sh down >/dev/null 2>&1 || true
+./medium/wmediumd/wmediumd-up.sh down >/dev/null 2>&1 || true
 
 # Stop every disposable lab instance before detaching legacy NVRAM devices.
 # The old bind directories are retained for explicit audit/purge; bpi.sh then
@@ -163,11 +163,11 @@ sudo systemctl enable easymesh-lab.service
 sudo systemctl start easymesh-lab.service
 sudo systemctl stop easymesh-room-demo.service
 
-bash "$repo/gen/wmediumd/observer/install.sh"
+bash "$repo/gen/medium/observer/install.sh"
 sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \
     /etc/default/wmediumd-console
 sudo systemctl enable --now wmediumd-console.service
-python3 "$repo/gen/wmediumd/observer/check-ready.py" --timeout 60
+python3 "$repo/gen/medium/observer/check-ready.py" --timeout 60
 
 console_status=
 for attempt in $(seq 1 30); do

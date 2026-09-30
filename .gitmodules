@@ -1,0 +1,3 @@
+[submodule "gen/medium"]
+	path = gen/medium
+	url = ../easymesh-medium.git

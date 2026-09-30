@@ -55,7 +55,7 @@ OneWifi/hwsim has no accepted per-probe observation/action adapter.
 
 ## Checked-in pseudo-worlds
 
-Sources are under `gen/wmediumd/configurator/worlds/`; generated timelines are
+Sources are under `gen/medium/configurator/worlds/`; generated timelines are
 under `worlds/golden/`.
 
 | World | Agents / clients | Purpose |
@@ -103,7 +103,7 @@ cases stay blocked instead of silently becoming ping tests.
 ## Build and inspect the matrix
 
 ```sh
-cd gen/wmediumd/configurator
+cd gen/medium/configurator
 worlds/build-goldens.sh --check
 python3 -m pytest -q
 

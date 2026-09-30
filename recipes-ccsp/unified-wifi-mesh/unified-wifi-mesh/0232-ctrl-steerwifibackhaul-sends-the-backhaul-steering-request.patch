@@ -1,0 +1,124 @@
+Subject: [PATCH] ctrl: SteerWiFiBackhaul() sends the Backhaul Steering Request
+
+The Data Elements method Device.WiFi.DataElements.Network.Device.{i}.
+MultiAPDevice.Backhaul.SteerWiFiBackhaul() validated its arguments, built its
+subdoc and answered Success, but its dispatch is commented out: nothing was
+ever sent. An operator (or the room) could not move a device's backhaul, and
+an agent that is not a OneWifi agent (an OpenSync pod through EMOSA) has no
+native backhaul measurements for the lab's policy to move it by.
+
+The method now hands the move to the native backhaul tick (0196): the
+device's backhaul STA (its backhaul-STA BSS row, also learned from Device
+Information, 0216) to TargetBSS, at the target's operating class and channel
+(from the native snapshot, else from Channel). The tick sends it before any
+policy decision and tracks the agent's Ack and Backhaul Steering Response like
+its own requests. A device without a backhaul STA, or an invalid TargetBSS,
+is answered with Failure.
+
+Upstream-Status: Pending
+
+--- a/inc/em_ctrl.h	2026-09-29 03:26:23.616777920 -0700
++++ b/inc/em_ctrl.h	2026-09-29 03:26:47.115823129 -0700
+@@ -30,6 +30,7 @@
+ #include "bus.h"
+ #include "em_dev_test_ctrl.h"
+ #include "em_backhaul_policy.h"
++#include <deque>
+ 
+ #ifdef AL_SAP
+ #define DATA_SOCKET_PATH "/tmp/al_data_socket"
+@@ -85,6 +86,13 @@
+     std::map<unsigned short, backhaul_query_t> m_backhaul_queries;
+     backhaul_steer_t m_backhaul_steer;
+     std::map<std::string, backhaul_steer_t> m_backhaul_uncertain;
++    /* SteerWiFiBackhaul() requests (TR-181 Data Elements), sent by the native tick. */
++    struct backhaul_requested_t {
++        em_backhaul::decision request;
++        unsigned char op_class = 0;
++        unsigned char channel = 0;
++    };
++    std::deque<backhaul_requested_t> m_backhaul_requested;
+     int64_t m_backhaul_last_query = 0;
+     uint64_t m_backhaul_round = 0;
+     void handle_native_backhaul_tick();
+--- a/src/ctrl/em_backhaul_ctrl.cpp	2026-09-29 03:26:23.618777924 -0700
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-09-29 03:26:47.116823131 -0700
+@@ -202,6 +202,27 @@
+         for (const auto &uncertain : m_backhaul_uncertain)
+             network.uncertain[uncertain.first] = uncertain.second.failures < 3 ? uncertain.second.request.target : "";
+         m_backhaul_network.uncertain = network.uncertain;
++        if (m_backhaul_steer.mid == 0 && !m_backhaul_requested.empty()) {
++            /* A SteerWiFiBackhaul() request goes before the policy: the operator's move.
++             * The agent answers it (Backhaul Steering Response); a device the native
++             * snapshot does not model (an adapter-managed pod) is verified by its response
++             * and its reported parent, not here. */
++            const backhaul_requested_t requested = m_backhaul_requested.front();
++            m_backhaul_requested.pop_front();
++            const auto ap = network.aps.find(requested.request.target);
++            const unsigned short mid = get_next_msg_id();
++            std::vector<unsigned char> payload(requested.request.sta.begin(), requested.request.sta.end());
++            payload.insert(payload.end(), requested.request.target.begin(), requested.request.target.end());
++            payload.push_back(ap != network.aps.end() ? ap->second.op_class : requested.op_class);
++            payload.push_back(ap != network.aps.end() ? ap->second.channel : requested.channel);
++            outgoing.push_back(em_backhaul::frame(requested.request.al, controller, em_msg_type_bh_steering_req,
++                mid, em_tlv_type_bh_steering_req, payload));
++            m_backhaul_steer = {requested.request, mid, now, false, false, now, 0};
++            em_printfout("Backhaul steering requested mid=%u agent=%s sta=%s previous=%s target=%s op_class=%u channel=%u",
++                mid, backhaul_label(requested.request.al).c_str(), backhaul_label(requested.request.sta).c_str(),
++                backhaul_label(requested.request.previous).c_str(), backhaul_label(requested.request.target).c_str(),
++                payload[12], payload[13]);
++        }
+         if (m_backhaul_steer.mid == 0) {
+             const auto decisions = m_backhaul_policy.evaluate(network, now);
+             if (!decisions.empty()) {
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp	2026-09-29 03:26:23.619777926 -0700
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp	2026-09-29 03:27:20.371888425 -0700
+@@ -868,6 +868,48 @@
+     free(json_buff);
+     cJSON_Delete(root);
+ 
++    /* Upstream stops here: nothing was sent. Hand the move to the native backhaul tick,
++     * which sends the Backhaul Steering Request to the device's agent: its backhaul STA
++     * (the device's backhaul-STA BSS row) to TargetBSS. */
++    {
++        mac_address_t target_mac;
++        const em_bss_info_t *bsta = NULL;
++        for (unsigned int i = 0; i < dm->get_num_bss(); i++) {
++            const em_bss_info_t *info = dm->get_bss(i)->get_bss_info();
++            if (info->vap_mode == em_vap_mode_sta && info->id.haul_type == em_haul_type_backhaul &&
++                    memcmp(info->sta_mac, ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) {
++                bsta = info;
++                break;
++            }
++        }
++        memset(target_mac, 0, sizeof(target_mac));
++        dm_easy_mesh_t::string_to_macbytes(target, target_mac);
++        if (bsta == NULL || (target_mac[0] & 1) != 0 ||
++                memcmp(target_mac, ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) {
++            em_printfout("SteerWiFiBackhaul(): device %s has no backhaul STA, or TargetBSS %s is invalid",
++                mac_str, target);
++            if (output_params) {
++                *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
++            }
++            return bus_error_invalid_input;
++        }
++        backhaul_requested_t requested;
++        requested.request.al.assign(reinterpret_cast<const char *>(di->intf.mac), sizeof(mac_address_t));
++        requested.request.sta.assign(reinterpret_cast<const char *>(bsta->sta_mac), sizeof(mac_address_t));
++        requested.request.previous.assign(reinterpret_cast<const char *>(bsta->bssid.mac), sizeof(mac_address_t));
++        requested.request.target.assign(reinterpret_cast<const char *>(target_mac), sizeof(mac_address_t));
++        requested.channel = channel > 0 ? static_cast<unsigned char>(channel) : 0;
++        /* 5 GHz 20 MHz operating classes (Annex E): 36-48, 52-64, 100-144, 149-165 */
++        requested.op_class = channel >= 149 ? 125 : channel >= 100 ? 121 : channel >= 52 ? 118 :
++            channel >= 36 ? 115 : 0;
++        {
++            std::lock_guard<std::mutex> lock(em_ctrl->m_backhaul_mutex);
++            em_ctrl->m_backhaul_requested.push_back(requested);
++        }
++        em_printfout("SteerWiFiBackhaul(): device %s sta %s to %s queued", mac_str,
++            util::mac_to_string(bsta->sta_mac).c_str(), target);
++    }
++
+     if (output_params) {
+         *output_params = tr_181_t::tr181_set_status_output_prop("Success");
+     }

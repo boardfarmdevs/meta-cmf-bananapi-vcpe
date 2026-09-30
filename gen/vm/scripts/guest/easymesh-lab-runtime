@@ -192,7 +192,7 @@ start_kernel_metrics_proxy() {
         --property=Type=simple \
         --property=Restart=on-failure \
         --property=RestartSec=1 \
-        /usr/bin/env PYTHONPATH="$gen/wmediumd/configurator" \
+        /usr/bin/env PYTHONPATH="$gen/medium/configurator" \
             /usr/bin/python3 -m wmdcfg.kernel_metrics_proxy \
             --socket "$kernel_metrics_socket"
     for _ in $(seq 1 50); do
@@ -205,7 +205,7 @@ start_kernel_metrics_proxy() {
         journalctl -u "$kernel_metrics_unit" -n 30 --no-pager >&2 || true
         return 1
     }
-    status=$(PYTHONPATH="$gen/wmediumd/configurator" \
+    status=$(PYTHONPATH="$gen/medium/configurator" \
         python3 -m wmdcfg.cli status --socket "$kernel_metrics_socket")
     jq -e '.capabilities | index("read_only") != null' >/dev/null <<<"$status"
 }
@@ -218,18 +218,18 @@ verify_medium_backend() {
     local status
     case "$medium_backend" in
     userspace)
-        status=$("$gen/wmediumd/wmediumd-up.sh" status)
+        status=$("$gen/medium/wmediumd/wmediumd-up.sh" status)
         [[ "$status" == *'wmediumd running'* ]]
         ;;
     kernel)
         grep -Eq '^(Y|1)$' "$kernel_medium_parameter"
-        status=$(PYTHONPATH="$gen/wmediumd/configurator" \
+        status=$(PYTHONPATH="$gen/medium/configurator" \
             python3 -m wmdcfg.cli status --backend kernel)
         jq -e '.capabilities | index("kernel_data_path") != null' \
             >/dev/null <<< "$status"
         # A registered userspace daemon always takes precedence, which would
         # make a requested kernel run silently exercise the wrong data path.
-        ! pgrep -f '^/home/[^[:space:]]+/.*/gen/wmediumd/wmediumd\.patched([[:space:]]|$)' \
+        ! pgrep -f '^/home/[^[:space:]]+/.*/gen/medium/wmediumd/build/wmediumd([[:space:]]|$)' \
             >/dev/null 2>&1
         [ -S "$kernel_metrics_socket" ]
         systemctl is-active --quiet "$kernel_metrics_unit"
@@ -241,7 +241,7 @@ publish_radio_identity_inventory() {
     local runtime=/run/meta-cmf-wmediumd
     local output=$runtime/identity-inventory.json
     install -d -m 0775 -o root -g lxd "$runtime"
-    "$gen/wmediumd/observer/generate-identity-inventory.sh" --output "$output"
+    "$gen/medium/observer/generate-identity-inventory.sh" --output "$output"
     jq -e --argjson expected "$((client_count + 5))" \
         '(.stations | length) == $expected' "$output" >/dev/null
 }
@@ -832,7 +832,7 @@ start)
     # group. Keep lifecycle ownership in this root service; wmediumd-up still
     # applies its narrow socket permissions for operator access.
     begin_phase quiesce_and_radio_reset
-    "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    "$gen/medium/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     stop_client_instances
     stop_mesh_instances
     reclaim_hwsim_vifs
@@ -891,7 +891,7 @@ start)
 
     begin_phase medium
     if [ "$medium_backend" = userspace ]; then
-        env SNR=40 "$gen/wmediumd/wmediumd-up.sh" up
+        env SNR=40 "$gen/medium/wmediumd/wmediumd-up.sh" up
     else
         # Stable radio ownership is consumed by steering, the Console and
         # test tooling independently of the packet data path.  Userspace
@@ -936,7 +936,7 @@ start)
 stop)
     begin_phase medium
     stop_kernel_metrics_proxy
-    "$gen/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
+    "$gen/medium/wmediumd/wmediumd-up.sh" down >/dev/null 2>&1 || true
     end_phase
 
     begin_phase clients

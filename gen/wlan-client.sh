@@ -258,11 +258,11 @@ up)
     # supplicant, so association and DHCP complete without an operator restart.
     # wmediumd-up.sh replaces the old daemon atomically enough for this lab and
     # preserves the caller's requested baseline SNR.
-    if [ -x "$HERE/wmediumd/wmediumd-up.sh" ] &&
+    if [ -x "$HERE/medium/wmediumd/wmediumd-up.sh" ] &&
        [ -s "$WMD_PIDF" ] &&
        sudo kill -0 "$(cat "$WMD_PIDF")" 2>/dev/null; then
         echo "  wmediumd: refreshing active-radio matrix for $CT"
-        SNR="${SNR:-40}" "$HERE/wmediumd/wmediumd-up.sh" up
+        SNR="${SNR:-40}" "$HERE/medium/wmediumd/wmediumd-up.sh" up
     fi
     # write the per-instance config and start via the baked autostart (which also
     # persists the connection across container restarts)

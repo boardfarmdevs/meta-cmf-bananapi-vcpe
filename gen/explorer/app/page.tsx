@@ -483,7 +483,7 @@ export default function Explorer() {
                     />
                     <Block
                       id="wmediumd"
-                      label="wmediumd.patched"
+                      label="wmediumd"
                       sub="SNR · channels · frame delivery"
                     />
                   </div>

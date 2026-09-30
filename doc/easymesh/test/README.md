@@ -50,7 +50,7 @@ initial/final health/RF gates without churn. Its `p0-preflight` result records
 `acceptance_eligible=false`; `total_runtime_seconds` includes final checks.
 It is not a soak pass.
 
-See [RF action qualification](../reference/radio/rf-property-coverage.md#native-load-action-qualification).
+See [RF action qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#native-load-action-qualification).
 
 Client count is auto-detected; override with `--expected-clients COUNT` or
 `EASYMESH_EXPECTED_CLIENTS`. Checked-in policies remain unchanged.
@@ -104,7 +104,7 @@ Check Console NG first. `lab-config.sh` sets ports, not the host address:
 
 ```sh
 source doc/easymesh/build/scripts/lab-config.sh "$EASYMESH_LXD_NAME"
-python3 gen/wmediumd/observer/check-ready.py \
+python3 gen/medium/observer/check-ready.py \
   --url "http://${EASYMESH_HOST_ADDRESS:-127.0.0.1}:$WMEDIUMD_CONSOLE_PORT" \
   --require-room --require-survey
 ```

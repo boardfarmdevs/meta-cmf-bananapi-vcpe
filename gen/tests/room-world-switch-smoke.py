@@ -13,8 +13,8 @@ import urllib.error
 import urllib.request
 import uuid
 
-# The default room of each room set (worlds, worlds-wired, worlds-pods, worlds-pods-wired).
-DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods|pods-wired))?--private-client-room-walk")
+# The default room of each room set (worlds, worlds-wired, worlds-pods).
+DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods))?--private-client-room-walk")
 
 
 def command(*arguments):

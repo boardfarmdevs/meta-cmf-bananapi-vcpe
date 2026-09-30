@@ -75,7 +75,7 @@ for c in "${wifi_extenders[@]}"; do
 done
 for c in bpibroadband "${wifi_extenders[@]}"; do lxc config set "$c" boot.autostart false; done
 
-log "medium"; SNR=40 bash wmediumd/wmediumd-up.sh up | tail -1
+log "medium"; SNR=40 bash medium/wmediumd/wmediumd-up.sh up | tail -1
 
 for c in "${wired_extenders[@]}"; do
     log "wired extender $c"

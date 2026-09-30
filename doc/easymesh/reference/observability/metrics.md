@@ -260,7 +260,7 @@ is a live observation, use the wmediumd configurator to apply a reversible RF
 scenario:
 
 ```sh
-cd gen/wmediumd/configurator
+cd gen/medium/configurator
 python3 -m wmdcfg.cli inventory -o /tmp/inventory.json
 python3 -m wmdcfg.cli status
 python3 -m wmdcfg.cli validate scenarios/two-ap-crossover.wmd
@@ -281,8 +281,8 @@ client traffic after restoring the link because hwsim supplies a fresh signal
 value when a frame traverses it. The runner captures and restores every
 touched link; confirm its final result before accepting the test.
 
-See [the configurator](../radio/configurator.md) for role binding and scenario
-authoring, and [wmediumd internals](../radio/wmediumd-internals.md) for the control socket
+See [the configurator](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/configurator.md) for role binding and scenario
+authoring, and [wmediumd internals](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/wmediumd-internals.md) for the control socket
 and RF model.
 
 ### Live WebUI RCPI monitor
@@ -291,8 +291,7 @@ Use the purpose-built wrapper when the goal is to watch signal change rather
 than to author a scenario manually:
 
 ```sh
-cd gen/wmediumd/configurator
-./run-rcpi-monitor.sh wlan-client
+gen/medium-tools/run-rcpi-monitor.sh wlan-client
 ```
 
 The wrapper discovers the selected client's MAC, current serving BSSID and AP
@@ -307,7 +306,7 @@ state even after a handled interrupt.
 The traffic target defaults to `10.0.0.1`; override it when required:
 
 ```sh
-WMD_TRAFFIC_TARGET=10.0.0.254 ./run-rcpi-monitor.sh wlan-client-3
+WMD_TRAFFIC_TARGET=10.0.0.254 gen/medium-tools/run-rcpi-monitor.sh wlan-client-3
 ```
 
 Traffic is required because hwsim attaches the current simulated signal to
@@ -329,7 +328,7 @@ observation and that traffic after restoration refreshes the original value.
   HAL survey/channel functions return success without populating measurements.
   The corresponding TLVs are sent, accepted and persisted, but zero-initialized
   fields do not prove an idle channel. See the
-  [virtual RF assessment](../radio/virtual-rf-assessment.md) for the driver,
+  [virtual RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md) for the driver,
   native-reporting and congestion-model work required in both labs.
 - Backhaul edges use the dedicated structured signal/freshness path; they do
   not expose the complete periodic fronthaul client metric set. All twenty

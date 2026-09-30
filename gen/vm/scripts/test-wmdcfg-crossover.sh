@@ -22,7 +22,7 @@ case "$OUTPUT_ROOT" in
         ;;
 esac
 
-daemon_pattern='^/home/.*/gen/wmediumd/wmediumd\.patched '
+daemon_pattern='^/home/.*/gen/medium/wmediumd/build/wmediumd '
 before_pid=$(pgrep -fo "$daemon_pattern")
 rm -rf -- "$OUTPUT_ROOT"
 rm -f -- /tmp/wmdcfg-crossover-ping.txt /tmp/wmdcfg-crossover-assoc.txt
@@ -55,7 +55,7 @@ fi
 set +e
 (
     cd "$META_DIR"
-    PYTHONPATH=gen/wmediumd/configurator \
+    PYTHONPATH=gen/medium/configurator \
         python3 -m wmdcfg.cli run "$PLAN" --output-root "$OUTPUT_ROOT"
 )
 run_rc=$?

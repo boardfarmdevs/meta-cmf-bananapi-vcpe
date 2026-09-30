@@ -74,13 +74,16 @@ working defaults from its checkout and accepts only optional overrides.
 
 ## BPI images
 
-Create a workspace and clone the layer. The current branch in that clone is the
-layer source; the single checked-in [manifest.xml](manifest.xml) pins every
-upstream project used by the image build.
+Create a workspace and clone the layer with its submodule: `gen/medium` is the
+RF medium ([easymesh-medium](https://github.com/boardfarmdevs/easymesh-medium)) at
+the commit this lab pins, which the image takes the room viewer from and the lab
+VM its medium. The current branch in that clone is the layer source; the single
+checked-in [manifest.xml](manifest.xml) pins every upstream project used by the
+image build.
 
 ```sh
 mkdir -p "$HOME/yocto/easymesh-bpi"
-git clone https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe.git \
+git clone --recurse-submodules https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe.git \
   "$HOME/yocto/easymesh-bpi/meta-cmf-bananapi-vcpe"
 cd "$HOME/yocto/easymesh-bpi/meta-cmf-bananapi-vcpe"
 export PATH="$HOME/hosttools/bin:$HOME/bin:$PATH"

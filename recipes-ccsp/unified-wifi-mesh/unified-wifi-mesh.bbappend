@@ -1,4 +1,4 @@
-FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:${THISDIR}/../../gen/wmediumd/configurator/worlds/viewer:"
+FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:${THISDIR}/../../gen/medium/configurator/worlds/viewer:"
 
 # Keep source patches in dependency order in one place. Comments below retain
 # the evidence for each patch without silently changing application order.
@@ -228,6 +228,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0229-ctrl-concurrent-candidate-queries-complete-and-time-out-on-their-own.patch \
     file://0230-ctrl-each-agents-em-config-times-out-on-its-own.patch \
     file://0231-cli-candidate-polls-share-one-recent-read.patch \
+    file://0232-ctrl-steerwifibackhaul-sends-the-backhaul-steering-request.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

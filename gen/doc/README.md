@@ -5,7 +5,7 @@ architecture and operating instructions live in:
 
 - [architecture](../../doc/easymesh/concepts/architecture.md)
 - [operations](../../doc/easymesh/guide/operations.md)
-- [wmediumd configurator](../../doc/easymesh/reference/radio/configurator.md)
+- [wmediumd configurator](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/configurator.md)
 - [steering policy](../../doc/easymesh/concepts/steering-policy.md)
 
 Do not duplicate host setup or acceptance procedures here.
@@ -20,10 +20,10 @@ Do not duplicate host setup or acceptance procedures here.
 | `wlan-client/wlan.start` | idempotent in-client association and DHCP replacement hook |
 | `steer.sh` | resolve WebUI names such as `sta-03` and `extender-2`, then issue a directed EasyMesh steer |
 | `steer-soak.sh` | repeatedly select valid moves from the current topology and invoke `steer.sh` |
-| `hwsim/build-hwsim.sh` | build/load the validated multichannel hwsim module |
-| `wmediumd/build-wmediumd.sh` | apply the pinned wmediumd patch series and build |
-| `wmediumd/wmediumd-up.sh` | generate, test and start/stop the shared medium |
-| `wmediumd/configurator/` | compile and run deterministic RF scenarios |
+| `medium/hwsim/build-hwsim.sh` | build/load the validated multichannel hwsim module |
+| `medium/wmediumd/build-wmediumd.sh` | apply the pinned wmediumd patch series and build |
+| `medium/wmediumd/wmediumd-up.sh` | generate, test and start/stop the shared medium |
+| `medium/configurator/` | compile and run deterministic RF scenarios |
 | `wpa_supplicant/` | build the client WNM supplicant |
 | `tests/p0-cold-reconstruction.sh` | reconstruct and accept the full lab repeatedly |
 | `tests/bpibroadband-memory-profile.py` | sample controller-container cgroup, PSS and storage state |
@@ -53,9 +53,9 @@ From `gen/` on a prepared runtime:
 ```sh
 ./bpi.sh -F -b br-wan101 /path/to/controller.rootfs.lxc.tar.bz2
 ./bpi.sh -F /path/to/extender.rootfs.lxc.tar.bz2
-SNR=40 ./wmediumd/wmediumd-up.sh up
+SNR=40 ./medium/wmediumd/wmediumd-up.sh up
 ./wlan-client.sh up private_ssid test-fronthaul
-./wmediumd/wmediumd-up.sh status
+./medium/wmediumd/wmediumd-up.sh status
 ```
 
 This is not a complete acceptance sequence. Follow the per-node gates in

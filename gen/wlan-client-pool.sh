@@ -183,7 +183,7 @@ up)
     # for a pool. Let mac80211_hwsim's built-in medium carry the bounded
     # association/export gates, then register the complete matrix once. The
     # EXIT trap restores wmediumd even if provisioning stops part way through.
-    medium_helper="$HERE/wmediumd/wmediumd-up.sh"
+    medium_helper="$HERE/medium/wmediumd/wmediumd-up.sh"
     medium_pending=0
     needs_provisioning=0
     probe_parallelism=${CLIENT_PROBE_PARALLELISM:-8}

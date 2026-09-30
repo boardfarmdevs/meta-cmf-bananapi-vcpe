@@ -15,7 +15,7 @@ The optimizer is a separate host-side component. It is not hidden inside the
 BPI controller, Agent, WebUI, wmediumd, or configurator.
 
 ```text
-wmediumd/configurator  -> controlled RF world
+medium/configurator  -> controlled RF world
 EasyMesh APIs          -> topology, BSS, client and metrics observations
 optimizer              -> normalize, validate, decide and journal
 steering adapter       -> exact bounded EasyMesh action

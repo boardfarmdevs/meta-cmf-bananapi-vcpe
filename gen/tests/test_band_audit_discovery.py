@@ -31,7 +31,7 @@ def test_band_discovery_queries_only_selected_clients_in_parallel(audit, monkeyp
         if arguments[:2] == ("lxc", "query"):
             container = arguments[2].removeprefix("/1.0/instances/").removesuffix("/state")
             assert container in processes
-            assert timeout == 5
+            assert timeout == 20
             barrier.wait(timeout=2)
             return json.dumps({"pid": processes[container], "status": "Running"})
         assert arguments[:2] == ("nsenter", "--target")

@@ -107,7 +107,7 @@ capture restarts.txt sh -c '
 capture bpi-pss.txt lxc exec -T -n bpibroadband -- pss.sh
 capture bpi-storage.txt lxc exec -T -n bpibroadband -- sh -c \
     'du -x -B1 -s /nvram /var/lib/mysql /rdklogs /var/log 2>/dev/null; df -B1 / /nvram'
-capture medium.txt "$root/gen/wmediumd/wmediumd-up.sh" status
+capture medium.txt "$root/gen/medium/wmediumd/wmediumd-up.sh" status
 
 capture_shell lxc-state.json '
     first=1

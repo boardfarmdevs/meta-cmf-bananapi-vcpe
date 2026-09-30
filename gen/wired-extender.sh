@@ -93,7 +93,9 @@ lanport() {    # the gateway's wired LAN port: a VM bridge as eth2 of its brlan0
 lxc info $CTL 2>/dev/null | grep -q '^Status: RUNNING' || exit 0
 lxc exec $CTL -- sh -c 'brctl show brlan0 2>/dev/null | grep -qw eth2 && exit 0
     ip link show brlan0 >/dev/null 2>&1 || exit 0
-    ip link set eth2 up && brctl addif brlan0 eth2 && echo "eth2 re-attached to brlan0"'
+    # the timer and a direct call may attach it at once: in brlan0 afterwards is success
+    ip link set eth2 up && { brctl addif brlan0 eth2 2>/dev/null || brctl show brlan0 | grep -qw eth2; } &&
+        echo "eth2 re-attached to brlan0"'
 SCRIPT
     chmod 755 /usr/local/sbin/easymesh-lanport
     cat > /etc/systemd/system/easymesh-lanport.service <<UNIT
@@ -127,12 +129,12 @@ medium() {    # regenerate wmediumd; the room demo drives it live, so it stops a
     # until OneWifi and em_agent were restarted: only when the medium would change.
     local room= cfg=${CFG:-/run/meta-cmf-wmediumd/wmediumd.cfg} pid=/run/meta-cmf-wmediumd/wmediumd.pid
     if [ -f "$cfg" ] && kill -0 "$(cat "$pid" 2>/dev/null)" 2>/dev/null &&
-            cmp -s "$cfg" <(bash "$gen/wmediumd/gen-config.sh" "${SNR:-40}" 2>/dev/null); then
+            cmp -s "$cfg" <(bash "$gen/medium/wmediumd/gen-config.sh" "${SNR:-40}" 2>/dev/null); then
         log "medium: already current"
         return
     fi
     systemctl is-active --quiet easymesh-room-demo && room=1 && systemctl stop easymesh-room-demo
-    (cd "$gen" && bash wmediumd/wmediumd-up.sh up) | tail -1
+    (cd "$gen" && bash medium/wmediumd/wmediumd-up.sh up) | tail -1
     [ -z "$room" ] || systemctl start easymesh-room-demo
 }
 
@@ -183,7 +185,25 @@ bridge_unit() {    # keep eth1 a port of brlan0 (RDK does not bridge it in exten
 # pushes the controller's settings again) bring them back. At most once per 3 minutes, logged.
 # And no Wi-Fi station stays up: with eth1 in brlan0 an associated backhaul station is a
 # second path into the LAN (an L2 loop), whatever the medium says.
-down=0 last=-180
+# And its 5 GHz backhaul BSS up, so Wi-Fi extenders can take it as their parent. OneWifi
+# never creates it here: in EasyMesh node mode it starts only the station, and the
+# controller's settings match what it has stored ("same, not applying"). Disabling and
+# enabling that SSID in the data model makes OneWifi create it. Last, brlan0 gets its
+# address from the gateway (a Wi-Fi extender's setup_ext_pre.sh runs udhcpc before
+# ieee1905 starts, when a wired extender's brlan0 has no uplink yet).
+down=0 last=-180 bh_down=0 bh_ssid= bh_if= dhcp_last=-60
+backhaul_ssid() {    # the data model's SSID of mesh_backhaul_5g, and its interface
+    local i=1
+    while [ "$i" -le 24 ]; do    # rbuscli ends its lines in CR LF
+        if rbuscli get "Device.WiFi.SSID.$i.Name" 2>/dev/null | tr -d '\r' | grep -q 'Value : mesh_backhaul_5g$'; then
+            bh_ssid=$i
+            bh_if=$(rbuscli get "Device.WiFi.SSID.$i.Alias" 2>/dev/null | tr -d '\r' | awk '/Value :/ {print $3}')
+            [ -n "$bh_if" ] && return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
 while :; do
     for n in $(iw dev 2>/dev/null | awk '$1 == "Interface" {n = $2} $1 == "type" && $2 == "managed" {print n}'); do
         if [ -e "/sys/class/net/$n/master" ] || [ "$(cat "/sys/class/net/$n/operstate" 2>/dev/null)" != down ]; then
@@ -209,6 +229,32 @@ while :; do
         systemctl restart em_agent --no-block
         last=$now
         down=0
+    fi
+    # the backhaul BSS, once the fronthaul is up (the controller's settings applied)
+    if [ "$down" -eq 0 ] && [ "$(systemctl is-active onewifi)" = active ] &&
+            iw dev wifi0 info 2>/dev/null | grep -q ssid &&
+            { [ -n "$bh_if" ] || backhaul_ssid; } &&
+            ! iw dev "$bh_if" info 2>/dev/null | grep -q ssid; then
+        bh_down=$((bh_down + 1))
+        if [ "$bh_down" -ge 3 ]; then
+            echo "$bh_if (mesh_backhaul_5g, SSID.$bh_ssid) has no BSS: disabling and enabling it"
+            rbuscli set "Device.WiFi.SSID.$bh_ssid.Enable" boolean false >/dev/null 2>&1
+            rbuscli set Device.WiFi.ApplyAccessPointSettings boolean true >/dev/null 2>&1
+            sleep 5
+            rbuscli set "Device.WiFi.SSID.$bh_ssid.Enable" boolean true >/dev/null 2>&1
+            rbuscli set Device.WiFi.ApplyAccessPointSettings boolean true >/dev/null 2>&1
+            bh_down=0
+        fi
+    else
+        bh_down=0
+    fi
+    # an address on brlan0 once eth1 is in it, tried at most once a minute
+    if [ "$(basename "$(readlink /sys/class/net/eth1/master)")" = brlan0 ] &&
+            ! ip -4 -o address show brlan0 2>/dev/null | grep -q 'inet ' &&
+            [ $((now - dhcp_last)) -ge 60 ]; then
+        dhcp_last=$now
+        udhcpc -i brlan0 -q -n -t 3 >/dev/null 2>&1 &&
+            echo "brlan0: $(ip -4 -o address show brlan0 | awk '{print $4}') from the gateway"
     fi
     sleep 5
 done

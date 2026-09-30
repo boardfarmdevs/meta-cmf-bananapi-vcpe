@@ -82,7 +82,7 @@ flowchart TB
         end
 
         ORACLE["Lab evaluator only<br/>wmediumd truth, client iw link,<br/>traffic and service health"]:::contract
-        WMD["wmediumd.patched<br/>one process, all active hwsim radios"]:::stimulus
+        WMD["wmediumd<br/>one process, all active hwsim radios"]:::stimulus
         SOCK --> WMD
         RUN --> JOURNAL
         WMD -.-> ORACLE

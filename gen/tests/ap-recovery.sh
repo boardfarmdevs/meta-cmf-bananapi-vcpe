@@ -20,7 +20,7 @@ medium_identity() {
     case "$medium_backend" in
         userspace) cat /run/meta-cmf-wmediumd/wmediumd.pid ;;
         kernel)
-            sudo -n env PYTHONPATH="$repo/gen/wmediumd/configurator" \
+            sudo -n env PYTHONPATH="$repo/gen/medium/configurator" \
                 python3 -m wmdcfg.cli status --backend kernel \
                 | jq -r .instance_id
             ;;

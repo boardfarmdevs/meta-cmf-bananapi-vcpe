@@ -435,7 +435,7 @@ export const entries: Record<string, Entry> = {
     ],
   ),
   wmediumd: entry(
-    'wmediumd.patched',
+    'wmediumd',
     'purple',
     'Accepted RF-medium backend',
     'Controls simulated delivery of all registered 802.11 frames.',

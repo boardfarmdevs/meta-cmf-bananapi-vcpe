@@ -17,10 +17,10 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 # The Golden Worlds the room runs: the lab's own, or the pod variant
 # (EASYMESH_ROOM_WORLDS_ROOT, as for run-easymesh-suite.sh).
-WORLDS = ROOT / (os.environ.get("EASYMESH_ROOM_WORLDS_ROOT") or "gen/wmediumd/configurator/worlds")
+WORLDS = ROOT / (os.environ.get("EASYMESH_ROOM_WORLDS_ROOT") or "gen/medium/configurator/worlds")
 ROOMS = ("rf-packet-size-counters", "rf-asymmetric-ack")
-# The default room of each room set (worlds, worlds-wired, worlds-pods, worlds-pods-wired).
-DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods|pods-wired))?--private-client-room-walk")
+# The default room of each room set (worlds, worlds-wired, worlds-pods).
+DEFAULT_WORLD = re.compile(r"home-five-agent(?:-(wired|pods))?--private-client-room-walk")
 COUNTERS = {"packets_per_second", "bytes_per_second", "retries_per_second",
             "tx_errors_per_second", "rx_errors_per_second"}
 

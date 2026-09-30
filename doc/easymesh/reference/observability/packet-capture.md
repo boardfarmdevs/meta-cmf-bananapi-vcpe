@@ -145,8 +145,8 @@ Run the capture and scenario from separate terminals. Start the capture first:
 # Terminal 1: use the recommended five-minute EasyMesh capture above.
 
 # Terminal 2:
-cd /home/rev/easymesh-lab/0829-lxd-primary/meta-cmf-bananapi-vcpe/gen/wmediumd/configurator
-./run-rcpi-monitor.sh wlan-client
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe
+gen/medium-tools/run-rcpi-monitor.sh wlan-client
 ```
 
 Keep the configurator run directory under `/tmp/wmdcfg-runs`. Its event times,
@@ -167,7 +167,7 @@ channel-context ACK-monitor problem behind the older dynamic-capture warning.
 Verify that the loaded module matches the patched build before a bounded
 capture, preserve the prior monitor state, and inspect kernel/capture drops.
 Do not dynamically enable monitoring on an unqualified kernel/medium pair.
-See the [virtual RF assessment](../radio/virtual-rf-assessment.md) for current
+See the [virtual RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md) for current
 module evidence and the distinction between capture, delivery and occupancy.
 
 The room trace helper's management filter excludes beacons and probes. BSS

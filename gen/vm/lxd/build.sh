@@ -42,6 +42,12 @@ export_dir=${EASYMESH_LXD_EXPORT_DIR:-$root/gen/vm/lxd/artifacts}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short HEAD)}
 client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
 wired_extenders=${EASYMESH_WIRED_EXTENDERS:-1}
+emosa=${EASYMESH_EMOSA:-0}
+emosa_lab=${EMOSA_LAB:-$(cd "$root/.." && pwd)/emosa-lab}
+emosa_pod_image=${EMOSA_POD_IMAGE:-}
+emosa_agent=${EASYMESH_EMOSA_AGENT:-python}
+[[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
+[[ "$emosa_agent" =~ ^(python|c)$ ]] || { echo 'EASYMESH_EMOSA_AGENT must be python or c' >&2; exit 2; }
 [[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
     echo 'CLIENT_CREATE_PARALLELISM must be a positive integer' >&2
     exit 2
@@ -62,6 +68,9 @@ Commands:
   export      check, stop and export a portable LXD VM backup bundle
   export-thin check, remove provisioned nodes and export the universal offline bundle
   delete      delete only the named appliance VM after showing its identity
+  emosa       turn the EMOSA option on in the accepted lab VM: emosa-lab stages its adapter
+              kit and the OpenSync pod image, then runs its option (EMOSA, fleet, the pods'
+              gateway, two pods, telemetry, their Wi-Fi backhaul, the rooms with the pods)
 
 Build inputs:
   EASYMESH_CONTROLLER_IMAGE=/path/to/controller.rootfs.lxc.tar.bz2
@@ -85,6 +94,14 @@ Common overrides:
   CLIENT_CREATE_PARALLELISM=$client_create_parallelism (fresh-roster workers; default: 8)
   EASYMESH_WIRED_EXTENDERS=$wired_extenders (extenders on a wired backhaul next to the four
     Wi-Fi extenders: 1, bpiap-004, the rooms with it; 0, the Wi-Fi extenders only)
+
+The EMOSA option (emosa-lab, on the lab's wired LAN port; needs the wired extender):
+  EASYMESH_EMOSA=$emosa (1: build turns it on once the lab is accepted, as emosa does)
+  EMOSA_LAB=$emosa_lab (the emosa-lab checkout)
+  EASYMESH_EMOSA_AGENT=$emosa_agent (the pods' agents: python, the reference, or c, the C lab
+    prototype; lab.sh agent POD python|c in the VM swaps one later)
+  EMOSA_POD_IMAGE=<.../out/mvx-pod-STAMP> (the OpenSync pod image the easymesh-labs
+    manifest pins, from opensync-lab's build-pod.sh)
 EOF
 }
 
@@ -190,13 +207,32 @@ add_proxy() {
 
 make_bundle() {
     local repo=$1 commit=$2 output=$3 ref=refs/heads/lxd-appliance-export
-    test -d "$repo/.git"
+    git -C "$repo" rev-parse --git-dir >/dev/null  # a repository or a submodule
     test -z "$(git -C "$repo" status --porcelain)"
     git -C "$repo" cat-file -e "$commit^{commit}"
     git -C "$repo" update-ref "$ref" "$commit"
     git -C "$repo" bundle create "$output" "$ref"
     git -C "$repo" update-ref -d "$ref"
     git bundle verify "$output" >/dev/null
+}
+
+# The RF medium: easymesh-medium at the commit this lab pins (gen/medium). Its
+# bundle becomes the guest's submodule; the daemon and the console are built here
+# from that commit (the lab commits no binaries) and installed in the guest.
+prepare_medium() {
+    local stage=$1 assets=$1/assets medium=$root/gen/medium pinned
+    pinned=$(git -C "$root" rev-parse HEAD:gen/medium)
+    [ "$(git -C "$medium" rev-parse HEAD 2>/dev/null)" = "$pinned" ] || {
+        echo "gen/medium is not at the pinned $pinned: git submodule update --init gen/medium" >&2
+        exit 1
+    }
+    test -z "$(git -C "$medium" status --porcelain)"
+    make_bundle "$medium" "$pinned" "$assets/easymesh-medium.bundle"
+    "$medium/wmediumd/build-wmediumd.sh" --source "$stage/wmediumd-source" --output "$stage/wmediumd" >&2
+    install -m 0755 "$stage/wmediumd/wmediumd" "$assets/wmediumd"
+    install -m 0644 "$stage/wmediumd/wmediumd.provenance.env" "$assets/wmediumd.provenance.env"
+    bash "$medium/observer/build.sh" "$assets/wmediumd-console" >&2
+    test -z "$(git -C "$medium" status --porcelain)"
 }
 
 prepare_assets() {
@@ -206,6 +242,7 @@ prepare_assets() {
     meta_commit=$(git -C "$root" rev-parse HEAD)
     test -z "$(git -C "$root" status --porcelain)"
     make_bundle "$root" "$meta_commit" "$assets/meta-cmf-bananapi-vcpe.bundle"
+    prepare_medium "$stage"
 
     if [ -d "$boardfarm_source/.git" ]; then
         make_bundle "$boardfarm_source" "$boardfarm_commit" \
@@ -227,7 +264,8 @@ prepare_assets() {
             "$(basename "$controller_image")" \
             "$(basename "$extender_image")" \
             boardfarm-lab-staging.bundle \
-            meta-cmf-bananapi-vcpe.bundle > SHA256SUMS
+            meta-cmf-bananapi-vcpe.bundle \
+            easymesh-medium.bundle wmediumd wmediumd.provenance.env wmediumd-console > SHA256SUMS
         sha256sum -c SHA256SUMS
     )
     printf '%s\n' "$meta_commit"
@@ -338,7 +376,8 @@ clear_secure_boot_config() {
 }
 
 build_vm() {
-    local stage meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
+    # stage is global: the EXIT trap that removes it runs after this function has returned
+    local meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
     local -a init_args
     require_command git
     require_command lxc
@@ -346,6 +385,7 @@ build_vm() {
     require_command sha256sum
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
+    [ "$emosa" = 0 ] || emosa_inputs
     instance_exists && {
         echo "$name already exists; delete it explicitly before a clean build" >&2
         exit 1
@@ -354,7 +394,7 @@ build_vm() {
     stage=$(mktemp -d /tmp/easymesh-lxd-build.XXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
     meta_commit=$(prepare_assets "$stage" | tail -n 1)
-    wmediumd_sha=$(sha256sum "$root/gen/wmediumd/wmediumd.patched" | awk '{print $1}')
+    wmediumd_sha=$(sha256sum "$stage/assets/wmediumd" | awk '{print $1}')
     controller_name=$(basename "$controller_image")
     extender_name=$(basename "$extender_image")
 
@@ -411,7 +451,7 @@ build_vm() {
     run_root env EASYMESH_SCALE_PROFILE="$profile" \
         HEALTH_EXPECT_CLIENTS="$profile_clients" \
         bash /home/easymesh/easymesh-provision/50-runtime-service.sh
-    run_root bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/install.sh --start
+    run_root bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/install.sh --start
     # A VM NAT proxy connects to the guest NIC, not to guest loopback. Keep the
     # Console's normal package default private, but bind its appliance instance
     # to the isolated guest interface so the host-side proxy can reach it.
@@ -432,13 +472,43 @@ build_vm() {
     wait_http_ready "wmediumd Console NG proxy" \
         "http://$proxy_check_address:$console_port/api/v2/health"
     wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
-    run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/wmediumd/observer/check-ready.py \
+    run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/check-ready.py \
         --require-room --require-survey --timeout 120
+    [ "$emosa" = 0 ] || emosa_vm
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
     trap - EXIT
     rm -rf -- "$stage"
+}
+
+emosa_inputs() {
+    [ "$wired_extenders" = 1 ] || {
+        echo 'the EMOSA option needs the wired extender (EASYMESH_WIRED_EXTENDERS=1)' >&2
+        exit 2
+    }
+    [ -x "$emosa_lab/deploy/rdk-lab/lab.sh" ] || {
+        echo "no emosa-lab checkout at $emosa_lab (EMOSA_LAB)" >&2
+        exit 2
+    }
+    [ -f "$emosa_pod_image.rootfs.tar.gz" ] && [ -f "$emosa_pod_image.metadata.tar.gz" ] || {
+        echo 'set EMOSA_POD_IMAGE to the pinned OpenSync pod image (.../out/mvx-pod-STAMP)' >&2
+        exit 2
+    }
+}
+
+emosa_vm() {
+    # The EMOSA option, owned by emosa-lab: its host side stages the adapter kit and the pod
+    # image into the VM, then its VM side runs every step (deploy/rdk-lab/vm/lab.sh up).
+    emosa_inputs
+    instance_exists
+    [ "$(instance_state)" = RUNNING ] || { echo "$name is not running" >&2; exit 1; }
+    [ "$(lxc exec "$name" -- lxc config get bpiap-004 user.easymesh.backhaul 2>/dev/null)" = wired ] || {
+        echo "$name has no wired extender bpiap-004" >&2
+        exit 1
+    }
+    EMOSA_VM=$name EMOSA_POD_IMAGE=$emosa_pod_image "$emosa_lab/deploy/rdk-lab/lab.sh" stage
+    EMOSA_VM=$name "$emosa_lab/deploy/rdk-lab/lab.sh" up "$emosa_agent"
 }
 
 start_vm() {
@@ -605,7 +675,8 @@ export_thin_vm() {
     }
 
     meta_commit=$(git -C "$root" rev-parse HEAD)
-    wmediumd_sha=$(sha256sum "$root/gen/wmediumd/wmediumd.patched" | awk '{print $1}')
+    # the daemon the running lab built from its pinned medium
+    wmediumd_sha=$(lxc exec "$name" -- sha256sum /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/build/wmediumd | awk '{print $1}')
     controller_name=$(basename "$controller_image")
     extender_name=$(basename "$extender_image")
     assets=/home/easymesh/easymesh-assets
@@ -734,6 +805,7 @@ case "${1:-}" in
     export) export_vm ;;
     export-thin) export_thin_vm ;;
     delete) delete_vm ;;
+    emosa) emosa_vm ;;
     -h|--help|help|'') usage ;;
     *) usage >&2; exit 2 ;;
 esac

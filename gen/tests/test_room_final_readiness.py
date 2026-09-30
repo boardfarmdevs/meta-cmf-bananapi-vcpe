@@ -115,9 +115,8 @@ def test_default_room_has_twenty_online_and_eighty_dormant(fault):
 
 
 @pytest.mark.parametrize("world, extra, expected", [
-    ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], True),
-    ("home-five-agent-pods-wired--private-client-room-walk", ["pod_1", "pod_2"], False),
-    ("home-five-agent-pods--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], False),
+    ("home-five-agent-pods--private-client-room-walk", ["pod_1", "pod_2", "extender_5"], True),
+    ("home-five-agent-pods--private-client-room-walk", ["pod_1", "pod_2"], False),
     ("home-five-agent-wired--private-client-room-walk", ["extender_5"], True),
     ("home-five-agent-wired--private-client-room-walk", [], False),
     ("home-five-agent--private-client-room-walk", ["extender_5"], False),

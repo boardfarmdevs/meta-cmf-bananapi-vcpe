@@ -37,7 +37,7 @@ acceptance and do not replace the next full 100-client baseline.
 | Guarded load steering | A native BTM and receiver delivery were observed, but repeat qualification hit native 503/504 query failures. |
 | Pressure veto / weak-signal rescue | Test stimuli did not sustain the required otherwise-eligible decision context; no complete live proof. |
 
-The [maintained RF qualification record](reference/radio/rf-property-coverage.md#room-catalog-qualification-and-open-failures)
+The [maintained RF qualification record](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#room-catalog-qualification-and-open-failures)
 contains exact evidence paths, repaired harness/namespace issues and attribution.
 The `rf-actions` tier is included in `all`; known failures remain failures.
 Do not relax deadlines, disable native admission checks, or invent unavailable

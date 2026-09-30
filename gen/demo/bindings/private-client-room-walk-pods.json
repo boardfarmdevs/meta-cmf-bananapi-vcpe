@@ -28,6 +28,7 @@
     "sta_mobile_09": "wlan-client-018",
     "sta_mobile_10": "wlan-client-019",
     "pod_1": "pod-1",
-    "pod_2": "pod-2"
+    "pod_2": "pod-2",
+    "extender_5": "bpiap-004"
   }
 }
