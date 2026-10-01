@@ -8,6 +8,9 @@ lists a pod's own vendor and model. Node names stay as they are (Agent-N,
 Extender-N), since the lab's checks read them. The root is always the
 controller: its own record takes the last M1 the controller processed
 ("Banana Pi - R4", or an adapter's), so it is never classified by it.
+
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
 ---
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
@@ -64,42 +67,3 @@ controller: its own record takes the last M1 the controller processed
  func getTreeValue(tree *C.em_network_node_t, key string) string {
      node := getNetworkTreeByKey(tree, key)
      if node != nil {
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -3875,7 +3875,7 @@
- 
-       }
- 
--      const nodeIconUrl = self.getNodeIcon(d.name);
-+      const nodeIconUrl = self.getNodeIcon(d.name, d.kind);
-       let isController = false;
-       if (d.name?.toLowerCase().includes('controller')) {
-         isController = true;
-@@ -3919,7 +3919,13 @@
-               tooltip.style('display', 'none');
-               return;
-             }
--            const html = `<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}` +
-+            // an adapter-onboarded OpenSync pod: its M1 identity, which the agent
-+            // chose, so it is escaped before it becomes HTML
-+            const text = value => String(value ?? '').replace(/[&<>"']/g,
-+              c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
-+            const identity = d.kind === 'opensync-pod'
-+              ? `<br><b>${text(d.model || 'OpenSync pod')}</b> · ${text(d.manufacturer)}` : '';
-+            const html = `<b>${d.name || d.id}</b>${identity}<br>AL MAC: ${d.id}${backhaul}` +
-               (self.roomLayout?.rfHTML(d) || '');
-             tooltip.style('display', 'block');
-             if (tooltip.html() !== html) tooltip.html(html);
-@@ -4461,9 +4467,11 @@
-   /**
-    * get the icon for nodes based on node name
-    */
--  getNodeIcon(nodeName) {
-+  getNodeIcon(nodeName, kind) {
-     const type = nodeName?.toLowerCase() || '';
- 
-+    // an OpenSync pod onboarded through an adapter (its M1 manufacturer)
-+    if (kind === 'opensync-pod') return 'static/icons/opensync-pod.svg';
-     if (type.includes('controller') || type.includes('agent')) return'static/icons/controller.png';
-     return 'static/icons/extender.png';
-   }

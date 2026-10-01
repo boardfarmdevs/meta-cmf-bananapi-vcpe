@@ -11,6 +11,12 @@ ping_interval=${HEALTH_PING_INTERVAL:-1}
 ping_max_loss=${HEALTH_PING_MAX_LOSS:-0}
 ping_exec_attempts=${HEALTH_PING_EXEC_ATTEMPTS:-2}
 ping_exec_timeout=${HEALTH_PING_EXEC_TIMEOUT:-20}
+# A lab just built, started or restored can still be reconfiguring its radios: a round that
+# loses packets is reported and the lab measured again after a pause; only the last round
+# decides, at the same loss bar (rdk-1001, 1 Oct: one client lost 4 of 10 pings in its
+# build's round, then every later check passed).
+ping_rounds=${HEALTH_PING_ROUNDS:-2}
+ping_settle=${HEALTH_PING_SETTLE_SECONDS:-30}
 # The lab's extenders on a wired backhaul (gen/wired-extender.sh): one more device each,
 # with three radios and ten BSSes, but no backhaul station association and no Wi-Fi edge.
 wired=$(for c in $(lxc list -c n --format csv | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
@@ -33,6 +39,10 @@ expected_associated=$((expected_clients + expected_devices - 1 - wired_count))
     || { echo "HEALTH_PING_EXEC_ATTEMPTS must be a positive integer" >&2; exit 2; }
 [[ "$ping_exec_timeout" =~ ^[1-9][0-9]*$ ]] \
     || { echo "HEALTH_PING_EXEC_TIMEOUT must be a positive integer" >&2; exit 2; }
+[[ "$ping_rounds" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "HEALTH_PING_ROUNDS must be a positive integer" >&2; exit 2; }
+[[ "$ping_settle" =~ ^[0-9]+$ ]] \
+    || { echo "HEALTH_PING_SETTLE_SECONDS must be a non-negative integer" >&2; exit 2; }
 
 status_section "Topology and controller model"
 status_action "Reading the live WebUI topology."
@@ -205,35 +215,49 @@ for ((client_index = 0; client_index < expected_clients; client_index++)); do
         exit 1
     fi
 done
-declare -a traffic_pids=()
-for client in "${traffic_clients[@]}"; do
-    (
-        ping_output=
-        for ((attempt = 1; attempt <= ping_exec_attempts; attempt++)); do
-            if ping_output=$(timeout "$ping_exec_timeout" \
-                lxc exec "$client" -- ping -q -c "$ping_count" \
-                -i "$ping_interval" -W 2 10.0.0.1 </dev/null 2>/dev/null); then
-                break
-            fi
+traffic_round() {    # one parallel round; fails if any client exceeds the loss bar
+    local client pid fail=0 completed=0
+    local -a pids=()
+    for client in "${traffic_clients[@]}"; do
+        (
             ping_output=
-        done
-        loss=$(sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p' <<<"$ping_output")
-        echo "$client ${loss:-FAIL}"
-        loss_value=${loss%%%}
-        [[ "$loss_value" =~ ^[0-9]+$ ]] \
-            && [ "$loss_value" -le "$ping_max_loss" ]
-    ) &
-    traffic_pids+=("$!")
-done
-traffic_completed=0
-for pid in "${traffic_pids[@]}"; do
-    wait "$pid" || traffic_fail=1
-    traffic_completed=$((traffic_completed + 1))
-done
-printf 'TRAFFIC_COVERAGE expected=%s scheduled=%s completed=%s\n' \
-    "$expected_clients" "${#traffic_pids[@]}" "$traffic_completed"
-[ "${#traffic_pids[@]}" -eq "$expected_clients" ] \
-    && [ "$traffic_completed" -eq "$expected_clients" ] || traffic_fail=1
+            for ((attempt = 1; attempt <= ping_exec_attempts; attempt++)); do
+                if ping_output=$(timeout "$ping_exec_timeout" \
+                    lxc exec "$client" -- ping -q -c "$ping_count" \
+                    -i "$ping_interval" -W 2 10.0.0.1 </dev/null 2>/dev/null); then
+                    break
+                fi
+                ping_output=
+            done
+            loss=$(sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p' <<<"$ping_output")
+            echo "$client ${loss:-FAIL}"
+            loss_value=${loss%%%}
+            [[ "$loss_value" =~ ^[0-9]+$ ]] \
+                && [ "$loss_value" -le "$ping_max_loss" ]
+        ) &
+        pids+=("$!")
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid" || fail=1
+        completed=$((completed + 1))
+    done
+    printf 'TRAFFIC_COVERAGE expected=%s scheduled=%s completed=%s\n' \
+        "$expected_clients" "${#pids[@]}" "$completed"
+    [ "${#pids[@]}" -eq "$expected_clients" ] && [ "$completed" -eq "$expected_clients" ] || fail=1
+    return "$fail"
+}
+traffic_rounds() {    # up to ping_rounds rounds, a pause after each lossy one; the last decides
+    local round
+    for ((round = 1; round <= ping_rounds; round++)); do
+        [ "$round" = 1 ] || echo "ROUND $round"
+        traffic_round && return 0
+        [ "$round" -lt "$ping_rounds" ] || return 1
+        echo "SETTLE: packets lost in round $round; measuring again in ${ping_settle}s"
+        sleep "$ping_settle"
+    done
+}
+traffic_fail=0
+traffic_rounds || traffic_fail=1
 
 if [ -s "$results" ]; then
     echo MATRIX

@@ -176,7 +176,7 @@ monitoring, provide guest Internet access and open `vagrant ssh`. During a
 maintenance window, use the existing monitoring installer inside the guest:
 
 ```sh
-cd /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/vm/lxd/observability
+cd /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/lxd-monitoring
 sudo env LAB_MONITORING_BIND_ADDRESS=10.0.2.15 \
   LAB_MONITORING_PUBLIC_HOST=127.0.0.1 LAB_GRAFANA_PORT=18893 \
   LAB_MONITORING_ALLOW_RESTART=1 bash setup.sh rdk-virtualbox-0916

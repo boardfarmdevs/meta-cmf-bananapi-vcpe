@@ -140,12 +140,12 @@ the three geometry-backhaul rooms. It separates correct RF/policy behavior
 from observed native parent selection and checks default-room recovery.
 See the [backhaul feature procedure](../../doc/easymesh/reference/testing/room-acceptance.md#short-backhaul-feature-test).
 
-`test_lxd_observability.py` checks the optional nested-LXD monitoring bundle's
-dashboard filters, verified scrape configuration, shell syntax and reference
-links. Its Compose checks require the v2 plugin but no running Docker daemon:
+The optional nested-LXD monitoring bundle is easymesh-medium's `lxd-monitoring/`, with its
+tests there; `test_monitoring_packaging.py` checks this lab's side (the wrapper with the
+VM's ports, the import's opt-in flag, the exports' copy):
 
 ```sh
-python3 -m pytest -q gen/tests/test_lxd_observability.py
+python3 -m pytest -q gen/tests/test_monitoring_packaging.py
 ```
 
 Live installation, authentication and rollback checks are documented in
@@ -317,10 +317,6 @@ Docker/Boardfarm reconstruction.
 | `test_soak_harness.py` | Isolated pytest unit test | No |
 | `verify-snmp-subagent-selfheal.sh` | Built-rootfs check | No live lab required |
 | `verify-webui-static-sync.sh` | Built-rootfs check | No live lab required |
-| `webui-extender-signal-test.js` | Isolated WebUI unit test | No |
-| `webui-mesh-device-signal-test.js` | Isolated WebUI unit test | No |
-| `webui-metrics-reporting-test.js` | Isolated WebUI unit test | No |
-| `webui-topology-layout-test.js` | Isolated WebUI unit test | No |
 
 ## Live health and configuration tests
 
@@ -950,11 +946,13 @@ unchanged room/counters and stale-pause rejection. The demo tests
 350 requests without lifetime exhaustion, failure/oscillation pauses, concurrent
 admission, idempotent Resume and no RF/playback changes.
 
-`steering-cues-test.js STEERING_CUES_JS` checks obstacle routing, simultaneous
-paths, 100 non-overlapping labels, same-position band changes and purple BTM.
-`steering-cues-browser-test.js STEERING_CUES_JS D3_JS [SCREENSHOT_PNG]` uses the
-Playwright environment below to check 24 concurrent cues, entity/text clearance
-masks, label collisions, repeated ticks, moved APs and six-second expiry.
+The topology page's tests live with the page in the medium
+([topology-ui/tests](https://github.com/boardfarmdevs/easymesh-medium/blob/main/topology-ui/tests/README.md)
+says what each holds). The `webui` section runs those without a browser against
+the medium's page assembled for RDK, as the controller image installs it, or
+against `WEBUI_STATIC_DIR` (a copy of a gateway's `/usr/ccsp/EasyMesh/static`);
+`browser` runs the steering cues and room follow browser tests against the same
+page, and `rooms` the live RF hover.
 
 `pane-divider-browser-test.js` uses the Playwright environment above to cover
 keyboard and touch resizing, persisted independent widths, bounds, reset,
@@ -962,69 +960,12 @@ mobile/desktop transitions and storage failures. The actual room and topology
 browser tests also drag their dividers and verify canvas/SVG resizing without
 graph replacement or lab writes.
 
-`webui-room-follow-test.js SCRIPT_JS` checks every bundled room generation,
-identity mapping, collision spacing and packed visual footprints across every
-bundled generation, orientation retention, current association ownership, same-AP
-band changes and steering-method evidence. The viewer browser test also compares
-the shared floor projection with the actual Three.js camera at the room corners.
-`webui-room-follow-browser-test.js
-STATIC_DIRECTORY` uses the Playwright environment above and the actual offline
-WebUI assets (including `vendor/`) with fixture APIs. It covers continuous
-coordinates despite slow metrics, no pose-only SVG replacement, manual dragging,
-outage/reconnect, world switches and room headings (including manual layout),
-the compact single-row topology heading, fullscreen, all three cue colors, source labels
-and expiry without delaying the client or sending any lab writes.
-
 The room server unit tests cover its small read-only coordinate projection.
 Go tests `room_layout_test.go`, `steering_actions_test.go`, `native_http_test.go`
 and `native_steering_test.go` cover bounded/coalesced transport, rejected responses,
 timeouts, history/evidence and independence from native API ownership. Run these
 with their production files and a test-only `apiRequestMutex sync.Mutex` stub
 when not building the complete native Go/C package.
-
-The four JavaScript tests load `rdkb-cli/static/script.js` directly with mocked
-browser/API objects. Supply the patched source file from the
-`unified-wifi-mesh` work tree:
-
-```sh
-script=/path/to/unified-wifi-mesh/src/rdkb-cli/static/script.js
-node gen/tests/webui-extender-signal-test.js "$script"
-node gen/tests/webui-mesh-device-signal-test.js "$script"
-node gen/tests/webui-metrics-reporting-test.js "$script"
-node gen/tests/webui-topology-layout-test.js "$script"
-```
-
-### `webui-extender-signal-test.js`
-
-Verifies topology-edge fresh, stale and unknown signal handling; RCPI `0`;
-legacy and future timestamps; band/channel/signal labels; Ethernet exclusion;
-extender meter strength, direction and accessible parent labels; and metric-only
-in-place refresh without a D3 relayout. Stale and unknown meters must stay
-unlit. A true parent/child structural change must still rebuild the graph.
-
-### `webui-mesh-device-signal-test.js`
-
-Verifies the Mesh Devices list representation of fresh, stale, unknown and
-Ethernet backhaul signal, and verifies that the two-second Devices refresh
-updates cards and badges without overlapping an in-flight request.
-
-### `webui-metrics-reporting-test.js`
-
-Mocks the metrics APIs and verifies that **Enable All Metrics** sends the
-activation request, reloads policy state, refreshes clients, restores the
-button state and presents a successful notification.
-
-### `webui-topology-layout-test.js`
-
-Verifies BSS band labels, SSID/client geometry, quoted color-matched cohort
-titles with padded bounds clear of default client RF paths, edge placement, draggable
-clients, steering pulse/trail state, signal bars, channel display, exact
-backhaul parent rendering, responsive resize, compact star layouts centered
-on Agent-1 with clearance for SSID groups, branch/chain layout preservation,
-position caching, Optimize Layout preserving operator device/client positions,
-and the rule that a metric-only two-second poll
-must not rebuild or move the graph. The API model must remain immutable through
-all rendering operations.
 
 ## Result interpretation
 

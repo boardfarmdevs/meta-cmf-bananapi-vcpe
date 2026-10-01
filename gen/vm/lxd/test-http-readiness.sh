@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# hermetic: not the lab a caller configured (lab-config.sh, as the suite and vm.md do)
+unset EASYMESH_LAB_NAME EASYMESH_LXD_NAME EASYMESH_LXD_STORAGE EASYMESH_PORT_BASE EASYMESH_ROOM_DEMO_PORT \
+    EASYMESH_WEBUI_PORT LAB_GRAFANA_PORT LAB_LXD_UI_PORT LAB_OUTER_METRICS_PORT WMEDIUMD_CONSOLE_PORT
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 build=$root/gen/vm/lxd/build.sh

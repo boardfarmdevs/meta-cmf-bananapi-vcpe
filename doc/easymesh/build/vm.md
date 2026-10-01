@@ -83,13 +83,12 @@ EASYMESH_CONTROLLER_IMAGE="$controller" EASYMESH_EXTENDER_IMAGE="$extender" \
 
 The default outer address is the source address of the host's default route.
 Set `EASYMESH_WEBUI_HOST_IP` only if the host has multiple usable interfaces.
-The builder prints the three HTTP URLs. Monitoring can use the ports exported by
-`lab-config.sh`:
+The builder prints the three HTTP URLs. Monitoring takes the VM's own ports:
 
 ```sh
 host_ip=$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i == "src") {print $(i+1); exit}}')
 LAB_MONITORING_ALLOW_RESTART=1 \
-  gen/vm/lxd/observability/enable.sh "$EASYMESH_LXD_NAME" "$host_ip"
+  gen/vm/lxd/monitoring.sh enable "$EASYMESH_LXD_NAME" "$host_ip"
 ```
 
 ## The wired extender

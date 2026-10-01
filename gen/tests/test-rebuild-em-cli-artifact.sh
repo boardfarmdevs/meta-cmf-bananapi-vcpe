@@ -23,6 +23,10 @@ done
 printf 'package main\n' >"$source_dir/candidate_rejection_test.go"
 printf '<html></html>\n' >"$source_dir/static/index.html"
 printf 'console.log("test")\n' >"$source_dir/static/script.js"
+mkdir -p "$source_dir/static/example"
+for data in clients.json devices.json system-config.json example/topology.json; do
+    printf '{}\n' >"$source_dir/static/$data"
+done
 touch "$work/recipe-sysroot/usr/include/ccsp/wifi_webconfig.h" \
     "$work/recipe-sysroot-native/usr/bin/i686-rdk-linux/i686-rdk-linux-gcc" \
     "$work/build/src/rdkb-cli/.libs/libemcli.so"
@@ -48,7 +52,7 @@ for argument in "$@"; do
     previous=$argument
 done
 [ -n "$out" ]
-printf 'mock ELF 32-bit Intel 80386 UnassociatedSTAErrors\n' >"$out"
+printf 'mock ELF 32-bit Intel 80386 UnassociatedSTAErrors easymesh.cli.coordination.v1 /api/v1/steer-native\n' >"$out"
 chmod 0755 "$out"
 EOF
 chmod 0755 "$mock/go"
@@ -74,5 +78,9 @@ unpacked="$tmp/unpacked"
 mkdir -p "$unpacked"
 tar -xzf "$artifact_dir/em-cli.tar.gz" -C "$unpacked"
 grep -a -q 'UnassociatedSTAErrors' "$unpacked/onewifi_em_cli"
+# the canned data only: the page is the medium's (gen/medium/topology-ui)
+(cd "$unpacked/static" && find . -type f | LC_ALL=C sort) >"$tmp/static-files"
+printf '%s\n' ./clients.json ./devices.json ./example/topology.json ./system-config.json >"$tmp/static-expected"
+cmp "$tmp/static-expected" "$tmp/static-files"
 
-echo "PASS rebuild-em-cli compiles every production Go source and validates schema"
+echo "PASS rebuild-em-cli compiles every production Go source, validates schema and packs only the canned data"

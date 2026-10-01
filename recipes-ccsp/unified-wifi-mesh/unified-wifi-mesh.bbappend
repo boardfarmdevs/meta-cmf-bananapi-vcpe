@@ -1,4 +1,4 @@
-FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:${THISDIR}/../../gen/medium/configurator/worlds/viewer:"
+FILESEXTRAPATHS_prepend := "${THISDIR}/${BPN}:${THISDIR}/../../gen/medium:"
 
 # Keep source patches in dependency order in one place. Comments below retain
 # the evidence for each patch without silently changing application order.
@@ -29,7 +29,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0025-controller-size-sta-frame-body-hex-buffer.patch \
     file://0026-orch-complete-cancelled-commands-independently.patch \
     file://0027-metrics-size-ap-response-for-model.patch \
-    file://0028-cli-topology-layout-and-export.patch \
     file://0029-cli-release-native-tree-allocations.patch \
     file://0030-db-drain-result-sets-before-early-return.patch \
     file://0031-association-refresh-topology-before-publish.patch \
@@ -38,10 +37,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0035-cli-remove-unused-command-data-model-init.patch \
     file://0036-controller-release-json-output.patch \
     file://0037-cli-serve-live-device-client-inventory.patch \
-    file://0038-cli-refresh-topology-on-live-change.patch \
-    file://0039-cli-identify-and-enlarge-topology-stas.patch \
-    file://0040-cli-preserve-active-topology-drag.patch \
-    file://0041-cli-enlarge-topology-network-labels.patch \
     file://0042-metrics-enable-policy-ack-profile-and-persistence.patch \
     file://0043-cli-apply-policies-per-device.patch \
     file://0044-cli-expose-live-client-rcpi.patch \
@@ -57,9 +52,6 @@ EASYMESH_CORE_PATCHES = " \
     file://0054-controller-serialize-command-result-sessions.patch \
     file://0055-topology-response-do-not-overwrite-conflicting-owner.patch \
     file://0056-radio-service-protocol-timers-under-frame-load.patch \
-    file://0057-cli-render-topology-without-mutating-model.patch \
-    file://0058-cli-isolate-d3-topology-render-state.patch \
-    file://0059-cli-optimize-rendered-topology-nodes.patch \
     file://0060-metrics-create-defaults-for-reloaded-radios.patch \
     file://0061-cli-enable-all-metrics-reporting.patch \
     file://0062-controller-preserve-profile-through-dm-commit.patch \
@@ -79,12 +71,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0076-controller-complete-candidate-command-on-response.patch \
     file://0077-cli-join-topology-to-authoritative-radio-inventory.patch \
     file://0078-topology-response-resolve-owner-by-association-age.patch \
-    file://0079-cli-distinguish-iot-clients.patch \
-    file://0080-cli-place-clients-inside-ssid-bubbles.patch \
-    file://0081-cli-show-live-client-signal-in-topology.patch \
-    file://0082-cli-drag-clients-and-highlight-steering.patch \
     file://0083-cli-show-authoritative-backhaul-channel.patch \
-    file://0084-cli-update-signal-arcs-in-place.patch \
     file://0085-cli-show-exact-backhaul-parent.patch \
     file://0086-cli-stabilize-layout-and-show-client-channel.patch \
     file://0087-dm-enforce-single-backhaul-sta-bss.patch \
@@ -114,10 +101,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0112-agent-finish-onewifi-callback-at-bss-config.patch \
     file://0113-cli-report-extender-signal-freshness-end-to-end.patch \
     file://0114-cli-show-mesh-device-backhaul-signal.patch \
-    file://0115-cli-resize-topology-viewport-with-browser.patch \
     file://0116-agent-release-command-data-model-objects.patch \
     file://0117-cli-resolve-wireless-parent-from-live-bss.patch \
-    file://0118-cli-optimize-landscape-topology-layout.patch \
     file://0119-agent-reconcile-authoritative-station-snapshots.patch \
     file://0120-cli-bound-live-observability-query-load.patch \
     file://0121-controller-bound-periodic-diagnostics.patch \
@@ -142,33 +127,17 @@ EASYMESH_CORE_PATCHES = " \
     file://0142-metrics-apply-associated-reports-to-exact-bss.patch \
     file://0143-metrics-reject-pre-association-samples.patch \
     file://0144-metrics-retain-exact-owner-backhaul-samples.patch \
-    file://0145-cli-use-controller-first-topology-layout.patch \
     file://0146-controller-scope-bss-list-delete.patch \
     file://0147-controller-preserve-negotiated-profile.patch \
     file://0148-agent-report-local-btm-dispatch-failures.patch \
-    file://0149-cli-show-segmented-client-signal-meter.patch \
-    file://0150-cli-center-agent-in-compact-star-layout.patch \
-    file://0151-cli-show-extender-uplink-bars-and-readable-labels.patch \
-    file://0152-cli-use-quoted-color-matched-cohort-labels.patch \
-    file://0153-cli-fit-topology-without-rearranging-nodes.patch \
     file://0154-agent-preserve-state-on-client-capability-query.patch \
     file://0155-orchestrator-serialize-candidate-command-lifetime.patch \
-    file://0156-cli-align-room-and-topology-signal-meters.patch \
-    file://0157-cli-remove-topology-signal-explanations.patch \
     file://0158-agent-preserve-association-clock-on-metrics.patch \
     file://0159-agent-refresh-authoritative-association-snapshots.patch \
     file://0160-controller-recover-capability-query-timeouts.patch \
-    file://0161-cli-maximize-topology-and-label-backhaul.patch \
-    file://0162-cli-enlarge-topology-labels-without-client-radio-clutter.patch \
-    file://0163-cli-space-branch-topologies-without-reordering-nodes.patch \
-    file://0164-cli-add-topology-fullscreen.patch \
-    file://0165-cli-decouple-topology-from-client-metrics.patch \
-    file://0166-cli-bind-signal-to-serving-bssid.patch \
     file://0167-cli-coordinate-candidate-waits.patch \
-    file://0168-cli-profile-topology-refresh.patch \
     file://0169-cli-submit-steering-without-container-launch.patch \
     file://0170-cli-bound-http-native-ownership.patch \
-    file://0171-cli-show-current-associations-immediately.patch \
     file://0172-agent-remember-controller-before-first-wsc.patch \
     file://0173-controller-decode-compact-cac-capability.patch \
     file://0174-agent-isolate-periodic-ap-metrics-command.patch \
@@ -186,13 +155,11 @@ EASYMESH_CORE_PATCHES = " \
     file://0186-advance-ready-agent-commands-on-events.patch \
     file://0187-policy-select-ready-owner-and-check-admission.patch \
     file://0188-prioritize-control-and-preserve-radio-reports.patch \
-    file://0188-cli-serve-offline-ui-dependencies.patch \
     file://0189-cli-follow-room-and-clarify-roam-history.patch \
     file://0190-agent-refresh-operating-channels-after-renew.patch \
     file://0191-agent-refresh-operating-channels-periodically.patch \
     file://0193-controller-lock-topology-notification-station-maps.patch \
     file://0194-agent-handle-native-ap-metrics-queries.patch \
-    file://0195-cli-show-native-ap-load-on-hover.patch \
     file://0196-native-backhaul-steering.patch \
     file://0197-native-backhaul-counted-interface-name.patch \
     file://0198-native-backhaul-targeted-verification.patch \
@@ -230,23 +197,16 @@ EASYMESH_CORE_PATCHES = " \
     file://0231-cli-candidate-polls-share-one-recent-read.patch \
     file://0232-ctrl-steerwifibackhaul-sends-the-backhaul-steering-request.patch \
 "
-SRC_URI += "${EASYMESH_CORE_PATCHES} file://signal-meter.js file://fullscreen-control.js file://room-name.js file://room-projection.js file://pane-divider.js file://pane-divider.css"
+SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
 SRC_URI += "file://native_steering.go file://native_steering_test.go"
 SRC_URI += "file://native_http.go file://native_http_test.go"
 SRC_URI += "file://bss_inventory.go file://bss_inventory_test.go"
-SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go file://room-topology.js file://steering-cues.js"
+SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go"
 
 python do_patch_append() {
     import os
     import shutil
-    shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "signal-meter.js"),
-                    os.path.join(d.getVar("S"), "src/rdkb-cli/static/signal-meter.js"))
-    shutil.copyfile(os.path.join(d.getVar("WORKDIR"), "fullscreen-control.js"),
-                    os.path.join(d.getVar("S"), "src/rdkb-cli/static/fullscreen-control.js"))
-    for name in ("room-topology.js", "steering-cues.js", "room-name.js", "room-projection.js", "pane-divider.js", "pane-divider.css"):
-        shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
-                        os.path.join(d.getVar("S"), "src/rdkb-cli/static", name))
     for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli", name))
@@ -764,7 +724,7 @@ do_install_append() {
 # Prebuilt Go binary: it is already stripped, and Go binaries trip the ldflags/
 # textrel/arch QA heuristics. Skip those for this package only.
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
-SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://iot-device.svg file://opensync-pod.svg file://web-vendor.tar.gz"
+SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://topology-ui file://configurator/worlds/viewer"
 
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
@@ -787,30 +747,14 @@ do_install_append_qemux86bpibroadband() {
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
     install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
+    # The helper archive supplies the cross-built Go binary and its canned data
+    # (devices, clients, system config, example topologies). The page is the
+    # medium's topology page (gen/medium/topology-ui, one page for both labs):
+    # assembled for RDK with the room viewer's shared modules beside it and its
+    # verified offline libraries. This recipe's patches leave src/rdkb-cli/static
+    # alone.
     cp -rf ${WORKDIR}/static/. ${D}/usr/ccsp/EasyMesh/static/
-    (cd ${WORKDIR}; sha256sum -c vendor/SHA256SUMS)
-    cp -r ${WORKDIR}/vendor ${D}/usr/ccsp/EasyMesh/static/
-    # The helper archive supplies the cross-built Go binary and its baseline
-    # assets.  Overlay the static files from the patched source tree so WebUI
-    # fixes remain normal, reviewable source patches instead of binary tarball
-    # replacements.
-    install -m 0644 ${S}/src/rdkb-cli/static/index.html \
-        ${S}/src/rdkb-cli/static/script.js \
-        ${S}/src/rdkb-cli/static/signal-meter.js \
-        ${S}/src/rdkb-cli/static/fullscreen-control.js \
-        ${S}/src/rdkb-cli/static/topology-fullscreen.js \
-        ${S}/src/rdkb-cli/static/room-topology.js \
-        ${S}/src/rdkb-cli/static/room-name.js \
-        ${S}/src/rdkb-cli/static/room-projection.js \
-        ${S}/src/rdkb-cli/static/pane-divider.js \
-        ${S}/src/rdkb-cli/static/pane-divider.css \
-        ${S}/src/rdkb-cli/static/steering-cues.js \
-        ${S}/src/rdkb-cli/static/style.css \
-        ${D}/usr/ccsp/EasyMesh/static/
-    install -m 0644 ${WORKDIR}/iot-device.svg \
-        ${D}/usr/ccsp/EasyMesh/static/icons/iot-device.svg
-    install -m 0644 ${WORKDIR}/opensync-pod.svg \
-        ${D}/usr/ccsp/EasyMesh/static/icons/opensync-pod.svg
+    sh ${WORKDIR}/topology-ui/assemble.sh rdk ${D}/usr/ccsp/EasyMesh/static
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
 

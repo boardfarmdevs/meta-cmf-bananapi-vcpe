@@ -558,7 +558,8 @@ input, not Yocto sstate. Record its SHA-256 with the build inputs.
 The recipe checks archived Go-source hashes against the patched workdir.
 After changing handlers, regenerate the helper with
 `gen/rebuild-em-cli-artifact.sh WORKDIR` and rebuild the controller image.
-The recipe always overlays `index.html`, `script.js`, `signal-meter.js`, and `style.css` from
-the patched source, so the old static files inside the helper archive cannot
-mask current WebUI changes. Changes to production Go sources require
+The archive carries the helper's canned data only; the page is
+[the medium's topology page](https://github.com/boardfarmdevs/easymesh-medium/blob/main/topology-ui/README.md),
+which the recipe assembles for RDK at install, and no patch here touches
+`src/rdkb-cli/static`. Changes to production Go sources require
 the separate rebuild procedure in the [build guide](../../../build/README.md).

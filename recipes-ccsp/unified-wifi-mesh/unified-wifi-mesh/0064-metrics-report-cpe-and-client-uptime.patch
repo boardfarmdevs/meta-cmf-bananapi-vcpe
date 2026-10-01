@@ -19,6 +19,9 @@ source of client RCPI; no proprietary replacement is introduced for them.
 
 Upstream-Status: Pending
 
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
+
 diff --git a/inc/em_base.h b/inc/em_base.h
 index 3bf615d..7d74580 100644
 --- a/inc/em_base.h
@@ -673,101 +676,3 @@ index 32a9d31..11f7dde 100644
  		}
  	}
  	return clientList, nil
-diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
-index c7b0fad..bcc431f 100644
---- a/src/rdkb-cli/static/index.html
-+++ b/src/rdkb-cli/static/index.html
-@@ -442,6 +442,7 @@
-                                     <tr>
-                                         <th>Device</th>
-                                         <th>Connection</th>
-+                                        <th>Uptime</th>
-                                         <th>Signal</th>
-                                         <th>Speed</th>
-                                         <th>Usage</th>
-@@ -450,7 +451,7 @@
-                                 </thead>
-                                 <tbody id="clients-tbody">
-                                     <tr>
--                                        <td colspan="6" class="loading-message">Loading clients...</td>
-+                                        <td colspan="7" class="loading-message">Loading clients...</td>
-                                     </tr>
-                                 </tbody>
-                             </table>
-diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
-index ee926cf..2bc658c 100644
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -2010,9 +2010,10 @@ async handleWebSocketMessage(data) {
- 
-     const statusClass = device.status === 'Online' ? 'online' : 'offline';
-     const signalStrength = Number.isFinite(device.signal)
--      ? this.getSignalStrengthIcon(device.signal)
--      : 'N/A';
--    const uptime = device.uptime || 'Unknown';
-+      ? `${this.getSignalStrengthIcon(device.signal)} ${device.signal} dBm`
-+      : ((device.role === 'Controller' || device.role?.startsWith('Agent-') ||
-+          device.backhaul_type === 'Ethernet') ? 'Local / Ethernet' : 'Not reported');
-+    const uptime = device.uptime || 'Not reported';
- 
-     card.innerHTML = `
-       <div class="device-header">
-@@ -2032,7 +2033,7 @@ async handleWebSocketMessage(data) {
-           <div class="value">${device.role}</div>
-         </div>
-         <div class="metric-item">
--          <div class="label">Signal</div>
-+          <div class="label">Backhaul signal</div>
-           <div class="value">${signalStrength}</div>
-         </div>
-         <div class="metric-item">
-@@ -2090,6 +2091,10 @@ async handleWebSocketMessage(data) {
-       ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm${hasRCPI ? ` (RCPI ${metrics.rcpi})` : ''}</span>`
-       : '<span>N/A</span>';
-     const connectionInfo = this.getClientConnectionInfo(client);
-+    const associationUptime = Number.isFinite(metrics.association_uptime_seconds) &&
-+      metrics.association_uptime_seconds > 0
-+      ? this.formatUptime(metrics.association_uptime_seconds)
-+      : 'Not reported';
- 
-     row.innerHTML = `
-       <td>
-@@ -2109,6 +2114,7 @@ async handleWebSocketMessage(data) {
-           <div class="connection-band">${connectionInfo.band}</div>
-         </div>
-       </td>
-+      <td>${associationUptime}</td>
-       <td>
-         <div class="signal-strength">
-           ${signalDisplay}
-@@ -2143,6 +2149,17 @@ async handleWebSocketMessage(data) {
-     return row;
-   }
- 
-+  formatUptime(seconds) {
-+    seconds = Math.max(0, Math.floor(Number(seconds) || 0));
-+    const days = Math.floor(seconds / 86400);
-+    const hours = Math.floor((seconds % 86400) / 3600);
-+    const minutes = Math.floor((seconds % 3600) / 60);
-+    const secs = seconds % 60;
-+    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-+    if (hours > 0) return `${hours}h ${minutes}m`;
-+    return `${minutes}m ${secs}s`;
-+  }
-+
-   /**
-    * Initialize all charts
-    */
-@@ -5131,8 +5148,10 @@ class ClientDetailsViewer {
-       this.determineBand(m.channel_width_mhz);
-     document.getElementById('client-channel').textContent = 
-       `${m.channel_width_mhz || 'N/A'} MHz`;
--    document.getElementById('client-connection-time').textContent = 
--      m.connection_duration || 'N/A';
-+    document.getElementById('client-connection-time').textContent =
-+      Number.isFinite(m.association_uptime_seconds) && m.association_uptime_seconds > 0
-+        ? this.formatUptime(m.association_uptime_seconds)
-+        : 'Not reported';
-     
-     // Capabilities
-     const standards = cap.wifi_standards || [];

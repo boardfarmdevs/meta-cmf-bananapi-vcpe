@@ -59,7 +59,7 @@ usage: $0 COMMAND
 
 Commands:
   build       create, provision, reboot and accept a native LXD VM
-  start       start an existing appliance VM
+  start       start an existing appliance VM and bring its lab up in order (gen/lab-bringup.sh)
   stop        stop it cleanly
   restart     restart it and wait for the EasyMesh service gate
   status      show VM and lab status
@@ -118,9 +118,9 @@ require_command() {
     }
 }
 
-# Lab VMs share a host badly: with prpl-1001 running next to it, rdk-1001's
-# 100-client traffic check lost packets, and alone it passed (rev140, 1 Oct). A lab
-# VM, RDK or prplMesh, is one with a wmediumd Console proxy.
+# Lab VMs share a host badly: with prpl-1001 running next to it, 19 of rdk-1001's 100
+# clients lost packets in its build's traffic check, alone one did and later checks passed
+# (rev140, 1 Oct). A lab VM, RDK or prplMesh, is one with a wmediumd Console proxy.
 other_running_labs() {
     lxc list --format json | python3 -c '
 import json, sys
@@ -554,10 +554,20 @@ emosa_vm() {
 }
 
 start_vm() {
+    local started=false bringup=/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/lab-bringup.sh
     instance_exists
-    [ "$(instance_state)" = RUNNING ] || lxc start "$name"
+    if [ "$(instance_state)" != RUNNING ]; then
+        lxc start "$name"
+        started=true
+    fi
     wait_agent
     run_root systemctl start easymesh-lab.service
+    # After a VM start an extender can come back with its backhaul or fronthaul down, or
+    # registered with the controller without its BSSes (rdk-1001, 1 Oct, one BSS of ten):
+    # the lab's ordered bring-up repairs that and waits for the room to settle.
+    if "$started" && run_root test -x "$bringup"; then
+        run_root "$bringup" up
+    fi
 }
 
 stop_vm() {
@@ -641,7 +651,8 @@ export_vm() {
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/instance-config.sh" "$bundle/instance-config.sh"
-    cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
+    cp -a "$root/gen/medium/lxd-monitoring" "$bundle/observability"    # easymesh-medium's, one copy for both labs
+    rm -rf "$bundle/observability/tests"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" \
@@ -785,7 +796,8 @@ export_thin_vm() {
     configure_no_secure_boot
     install -m 0755 "$root/gen/vm/lxd/import.sh" "$bundle/import.sh"
     install -m 0755 "$root/gen/vm/lxd/instance-config.sh" "$bundle/instance-config.sh"
-    cp -a "$root/gen/vm/lxd/observability" "$bundle/observability"
+    cp -a "$root/gen/medium/lxd-monitoring" "$bundle/observability"    # easymesh-medium's, one copy for both labs
+    rm -rf "$bundle/observability/tests"
     install -m 0755 "$root/gen/vm/lxd/install-host.sh" "$bundle/install-host.sh"
     install -m 0755 "$root/gen/vm/lxd/package-release.sh" "$bundle/package-release.sh"
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" "$root/gen/vm/lxd/README.md" \
@@ -852,6 +864,12 @@ update_vm() (
         echo "the medium's daemon, console or radio module changed since $guest_medium: build instead" >&2
         exit 1
     }
+    # The topology page comes with the controller image (gen/medium/topology-ui, assembled by
+    # its recipe): a VM build would not change it either.
+    git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- topology-ui \
+        $(sed 's|^|configurator/worlds/viewer/|' "$root/gen/medium/topology-ui/shared-modules") \
+        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' ||
+        echo "note: the medium's topology page changed since $guest_medium; the gateway serves its image's page until a controller image built from this checkout" >&2
     git -C "$root" diff --quiet "$guest_commit" "$host_commit" -- gen/vm/scripts/guest \
         gen/vm/scripts/55-scale-topology.sh gen/vm/scripts/60-scale-steering-test.sh \
         gen/vm/scripts/61-return-steering-regression.sh || {

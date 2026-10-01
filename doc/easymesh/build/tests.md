@@ -10,14 +10,12 @@ Use after documentation, script or frontend-only changes. No VM or image build
 is required.
 
 ```sh
-python3 gen/tests/test_documentation.py
-python3 -m pytest -q gen/tests/test_clean_release.py
-bash gen/vm/lxd/test-profiles.sh
-bash gen/vm/lxd/test-build-storage.sh
-bash gen/vm/lxd/test-import-storage.sh
-bash gen/vm/lxd/test-instance-config.sh
-bash gen/vm/lxd/test-shared-host.sh
+gen/tests/run-easymesh-suite.sh static webui
 ```
+
+`static` runs the documentation, Python and Node unit tests and the VM builder's
+shell tests (`gen/vm/lxd/test-*.sh`); `webui` the topology page's tests against
+the medium's page assembled for RDK.
 
 Run adjacent unit tests for the subsystem changed. For example, a room/viewer
 change should run its matching `gen/tests/viewer-*.js` or browser test; a native

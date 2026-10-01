@@ -599,7 +599,7 @@ export const entries: Record<string, Entry> = {
       ['Qualified catalog', '14 original rooms + 3 dedicated band rooms'],
     ],
     ['configurator', 'optimizer', 'band', 'cli', 'tests'],
-    ['room-service/README.md', 'reference/optimizer/band-steering.md'],
+    ['live-room-demo/README.md', 'reference/optimizer/band-steering.md'],
     'This architecture explorer is a separate explanatory page. Its interactions do not acquire a room lease or change RF.',
   ),
   tests: entry(

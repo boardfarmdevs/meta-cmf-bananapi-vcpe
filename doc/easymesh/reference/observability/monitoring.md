@@ -4,14 +4,13 @@
 
 The full installation, Windows/Chrome enrollment, TLS, credentials, dashboards,
 removal and renewal procedure lives with the installer:
-[monitoring bundle](../../../../gen/vm/lxd/observability/README.md).
+[monitoring bundle](https://github.com/boardfarmdevs/easymesh-medium/blob/main/lxd-monitoring/README.md) (easymesh-medium's, one copy for both labs).
 Do not duplicate that procedure here.
 
 From the **physical LXD host**, for an existing running appliance:
 
 ```sh
-LAB_LXD_UI_PORT=48892 LAB_GRAFANA_PORT=48893 LAB_MONITORING_ALLOW_RESTART=1 \
-  bash gen/vm/lxd/observability/enable.sh VM HOST_IPV4 LAB_LABEL
+LAB_MONITORING_ALLOW_RESTART=1 gen/vm/lxd/monitoring.sh enable VM HOST_IPV4 LAB_LABEL
 ```
 
 Replace the three arguments deliberately. The explicit restart permission
@@ -22,7 +21,7 @@ VM to enable monitoring.
 The same bundle can add the **outer VM** to the existing collector:
 
 ```sh
-bash gen/vm/lxd/observability/enable-outer-metrics.sh \
+gen/vm/lxd/monitoring.sh enable-outer-metrics \
   VM HOST_IPV4 HOST_CERT_DNS_NAME LAB_LABEL
 ```
 
@@ -60,7 +59,7 @@ performance profile, **not a cooling repair**; keep it out of the guest VM.
 From the repository root on the affected host:
 
 ```sh
-sudo install -m 0644 gen/vm/lxd/observability/easymesh-host-cooling.service /etc/systemd/system/
+sudo install -m 0644 gen/medium/lxd-monitoring/easymesh-host-cooling.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now easymesh-host-cooling
 cat /sys/devices/system/cpu/intel_pstate/no_turbo

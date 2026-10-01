@@ -18,11 +18,12 @@ so the operator sees an end-to-end result rather than only request admission.
 
 Upstream-Status: Pending
 Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
 ---
- src/rdkb-cli/main.go          | 98 ++++++++++++++++++++++++++++++++++++
- src/rdkb-cli/static/index.html |  6 ++-
- src/rdkb-cli/static/script.js | 60 ++++++++++++++++++++++++++++
- 3 files changed, 163 insertions(+), 1 deletion(-)
+ src/rdkb-cli/main.go |   99 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 99 insertions(+)
 
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 --- a/src/rdkb-cli/main.go
@@ -140,105 +141,5 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
  
          // ===== NEW COVERAGE MAP ROUTES =====
  	
-diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
---- a/src/rdkb-cli/static/index.html
-+++ b/src/rdkb-cli/static/index.html
-@@ -865,6 +865,10 @@
-                 <select id="device-selector" aria-label="Select device"></select>
-             </div>
-             <div class="actions-group">
-+                <button id="enable-all-metrics" class="btn btn-secondary" type="button"
-+                        title="Configure and activate periodic metrics on every live EasyMesh radio">
-+                    <i class="fas fa-signal"></i> Enable All Metrics
-+                </button>
-                 <button id="apply-policy-settings" class="btn btn-primary" type="button">
-                     <i class="fas fa-save"></i> Apply Policy Settings
-                 </button>
-@@ -2032,7 +2036,7 @@
-     <div id="toast-container" class="toast-container"></div>
- 
-     <!-- Scripts -->
--    <script src="static/script.js?v=topology-layout-optimized-1"></script>
-+    <script src="static/script.js?v=metrics-reporting-1"></script>
-     <script src="static/wireless-settings.js"></script>
-     <script src="static/map.js"></script>
- </body>
-diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -326,6 +326,9 @@ class EasyMeshController {
-     if (applyPolicyBtn) {
-       applyPolicyBtn.addEventListener('click', () => this.handlePolicySettingApply());
-     }
-+    document.getElementById('enable-all-metrics')?.addEventListener('click', () => {
-+      this.enableAllMetricsReporting();
-+    });
- 
-     // Local Steering disallowed mac: + / - buttons
-     (() => {
-@@ -849,6 +852,63 @@ savePolicySettings(sectionKey, scope = "selected") {
- }
- 
- 
-+async enableAllMetricsReporting() {
-+  const button = document.getElementById('enable-all-metrics');
-+  if (button?.disabled) return;
-+
-+  if (button) {
-+    button.disabled = true;
-+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enabling Metrics...';
-+  }
-+  this.showNotification('Applying metrics reporting to every live radio…', 'info');
-+
-+  try {
-+    const response = await fetch('/api/v1/metricsreporting/enable', { method: 'POST' });
-+    const text = await response.text();
-+    let result = {};
-+    try {
-+      result = text ? JSON.parse(text) : {};
-+    } catch (_) {
-+      result = {};
-+    }
-+    if (!response.ok) {
-+      throw new Error(result.message || text || `HTTP ${response.status}`);
-+    }
-+
-+    await this.loadWifiPolicyConfig();
-+
-+    let reporting = 0;
-+    let total = 0;
-+    const deadline = Date.now() + 30000;
-+    do {
-+      const clientsResponse = await fetch('/api/v1/clients');
-+      if (clientsResponse.ok) {
-+        const clientsResult = await clientsResponse.json();
-+        const clients = Array.isArray(clientsResult.clients) ? clientsResult.clients : [];
-+        total = clients.length;
-+        reporting = clients.filter(client => Number(client.client_metrics?.rcpi) > 0).length;
-+        if (total > 0 && reporting === total) break;
-+      }
-+      await new Promise(resolve => setTimeout(resolve, 2000));
-+    } while (Date.now() < deadline);
-+
-+    const policySummary = `${result.devices || 0} devices / ${result.radios || 0} radios`;
-+    if (total > 0 && reporting === total) {
-+      this.showNotification(`Metrics enabled: ${policySummary}, ${reporting}/${total} clients reporting signal`, 'success');
-+    } else {
-+      this.showNotification(`Metrics enabled: ${policySummary}; signal pending for ${total - reporting}/${total} clients`, 'warning');
-+    }
-+  } catch (error) {
-+    console.error('Failed to enable metrics reporting:', error);
-+    this.showNotification(`Failed to enable metrics reporting: ${error.message}`, 'error');
-+  } finally {
-+    if (button) {
-+      button.disabled = false;
-+      button.innerHTML = '<i class="fas fa-signal"></i> Enable All Metrics';
-+    }
-+  }
-+}
-+
- async handlePolicySettingApply() {
-   const saveBtn = document.getElementById('apply-policy-settings');
- 
 -- 
 2.43.0

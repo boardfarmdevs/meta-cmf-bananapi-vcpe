@@ -29,8 +29,9 @@ unified-wifi-mesh 0232, the extender image `…20260929014035`): the static sect
 passed 39 of 39 and the room suite 9 of 9 stages, the catalog 27 of 27 on rev140
 and the geometry stage with the browser on rev150 (on rev140 the optimizer had
 one client left to steer when the 60 s default recovery ended). The build's
-traffic check lost packets while `prpl-1001` ran on the same host and passed with
-`rdk-1001` alone: build and test one lab at a time on rev140. `rdk-emosa-1001`
+traffic check lost packets while `prpl-1001` ran on the same host (19 clients) and,
+in a rebuild alone, for one client; later checks passed: build and test one lab at a
+time on rev140, and repeat `build.sh check` once the lab has settled. `rdk-emosa-1001`
 (rev120, emosa-lab `f947bf3`, which fixed the adapter kit's C build) passed its
 suite with the pods, `fifty-client-counter-roam` with the browser on rev150.
 

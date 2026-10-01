@@ -36,7 +36,9 @@ Environment:
                             to the checkout; default: the one the room service reports
                             (/api/demo/worlds), else gen/medium/configurator/worlds.
   EASYMESH_EXPECTED_CLIENTS Override the auto-detected lab client profile.
-  WEBUI_STATIC_DIR          Built unified-wifi-mesh static directory.
+  WEBUI_STATIC_DIR          An installed topology page to test (a gateway's
+                            /usr/ccsp/EasyMesh/static); default: the medium's page
+                            (gen/medium/topology-ui) assembled for RDK.
   PUBLIC_VIEWER_URL         Published static viewer base URL for its browser test.
   NODE_PATH, PLAYWRIGHT_MODULE, CHROMIUM_PATH
                             Existing browser-tool installation, if not using
@@ -131,13 +133,15 @@ block() {
 
 have_modern_node() { have_command node && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; }
 
+# The topology page under test: WEBUI_STATIC_DIR, else the medium's assembled for RDK as
+# the controller image installs it.
 webui_static_dir() {
-    if [[ -n ${WEBUI_STATIC_DIR:-} && -f $WEBUI_STATIC_DIR/script.js ]]; then
+    local page="$output_root/webui-page"
+    if [[ -n ${WEBUI_STATIC_DIR:-} ]]; then
         printf '%s\n' "$WEBUI_STATIC_DIR"
-        return
+    elif [[ -f $page/script.js ]] || "$root/gen/medium/topology-ui/assemble.sh" rdk "$page" >&2; then
+        printf '%s\n' "$page"
     fi
-    find "$root/.." -path '*/unified-wifi-mesh/*/src/rdkb-cli/static/script.js' -type f -print -quit 2>/dev/null |
-        xargs -r dirname
 }
 
 prepare_browser() {
@@ -162,18 +166,6 @@ prepare_browser() {
         export CHROMIUM_PATH=$chromium
     fi
     [[ -x $CHROMIUM_PATH ]]
-}
-
-webui_browser_fixture() {
-    local static=$1 fixture="$output_root/webui-browser-fixture"
-    local vendor="$root/recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh/web-vendor.tar.gz"
-    [ -f "$vendor" ] || return 1
-    rm -rf "$fixture"
-    mkdir -p "$fixture"
-    cp -a "$static/." "$fixture/"
-    tar -xzf "$vendor" -C "$fixture"
-    [ -f "$fixture/vendor/d3-7.9.0.min.js" ] || return 1
-    printf '%s\n' "$fixture"
 }
 
 guest_command() {
@@ -299,7 +291,7 @@ lab_client_count() {
 
 run_static() {
     local test
-    if have_command python3 && have_command pytest; then
+    if have_command python3 && python3 -c 'import pytest' 2>/dev/null; then
         run static documentation "cd '$root' && python3 gen/tests/test_documentation.py"
         run static python "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/rooms:$root/gen/rooms/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib gen/medium/configurator/tests gen/optimizer/tests gen/optimizer/acceptance gen/rooms/tests gen/tests"
     else
@@ -307,7 +299,7 @@ run_static() {
     fi
     if have_modern_node; then
         run static console-ng-model "cd '$root' && node --test gen/medium/observer/web/ng/model.test.mjs"
-        for test in "$root"/gen/medium/configurator/tests/viewer/*-test.js "$root"/gen/tests/test-*.js "$root"/gen/optimizer/acceptance/test-*.js "$root"/gen/tests/fullscreen-control-test.js; do
+        for test in "$root"/gen/medium/configurator/tests/viewer/*-test.js "$root"/gen/tests/test-*.js "$root"/gen/optimizer/acceptance/test-*.js; do
             case $(basename "$test") in
                 *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
             esac
@@ -316,24 +308,33 @@ run_static() {
     else
         skip static node-units 'Node 22+ is required on PATH'
     fi
+    # the VM builder's and the helper rebuild's shell tests (no VM, no lxc)
+    for test in "$root"/gen/vm/lxd/test-*.sh "$root"/gen/tests/test-*.sh; do
+        run static "$(basename "${test%.sh}")" "cd '$root' && bash '$test'"
+    done
 }
 
 run_webui() {
-    local static
+    local static test source
     have_modern_node || { skip webui node 'Node 22+ is required on PATH'; return; }
     static=$(webui_static_dir)
     [[ -n $static && -f $static/script.js && -f $static/room-topology.js && -f $static/steering-cues.js ]] || {
-        skip webui artifact 'set WEBUI_STATIC_DIR to the built unified-wifi-mesh static directory'; return;
+        skip webui page 'the topology page did not assemble; set WEBUI_STATIC_DIR to an installed one'; return;
     }
-    for test in webui-extender-signal-test.js webui-independent-refresh-test.js webui-mesh-device-signal-test.js webui-metrics-reporting-test.js webui-topology-fit-test.js webui-topology-label-test.js webui-topology-layout-test.js webui-room-follow-test.js; do
-        run webui "${test%.js}" "cd '$root' && node gen/tests/$test '$static/script.js'"
+    # the topology page's tests (easymesh-medium topology-ui)
+    for test in "$root"/gen/medium/topology-ui/tests/*-test.js; do
+        case $(basename "$test") in
+            *browser-test.js) continue ;;
+            webui-rf-hover-test.js) source=$static/room-topology.js ;;
+            steering-cues-test.js) source=$static/steering-cues.js ;;
+            *) source=$static/script.js ;;
+        esac
+        run webui "$(basename "${test%.js}")" "cd '$root' && node '$test' '$source'"
     done
-    run webui rf-hover "cd '$root' && node gen/tests/webui-rf-hover-test.js '$static/room-topology.js'"
-    run webui steering-cues "cd '$root' && node gen/tests/steering-cues-test.js '$static/steering-cues.js'"
 }
 
 run_browser() {
-    local static fixture d3
+    local static d3
     prepare_browser || { skip browser prerequisites 'install node/npm and Playwright/Chromium, or rerun with --install-browser-deps'; return; }
     # the medium's viewer and console browser tests (easymesh-medium)
     for test in gen/medium/configurator/tests/viewer/pane-divider-browser-test.js gen/medium/configurator/tests/viewer/viewer-room-convergence-browser-test.js \
@@ -348,15 +349,11 @@ run_browser() {
     fi
     static=$(webui_static_dir)
     if [[ -n $static && -f $static/steering-cues.js ]]; then
-        fixture=$(webui_browser_fixture "$static") || {
-            skip browser webui-fixtures 'the packaged WebUI vendor assets are unavailable'
-            return
-        }
-        d3=$(find "$fixture" -name 'd3-*.min.js' -type f -print -quit)
-        if [[ -n $d3 ]]; then run browser steering-cues "cd '$root' && node gen/tests/steering-cues-browser-test.js '$fixture/steering-cues.js' '$d3'"; else skip browser steering-cues 'the WebUI fixture has no D3 asset'; fi
-        run browser room-follow "cd '$root' && node gen/tests/webui-room-follow-browser-test.js '$fixture'"
+        d3=$(find "$static" -name 'd3-*.min.js' -type f -print -quit)
+        if [[ -n $d3 ]]; then run browser steering-cues "cd '$root' && node gen/medium/topology-ui/tests/steering-cues-browser-test.js '$static/steering-cues.js' '$d3'"; else skip browser steering-cues 'the topology page has no D3 asset'; fi
+        run browser room-follow "cd '$root' && node gen/medium/topology-ui/tests/webui-room-follow-browser-test.js '$static'"
     else
-        skip browser webui-fixtures 'set WEBUI_STATIC_DIR to run WebUI browser fixtures'
+        skip browser webui-page 'the topology page did not assemble; set WEBUI_STATIC_DIR to an installed one'
     fi
     if [[ -n ${PUBLIC_VIEWER_URL:-} ]]; then
         run browser public-viewer "cd '$root' && node gen/tests/viewer-public-site-browser-test.js '$PUBLIC_VIEWER_URL'"
@@ -415,7 +412,7 @@ run_rooms() {
     run rooms default-readiness "cd '$root' && python3 gen/optimizer/acceptance/room-final-readiness.py --room-url '$room_url' --require-absolute-best --output '$output_root/default-readiness'"
     run rooms catalog "cd '$root' && node gen/optimizer/acceptance/room-feature-acceptance.js --yes-act --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --worlds '$worlds' --output '$output_root/catalog'"
     run rooms geometry "cd '$root' && node gen/optimizer/acceptance/room-backhaul-features.js --yes-act true --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --output '$output_root/geometry'"
-    run rooms rf-hover "cd '$root' && node gen/tests/webui-rf-hover-browser-test.js '$webui_url' '$output_root/rf-hover'"
+    run rooms rf-hover "cd '$root' && node gen/medium/topology-ui/tests/webui-rf-hover-browser-test.js '$webui_url' '$output_root/rf-hover'"
     run rooms rf-access "cd '$root' && python3 gen/optimizer/acceptance/rf-access-smoke.py --room-url '$room_url' --output '$output_root/rf-access.json'"
     run rooms rf-properties "cd '$root' && python3 gen/optimizer/acceptance/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'"
     run rooms world-switch "$(guest_command "python3 gen/optimizer/acceptance/room-world-switch-smoke.py --stack rdk --yes-act --all-worlds --output '$guest_repo/test-results-world-switch-$stamp'")"

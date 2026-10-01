@@ -6,8 +6,10 @@
 #     build-qemux86bpibroadband/tmp/work/core2-32-rdk-linux/unified-wifi-mesh/1.0-r0
 #
 # Run unified-wifi-mesh through do_compile first. The script uses its target
-# sysroot and freshly linked libemcli, refreshes the helper and its static
-# WebUI bundle in em-cli.tar.gz, and emits deterministic archive metadata.
+# sysroot and freshly linked libemcli, refreshes the helper and its canned data
+# (static/: devices, clients, system config, example topologies) in em-cli.tar.gz,
+# and emits deterministic archive metadata. The page is not in the archive: the
+# recipe installs the medium's topology page (gen/medium/topology-ui).
 
 set -eu
 
@@ -27,7 +29,7 @@ artifact="$repo/recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh/em-cli.tar.gz"
 go_bin=${GO_BIN:-$(command -v go || true)}
 
 for required in "$source_dir" \
-    "$source_dir/static/index.html" "$source_dir/static/script.js" \
+    "$source_dir/static/devices.json" "$source_dir/static/clients.json" \
     "$sysroot/usr/include/ccsp/wifi_webconfig.h" \
     "$native/usr/bin/i686-rdk-linux/i686-rdk-linux-gcc" "$libemcli" "$artifact"; do
     if [ ! -e "$required" ]; then
@@ -85,7 +87,9 @@ tar -xzf "$artifact" -C "$archive_dir"
 install -m 0755 "$binary" "$archive_dir/onewifi_em_cli"
 rm -rf "$archive_dir/static"
 install -d -m 0755 "$archive_dir/static"
-cp -a "$source_dir/static/." "$archive_dir/static/"
+for data in clients.json devices.json system-config.json example; do
+    cp -a "$source_dir/static/$data" "$archive_dir/static/"
+done
 (
     cd "$source_dir"
     find . -maxdepth 1 -type f \( -name '*.go' -o -name go.mod -o -name go.sum \) \

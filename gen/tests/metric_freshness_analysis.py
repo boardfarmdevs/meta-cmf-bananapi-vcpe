@@ -207,7 +207,8 @@ def main():
     args = parser.parse_args()
     if not args.runs and not args.trace:
         parser.error("provide saved run directories or --trace JSONL")
-    profiles = runpy.run_path(str(Path(__file__).with_name("native-controller-trace.py")))["PROFILES"]
+    trace = Path(__file__).resolve().parents[1] / "optimizer" / "acceptance" / "native-controller-trace.py"
+    profiles = runpy.run_path(str(trace))["PROFILES"]
     output = {"schema": "easymesh.metric-freshness-analysis.v1", "runs": {}, "native_traces": {}}
     for directory in args.runs:
         output["runs"][str(directory)] = summarize_run(

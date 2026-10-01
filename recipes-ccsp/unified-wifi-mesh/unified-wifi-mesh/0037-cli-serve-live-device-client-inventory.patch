@@ -9,6 +9,9 @@ routes use the same inventory, so canned MAC addresses cannot reappear.
 Values that EasyMesh does not supply remain empty or zero. This deliberately
 avoids presenting demonstration RSSI, throughput, CPU, vendor, IP, or uptime
 values as observations.
+
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
 ---
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
@@ -295,56 +298,3 @@ values as observations.
  		"topology":  meshTopology,
  		"timestamp": time.Now(),
  	}
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -1948,7 +1948,9 @@
-     card.onclick = () => this.showDeviceDetails(device);
- 
-     const statusClass = device.status === 'Online' ? 'online' : 'offline';
--    const signalStrength = this.getSignalStrengthIcon(device.signal || -50);
-+    const signalStrength = Number.isFinite(device.signal)
-+      ? this.getSignalStrengthIcon(device.signal)
-+      : 'N/A';
-     const uptime = device.uptime || 'Unknown';
- 
-     card.innerHTML = `
-@@ -2017,7 +2019,14 @@
-     const row = document.createElement('tr');
- 
-     const deviceIcon = this.getDeviceTypeIcon(client.device_type);
--    const signalBars = this.createSignalBars(client.client_metrics?.rssi || -70);
-+    const metrics = client.client_metrics || {};
-+    const hasRSSI = Number.isFinite(metrics.rssi_dbm) && metrics.rssi_dbm !== 0;
-+    const hasTxRate = Number.isFinite(metrics.tx_rate_mbps) && metrics.tx_rate_mbps > 0;
-+    const hasRxRate = Number.isFinite(metrics.rx_rate_mbps) && metrics.rx_rate_mbps > 0;
-+    const hasUsage = Number.isFinite(metrics.data_usage_bytes) && metrics.data_usage_bytes > 0;
-+    const signalDisplay = hasRSSI
-+      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm</span>`
-+      : '<span>N/A</span>';
-     const connectionInfo = this.getClientConnectionInfo(client);
- 
-     row.innerHTML = `
-@@ -2040,19 +2049,18 @@
-       </td>
-       <td>
-         <div class="signal-strength">
--          ${signalBars}
--          <span>${client.client_metrics?.rssi || 'N/A'} dBm</span>
-+          ${signalDisplay}
-         </div>
-       </td>
-       <td>
-         <div class="speed-info">
--          ↑${this.formatSpeed(client.client_metrics?.tx_rate || 0)}<br>
--          ↓${this.formatSpeed(client.client_metrics?.rx_rate || 0)}
-+          ↑${hasTxRate ? this.formatSpeed(metrics.tx_rate_mbps) : 'N/A'}<br>
-+          ↓${hasRxRate ? this.formatSpeed(metrics.rx_rate_mbps) : 'N/A'}
-         </div>
-       </td>
-       <td>
-         <div class="usage-info">
--          ${this.formatBytes(client.client_metrics?.data_usage || 0)}
-+          ${hasUsage ? this.formatBytes(metrics.data_usage_bytes) : 'N/A'}
-         </div>
-       </td>
-       <td>

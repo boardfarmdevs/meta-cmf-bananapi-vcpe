@@ -16,11 +16,12 @@ the hover details.  A multi-hop reassociation therefore moves the edge to the
 new parent and identifies the exact BSS used for that hop.
 
 Upstream-Status: Inappropriate [HWSIM evaluation WebUI]
+
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
 ---
- src/rdkb-cli/main.go           | 51 ++++++++++++++++++++++++++++++++++++-----
- src/rdkb-cli/static/index.html |  2 +-
- src/rdkb-cli/static/script.js  | 42 ++++++++++++++++++++++++++++++++++++++--
- 3 files changed, 86 insertions(+), 9 deletions(-)
+ src/rdkb-cli/main.go |   51 ++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 45 insertions(+), 6 deletions(-)
 
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 index 86e0a2c..65acba1 100644
@@ -106,89 +107,5 @@ index 86e0a2c..65acba1 100644
  // loadLocalRadioChannels reads the colocated Agent's actual kernel radio
  // state. EasyMesh Operating Channel Reports remain the primary source; this
  // bounded cache fills the startup gap before the Controller has received one.
-diff --git a/src/rdkb-cli/static/index.html b/src/rdkb-cli/static/index.html
-index 78026b2..5cc0a2d 100644
---- a/src/rdkb-cli/static/index.html
-+++ b/src/rdkb-cli/static/index.html
-@@ -2037,7 +2037,7 @@
-     <div id="toast-container" class="toast-container"></div>
-
-     <!-- Scripts -->
--    <script src="static/script.js?v=topology-signal-arcs-1"></script>
-+    <script src="static/script.js?v=topology-exact-backhaul-1"></script>
-     <script src="static/wireless-settings.js"></script>
-     <script src="static/map.js"></script>
- </body>
-diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
-index 181ba15..5d93553 100644
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -2996,6 +2996,16 @@ async handleWebSocketMessage(data) {
-       .attr('d', 'M0,-5L10,0L0,5')
-       .attr('fill', '#7c3aed');
-
-+    defs.append('marker')
-+      .attr('id', 'backhaul-uplink-arrowhead')
-+      .attr('viewBox', '0 -5 10 10')
-+      .attr('refX', 9).attr('refY', 0)
-+      .attr('markerWidth', 6).attr('markerHeight', 6)
-+      .attr('orient', 'auto-start-reverse')
-+      .append('path')
-+      .attr('d', 'M0,-5L10,0L0,5')
-+      .attr('fill', '#334155');
-+
-     const svgGroup = svg.append('g');
-     const zoom = d3.zoom()
-       .on('start', (event) => {
-@@ -3358,8 +3368,20 @@ async handleWebSocketMessage(data) {
-         .attr('width', isController ? 50 : 35)
-         .attr('height', isController ? 50 : 35)
-         .on('mouseover', function(event) {
-+          const incoming = edges.find(item => String(item.to) === String(d.id));
-+          const parent = incoming?.source?.name || incoming?.source?.id || '';
-+          const upstreamBSSID = d.upstreamBSSID || incoming?.upstreamBSSID || '';
-+          const wireless = upstreamBSSID && upstreamBSSID !== '00:00:00:00:00:00';
-+          const backhaul = incoming
-+            ? `<br><b>Backhaul parent:</b> ${parent}` +
-+              `<br>Media: ${d.backhaulMedia || incoming.mediaType || 'Unknown'}` +
-+              (wireless ? `<br>Upstream BSSID: ${upstreamBSSID}` : '') +
-+              (String(incoming.band) !== '-1'
-+                ? `<br>Link: ${self.topologyBandLabel(incoming.band)} · ch ${Number(incoming.channel) > 0 ? incoming.channel : '?'}`
-+                : '')
-+            : '';
-           tooltip.style('display', 'block')
--          .html(`<b>${d.name || d.id}</b><br>MAC Address: ${d.id}`);
-+          .html(`<b>${d.name || d.id}</b><br>AL MAC: ${d.id}${backhaul}`);
-         })
-         .on('mousemove', function(event) {
-           self.positionTooltip(event, tooltip);
-@@ -3388,10 +3410,26 @@ async handleWebSocketMessage(data) {
-     const edge = edgeGroup.selectAll('path')
-     .data(edges)
-     .enter()
-     .append('path')
-+    .attr('class', 'backhaul-link')
-     .attr('fill', 'none')
-     .attr('stroke-width', 2)
--    .attr('stroke', d => bandColors[d.band] || '#000');
-+    .attr('stroke', d => bandColors[d.band] || '#000')
-+    // Paths are encoded parent -> child; marker-start with auto-start-reverse
-+    // points from the child back toward its actual upstream parent.
-+    .attr('marker-start', d => String(d.band) === '-1' ? null : 'url(#backhaul-uplink-arrowhead)')
-+    .style('pointer-events', 'stroke')
-+    .style('cursor', 'help')
-+    .on('mouseover', function(event, d) {
-+      const parent = d.source?.name || d.source?.id || d.from;
-+      const child = d.target?.name || d.target?.id || d.to;
-+      const bssid = d.upstreamBSSID && d.upstreamBSSID !== '00:00:00:00:00:00'
-+        ? `<br>Upstream BSSID: ${d.upstreamBSSID}` : '';
-+      tooltip.style('display', 'block')
-+        .html(`<b>${child} uplink &rarr; ${parent}</b><br>${self.topologyBandLabel(d.band)} · ch ${Number(d.channel) > 0 ? d.channel : '?'}${bssid}`);
-+    })
-+    .on('mousemove', event => self.positionTooltip(event, tooltip))
-+    .on('mouseout', () => tooltip.style('display', 'none'));
-
-     const channelLabels = edgeGroup.selectAll('g.channel-label')
-     .data(edges.filter(d => String(d.band) !== '-1')) // Only for non -1 bands
 --
 2.43.0

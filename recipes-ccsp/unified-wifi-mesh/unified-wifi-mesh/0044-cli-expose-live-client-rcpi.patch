@@ -17,10 +17,12 @@ native query cannot create an overlapping request backlog.
 
 Upstream-Status: Pending
 Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
+
+Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
+which builds the page the controller image serves.
 ---
- src/rdkb-cli/main.go          | 77 +++++++++++++++++++++++++++++++++++--
- src/rdkb-cli/static/script.js | 27 ++++++++++++-
- 2 files changed, 101 insertions(+), 3 deletions(-)
+ src/rdkb-cli/main.go |   81 +++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 79 insertions(+), 2 deletions(-)
 
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 --- a/src/rdkb-cli/main.go
@@ -134,76 +136,5 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
  	if err != nil {
  		http.Error(w, "Live EasyMesh inventory unavailable", http.StatusServiceUnavailable)
  		return
-diff --git a/src/rdkb-cli/static/script.js b/src/rdkb-cli/static/script.js
---- a/src/rdkb-cli/static/script.js
-+++ b/src/rdkb-cli/static/script.js
-@@ -31,6 +31,7 @@ class EasyMeshController {
-     this.currentTab = 'dashboard';
-     this.devices = [];
-     this.clients = [];
-+    this.clientsRefreshInFlight = false;
-     this.topology = {};
-     this.charts = {};
-     this.refreshIntervals = {};
-@@ -2021,11 +2022,12 @@ class EasyMeshController {
-     const deviceIcon = this.getDeviceTypeIcon(client.device_type);
-     const metrics = client.client_metrics || {};
-     const hasRSSI = Number.isFinite(metrics.rssi_dbm) && metrics.rssi_dbm !== 0;
-+    const hasRCPI = Number.isInteger(metrics.rcpi) && metrics.rcpi > 0;
-     const hasTxRate = Number.isFinite(metrics.tx_rate_mbps) && metrics.tx_rate_mbps > 0;
-     const hasRxRate = Number.isFinite(metrics.rx_rate_mbps) && metrics.rx_rate_mbps > 0;
-     const hasUsage = Number.isFinite(metrics.data_usage_bytes) && metrics.data_usage_bytes > 0;
-     const signalDisplay = hasRSSI
--      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm</span>`
-+      ? `${this.createSignalBars(metrics.rssi_dbm)}<span>${metrics.rssi_dbm} dBm${hasRCPI ? ` (RCPI ${metrics.rcpi})` : ''}</span>`
-       : '<span>N/A</span>';
-     const connectionInfo = this.getClientConnectionInfo(client);
- 
-@@ -3299,6 +3301,9 @@ class EasyMeshController {
-    */
-   async loadTabData(tabName) {
-     switch (tabName) {
-+      case 'clients':
-+        await this.refreshClients();
-+        break;
-       case 'topology':
-         const freshTopology = await this.apiCall('/topology');
-         await this.updateTopology(freshTopology);
-@@ -3754,6 +3759,21 @@ class EasyMeshController {
- 
-   // ---------- Timers & lifecycle ----------
- 
-+  async refreshClients() {
-+    if (this.clientsRefreshInFlight) return;
-+    this.clientsRefreshInFlight = true;
-+    try {
-+      const response = await this.apiCall('/clients');
-+      this.clients = response.clients || [];
-+      this.updateClientsList();
-+      this.updateCountBadges();
-+    } catch (error) {
-+      console.error('Failed to refresh connected clients:', error);
-+    } finally {
-+      this.clientsRefreshInFlight = false;
-+    }
-+  }
-+
-   startRefreshTimers() {
-     // Refresh dashboard every 10 seconds
-     this.refreshIntervals.dashboard = setInterval(() => {
-@@ -3765,6 +3785,13 @@ class EasyMeshController {
-       this.updateAllCharts();
-     }, 30000);
- 
-+    // Client signal comes from periodic EasyMesh AP Metrics Responses. Poll
-+    // only while the Connected Clients tab is visible and prevent overlap if
-+    // a native controller query takes longer than the two-second interval.
-+    this.refreshIntervals.clients = setInterval(() => {
-+      if (this.currentTab === 'clients') this.refreshClients();
-+    }, 2000);
-+
-     // Keep steering and RF-loss experiments visible without a page reload.
-     // Do not overlap native/API requests and redraw only on a real change.
-     this.refreshIntervals.topology = setInterval(async () => {
 -- 
 2.43.0
