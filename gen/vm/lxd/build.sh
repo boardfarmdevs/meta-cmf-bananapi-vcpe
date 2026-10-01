@@ -44,6 +44,7 @@ client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
 wired_extenders=${EASYMESH_WIRED_EXTENDERS:-1}
 emosa=${EASYMESH_EMOSA:-0}
 emosa_lab=${EMOSA_LAB:-$(cd "$root/.." && pwd)/emosa-lab}
+emosa_pin=$(sed -n 's/^EMOSA_LAB_COMMIT=//p' "$root/gen/vm/lxd/emosa-lab.env")
 emosa_pod_image=${EMOSA_POD_IMAGE:-}
 emosa_agent=${EASYMESH_EMOSA_AGENT:-python}
 [[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
@@ -103,7 +104,8 @@ Common overrides:
 
 The EMOSA option (emosa-lab, on the lab's wired LAN port; needs the wired extender):
   EASYMESH_EMOSA=$emosa (1: build turns it on once the lab is accepted, as emosa does)
-  EMOSA_LAB=$emosa_lab (the emosa-lab checkout)
+  EMOSA_LAB=$emosa_lab (the emosa-lab checkout, clean at the commit gen/vm/lxd/emosa-lab.env
+    pins, ${emosa_pin:0:10}; EMOSA_LAB_UNPINNED=1 takes another)
   EASYMESH_EMOSA_AGENT=$emosa_agent (the pods' agents: python, the reference, or c, the C lab
     prototype; lab.sh agent POD python|c in the VM swaps one later)
   EMOSA_POD_IMAGE=<.../out/mvx-pod-STAMP> (the OpenSync pod image the easymesh-labs
@@ -524,6 +526,26 @@ build_vm() {
     rm -rf -- "$stage"
 }
 
+emosa_commit() {    # the emosa-lab checkout's commit, +dirty with tracked changes
+    local commit
+    commit=$(git -C "$emosa_lab" rev-parse HEAD 2>/dev/null) || return 1
+    [ -z "$(git -C "$emosa_lab" status --porcelain --untracked-files=no)" ] || commit=$commit+dirty
+    printf '%s\n' "$commit"
+}
+
+emosa_pinned() {    # EMOSA_LAB at the pinned commit, clean (EMOSA_LAB_UNPINNED=1: any, noted)
+    local commit
+    commit=$(emosa_commit) || { echo "no emosa-lab git checkout at $emosa_lab (EMOSA_LAB)" >&2; return 1; }
+    [ "$commit" != "$emosa_pin" ] || return 0
+    if [ "${EMOSA_LAB_UNPINNED:-0}" = 1 ]; then
+        echo "note: emosa-lab ${commit:0:10}${commit:40}, not the pinned ${emosa_pin:0:10} (EMOSA_LAB_UNPINNED=1)" >&2
+        return 0
+    fi
+    echo "emosa-lab at $emosa_lab is ${commit:0:10}${commit:40}, not the pinned" \
+        "${emosa_pin:0:10} (gen/vm/lxd/emosa-lab.env): git -C $emosa_lab checkout $emosa_pin, or EMOSA_LAB_UNPINNED=1" >&2
+    return 1
+}
+
 emosa_inputs() {
     [ "$wired_extenders" = 1 ] || {
         echo 'the EMOSA option needs the wired extender (EASYMESH_WIRED_EXTENDERS=1)' >&2
@@ -533,6 +555,7 @@ emosa_inputs() {
         echo "no emosa-lab checkout at $emosa_lab (EMOSA_LAB)" >&2
         exit 2
     }
+    emosa_pinned || exit 2
     [ -f "$emosa_pod_image.rootfs.tar.gz" ] && [ -f "$emosa_pod_image.metadata.tar.gz" ] || {
         echo 'set EMOSA_POD_IMAGE to the pinned OpenSync pod image (.../out/mvx-pod-STAMP)' >&2
         exit 2
@@ -551,6 +574,7 @@ emosa_vm() {
     }
     EMOSA_VM=$name EMOSA_POD_IMAGE=$emosa_pod_image "$emosa_lab/deploy/rdk-lab/lab.sh" stage
     EMOSA_VM=$name "$emosa_lab/deploy/rdk-lab/lab.sh" up "$emosa_agent"
+    lxc config set "$name" user.easymesh.emosa-lab "$(emosa_commit)"
 }
 
 start_vm() {

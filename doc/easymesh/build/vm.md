@@ -43,8 +43,8 @@ For `demo-a`, the helper exports:
 
 The printed port range is deterministic for the lab name. If a site requires a
 chosen range, set `EASYMESH_PORT_BASE` before sourcing the helper. Names must be
-lowercase letters, digits and hyphens. Use a different name for every concurrent
-VM; do not manually reuse one VM's pool or port values for another VM.
+lowercase letters, digits and hyphens. Give every concurrent VM its own name;
+never reuse another VM's pool or ports.
 
 ## Build and start
 
@@ -129,7 +129,8 @@ emosa-lab's OpenSync adapter to the lab: EMOSA, its fleet, the pods' gateway
 backhaul, and the room service on the rooms with the pods
 (`gen/medium/configurator/worlds-pods`: the standard rooms plus `pod_1`,
 `pod_2`). emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`;
-`EMOSA_LAB` names its checkout). It needs the wired extender. After a reboot,
+`EMOSA_LAB` names its checkout, clean at the commit `gen/vm/lxd/emosa-lab.env`
+pins). It needs the wired extender. After a reboot,
 `build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` starts the
 pods' agents on emosa-lab's C lab prototype instead of the Python reference
 (`python`, the default); the two take the same configuration, and
