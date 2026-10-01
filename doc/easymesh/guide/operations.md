@@ -40,11 +40,11 @@ in the room RF inspector. Both work without enabling Follow room layout.
 On the physical LXD host, replace VM with the name from `lxc list`:
 
 ```sh
-VM=rdkeasymesh-0913
+VM=<vm-name>
 lxc config get "$VM" boot.autostart
 lxc start "$VM"
-lxc exec "$VM" -- systemctl is-active easymesh-lab.service easymesh-room-demo.service
-lxc exec "$VM" -- journalctl -u easymesh-lab.service -u easymesh-room-demo.service -n 80 --no-pager
+lxc exec "$VM" -- systemctl is-active easymesh-lab.service easymesh-room-service.service
+lxc exec "$VM" -- journalctl -u easymesh-lab.service -u easymesh-room-service.service -n 80 --no-pager
 ```
 
 Start only a stopped instance. Imports default to `boot.autostart=false`.
@@ -75,7 +75,7 @@ journals first. Do not stack duplicate proxies or reimport over a working VM.
 
 ## Recovery and safe testing
 
-Stop `easymesh-room-demo.service` before a native acceptance script or another
+Stop `easymesh-room-service.service` before a native acceptance script or another
 RF writer. Restart it after the test. A paused browser is not the same as
 stopping the room's optimizer. Preserve the original service configuration.
 

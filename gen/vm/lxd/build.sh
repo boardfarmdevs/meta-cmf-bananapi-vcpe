@@ -67,6 +67,10 @@ Commands:
   snapshot    replace the accepted snapshot after a passing check
   export      check, stop and export a portable LXD VM backup bundle
   export-thin check, remove provisioned nodes and export the universal offline bundle
+  update      move the accepted VM forward to this checkout's commit in place, without a
+              build: its checkout and submodules (the medium, the optimizer) follow, the room
+              service restarts and settles; refused when the commit changes what a build
+              installs (the medium's daemon, console or radio module, the guest's tools)
   delete      delete only the named appliance VM after showing its identity
   emosa       turn the EMOSA option on in the accepted lab VM: emosa-lab stages its adapter
               kit and the OpenSync pod image, then runs its option (EMOSA, fleet, the pods'
@@ -92,6 +96,8 @@ Common overrides:
   EASYMESH_ROOM_DEMO_PORT=$room_port
   EASYMESH_LXD_HTTP_READY_TIMEOUT=$http_ready_timeout
   CLIENT_CREATE_PARALLELISM=$client_create_parallelism (fresh-roster workers; default: 8)
+  EASYMESH_SHARED_HOST=${EASYMESH_SHARED_HOST:-0} (1: build and check although another lab VM
+    runs on this host; its load can cost the 100-client traffic check packets)
   EASYMESH_WIRED_EXTENDERS=$wired_extenders (extenders on a wired backhaul next to the four
     Wi-Fi extenders: 1, bpiap-004, the rooms with it; 0, the Wi-Fi extenders only)
 
@@ -108,6 +114,27 @@ EOF
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "required command is missing: $1" >&2
+        exit 1
+    }
+}
+
+# Lab VMs share a host badly: with prpl-1001 running next to it, rdk-1001's
+# 100-client traffic check lost packets, and alone it passed (rev140, 1 Oct). A lab
+# VM, RDK or prplMesh, is one with a wmediumd Console proxy.
+other_running_labs() {
+    lxc list --format json | python3 -c '
+import json, sys
+print(" ".join(i["name"] for i in json.load(sys.stdin) if i["name"] != sys.argv[1]
+               and i["status"] == "Running" and "wmediumd-console" in (i.get("expanded_devices") or {})))' "$name"
+}
+
+require_host_to_itself() {
+    local others
+    [ "${EASYMESH_SHARED_HOST:-0}" = 1 ] && return
+    others=$(other_running_labs)
+    [ -z "$others" ] || {
+        echo "another lab VM runs on this host ($others): stop it first, or set EASYMESH_SHARED_HOST=1" >&2
+        echo "(its load can cost this lab's 100-client traffic check packets)" >&2
         exit 1
     }
 }
@@ -235,6 +262,18 @@ prepare_medium() {
     test -z "$(git -C "$medium" status --porcelain)"
 }
 
+# The optimizer: easymesh-optimizer at the commit this lab pins (gen/optimizer). Its
+# bundle becomes the guest's submodule, as the medium's.
+prepare_optimizer() {
+    local assets=$1/assets optimizer=$root/gen/optimizer pinned
+    pinned=$(git -C "$root" rev-parse HEAD:gen/optimizer)
+    [ "$(git -C "$optimizer" rev-parse HEAD 2>/dev/null)" = "$pinned" ] || {
+        echo "gen/optimizer is not at the pinned $pinned: git submodule update --init gen/optimizer" >&2
+        exit 1
+    }
+    make_bundle "$optimizer" "$pinned" "$assets/easymesh-optimizer.bundle"
+}
+
 prepare_assets() {
     local stage=$1 assets=$stage/assets boardfarm_repo=$stage/boardfarm-source
     local meta_commit
@@ -243,6 +282,7 @@ prepare_assets() {
     test -z "$(git -C "$root" status --porcelain)"
     make_bundle "$root" "$meta_commit" "$assets/meta-cmf-bananapi-vcpe.bundle"
     prepare_medium "$stage"
+    prepare_optimizer "$stage"
 
     if [ -d "$boardfarm_source/.git" ]; then
         make_bundle "$boardfarm_source" "$boardfarm_commit" \
@@ -265,7 +305,8 @@ prepare_assets() {
             "$(basename "$extender_image")" \
             boardfarm-lab-staging.bundle \
             meta-cmf-bananapi-vcpe.bundle \
-            easymesh-medium.bundle wmediumd wmediumd.provenance.env wmediumd-console > SHA256SUMS
+            easymesh-medium.bundle easymesh-optimizer.bundle \
+            wmediumd wmediumd.provenance.env wmediumd-console > SHA256SUMS
         sha256sum -c SHA256SUMS
     )
     printf '%s\n' "$meta_commit"
@@ -301,7 +342,7 @@ push_inputs() {
         [boardfarm-lab.service]=gen/vm/scripts/guest/boardfarm-lab.service
         [easymesh-lab-runtime]=gen/vm/scripts/guest/easymesh-lab-runtime
         [easymesh-lab.service]=gen/vm/scripts/guest/easymesh-lab.service
-        [easymesh-room-demo.service]=gen/vm/scripts/guest/easymesh-room-demo.service
+        [easymesh-room-service.service]=gen/vm/scripts/guest/easymesh-room-service.service
         [easymesh-hwsim-pool]=gen/vm/scripts/guest/easymesh-hwsim-pool
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
@@ -339,10 +380,10 @@ run_root() {
 
 check_baseline() (
     restore_room=false
-    trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-demo.service || result=$?; fi; exit "$result"' EXIT
-    room_state=$(run_root systemctl show easymesh-room-demo.service -p ActiveState --value)
+    trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-service.service || result=$?; fi; exit "$result"' EXIT
+    room_state=$(run_root systemctl show easymesh-room-service.service -p ActiveState --value)
     case "$room_state" in active|activating) restore_room=true ;; esac
-    run_root systemctl stop easymesh-room-demo.service || return
+    run_root systemctl stop easymesh-room-service.service || return
     run_root "$@" /usr/local/sbin/easymesh-labctl check
 )
 
@@ -386,6 +427,7 @@ build_vm() {
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
     [ "$emosa" = 0 ] || emosa_inputs
+    require_host_to_itself
     instance_exists && {
         echo "$name already exists; delete it explicitly before a clean build" >&2
         exit 1
@@ -533,6 +575,7 @@ status_vm() {
 
 check_vm() {
     local host_commit guest_commit
+    require_host_to_itself
     start_vm
     host_commit=$(git -C "$root" rev-parse HEAD)
     guest_commit=$(lxc exec "$name" -- sudo -H -u easymesh \
@@ -787,6 +830,78 @@ EOF
     ls -lh "$bundle"/*
 }
 
+update_vm() (
+    local repo=/home/easymesh/git/meta-cmf-bananapi-vcpe guest_assets=/home/easymesh/easymesh-assets
+    local host_commit guest_commit guest_medium stage file
+    instance_exists
+    [ "$(instance_state)" = RUNNING ] || { echo "$name is not running: $0 start" >&2; exit 1; }
+    wait_agent
+    host_commit=$(git -C "$root" rev-parse HEAD)
+    test -z "$(git -C "$root" status --porcelain)"
+    guest_commit=$(lxc exec "$name" -- sudo -H -u easymesh git -C "$repo" rev-parse HEAD)
+    [ "$guest_commit" != "$host_commit" ] || { echo "$name is at $host_commit already"; exit 0; }
+    git -C "$root" merge-base --is-ancestor "$guest_commit" "$host_commit" || {
+        echo "$name is at $guest_commit, not an ancestor of $host_commit: build instead" >&2
+        exit 1
+    }
+    # What a build made from the checkout and installed: the medium's daemon, console and
+    # radio module, and the guest's services and tools. A change there needs a build.
+    guest_medium=$(git -C "$root" rev-parse "$guest_commit:gen/medium")
+    git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- wmediumd observer hwsim \
+        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' || {
+        echo "the medium's daemon, console or radio module changed since $guest_medium: build instead" >&2
+        exit 1
+    }
+    git -C "$root" diff --quiet "$guest_commit" "$host_commit" -- gen/vm/scripts/guest \
+        gen/vm/scripts/55-scale-topology.sh gen/vm/scripts/60-scale-steering-test.sh \
+        gen/vm/scripts/61-return-steering-regression.sh || {
+        echo "the guest's services or tools changed since $guest_commit: build instead" >&2
+        exit 1
+    }
+    stage=$(mktemp -d)
+    trap 'rm -rf "$stage"' EXIT
+    install -d "$stage/assets"
+    make_bundle "$root" "$host_commit" "$stage/assets/meta-cmf-bananapi-vcpe.bundle"
+    make_bundle "$root/gen/medium" "$(git -C "$root" rev-parse HEAD:gen/medium)" \
+        "$stage/assets/easymesh-medium.bundle"
+    prepare_optimizer "$stage"
+    for file in "$stage"/assets/*.bundle; do
+        lxc file push "$file" "$name$guest_assets/$(basename "$file")"
+        lxc exec "$name" -- chown easymesh:easymesh "$guest_assets/$(basename "$file")"
+    done
+    # A directory the commit turns into a submodule keeps only ignored files: bytecode,
+    # some of it the root-run room service's, so root removes them.
+    lxc exec "$name" -- env REPO="$repo" bash -euo pipefail -c '
+        cd "$REPO"
+        for path in gen/medium gen/optimizer; do
+            [ ! -d "$path" ] || [ -e "$path/.git" ] || git -c safe.directory="$REPO" clean -q -fdX -- "$path"
+        done
+    '
+    lxc exec "$name" -- sudo -H -u easymesh env REPO="$repo" ASSETS="$guest_assets" \
+        COMMIT="$host_commit" bash -euo pipefail -c '
+        cd "$REPO"
+        test -z "$(git status --porcelain --untracked-files=no)"
+        git fetch -q "$ASSETS/meta-cmf-bananapi-vcpe.bundle" refs/heads/lxd-appliance-export
+        test "$(git rev-parse FETCH_HEAD)" = "$COMMIT"
+        git merge -q --ff-only FETCH_HEAD
+        for path in gen/medium gen/optimizer; do
+            [ -e "$path/.git" ] || [ -z "$(ls -A "$path" 2>/dev/null)" ] || {
+                echo "$path holds untracked files; it cannot become a submodule" >&2
+                exit 1
+            }
+        done
+        git config submodule.gen/medium.url "$ASSETS/easymesh-medium.bundle"
+        git config submodule.gen/optimizer.url "$ASSETS/easymesh-optimizer.bundle"
+        git -c protocol.file.allow=always submodule update --init gen/medium gen/optimizer
+        for path in gen/medium gen/optimizer; do
+            test "$(git -C "$path" rev-parse HEAD)" = "$(git rev-parse "HEAD:$path")"
+        done
+        echo "$(git rev-parse --short HEAD): medium $(git -C gen/medium rev-parse --short HEAD)," \
+            "optimizer $(git -C gen/optimizer rev-parse --short HEAD)"
+    '
+    run_root bash "$repo/gen/lab-bringup.sh" room
+)
+
 delete_vm() {
     instance_exists
     lxc list "$name" -c nst4m --format table
@@ -804,6 +919,7 @@ case "${1:-}" in
     snapshot) snapshot_vm ;;
     export) export_vm ;;
     export-thin) export_thin_vm ;;
+    update) update_vm ;;
     delete) delete_vm ;;
     emosa) emosa_vm ;;
     -h|--help|help|'') usage ;;

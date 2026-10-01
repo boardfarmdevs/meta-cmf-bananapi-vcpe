@@ -13,7 +13,7 @@ Only one RF writer may run at a time. The default room is itself a writer.
 | Can a requested BTM move a real station? | [Commanded steering](../reference/optimizer/commanded-steering.md) |
 | Can a private or IoT cohort move reversibly? | `gen/tests/wmediumd-client-carousel.py --help` |
 | Can backhaul form a chain or branch? | `gen/tests/multihop-backhaul.sh` (inspect options before mutation) |
-| How do I add or evaluate a policy? | [Optimizer development](../reference/optimizer/development.md), [scenarios](../reference/optimizer/scenarios.md) |
+| How do I add or evaluate a policy? | [Optimizer development](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/development.md), [scenarios](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/scenarios.md) |
 | Is the medium/resource path the bottleneck? | [Performance diagnostics](../reference/testing/performance.md) |
 | Which room makes a short demonstration? | [Catalog](../reference/rooms/catalog.md) |
 

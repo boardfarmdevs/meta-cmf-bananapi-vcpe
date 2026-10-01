@@ -1,6 +1,6 @@
 # Current RDK lab
 
-Reviewed 22 September 2026. This is the source/checkpoint and last-tested
+Reviewed 1 October 2026. This is the source/checkpoint and last-tested
 deployment summary, not a live health monitor. See [operations](guide/operations.md).
 
 ## Identity and release status
@@ -8,28 +8,77 @@ deployment summary, not a live health monitor. See [operations](guide/operations
 | Item | Current value |
 | --- | --- |
 | Canonical branch | `main` |
-| Development checkout | `rev150:/home/rev/git/meta-cmf-bananapi-vcpe-builddocs` |
-| Existing build checkout | `rev140:/home/rev/yocto/easymesh-bpi/meta-cmf-bananapi-vcpe` |
-| Last-tested VM | `rev140:demo-a` |
+| Development and build checkout | `rev140:/home/rev/git/easymesh-labs/meta-cmf-bananapi-vcpe` (the easymesh-labs workspace) |
+| Last-tested VM | `rev140:rdk-1001` (from scratch, 1 Oct); with the EMOSA option `rev120:rdk-emosa-1001` |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
-| Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd |
-| Fixed pool | 100 clients; five mesh containers / six displayed roles |
-| Current classification | Development checkpoint; fresh-VM/full-suite acceptance pending |
-| prplMesh peer | Separate repository; last-tested VM `rev120:demo-prpl` |
+| Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd from easymesh-medium (the `gen/medium` submodule); the optimizer from easymesh-optimizer (the `gen/optimizer` submodule) |
+| Images | the controller and extender images the easymesh-labs `manifest.json` pins, with the commit each was built from |
+| Fixed pool | 100 clients; the gateway, four Wi-Fi extenders and the wired extender `bpiap-004` (`extender_5`) |
+| Current classification | Fresh VM on easymesh-medium; its full room suite passed (below) |
+| prplMesh peer | prplmesh-lab; last-tested VM `rev140:prpl-1001` |
 
 Controller and Agent-1 share the root container. Default selects ten private
 and ten IoT clients; other rooms change presence, not permanent pool size.
 Do not enable VM autostart as part of rebuilding or optional remote access.
 
-## Qualification and remaining failures
+## Qualification
 
-The latest bounded catalog diagnostics passed **24/24 ordinary rooms** through
+**1 October, `rdk-1001`** (from scratch on rev140 at `badc808`: the medium
+`e39e98e`, the optimizer `5e57337`, the controller image `…20260929102959` with
+unified-wifi-mesh 0232, the extender image `…20260929014035`): the static section
+passed 39 of 39 and the room suite 9 of 9 stages, the catalog 27 of 27 on rev140
+and the geometry stage with the browser on rev150 (on rev140 the optimizer had
+one client left to steer when the 60 s default recovery ended). The build's
+traffic check lost packets while `prpl-1001` ran on the same host and passed with
+`rdk-1001` alone: build and test one lab at a time on rev140. `rdk-emosa-1001`
+(rev120, emosa-lab `f947bf3`, which fixed the adapter kit's C build) passed its
+suite with the pods, `fifty-client-counter-roam` with the browser on rev150.
+
+**30 September, the optimizer split**: `rdk-0930` moved in place to the optimizer
+from easymesh-optimizer (`gen/vm/lxd/build.sh update`) and passed a quick
+requalification: the offline suites, the default room settled with the
+optimizer converged, three live `recommend` cycles through the optimizer's CLI,
+default readiness and five optimizer rooms with the browser on rev150 (the
+easymesh-labs alignment plan, 6.5).
+
+**30 September, `rdk-0930`** (from scratch on rev140, the RF medium from
+easymesh-medium `036cd3f`, the images `…20260929012442` and `…20260929014035`):
+the full room suite (`gen/tests/run-easymesh-suite.sh rooms`) passed 8 of 9
+stages on rev140: the guest audit, default readiness, the geometry rooms, the RF
+hover, access and property rooms, the switch through every world and the
+restore. The catalog passed 26 of 27 rooms there; the 27th,
+`traffic-low-high-off`, missed its load window with rev140 at load 20 and passed
+with the browser on rev150. The same day `rdk-emosa-0930` (the EMOSA option,
+rev120) passed its suite with the pods, two rooms and the geometry stage with
+the browser on rev150.
+
+**29 September, `rdk-0929`**: the first from-scratch VM with the wired
+extender as a backhaul parent; its full suite passed (the easymesh-labs
+alignment plan, 1.6).
+
+With a lab VM and its browser on one host, rev140 runs at load 15 to 20 on 16
+cores and rooms with short windows can miss them in the browser: run the room
+browser from another host (`--host`, `--room-url`, `--topology-url`).
+
+## Rebuild
+
+A new VM from scratch: the [build guide](build/README.md)
+(`gen/vm/lxd/build.sh build`), from a clean checkout at the pinned commits; the
+medium and the optimizer come from the `gen/medium` and `gen/optimizer`
+submodules at the commits this repository pins. A commit the lab runs from its
+checkout (the optimizer, the room service) moves an accepted VM in place:
+`gen/vm/lxd/build.sh update`.
+New images into a running lab: `gen/lab-redeploy.sh`. Retain old VMs stopped
+until their replacements pass.
+
+## The record of 22 September
+
+The latest bounded catalog diagnostics then passed **24/24 ordinary rooms** through
 load, convergence, Play, native roster/traffic and room/topology checks, followed
-by healthy Default-20 restoration. Native identities stayed unchanged. These
-runs included recorded working-tree fixes; they are not clean-source fresh-VM
-acceptance and do not replace the next full 100-client baseline.
+by healthy Default-20 restoration, on `rev140:demo-a` with recorded working-tree
+fixes (not a clean-source fresh VM). The gates open then:
 
-| Remaining gate | Last observation |
+| Gate | Observation on 22 September |
 | --- | --- |
 | Geometry branch formation | Failed the initial 60-second convergence gate before Play; all ten clients were present, but fresh candidate coverage was incomplete. Default recovery passed. |
 | Geometry parent handover | Passed the scenario and Default recovery. |
@@ -37,32 +86,13 @@ acceptance and do not replace the next full 100-client baseline.
 | Guarded load steering | A native BTM and receiver delivery were observed, but repeat qualification hit native 503/504 query failures. |
 | Pressure veto / weak-signal rescue | Test stimuli did not sustain the required otherwise-eligible decision context; no complete live proof. |
 
-The [maintained RF qualification record](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#room-catalog-qualification-and-open-failures)
+The geometry gates have passed since (29 and 30 September). The
+[maintained RF qualification record](reference/testing/rf-qualification.md#room-catalog-qualification-and-open-failures)
 contains exact evidence paths, repaired harness/namespace issues and attribution.
 The `rf-actions` tier is included in `all`; known failures remain failures.
 Do not relax deadlines, disable native admission checks, or invent unavailable
 metrics to make the new build green. Optional live visibility/priority modes
 remain unqualified; isolated medium selftests do not qualify those modes.
-
-## Rebuild checkpoint
-
-Use clean, matching host/guest source commits. The existing rev140 build
-checkout contains older uncommitted diagnostic copies; it was inspected but
-not reset or overwritten. Preserve/reconcile that work, or use a fresh source
-workspace before following the [build guide](build/README.md).
-
-The latest recorded controller and extender image builds there used layer
-`3b81ede45d765062f64daa6da9aeeed385448dfb`. Native recipe inputs have changed
-since then. **Build both BPI roles again before the new VM**, retaining
-`$HOME/oe/downloads` and `$HOME/oe/sstate-cache`; do not clean those caches.
-The VM builder consumes images and does not invoke BitBake itself.
-The UAF repair, native AP threshold/query handling, proactive backhaul steering
-and current candidate-admission patch remain selected by the layer.
-
-Start with static/webui/browser checks, then a fresh VM baseline, rooms and
-the remaining [test suite](test/README.md). Retain old VMs stopped until their
-replacements pass. No new thin archive or VirtualBox package is produced by
-this source checkpoint.
 
 ## Access and distribution
 
@@ -70,9 +100,9 @@ These are the last-tested VM's configured addresses, not a health promise:
 
 | View | RDK |
 | --- | --- |
-| Live room | <http://192.168.2.140:26342/> |
-| Network topology | <http://192.168.2.140:26340/> |
-| Console NG | <http://192.168.2.140:26341/> |
+| Live room | <http://192.168.2.140:27292/> |
+| Network topology | <http://192.168.2.140:27290/> |
+| Console NG | <http://192.168.2.140:27291/> |
 
 New VM names receive their own port blocks. See
 [monitoring](reference/observability/monitoring.md) for LXD/Grafana.

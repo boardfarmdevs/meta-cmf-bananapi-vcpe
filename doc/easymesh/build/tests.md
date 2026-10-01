@@ -16,6 +16,7 @@ bash gen/vm/lxd/test-profiles.sh
 bash gen/vm/lxd/test-build-storage.sh
 bash gen/vm/lxd/test-import-storage.sh
 bash gen/vm/lxd/test-instance-config.sh
+bash gen/vm/lxd/test-shared-host.sh
 ```
 
 Run adjacent unit tests for the subsystem changed. For example, a room/viewer
@@ -56,9 +57,9 @@ named lab and run only the scenarios affected by the change, plus their source
 or browser checks. Typical commands are:
 
 ```sh
-node gen/tests/test-room-feature-acceptance.js --help
-node gen/tests/test-room-backhaul-features.js --help
-python3 gen/tests/room-final-readiness.py --help
+node gen/optimizer/acceptance/test-room-feature-acceptance.js --help
+node gen/optimizer/acceptance/test-room-backhaul-features.js --help
+python3 gen/optimizer/acceptance/room-final-readiness.py --help
 ```
 
 Record the selected room names, URLs, source commit, measured convergence and

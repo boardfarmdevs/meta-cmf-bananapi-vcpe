@@ -6,5 +6,6 @@ Correctness, convergence and performance.
 
 - [Performance and failure attribution](performance.md)
 - [Room correctness and convergence acceptance](room-acceptance.md)
+- [RF property qualification records](rf-qualification.md)
 - [Experiment selection](../../experiments/README.md)
 - [Test commands](../../../../gen/tests/README.md)

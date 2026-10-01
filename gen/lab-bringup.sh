@@ -28,7 +28,7 @@ usage() {
 
 TOPOLOGY=${EASYMESH_TOPOLOGY_URL:-http://127.0.0.1:8888/api/v1/topology}
 ROOM=${EASYMESH_ROOM_URL:-http://127.0.0.1:8891}
-ROOM_UNIT=easymesh-room-demo.service
+ROOM_UNIT=easymesh-room-service.service
 
 log() { printf '[lab-bringup %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { printf '[lab-bringup] %s\n' "$*" >&2; exit 1; }

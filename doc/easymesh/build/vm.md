@@ -172,8 +172,12 @@ gen/vm/lxd/build.sh status
 gen/vm/lxd/build.sh stop
 gen/vm/lxd/build.sh start
 gen/vm/lxd/build.sh check
+gen/vm/lxd/build.sh update
 gen/vm/lxd/build.sh delete
 ```
+
+`update` moves an accepted VM to the checkout's commit in place; `build.sh help`
+says when it refuses.
 
 `delete` removes only the named VM. It deliberately leaves the matching storage
 pool intact. To remove a lab permanently, stop/delete its VM, review the exact

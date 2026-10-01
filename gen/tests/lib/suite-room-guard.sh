@@ -2,7 +2,7 @@
 set -euo pipefail
 
 state=/run/easymesh-suite-room-guard
-dropin=/run/systemd/system/easymesh-room-demo.service.d/90-suite-guard.conf
+dropin=/run/systemd/system/easymesh-room-service.service.d/90-suite-guard.conf
 
 case ${1:-} in
 acquire)

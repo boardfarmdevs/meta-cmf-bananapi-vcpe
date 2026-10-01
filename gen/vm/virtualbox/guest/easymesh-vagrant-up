@@ -11,9 +11,9 @@ deadline=$((SECONDS + start_timeout))
 failure() {
     echo 'The lab did not become ready. The VM is retained for diagnosis.' >&2
     systemctl --no-pager --full status easymesh-thin-firstboot.service \
-        easymesh-lab.service easymesh-room-demo.service || true
+        easymesh-lab.service easymesh-room-service.service || true
     journalctl -b -u easymesh-thin-firstboot.service -u easymesh-lab.service \
-        -u easymesh-room-demo.service -n 40 --no-pager || true
+        -u easymesh-room-service.service -n 40 --no-pager || true
     exit 1
 }
 
@@ -43,12 +43,12 @@ until systemctl is-active --quiet easymesh-lab.service; do
 done
 jq -e '.result == "pass" and .clients == 100 and .final_instances == 105' \
     "$state/thin-firstboot-report.json" >/dev/null
-systemctl start easymesh-room-demo.service
+systemctl start easymesh-room-service.service
 for endpoint in http://127.0.0.1:8888/api/v1/topology \
     http://127.0.0.1:8890/ http://127.0.0.1:8891/api/demo/current; do
     until curl -fsS --max-time 8 "$endpoint" >/dev/null; do
         (( SECONDS < deadline )) || failure
-        systemctl is-failed --quiet easymesh-room-demo.service && failure
+        systemctl is-failed --quiet easymesh-room-service.service && failure
         sleep 2
     done
 done

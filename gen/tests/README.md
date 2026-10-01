@@ -3,13 +3,20 @@
 Documentation-only check (no lab access): `python3 gen/tests/test_documentation.py`.
 This checks local files/anchors, navigation, guide sizes and packaged manual inputs.
 
+Two groups of tests this guide describes live with the code they test, and this
+lab's suite (`run-easymesh-suite.sh`) runs them from there: the room viewer's and
+Console NG's tests are easymesh-medium's (`gen/medium/configurator/tests/viewer`,
+`gen/medium/observer/tests`), and the room and optimizer acceptance tools, with
+their tests, easymesh-optimizer's (`gen/optimizer/acceptance`). This directory keeps
+the lab's own: its dashboard, suite, units, manifests and native tools.
+
 The asymmetric RF audit retries at most three complete read-only snapshots if
 playback changes the environment epoch or native generation during collection.
 Discarded samples remain in the evidence; run/world/daemon changes and query
 errors fail immediately. Its 10-second collection budget and 20-second process
 bound fit the existing 30-second caller timeout without pausing playback or
 changing RF settings or room deadlines. No coherent sample means failure.
-Offline check: `python3 -m pytest -q gen/tests/test_room_feature_rf_audit.py`.
+Offline check: `python3 -m pytest -q gen/optimizer/acceptance/test_room_feature_rf_audit.py`.
 
 Phase 0 RF contract/provenance tests and the short read-only live audit are in
 the [RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
@@ -21,9 +28,9 @@ unless a section says otherwise.
 Run the Python suites together without a live lab:
 
 ```sh
-PYTHONPATH="$PWD/gen/medium/configurator:$PWD/gen/optimizer:$PWD/gen/demo:$PWD/gen/demo/tests:$PWD/gen/tests" \
+PYTHONPATH="$PWD/gen/medium/configurator:$PWD/gen/optimizer:$PWD/gen/rooms:$PWD/gen/rooms/tests:$PWD/gen/tests" \
   python3 -m pytest --import-mode=importlib \
-  gen/medium/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests
+  gen/medium/configurator/tests gen/optimizer/tests gen/rooms/tests gen/tests
 ```
 
 The test directories on `PYTHONPATH` supply shared fixtures and
@@ -89,9 +96,9 @@ before the frequency-qualified lookup. Unknown/departed ownership and malformed
 or mismatched provider replies must remain unavailable; the returned owner must
 not replace the requested candidate AP.
 
-`node gen/tests/viewer-mode-test.js` checks server-provided defaults, static/file
+`node gen/medium/configurator/tests/viewer/viewer-mode-test.js` checks server-provided defaults, static/file
 offline fallback and explicit mode overrides without probing a backend. The
-HTTP counterpart in `gen/demo/tests/test_server.py` checks clean root redirects,
+HTTP counterpart in `gen/optimizer/tests/room/test_server.py` checks clean root redirects,
 query preservation and HTML mode injection for interactive, observation and
 replay servers without modifying files or other assets.
 
@@ -104,20 +111,20 @@ It uses an isolated page fixture and does not connect to or change a live lab:
 ```sh
 NODE_PATH=/path/to/browser-tools/node_modules \
 CHROMIUM_PATH=/path/to/chromium \
-node gen/tests/viewer-sidebar-layout-test.js
+node gen/medium/configurator/tests/viewer/viewer-sidebar-layout-test.js
 ```
 
 The Node module path must provide `playwright-core`; `CHROMIUM_PATH` is optional
 when its matching browser is already installed at Playwright's default location.
 
-`node gen/tests/viewer-room-convergence-test.js` checks continuous readiness,
+`node gen/medium/configurator/tests/viewer/viewer-room-convergence-test.js` checks continuous readiness,
 exact room counts, current RF epochs, freshness, band policy and failure states.
 `viewer-room-convergence-browser-test.js` uses the same Playwright environment
 to check the prominent status card beside Play and in full screen, fixed-size
 desktop/mobile layout, and no DOM changes during routine measurement progress.
 Both run without changing a live lab.
 
-`node gen/tests/viewer-room-guide-test.js` checks that every bundled RDK room
+`node gen/medium/configurator/tests/viewer/viewer-room-guide-test.js` checks that every bundled RDK room
 has detailed RF/optimizer/evidence/limits guidance and that counts, durations
 and pauses match its golden plan. `viewer-room-guide-browser-test.js` uses the
 same Playwright environment to test hover, keyboard and touch, small viewports,
@@ -1039,7 +1046,7 @@ gate. It reads the most recent lifecycle timing record and uses
 process:
 
 ```sh
-sudo gen/tests/lab-performance-snapshot.py \
+sudo gen/optimizer/acceptance/lab-performance-snapshot.py \
   --stack rdk --profile 20 --label ready \
   --output /var/tmp/rdk-ready.json
 ```

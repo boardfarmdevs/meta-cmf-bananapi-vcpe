@@ -15,7 +15,7 @@
 6. Reload **Home A Private Client Room Walk** to return to the twenty-client
    default. Leave it paused, with no control lease or fault.
 
-Use the [room manual](../live-room-demo/README.md) for controls and failure
+Use the [room manual](../room-service/README.md) for controls and failure
 interpretation, and [room catalog](../reference/rooms/catalog.md) for other demos.
 
 For a separate native acceptance test, stop the room first so its RF writer

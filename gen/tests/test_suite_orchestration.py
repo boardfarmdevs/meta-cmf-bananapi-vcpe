@@ -36,7 +36,7 @@ prepare_full_client_profile 100 || exit 1
 prepare_full_client_profile 100 || exit 1
 test "$(grep -c 'acquire' "$CALLS")" = 1 || exit 2
 test "$(grep -c 'restart easymesh-lab.service' "$CALLS")" = 1 || exit 3
-! grep -q 'start easymesh-room-demo.service' "$CALLS" || exit 4
+! grep -q 'start easymesh-room-service.service' "$CALLS" || exit 4
 restore_room_service || exit 5
 test "$(grep -c 'release' "$CALLS")" = 1 || exit 6
 '''
@@ -121,12 +121,18 @@ block() { printf 'blocked %s %s\\n' "$1" "$2"; }
 
 
 def test_native_audit_replaces_old_operator_owned_tmp_file():
-    expected = "install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py"
-    for name in ("room-backhaul-features.js", "room-feature-acceptance.js", "run-easymesh-suite.sh"):
-        source = (ROOT / "gen/tests" / name).read_text()
-        assert expected in source
+    # the suite installs the guest audit itself; the acceptance harnesses (easymesh-optimizer's,
+    # gen/optimizer/acceptance) through room-host-monitor.js's guestAuditInstallCommand
+    acceptance = ROOT / "gen/optimizer/acceptance"
+    suite = (ROOT / "gen/tests/run-easymesh-suite.sh").read_text()
+    monitor = (acceptance / "room-host-monitor.js").read_text()
+    assert "install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py" in suite
+    assert "install -m 0644 /dev/stdin /tmp/' + name" in monitor and "'room-feature-guest-audit.py'" in monitor
+    for source in (suite, monitor):
         assert "--mode non-interactive" in source
         assert not re.search(r"lxc file push[^\n]+room-feature-guest-audit", source)
+    for name in ("room-backhaul-features.js", "room-feature-acceptance.js"):
+        assert "guestAuditInstallCommand(" in (acceptance / name).read_text()
 
 
 def test_generated_test_output_does_not_dirty_source_checkout():

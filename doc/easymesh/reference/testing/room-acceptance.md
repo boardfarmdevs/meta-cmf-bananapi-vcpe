@@ -31,7 +31,7 @@ physical platforms/fronthauls are unchanged. Native builds and admission/beacon
 fixtures pass, including fail-closed flushing. Typed inventory errors pause
 interactive RDK steering; noninteractive checks fail.
 
-Later [native recovery/retry checks](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#cold-room-initialization)
+Later [native recovery/retry checks](rf-qualification.md#native-recovery-during-cold-room-initialization)
 still fail cold readiness and branch recovery. Held retry 0206 is not enabled;
 the UAF-patched baseline controller is restored. Those failures are not erased
 by the earlier targeted passes listed here.
@@ -63,7 +63,7 @@ Earlier bounded RDK evidence in `test-results/targeted-suite-repair/`:
   overload. Raising offered UDP from 12 to 40 Mbps per client does not prove
   radio congestion; the latter peaks at 168/255 against the unchanged 192 gate.
 - Pressure/rescue and later browser/preflight evidence are maintained in
-  [bounded qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#bounded-qualification-follow-up).
+  [bounded qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-qualification.md#bounded-qualification-follow-up).
   Earlier failed workloads remain failed; unrun dependent cases remain blocked.
 
 The HAL library was compiled and installed with verified rollback copies;
@@ -160,7 +160,7 @@ client roster before starting the room.
 From RDK `gen/` or prpl root, substitute `prpl` for the second stack:
 
 ```sh
-sudo env PYTHONPATH=optimizer:medium/configurator python3 tests/native-retry-counter-acceptance.py \
+sudo env PYTHONPATH=optimizer:medium/configurator python3 optimizer/acceptance/native-retry-counter-acceptance.py \
   --stack rdk --output /tmp/retry-qualification-new --yes-change-lab
 ```
 
@@ -383,15 +383,15 @@ change and must preserve one-at-a-time native commands.
 1. Reserve the lab; save configuration, native/container/medium identities and
    revisions. Exclude other leases/RF writers; preserve policy, timers and VM resources.
 2. Copy deployed `gen/medium/configurator/worlds/golden/*.world.json` into
-   evidence and match loaded-world hashes. Copy `gen/tests/room-feature-guest-audit.py`
-   and `gen/tests/room-feature-rf-audit.py` into guest `/tmp/`, retaining names.
+   evidence and match loaded-world hashes. Copy `gen/optimizer/acceptance/room-feature-guest-audit.py`
+   and `gen/optimizer/acceptance/room-feature-rf-audit.py` into guest `/tmp/`, retaining names.
 3. Use Playwright/Chromium, preferably on a separate observer. If colocated,
    `--observer-cpus` restricts only owned GPU threads to valid CPUs. The SSH
    sampler needs two pre-mutation samples and runs through restoration,
    recording CPU/pressure, RAM, temperature and available throttling counters.
    Its stdin closes on shutdown; failure invalidates host coverage.
 4. Verify `maximum_actions: null` and rate/oscillation/failure guards with
-   `tests/room-final-readiness.py`; never restore the obsolete 2000-action override.
+   `optimizer/acceptance/room-final-readiness.py`; never restore the obsolete 2000-action override.
    Preserve explicit operator limits. Profile changes use named temporary
    drop-ins and room-only restarts outside measurement.
 5. Exclude builds, exports, backups and maintenance from timing. On LXD timeouts,
@@ -450,18 +450,18 @@ Older reports retain their strongest-AP criterion.
 From this repository on an observer able to SSH to the physical host:
 
 ```sh
-node gen/tests/test-room-feature-acceptance.js
-node --check gen/tests/room-feature-acceptance.js
+node gen/optimizer/acceptance/test-room-feature-acceptance.js
+node --check gen/optimizer/acceptance/room-feature-acceptance.js
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright-core
 export CHROMIUM_PATH=/absolute/path/to/chromium/chrome
-node gen/tests/room-feature-acceptance.js --yes-act --flavor rdk \
-  --host rev140 --vm rdkeasymesh-0916 \
-  --room-url http://192.168.2.140:49891/ \
-  --topology-url http://192.168.2.140:49889/ \
+node gen/optimizer/acceptance/room-feature-acceptance.js --yes-act --flavor rdk \
+  --host "$HOST" --vm "$VM" \
+  --room-url "$ROOM_URL" \
+  --topology-url "$TOPOLOGY_URL" \
   --worlds /absolute/path/to/deployed-goldens \
   --output /absolute/path/to/new-results --native-audits 1 \
   --initial-timeout 90 --checkpoint-timeout 60 --final-timeout 90
-node gen/tests/room-feature-report.js /absolute/path/to/new-results \
+node gen/optimizer/acceptance/room-feature-report.js /absolute/path/to/new-results \
   /absolute/path/to/deployed-goldens > audited-summary.json
 ```
 
@@ -479,26 +479,27 @@ native processes, parent BSSIDs and action budgets remain unchanged.
 
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core CHROMIUM_PATH=/path/to/chromium \
-node gen/tests/room-backhaul-features.js \
-  --yes-act true --flavor rdk --host rev140 --vm rdkeasymesh-0916 \
-  --room-url http://192.168.2.140:48891 \
-  --topology-url http://192.168.2.140:48889 \
+node gen/optimizer/acceptance/room-backhaul-features.js \
+  --yes-act true --flavor rdk --host "$HOST" --vm "$VM" \
+  --room-url "$ROOM_URL" \
+  --topology-url "$TOPOLOGY_URL" \
   --output /tmp/new-backhaul-feature-results
 ```
 
 Use new evidence directories; retain RF, policy/clock, parents, native
-links/probes and both screenshots. The 0916 harness requires actual branch
+links/probes and both screenshots. It requires actual branch
 formation and handover, not only changed geometry. It checks exact native
-process identities and initial/return client kernel ownership. The prpl copy
-uses `--flavor prpl`, its own container/interface names, gateway and five
-physical data-model nodes while still requiring six logical topology nodes.
+process identities and initial/return client kernel ownership. `--flavor prpl`
+selects prpl's containers, interfaces, gateway and five data-model nodes
+(six topology nodes).
 Isolation requires −20 dB mesh links with the AP present and strong fronthaul,
 an initial upstream probe within 15 s, then disconnected uplink/failed traffic.
 Require ten-client return convergence within 60 s before Default.
 `--room backhaul-isolation-recovery` selects that case; otherwise run all three.
 
 Each half-script has 35 s; native midpoint checks allow 60 s. Cleanup checks exact default RF and allows 60 s for
-twenty clients, six nodes and all-AP gateway probes. Missing evidence/recovery
+twenty clients, six nodes and all-AP gateway probes. A hold (≤150 s: start
+parents plus 90 s) fails on a mesh node missing three samples. Missing evidence/recovery
 fails; never hide it with forced parents or native restarts. This is bounded
 functionality, not soak or complete native-policy qualification.
 
@@ -570,7 +571,7 @@ Always remove the named temporary service override, daemon-reload, restore the
 original room and verify the default roster, paused time zero, no held lease,
 no fault and the original action cap. Stop only owned browsers/host samplers.
 For a separate opt-in crash-recovery test, use
-`gen/tests/room-recovery-smoke.py --help`; it deliberately kills only the room
+`gen/optimizer/acceptance/room-recovery-smoke.py --help`; it deliberately kills only the room
 process and must be scheduled, not silently included in a normal room pass.
 
 The images rate-limit em_ctrl and em_agent to 1000 journal lines per 30 s in a
@@ -663,13 +664,13 @@ owns playback. On RDK:
 
 ```sh
 node gen/tests/controller-render-latency.js \
-  --scope metrics --url http://192.168.2.140:48889/ \
+  --scope metrics --url "$TOPOLOGY_URL" \
   --output /tmp/native-metrics-new --seconds 100 \
-  --native-stack rdk --host rev140 --vm rdkeasymesh-20-0908
+  --native-stack rdk --host "$HOST" --vm "$VM"
 ```
 
-On prpl omit `gen/`, use URL `http://192.168.2.150:8091/`,
-`--native-stack prpl --host rev150 --vm prplmesh-20-0908`.
+On prpl omit `gen/`, use URL `$CONTROLLER_URL`,
+`--native-stack prpl --host "$HOST" --vm "$VM"`.
 The guest requires root Python/BCC and the exact qualified native binary hash;
 the browser profile is **Chromium 139.0.7258.5**. Unknown native builds fail
 closed; changed or missing browser trace identities cannot qualify a frame.
@@ -909,7 +910,7 @@ A committed world establishes a new revision boundary. Active drags and
 acknowledged preview cleanup remain intact. No polling, native restart, delay
 or acceptance-tolerance change is added.
 
-`tests/viewer-playback-order-test.js` executes the actual viewer functions with
+`medium/configurator/tests/viewer/viewer-playback-order-test.js` executes the actual viewer functions with
 a deliberately delayed Play response. The previous source reproduces the
 0-versus-1000-ms clock failure; repaired source passes, including stale full
 snapshots, same-revision clock regression, rewinds, world reset and dragging.
@@ -968,13 +969,13 @@ canvas mailbox preparation, and exact Chrome frame presentation feedback**:
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core \
 CHROMIUM_PATH=/path/to/chromium-139.0.7258.5/chrome \
-node gen/tests/room-render-latency.js --url http://192.168.2.140:48891/ \
+node gen/tests/room-render-latency.js --url "$ROOM_URL" \
   --output /tmp/rdk-room-render-new --seconds 65 \
-  --native-stack rdk --host rev140 --vm rdkeasymesh-20-0908
+  --native-stack rdk --host "$HOST" --vm "$VM"
 ```
 
-For prpl omit `gen/`, use `http://192.168.2.150:18891/` and
-`--native-stack prpl --host rev150 --vm prplmesh-20-0908`; omit native arguments
+For prpl omit `gen/`, use `$ROOM_URL` and
+`--native-stack prpl --host "$HOST" --vm "$VM"`; omit native arguments
 for decode-only profiling. Observe separately controlled playback in full screen.
 Only the profiler's page enables `?profile=1`; remove it before export.
 Default viewers add no observer, queries, pixel readback or synchronous GPU wait.
@@ -1062,17 +1063,17 @@ in the timeout investigation below.
 
 ### Native-load coverage
 
-`tests/native-load-acceptance.py` checks the default lab read-only for twenty
+`optimizer/acceptance/native-load-acceptance.py` checks the default lab read-only for twenty
 seconds: thirty private/IoT BSS loads, association-matching station counts,
 twenty client activities, advancing timestamps, and unavailable data after
 receiver shutdown. Run inside the VM with new evidence:
 
 ```sh
-PYTHONPATH=optimizer python3 tests/native-load-acceptance.py \
+PYTHONPATH=optimizer python3 optimizer/acceptance/native-load-acceptance.py \
   --stack prpl --output /tmp/native-load-new
 ```
 
-RDK uses `PYTHONPATH=gen/optimizer`, `gen/tests/native-load-acceptance.py`,
+RDK uses `PYTHONPATH=gen/optimizer`, `gen/optimizer/acceptance/native-load-acceptance.py`,
 `--stack rdk`. No retunes, injected traffic, steering or restarts.
 
 September 12 passes: complete coverage **2.155 s prpl/10.333 s RDK**, requiring

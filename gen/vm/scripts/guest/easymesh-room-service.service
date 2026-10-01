@@ -1,0 +1,21 @@
+[Unit]
+Description=Interactive EasyMesh room service
+Requires=easymesh-lab.service
+After=easymesh-lab.service
+ConditionPathExists=!/var/lib/easymesh-lab/thin-profile-selection.required
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/easymesh/git/meta-cmf-bananapi-vcpe
+Environment=PYTHONUNBUFFERED=1
+ExecCondition=/usr/bin/grep -qx HEALTH_EXPECT_CLIENTS=100 /etc/default/easymesh-lab
+ExecStart=/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/rooms/room-service interactive --mode act --yes-act --profiling --steering-rate-limit 300 --listen 0.0.0.0:8891 --output-root /home/easymesh/easymesh-evidence/room-runs
+TimeoutStopSec=180
+KillMode=mixed
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target easymesh-lab.service

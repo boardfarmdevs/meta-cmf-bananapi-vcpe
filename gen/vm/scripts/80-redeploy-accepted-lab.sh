@@ -45,19 +45,19 @@ test "$(sha256sum "$extender_image" | awk '{print $1}')" = \
 test "$(sha256sum "$repo/gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')" = \
     "$expected_wmediumd_sha256"
 
-room_state=$(sudo systemctl show easymesh-room-demo.service -p ActiveState --value)
+room_state=$(sudo systemctl show easymesh-room-service.service -p ActiveState --value)
 restore_room() {
     result=$?
     trap - EXIT
     if [ "$room_state" = active ] || [ "$room_state" = activating ]; then
-        sudo systemctl start easymesh-room-demo.service || {
+        sudo systemctl start easymesh-room-service.service || {
             restore_result=$?
             [ "$result" -ne 0 ] || result=$restore_result
         }
     fi
     exit "$result"
 }
-sudo systemctl stop easymesh-room-demo.service
+sudo systemctl stop easymesh-room-service.service
 trap restore_room EXIT
 sudo systemctl stop easymesh-lab.service 2>/dev/null || true
 sudo systemctl stop wmediumd-console.service 2>/dev/null || true
@@ -161,7 +161,7 @@ printf 'EASYMESH_SCALE_PROFILE=unified\nHEALTH_EXPECT_CLIENTS=100\n' \
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-lab.service
 sudo systemctl start easymesh-lab.service
-sudo systemctl stop easymesh-room-demo.service
+sudo systemctl stop easymesh-room-service.service
 
 bash "$repo/gen/medium/observer/install.sh"
 sudo install -m 0644 "$repo/gen/vm/config/wmediumd-console.default" \

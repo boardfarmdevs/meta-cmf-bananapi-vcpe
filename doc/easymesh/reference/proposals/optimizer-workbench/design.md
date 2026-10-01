@@ -52,13 +52,13 @@ The workbench packages that core and adds a loader, a sandbox and reporting.
 | Piece | Where today | State | Reused as |
 | --- | --- | --- | --- |
 | Decision core: `policy.py`, `model.py`, `state.py`, `recorder.py`, `simulator.py` | `gen/optimizer/optimizer`, prplmesh-lab `optimizer/optimizer` | Byte-identical; 7 adapter files differ | The SDK's types, replay and synthetic runner |
-| Policy interface `evaluate(snapshot, prior_state) -> Evaluation` | Same | No network I/O; see the [optimizer development guide](../../optimizer/development.md) | The shape of the plugin API |
+| Policy interface `evaluate(snapshot, prior_state) -> Evaluation` | Same | No network I/O; see the [optimizer development guide](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/development.md) | The shape of the plugin API |
 | Snapshot schema 1 and 2 | `model.py` | Clients, candidates, health, BSS load, client activity | Observation contract version 1 |
 | Reference policies | `ThresholdPolicy`, `BandThresholdPolicy`, `LoadAwarePolicy`, `PreAssociationPolicy` | In-process in the room's conductor | The first plugins |
 | Journal | `recorder.py` | Append-only JSON lines, SHA-256 hash chain | Run journal and replay input |
 | Replay | `em-optimizer replay` | Identical input and policy give identical output bytes | `easymesh-opt replay` |
-| Safety limits | `gen/demo/room_demo/steering_safety.py` | Enforced by the room, whatever decides | Unchanged gate for every plugin |
-| Convergence summary | `gen/demo/room_demo/conductor.py` `_fleet_status` | Measured best-AP convergence, independent of the policy | The scorecard's main measure |
+| Safety limits | `gen/optimizer/room_service/steering_safety.py` | Enforced by the room, whatever decides | Unchanged gate for every plugin |
+| Convergence summary | `gen/optimizer/room_service/conductor.py` `_fleet_status` | Measured best-AP convergence, independent of the policy | The scorecard's main measure |
 | Room modes | `stimulus`, `recommend`, `act` | Chosen at service start | Chosen per run |
 
 Two couplings must be undone. The conductor asks the policy object directly

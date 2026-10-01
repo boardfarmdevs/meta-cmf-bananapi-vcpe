@@ -205,9 +205,9 @@ restore_room_service() {
         room_service_guarded=false
     fi
     if "$room_service_was_active"; then
-        printf 'Restoring easymesh-room-demo.service.\n'
-        lxc exec "$vm" -- systemctl reset-failed easymesh-room-demo.service || return
-        lxc exec "$vm" -- systemctl start easymesh-room-demo.service || return
+        printf 'Restoring easymesh-room-service.service.\n'
+        lxc exec "$vm" -- systemctl reset-failed easymesh-room-service.service || return
+        lxc exec "$vm" -- systemctl start easymesh-room-service.service || return
     fi
     room_service_stopped=false
 }
@@ -232,7 +232,7 @@ archive_rebuilt_room_recovery() {
     lxc exec "$vm" -- env HEALTH_EXPECT_CLIENTS="$expected" bash -lc '
         set -euo pipefail
         /usr/local/sbin/easymesh-labctl check
-        recovery=/run/easymesh-room-demo/recovery.json
+        recovery=/run/easymesh-room-service/recovery.json
         [ -e "$recovery" ] || exit 0
         archive=/home/easymesh/easymesh-evidence/recovery-archives
         stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -256,15 +256,15 @@ prepare_full_client_profile() {
     local expected=$1 state
     [[ $expected == 100 ]] || return 0
     if ! "$room_service_stopped"; then
-        state=$(lxc exec "$vm" -- systemctl show easymesh-room-demo.service -p ActiveState --value)
+        state=$(lxc exec "$vm" -- systemctl show easymesh-room-service.service -p ActiveState --value)
         room_service_was_active=false
         if [[ $state == active || $state == activating || $state == failed ]]; then
             room_service_was_active=true
         fi
-        printf 'Isolating the shared 100-client profile from easymesh-room-demo.service.\n'
+        printf 'Isolating the shared 100-client profile from easymesh-room-service.service.\n'
         lxc exec "$vm" -- bash -s -- acquire < "$root/gen/tests/lib/suite-room-guard.sh" || return
         room_service_guarded=true
-        lxc exec "$vm" -- systemctl stop easymesh-room-demo.service || return
+        lxc exec "$vm" -- systemctl stop easymesh-room-service.service || return
         room_service_stopped=true
     fi
     if ! "$full_profile_reset"; then
@@ -301,13 +301,13 @@ run_static() {
     local test
     if have_command python3 && have_command pytest; then
         run static documentation "cd '$root' && python3 gen/tests/test_documentation.py"
-        run static python "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib gen/medium/configurator/tests gen/optimizer/tests gen/demo/tests gen/tests"
+        run static python "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/rooms:$root/gen/rooms/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib gen/medium/configurator/tests gen/optimizer/tests gen/optimizer/acceptance gen/rooms/tests gen/tests"
     else
         skip static python 'install python3 and pytest for Python and documentation tests'
     fi
     if have_modern_node; then
         run static console-ng-model "cd '$root' && node --test gen/medium/observer/web/ng/model.test.mjs"
-        for test in "$root"/gen/tests/viewer-*-test.js "$root"/gen/tests/test-*.js "$root"/gen/tests/fullscreen-control-test.js "$root"/gen/tests/signal-meter-test.js; do
+        for test in "$root"/gen/medium/configurator/tests/viewer/*-test.js "$root"/gen/tests/test-*.js "$root"/gen/optimizer/acceptance/test-*.js "$root"/gen/tests/fullscreen-control-test.js; do
             case $(basename "$test") in
                 *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
             esac
@@ -335,8 +335,11 @@ run_webui() {
 run_browser() {
     local static fixture d3
     prepare_browser || { skip browser prerequisites 'install node/npm and Playwright/Chromium, or rerun with --install-browser-deps'; return; }
-    for test in pane-divider-browser-test.js viewer-room-convergence-browser-test.js viewer-room-guide-browser-test.js viewer-sidebar-layout-test.js viewer-steering-resume-browser-test.js wmediumd-console-ng-browser-test.js; do
-        run browser "${test%.js}" "cd '$root' && node gen/tests/$test"
+    # the medium's viewer and console browser tests (easymesh-medium)
+    for test in gen/medium/configurator/tests/viewer/pane-divider-browser-test.js gen/medium/configurator/tests/viewer/viewer-room-convergence-browser-test.js \
+        gen/medium/configurator/tests/viewer/viewer-room-guide-browser-test.js gen/medium/configurator/tests/viewer/viewer-sidebar-layout-test.js \
+        gen/medium/configurator/tests/viewer/viewer-steering-resume-browser-test.js gen/medium/observer/tests/wmediumd-console-ng-browser-test.js; do
+        run browser "$(basename "${test%.js}")" "cd '$root' && node $test"
     done
     if have_command openssl && python3 -c 'import aiohttp' >/dev/null 2>&1; then
         run browser remote-access "cd '$root' && node gen/tests/remote-access-browser-test.js"
@@ -405,36 +408,36 @@ run_rooms() {
         skip rooms ssh "SSH host $ssh_host must execute 'lxc exec $vm' without a password"
         return
     fi
-    run rooms guest-audit "lxc exec --mode non-interactive '$vm' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py < '$root/gen/tests/room-feature-guest-audit.py'" || {
+    run rooms guest-audit "lxc exec --mode non-interactive '$vm' -- install -m 0644 /dev/stdin /tmp/room-feature-guest-audit.py < '$root/gen/optimizer/acceptance/room-feature-guest-audit.py'" || {
         skip rooms dependents 'Could not install the native guest audit; room qualification cannot proceed'
         return
     }
-    run rooms default-readiness "cd '$root' && python3 gen/tests/room-final-readiness.py --room-url '$room_url' --require-absolute-best --output '$output_root/default-readiness'"
-    run rooms catalog "cd '$root' && node gen/tests/room-feature-acceptance.js --yes-act --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --worlds '$worlds' --output '$output_root/catalog'"
-    run rooms geometry "cd '$root' && node gen/tests/room-backhaul-features.js --yes-act true --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --output '$output_root/geometry'"
+    run rooms default-readiness "cd '$root' && python3 gen/optimizer/acceptance/room-final-readiness.py --room-url '$room_url' --require-absolute-best --output '$output_root/default-readiness'"
+    run rooms catalog "cd '$root' && node gen/optimizer/acceptance/room-feature-acceptance.js --yes-act --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --worlds '$worlds' --output '$output_root/catalog'"
+    run rooms geometry "cd '$root' && node gen/optimizer/acceptance/room-backhaul-features.js --yes-act true --flavor rdk --host '$ssh_host' --vm '$vm' --room-url '$room_url' --topology-url '$webui_url' --output '$output_root/geometry'"
     run rooms rf-hover "cd '$root' && node gen/tests/webui-rf-hover-browser-test.js '$webui_url' '$output_root/rf-hover'"
-    run rooms rf-access "cd '$root' && python3 gen/tests/rf-access-smoke.py --room-url '$room_url' --output '$output_root/rf-access.json'"
-    run rooms rf-properties "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'"
-    run rooms world-switch "$(guest_command "python3 gen/tests/room-world-switch-smoke.py --yes-act --all-worlds --output '$guest_repo/test-results-world-switch-$stamp'")"
-    run rooms restore-default "$(guest_command 'python3 gen/tests/room-world-switch-smoke.py --yes-act --world home-a-private-client-room-walk --skip-presence --output /tmp/easymesh-default-restore')"
+    run rooms rf-access "cd '$root' && python3 gen/optimizer/acceptance/rf-access-smoke.py --room-url '$room_url' --output '$output_root/rf-access.json'"
+    run rooms rf-properties "cd '$root' && python3 gen/optimizer/acceptance/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-properties.json'"
+    run rooms world-switch "$(guest_command "python3 gen/optimizer/acceptance/room-world-switch-smoke.py --stack rdk --yes-act --all-worlds --output '$guest_repo/test-results-world-switch-$stamp'")"
+    run rooms restore-default "$(guest_command 'python3 gen/optimizer/acceptance/room-world-switch-smoke.py --stack rdk --yes-act --world home-a-private-client-room-walk --skip-presence --output /tmp/easymesh-default-restore')"
 }
 
 run_rf() {
-    run rf contracts "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/demo:$root/gen/demo/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib -o addopts='' -q gen/optimizer/tests/test_counter_guard.py gen/optimizer/tests/test_counter_shadow.py gen/tests/test_native_retry_counters.py gen/optimizer/tests/test_load_policy.py gen/optimizer/tests/test_policy.py gen/optimizer/tests/test_owner_observation.py gen/optimizer/tests/test_rf_observations.py gen/demo/tests/test_rf_property_coverage.py gen/demo/tests/test_rf_rooms.py gen/demo/tests/test_world_switch.py gen/demo/tests/test_traffic_experiment.py gen/demo/tests/test_rf_observation.py gen/tests/test_rf_property_rooms_smoke.py gen/tests/test_counter_guard_room_smoke.py gen/tests/test_frequency_slot_allocation.py gen/tests/test_console_ng_contract.py gen/medium/configurator/tests/test_rf_contract.py" || return
-    run rf viewer "cd '$root' && node gen/tests/viewer-room-guide-test.js" || return
-    run rf inspector "cd '$root' && node gen/tests/viewer-rf-inspector-test.js" || return
+    run rf contracts "cd '$root' && PYTHONPATH='$root/gen/medium/configurator:$root/gen/optimizer:$root/gen/rooms:$root/gen/rooms/tests:$root/gen/tests' python3 -m pytest --import-mode=importlib -o addopts='' -q gen/optimizer/tests/test_counter_guard.py gen/optimizer/tests/test_counter_shadow.py gen/optimizer/acceptance/test_native_retry_counters.py gen/optimizer/tests/test_load_policy.py gen/optimizer/tests/test_policy.py gen/optimizer/tests/test_owner_observation.py gen/optimizer/tests/test_rf_observations.py gen/rooms/tests/test_rf_property_coverage.py gen/optimizer/tests/room/test_rf_rooms.py gen/optimizer/tests/room/test_world_switch.py gen/optimizer/tests/room/test_traffic_experiment.py gen/optimizer/tests/room/test_rf_observation.py gen/optimizer/acceptance/test_rf_property_rooms_smoke.py gen/optimizer/acceptance/test_counter_guard_room_smoke.py gen/tests/test_frequency_slot_allocation.py gen/tests/test_console_ng_contract.py gen/medium/configurator/tests/test_rf_contract.py" || return
+    run rf viewer "cd '$root' && node gen/medium/configurator/tests/viewer/viewer-room-guide-test.js" || return
+    run rf inspector "cd '$root' && node gen/medium/configurator/tests/viewer/viewer-rf-inspector-test.js" || return
     run rf documentation "cd '$root' && python3 gen/tests/test_documentation.py" || return
-    run rf rooms "cd '$root' && python3 gen/tests/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-tier-properties.json'" || return
-    run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/tests/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || {
+    run rf rooms "cd '$root' && python3 gen/optimizer/acceptance/rf-property-rooms-smoke.py --yes-act --room-url '$room_url' --host '$ssh_host' --vm '$vm' --output '$output_root/rf-tier-properties.json'" || return
+    run rf counter-manifest "ssh '$ssh_host' lxc exec '$vm' -- python3 '$guest_repo/gen/optimizer/acceptance/counter-guard-room-smoke.py' --stack rdk --yes-change-lab --output '/tmp/rf-counter-manifest-$stamp'" || {
         block rf counter-shadow 'counter-manifest failed; subsequent RF mutation was not attempted'
         return
     }
-    run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/medium/configurator' python3 '$guest_repo/gen/tests/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
+    run rf counter-shadow "ssh '$ssh_host' lxc exec '$vm' -- env PYTHONPATH='$guest_repo/gen/optimizer:$guest_repo/gen/medium/configurator' python3 '$guest_repo/gen/optimizer/acceptance/native-retry-counter-acceptance.py' --stack rdk --yes-change-lab --seconds 8 --shadow-counter-policy '$guest_repo/gen/optimizer/configs/load-counter-guard-policy.yaml' --output '/tmp/rf-counter-shadow-$stamp'"
 }
 
 run_rf_actions() {
     local scenario destination workload_options failed_scenario=
-    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/medium/configurator' python3 -m pytest -q gen/tests/test_load_acceptance.py" || failed_scenario=contracts
+    run rf-actions contracts "cd '$root' && PYTHONPATH='$root/gen/optimizer:$root/gen/medium/configurator' python3 -m pytest -q gen/optimizer/acceptance/test_load_acceptance.py" || failed_scenario=contracts
     if [[ -z $failed_scenario ]] && ! prepare_lab; then
         failed_scenario=prerequisites
         skip rf-actions prerequisites "LXD VM $vm or guest repository is unavailable"
@@ -450,7 +453,7 @@ run_rf_actions() {
             pressure) workload_options='--payload-bytes 1200 --pressure-payload-bytes 1400 --pressure-access-category voice --pressure-snr 2 --background-packets-per-second 1000' ;;
             rescue) workload_options='--payload-bytes 1200 --pressure-payload-bytes 512 --pressure-access-category voice --pressure-snr 2 --rescue-snr 32 --background-packets-per-second 500' ;;
         esac
-        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/medium/configurator python3 gen/tests/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --counter-case '$scenario' $workload_options --yes-change-lab --output '$destination'")" || failed_scenario=$scenario
+        run rf-actions "$scenario" "$(guest_command "PYTHONPATH=gen/optimizer:gen/medium/configurator python3 gen/optimizer/acceptance/load-policy-acceptance.py --stack rdk --root '$guest_repo/gen' --policy gen/optimizer/configs/load-counter-guard-policy.yaml --counter-case '$scenario' $workload_options --yes-change-lab --output '$destination'")" || failed_scenario=$scenario
     done
 }
 

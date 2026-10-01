@@ -78,12 +78,16 @@ if not source:
     raise SystemExit(f"cannot map serving BSSID {source_bssid}")
 if source == target_name:
     raise SystemExit(f"{client_name} is already served by {target_name}")
+# The crossover binds five APs: the lab's extender on a wired backhaul and OpenSync pods
+# (EMOSA) stay unbound, at the medium's baseline, as in the prplMesh lab's crossover.
 others = sorted(
     item["container"] for item in inventory["radios"]
     if item.get("kind") == "mesh" and item["container"] not in {source, target_name}
+    and item.get("backhaul") != "wired" and not item.get("adapter")
 )
 if len(others) != 3:
-    raise SystemExit(f"five-node profile required; found {2 + len(others)} mesh nodes")
+    raise SystemExit(f"five-node profile required; found {2 + len(others)} Wi-Fi mesh nodes")
+mesh_devices = sum(item.get("kind") == "mesh" for item in inventory["radios"])
 wlan = next(
     (item for item in client.get("interfaces", []) if item.get("name") == "wlan0"),
     None,
@@ -101,13 +105,15 @@ target_bssid = next(
 )
 if not target_bssid:
     raise SystemExit(f"no {client_band} GHz {ssid} BSS on {target_name}")
-for value in [source, target_name, str(target_bssid).lower(), *others]:
+for value in [source, target_name, str(target_bssid).lower(), *others, mesh_devices]:
     print(value)
 PY
 )
 source=${binding[0]}
 target=${binding[1]}
 target_bssid=${binding[2]}
+# every mesh device the controller models: the policy's count is the five-node core
+mesh_devices=${binding[6]}
 
 status_action "Compiling the crossover world for $client: $source to $target ($target_bssid)."
 python3 -m wmdcfg.cli compile scenarios/optimizer-five-ap-crossover.wmd \
@@ -132,7 +138,7 @@ args=(
     "$mode" --base-url http://127.0.0.1:8888
     --candidate-provider controller --allow-simulated-candidates
     --candidate-attempts 2
-    --policy configs/threshold-policy.yaml --journal "$journal"
+    --policy configs/threshold-policy.yaml --expected-devices "$mesh_devices" --journal "$journal"
     # One RDK controller candidate transaction spans roughly 20 seconds. Six
     # samples cover the policy hold while keeping this acceptance bounded by
     # the 130-second stimulus rather than continuing long after restoration.

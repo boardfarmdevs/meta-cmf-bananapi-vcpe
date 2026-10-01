@@ -1,6 +1,11 @@
 # EasyMesh rooms: design and implementation plan
 
-**Status:** Proposed plan; no runtime or implementation changes made.
+**Status:** Proposed plan. Its shared room code (section on the core and the
+adapters) was done differently on 30 September: the room service is one
+package in [easymesh-optimizer](https://github.com/boardfarmdevs/easymesh-optimizer)
+(`room_service`, pinned here as `gen/optimizer`) with each stack's settings in
+`room_service/lab.py`, not a core vendored into two labs. The tables below keep
+the names of the time (`room_demo`).
 
 **Prepared:** 29 September 2026.
 

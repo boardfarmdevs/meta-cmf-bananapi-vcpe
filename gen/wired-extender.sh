@@ -28,8 +28,8 @@ CTL=bpibroadband
 LAN_MAC=${WIRED_LAN_MAC:-0a:e0:5a:00:00:01}
 # The room service runs the rooms with the wired extender (extender_5) while it exists; a
 # later drop-in (emosa-lab's pod rooms, 90-*) takes precedence.
-ROOM_DROPIN=/etc/systemd/system/easymesh-room-demo.service.d/80-wired-extender.conf
-ROOM_MANIFEST=gen/demo/manifests/private-client-room-walk-wired.json
+ROOM_DROPIN=/etc/systemd/system/easymesh-room-service.service.d/80-wired-extender.conf
+ROOM_MANIFEST=gen/rooms/manifests/private-client-room-walk-wired.json
 REFERENCE=${REFERENCE_EXTENDER:-bpiap}   # an existing extender: its image and binaries
 # The reference extender's binaries (OneWifi 0040/0041, unified-wifi-mesh 0213, ieee1905
 # 0009): installed in place in the lab's extenders until the images carried them (layer
@@ -133,9 +133,9 @@ medium() {    # regenerate wmediumd; the room demo drives it live, so it stops a
         log "medium: already current"
         return
     fi
-    systemctl is-active --quiet easymesh-room-demo && room=1 && systemctl stop easymesh-room-demo
+    systemctl is-active --quiet easymesh-room-service && room=1 && systemctl stop easymesh-room-service
     (cd "$gen" && bash medium/wmediumd/wmediumd-up.sh up) | tail -1
-    [ -z "$room" ] || systemctl start easymesh-room-demo
+    [ -z "$room" ] || systemctl start easymesh-room-service
 }
 
 match_binaries() {    # the reference extender's in-place binaries, where they differ

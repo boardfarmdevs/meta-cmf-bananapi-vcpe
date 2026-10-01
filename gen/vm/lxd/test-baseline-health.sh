@@ -9,9 +9,9 @@ eval "$(sed -n '/^check_baseline()/,/^)/p' "$root/gen/vm/lxd/build.sh")"
 run_root() {
     printf '%s\n' "$*" >> "$temporary/calls"
     case "$*" in
-        'systemctl show easymesh-room-demo.service -p ActiveState --value') echo "$room_state" ;;
-        'systemctl stop easymesh-room-demo.service') return "$stop_status" ;;
-        'systemctl start easymesh-room-demo.service') return 0 ;;
+        'systemctl show easymesh-room-service.service -p ActiveState --value') echo "$room_state" ;;
+        'systemctl stop easymesh-room-service.service') return "$stop_status" ;;
+        'systemctl start easymesh-room-service.service') return 0 ;;
         *'/usr/local/sbin/easymesh-labctl check') return "$audit_status" ;;
         *) return 99 ;;
     esac
@@ -26,8 +26,8 @@ for room_state in active activating inactive; do
         test "$result" = "$audit_status"
         grep -Fxq 'env HEALTH_EXPECT_CLIENTS=100 /usr/local/sbin/easymesh-labctl check' "$temporary/calls"
         if [ "$room_state" != inactive ]; then
-            test "$(sed -n '2p' "$temporary/calls")" = 'systemctl stop easymesh-room-demo.service'
-            test "$(tail -1 "$temporary/calls")" = 'systemctl start easymesh-room-demo.service'
+            test "$(sed -n '2p' "$temporary/calls")" = 'systemctl stop easymesh-room-service.service'
+            test "$(tail -1 "$temporary/calls")" = 'systemctl start easymesh-room-service.service'
         else
             test "$(wc -l < "$temporary/calls")" = 3
         fi

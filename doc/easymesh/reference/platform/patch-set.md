@@ -356,7 +356,7 @@ authority. Its dependency order is:
     Network Topology (`0156`), with opaque grey unlit segments and the same
     measured RSSI thresholds. Missing/stale readings remain grey. The recipe
     stages and installs the viewer's canonical `signal-meter.js` asset; the
-    shared Node regression is `gen/tests/signal-meter-test.js`;
+    shared Node regression is `gen/medium/configurator/tests/viewer/signal-meter-test.js`;
 91. remove the topology's redundant signal explanation and legend (`0157`);
 92. preserve station ownership and association clocks on metric updates (`0158`);
 93. periodically reconcile authoritative OneWifi association snapshots and

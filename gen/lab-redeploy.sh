@@ -21,7 +21,7 @@ exec </dev/null
 
 GEN=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 ASSETS=${EASYMESH_ASSETS:-/home/easymesh/easymesh-assets}
-ROOM_UNIT=easymesh-room-demo.service
+ROOM_UNIT=easymesh-room-service.service
 EVIDENCE=/etc/systemd/journald.conf.d/zz-lab-journal-evidence.conf
 
 log() { printf '\n== %s %s\n' "$(date +%H:%M:%S)" "$*"; }

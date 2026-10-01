@@ -129,14 +129,14 @@ mapfile -t targets < <(containers | sort -r)
 ((${#targets[@]})) || { echo "lab-journal-evidence.sh: no gateway or extender containers" >&2; exit 1; }
 [[ ${targets[0]} == bpibroadband ]] || { echo "lab-journal-evidence.sh: no gateway container" >&2; exit 1; }
 if [[ $action != status ]]; then
-    systemctl stop easymesh-room-demo.service 2>/dev/null || true
+    systemctl stop easymesh-room-service.service 2>/dev/null || true
     for container in "${targets[@]}"; do
         if [[ $action == on ]]; then apply "$container"; else remove "$container"; fi
         restart "$container"
         [[ $container == bpibroadband ]] && sleep 20
     done
     settle_topology
-    systemctl reset-failed easymesh-room-demo.service 2>/dev/null || true
-    systemctl start easymesh-room-demo.service
+    systemctl reset-failed easymesh-room-service.service 2>/dev/null || true
+    systemctl start easymesh-room-service.service
 fi
 for container in "${targets[@]}"; do status "$container"; done

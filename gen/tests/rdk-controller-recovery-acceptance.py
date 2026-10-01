@@ -15,8 +15,12 @@ import time
 import urllib.request
 
 
+# the shared acceptance tools: easymesh-optimizer's, mounted as gen/optimizer
+ACCEPTANCE = Path(__file__).resolve().parents[1] / 'optimizer' / 'acceptance'
+
+
 def sibling(name):
-    specification = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
+    specification = importlib.util.spec_from_file_location(name, ACCEPTANCE / (name + '.py'))
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

@@ -16,8 +16,8 @@ install -m 0755 /home/easymesh/easymesh-assets/easymesh-lab-runtime \
     /usr/local/sbin/easymesh-lab-runtime
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-lab.service \
     /etc/systemd/system/easymesh-lab.service
-install -m 0644 /home/easymesh/easymesh-assets/easymesh-room-demo.service \
-    /etc/systemd/system/easymesh-room-demo.service
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-room-service.service \
+    /etc/systemd/system/easymesh-room-service.service
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-hwsim-pool \
     /usr/local/sbin/easymesh-hwsim-pool
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-hwsim-pool.service \
@@ -53,7 +53,7 @@ systemctl daemon-reload
 systemctl enable boardfarm-lab.service
 systemctl enable easymesh-hwsim-pool.service
 systemctl enable easymesh-lab.service
-systemctl enable easymesh-room-demo.service
+systemctl enable easymesh-room-service.service
 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-survey-bridge.sh \
     /run/meta-cmf-wmediumd/metrics/control.sock easymesh-lab.service
 bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-control-priority.sh rdk

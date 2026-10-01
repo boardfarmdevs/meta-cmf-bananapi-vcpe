@@ -6,7 +6,7 @@ set -euo pipefail
 # the command response by itself is not sufficient.
 exec </dev/null
 
-if systemctl is-active --quiet easymesh-room-demo.service; then
+if systemctl is-active --quiet easymesh-room-service.service; then
     echo 'Stop the room service before native RF steering tests; use the suite live section to own and restore it safely.' >&2
     exit 2
 fi

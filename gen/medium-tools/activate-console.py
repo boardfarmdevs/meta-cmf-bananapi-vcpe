@@ -12,7 +12,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 GEN = HERE.parent
 MEDIUM = GEN / "medium"  # easymesh-medium, the lab's pinned medium
-sys.path[:0] = [str(GEN / "demo"), str(GEN / "optimizer"), str(MEDIUM / "configurator")]
+sys.path[:0] = [str(GEN / "rooms"), str(GEN / "optimizer"), str(MEDIUM / "configurator")]
 CONSOLE = MEDIUM / "observer" / "wmediumd-console"
 DAEMON = MEDIUM / "wmediumd" / "build" / "wmediumd"
 
@@ -34,8 +34,8 @@ def main():
         parser.error("--restart-medium is required; this is a maintenance operation")
     if os.geteuid() != 0:
         parser.error("run inside the lab VM as root")
-    from room_demo.client_wifi import parallel_reconnections, reconnect_client
-    from room_demo.recovery import load_recovery
+    from room_service.client_wifi import parallel_reconnections, reconnect_client
+    from room_service.recovery import load_recovery
     from wmdcfg.actuator import ControlClient
 
     for binary in (CONSOLE, DAEMON):
@@ -53,7 +53,7 @@ def main():
             continue
         if flag not in expected_paths or next(flags, None) != expected_paths[flag]:
             raise RuntimeError(f"nonstandard daemon option {flag}; preserve it using a manual maintenance upgrade")
-    recovery = Path("/run/easymesh-room-demo/recovery.json")
+    recovery = Path("/run/easymesh-room-service/recovery.json")
 
     def journal():
         record = load_recovery(recovery) if recovery.exists() else {}
@@ -76,8 +76,8 @@ def main():
                              (recovery, "recovery.before.json")):
             if source.exists():
                 shutil.copy2(source, backup / name)
-        room_enabled = service_state("easymesh-room-demo.service", "is-enabled")
-        room_active = service_state("easymesh-room-demo.service", "is-active")
+        room_enabled = service_state("easymesh-room-service.service", "is-enabled")
+        room_active = service_state("easymesh-room-service.service", "is-active")
         environment = dict(os.environ, WMEDIUMD_PRIORITY_QUEUES="1" if "-Q" in argv else "0",
                            WMEDIUMD_VISIBILITY_CONTENTION="1" if "-F" in argv else "0",
                            WMEDIUMD_CPU_AFFINITY=",".join(map(str, sorted(os.sched_getaffinity(pid)))))
@@ -88,7 +88,7 @@ def main():
         (backup / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(f"Maintenance backup: {backup}", flush=True)
         try:
-            run("systemctl", "stop", "easymesh-room-demo.service")
+            run("systemctl", "stop", "easymesh-room-service.service")
             record = journal()
             if recovery.exists():
                 shutil.copy2(recovery, backup / "recovery.after-stop.json")
@@ -110,8 +110,8 @@ def main():
             run("systemctl", "enable", "wmediumd-console.service")
             run("systemctl", "restart", "wmdcfg-survey-bridge.service", "wmediumd-console.service")
             if room_enabled or room_active:
-                run("systemctl", "reset-failed", "easymesh-room-demo.service")
-                run("systemctl", "start", "easymesh-room-demo.service")
+                run("systemctl", "reset-failed", "easymesh-room-service.service")
+                run("systemctl", "start", "easymesh-room-service.service")
             checks = [sys.executable, str(MEDIUM / "observer" / "check-ready.py"), "--require-survey", "--timeout", "180"]
             if room_enabled or room_active:
                 checks.append("--require-room")

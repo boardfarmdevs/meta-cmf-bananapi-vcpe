@@ -124,18 +124,6 @@ sleep() { :; }
                                 cwd=ROOT, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
-    def test_bounded_room_selection_does_not_start_a_lab(self):
-        script = ROOT.parents[1] / "tests/room-world-switch-smoke.py"
-        help_result = subprocess.run([sys.executable, str(script), "--help"],
-                                     capture_output=True, text=True, check=True, timeout=10)
-        self.assertIn("--skip-presence", help_result.stdout)
-        self.assertIn("--world WORLD", help_result.stdout)
-        invalid = subprocess.run([sys.executable, str(script), "--yes-act", "--world", "default",
-                                  "--all-worlds", "--output", "/unused.json"],
-                                 capture_output=True, text=True, timeout=10)
-        self.assertEqual(invalid.returncode, 2)
-        self.assertIn("choose --all-worlds or --world", invalid.stderr)
-
     def test_shell_syntax(self):
         for script in [ROOT / "build.sh", ROOT / "prepare-guest.sh", ROOT / "package-release.sh", ROOT / "guest/easymesh-vagrant-up"]:
             with self.subTest(script=script.name):

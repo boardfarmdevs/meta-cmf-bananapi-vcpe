@@ -79,6 +79,16 @@ sudo -u easymesh install -m 0644 "$assets/wmediumd.provenance.env" \
     "$lab_repo/gen/medium/wmediumd/build/wmediumd.provenance.env"
 sudo -u easymesh install -m 0755 "$assets/wmediumd-console" "$lab_repo/gen/medium/observer/wmediumd-console"
 
+# The optimizer (gen/optimizer, easymesh-optimizer at the commit the lab pins): the
+# submodule from its bundle.
+optimizer_bundle=$assets/easymesh-optimizer.bundle
+if [ -f "$optimizer_bundle" ]; then
+    sudo -u easymesh git -C "$lab_repo" config submodule.gen/optimizer.url "$optimizer_bundle"
+fi
+sudo -u easymesh git -c protocol.file.allow=always -C "$lab_repo" submodule update --init gen/optimizer
+test "$(sudo -u easymesh git -C "$lab_repo/gen/optimizer" rev-parse HEAD)" = \
+    "$(sudo -u easymesh git -C "$lab_repo" rev-parse HEAD:gen/optimizer)"
+
 clone_pinned_repo() {
     local name=$1 branch=$2 expected=$3
     local destination="$boardfarm_workspace/$name"

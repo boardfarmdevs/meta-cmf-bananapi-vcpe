@@ -70,7 +70,7 @@ def test_virgin_agent_remembers_the_controller_before_first_wsc():
 
 
 def test_room_is_installed_from_source_with_current_profiling_defaults():
-    unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-demo.service").read_text()
+    unit = (ROOT / "gen/vm/scripts/guest/easymesh-room-service.service").read_text()
     assert "Requires=easymesh-lab.service" in unit
     assert "After=easymesh-lab.service" in unit
     assert "ConditionPathExists=!/var/lib/easymesh-lab/thin-profile-selection.required" in unit
@@ -80,13 +80,13 @@ def test_room_is_installed_from_source_with_current_profiling_defaults():
     assert "WantedBy=multi-user.target easymesh-lab.service" in unit
     builder = (ROOT / "gen/vm/lxd/build.sh").read_text()
     installer = (ROOT / "gen/vm/scripts/50-runtime-service.sh").read_text()
-    assert "[easymesh-room-demo.service]=gen/vm/scripts/guest/easymesh-room-demo.service" in builder
+    assert "[easymesh-room-service.service]=gen/vm/scripts/guest/easymesh-room-service.service" in builder
     assert '"http://$proxy_check_address:$room_port/healthz"' in builder
-    assert "/home/easymesh/easymesh-assets/easymesh-room-demo.service" in installer
-    assert "systemctl enable easymesh-room-demo.service" in installer
+    assert "/home/easymesh/easymesh-assets/easymesh-room-service.service" in installer
+    assert "systemctl enable easymesh-room-service.service" in installer
 
 
 def test_thin_export_stops_room_before_native_lab():
     for name in ("easymesh-prepare-thin-package", "easymesh-package-cleanup"):
         script = (ROOT / "gen/vm/scripts/guest" / name).read_text()
-        assert script.index("systemctl stop easymesh-room-demo.service") < script.index("systemctl stop easymesh-lab.service")
+        assert script.index("systemctl stop easymesh-room-service.service") < script.index("systemctl stop easymesh-lab.service")

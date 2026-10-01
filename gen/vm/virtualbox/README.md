@@ -157,7 +157,7 @@ Inside `vagrant ssh`, use:
 ```sh
 sudo easymesh-labctl status
 sudo cat /var/lib/easymesh-lab/thin-firstboot-report.json
-sudo journalctl -b -u easymesh-thin-firstboot -u easymesh-lab -u easymesh-room-demo -n 60
+sudo journalctl -b -u easymesh-thin-firstboot -u easymesh-lab -u easymesh-room-service -n 60
 sudo lxc list
 curl -fsS http://127.0.0.1:8891/api/demo/current | jq '.health, .optimizer.fleet'
 ```

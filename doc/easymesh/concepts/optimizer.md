@@ -5,9 +5,9 @@ logic.
 
 Purpose: describe the optimizer boundary and the safe path from observations to
 actions. The detailed schemas and implementation are in
-[the architecture reference](../reference/optimizer/architecture.md), while
+[the architecture reference](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/architecture.md), while
 extension procedures are in
-[optimizer development](../reference/optimizer/development.md).
+[optimizer development](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/development.md).
 
 ## Ownership boundary
 
@@ -91,8 +91,8 @@ interpretable baseline and explicit failure behavior.
 
 ## Start here
 
-- [Run and extend the optimizer](../reference/optimizer/development.md)
-- [Optimizer scenarios](../reference/optimizer/scenarios.md)
-- [Full architecture and interface contracts](../reference/optimizer/architecture.md)
+- [Run and extend the optimizer](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/development.md)
+- [Optimizer scenarios](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/scenarios.md)
+- [Full architecture and interface contracts](https://github.com/boardfarmdevs/easymesh-optimizer/blob/main/docs/architecture.md)
 - [Steering policy boundary](steering-policy.md)
 - [Current implementation and limitations](../current-state.md)

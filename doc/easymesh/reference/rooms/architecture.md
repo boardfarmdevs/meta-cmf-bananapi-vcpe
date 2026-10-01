@@ -52,7 +52,7 @@ the existing collector cadence, not another poller or a controller-side filter.
 | `interactive --mode stimulus --profiling --model-backhaul` | No external client policy | AP-to-AP RF follows world |
 | `interactive --mode act --yes-act --profiling`, geometry room | External client policy, unassisted native BTM | Geometry RF; native parent selection |
 
-The CLI entry point is `gen/demo/room-demo`; inspect `--help` for all
+The CLI entry point is `gen/rooms/room-service`; inspect `--help` for all
 options before replacing a service's command. These CLI modes are distinct from
 the browser's default URL. Serving-state and traffic observations remain active.
 

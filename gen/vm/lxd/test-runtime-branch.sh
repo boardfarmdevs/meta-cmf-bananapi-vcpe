@@ -18,9 +18,10 @@ git -C "$temporary/source" add payload
 git -C "$temporary/source" -c commit.gpgsign=false commit -qm initial
 expected_meta_head=$(git -C "$temporary/source" rev-parse HEAD)
 git -C "$temporary/source" bundle create "$meta_bundle" lxd-appliance-export
+# The checkout, up to the submodules (the medium, the optimizer), which need the lab.
 awk '
     /^if \[ ! -d "\$meta_workspace/ {active=1}
-    /^clone_pinned_repo\(\)/ {exit}
+    /^# The RF medium/ {exit}
     active {print}
 ' "$root/gen/vm/scripts/20-prepare-lab-host.sh" > "$temporary/checkout.sh"
 test -s "$temporary/checkout.sh"

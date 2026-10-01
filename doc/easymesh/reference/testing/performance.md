@@ -20,10 +20,10 @@ when profiling native behavior, not a deterministic RF-assisted demonstration.
 
 ## Tools and evidence
 
-The repository's `gen/tests/room-feature-acceptance.js` records browser/API
+The repository's `gen/optimizer/acceptance/room-feature-acceptance.js` records browser/API
 samples and selected SSE; its report helper aggregates action/collection
 timings. The [room test plan](room-acceptance.md) owns invocation and gates.
-`gen/tests/room-feature-host-monitor.py` samples physical-host load separately.
+`gen/optimizer/acceptance/room-feature-host-monitor.py` samples physical-host load separately.
 
 During a separately controlled moving-room test, run the read-only
 `tests/controller-render-latency.js --url TOPOLOGY_URL --seconds 90 --output NEW_DIR`
@@ -34,7 +34,7 @@ including removals; it does not measure native commit time, polling wait or
 paint timing or animation completion. Zero transitions are insufficient evidence. Timeouts,
 superseded transitions and pending observations remain in the report.
 
-For deeper attribution, `gen/demo/room-demo` and the `room_demo.trace`
+For deeper attribution, `gen/rooms/room-service` and the `room_service.trace`
 module provide room evidence and passive client/1905 capture; inspect their
 `--help` before starting. [Packet capture](../observability/packet-capture.md)
 must remain observation, not reconnect/roam commands. Retain drop, truncation

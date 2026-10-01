@@ -7,7 +7,7 @@ const helperPath = path.resolve(__dirname, '../medium/configurator/worlds/viewer
 const helper = require(helperPath);
 const recipe = fs.readFileSync(path.resolve(__dirname,
   '../../recipes-ccsp/unified-wifi-mesh/unified-wifi-mesh.bbappend'), 'utf8');
-assert.match(recipe, /gen\/wmediumd\/configurator\/worlds\/viewer/);
+assert.match(recipe, /gen\/medium\/configurator\/worlds\/viewer/);
 assert.match(recipe, /file:\/\/fullscreen-control\.js/);
 assert.match(recipe, /src\/rdkb-cli\/static\/fullscreen-control\.js/);
 

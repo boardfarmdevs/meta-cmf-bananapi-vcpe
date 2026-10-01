@@ -50,7 +50,7 @@ initial/final health/RF gates without churn. Its `p0-preflight` result records
 `acceptance_eligible=false`; `total_runtime_seconds` includes final checks.
 It is not a soak pass.
 
-See [RF action qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/rf-property-coverage.md#native-load-action-qualification).
+See [RF action qualification](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/../reference/testing/rf-qualification.md#native-load-action-qualification).
 
 Client count is auto-detected; override with `--expected-clients COUNT` or
 `EASYMESH_EXPECTED_CLIENTS`. Checked-in policies remain unchanged.
@@ -69,13 +69,13 @@ The exclusive guard prevents concurrent suites and room-owned RF changes.
 Restoration failures count as failures.
 
 World switching checks configured-policy convergence; absolute-best placement
-is reported separately. Use `room-world-switch-smoke.py --require-absolute-best`
+is reported separately. Use `gen/optimizer/acceptance/room-world-switch-smoke.py --require-absolute-best`
 for the stricter criterion, which may conflict with steering hysteresis.
 
 For a **GET-only** RF check:
 
 ```sh
-python3 gen/tests/rf-access-smoke.py \
+python3 gen/optimizer/acceptance/rf-access-smoke.py \
   --room-url "http://${EASYMESH_HOST_ADDRESS:-127.0.0.1}:$EASYMESH_ROOM_DEMO_PORT" \
   --output "test-results/rf-access-$(date -u +%Y%m%dT%H%M%SZ).json"
 ```
