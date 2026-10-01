@@ -196,6 +196,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0230-ctrl-each-agents-em-config-times-out-on-its-own.patch \
     file://0231-cli-candidate-polls-share-one-recent-read.patch \
     file://0232-ctrl-steerwifibackhaul-sends-the-backhaul-steering-request.patch \
+    file://0233-ctrl-renewed-radios-do-not-wait-for-configured-siblings.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

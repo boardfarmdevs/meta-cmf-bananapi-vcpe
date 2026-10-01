@@ -1,0 +1,47 @@
+Subject: [PATCH] ctrl: an agent's renewed radios do not wait for its configured ones
+
+After M2 a radio waits in topo_sync_pending, and the controller sends the
+agent's Topology Query only when every radio of the agent is there. When only
+some radios are renewed (their em_config timed out once, they were marked
+misconfigured and AutoConfig Renew re-ran WSC for them alone), the radio that
+stayed configured never comes back to topo_sync_pending: the renewed radios
+wait for it until their em_config times out, are renewed again and wait again,
+for ever. Each round drops their BSSes from the model and re-adds them, about
+once a minute (seen on rdk-emosa-1001's wired extender, 1 Oct: its 2.4 and
+5 GHz radios cycling, its 6 GHz radio configured).
+
+Only a sibling still onboarding (before topo_sync_pending) holds the query
+now; one past topology sync does not. The radio that sends the query is
+elected among the radios waiting for it, since a configured sibling may be
+executing another command.
+
+Upstream-Status: Pending
+
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -7220,7 +7220,11 @@
+             if (ssid_mismatch_present == false)
+             {
+                 for (auto &em : em_radios) {
+-                    if (em->get_state() != em_state_ctrl_topo_sync_pending) {
++                    // Only a sibling still onboarding (before topology sync) holds the
++                    // query. One already past it, because it finished earlier and only
++                    // this radio was renewed, must not: waiting for it times this radio's
++                    // em_config out, renews it and waits again, for ever.
++                    if (em->get_state() < em_state_ctrl_topo_sync_pending) {
+                         em_printfout("radio %s is in state:%d, not in topo sync pending state, ignoring",
+                             util::mac_to_string(em->get_radio_interface_mac()).c_str(), em->get_state());
+                         em_radios.clear();
+@@ -7234,8 +7238,11 @@
+                 // can finish its orchestration before the last sibling reaches this state.
+                 // Elect a radio whose state machine is actually still executing, otherwise
+                 // no candidate can pass the old `this == em_radios.front()` gate.
++                // ... and among the radios waiting for this query: a sibling already
++                // past topology sync may be executing another command.
+                 auto query_em = std::find_if(em_radios.begin(), em_radios.end(), [](em_t *radio) {
+-                    return radio->get_orch_state() == em_orch_state_progress;
++                    return radio->get_state() == em_state_ctrl_topo_sync_pending &&
++                        radio->get_orch_state() == em_orch_state_progress;
+                 });
+                 if (query_em != em_radios.end() && this == *query_em) {
+                     em_printfout("Sending the Topology query message to agent al_mac:%s on radio: %s",
