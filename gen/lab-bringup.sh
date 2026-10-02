@@ -181,7 +181,24 @@ bss = lambda n: sum(len(h.get("BSSList") or []) for h in (n.get("haulTypes") or 
 print(" ".join("%s:%d" % (n.get("name"), bss(n)) for n in nodes if n.get("kind") != "controller"))' 2>/dev/null || echo unavailable
     printf 'model (devices radios bsses associated): %s\n' "$(cx bpibroadband "mysql -N -ubpi -proot OneWifiMesh -e \
         'select (select count(*) from DeviceList),(select count(*) from RadioList),(select count(*) from BSSList),(select count(*) from STAList where Associated=1)' 2>/dev/null" | tr '\t' ' ')"
+    gateway_memory
+    # a radio the controller keeps renewing is never configured: none in a settled lab
+    printf 'controller renews in the last 5 min: %s\n' \
+        "$(cx bpibroadband "journalctl -u em_ctrl --since -5min --no-pager -o cat | grep -c 'AutoConfig Renew' || true" 2>/dev/null || echo unavailable)"
     printf 'room: %s %s\n' "$(systemctl is-active "$ROOM_UNIT" || true)" "$(room_settled || true)"
+}
+
+# The gateway container's memory against its limit, the controller's share and the kills so
+# far: the controller grows when the mesh keeps re-forming, and is killed at the limit.
+gateway_memory() {
+    local cgroup=${EASYMESH_GATEWAY_CGROUP:-/sys/fs/cgroup/lxc.payload.bpibroadband} current limit kills controller
+    current=$(cat "$cgroup/memory.current" 2>/dev/null) || { echo 'gateway memory: unavailable'; return 0; }
+    limit=$(cat "$cgroup/memory.max")
+    kills=$(sed -n 's/^oom_kill //p' "$cgroup/memory.events")
+    controller=$(cx bpibroadband "sed -n 's/^VmRSS:[^0-9]*\([0-9]*\).*/\1/p' /proc/\$(pidof onewifi_em_ctrl)/status" 2>/dev/null || true)
+    [ "$limit" = max ] || limit="$((limit / 1048576)) MiB"
+    printf 'gateway memory: %s MiB of %s, em_ctrl %s MiB, oom kills %s\n' \
+        "$((current / 1048576))" "$limit" "$(( ${controller:-0} / 1024 ))" "${kills:-0}"
 }
 
 [ $# -eq 1 ] || usage
