@@ -77,6 +77,25 @@ If guest HTTP works but the host URL fails, check the configured bind address,
 guest address, NAT proxy and firewall. If guest HTTP fails, inspect service
 journals first. Do not stack duplicate proxies or reimport over a working VM.
 
+## The lab's host and its health
+
+A lab VM needs its CPU time: when other work on its host takes it, the mesh keeps
+re-forming and the controller grows until it is killed at the gateway's memory
+limit. Run one lab VM per host, and long builds on that host at low priority
+(`nice -n 19 ionice -c3`) or elsewhere. In the VM, as root:
+
+```sh
+/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/lab-bringup.sh status
+/home/easymesh/git/meta-cmf-bananapi-vcpe/gen/lab-bringup.sh up
+```
+
+`status` lists each node's services, the controller's model, the gateway's memory
+against its limit with the controller's share and the out-of-memory kills, how
+often the controller renewed a radio in the last five minutes (none in a settled
+lab) and whether the room is settled. `up` restarts the controller and the agents
+in order and waits for the room: it restores a lab whose controller was restarted
+or whose model is incomplete.
+
 ## Recovery and safe testing
 
 Stop `easymesh-room-service.service` before a native acceptance script or another
