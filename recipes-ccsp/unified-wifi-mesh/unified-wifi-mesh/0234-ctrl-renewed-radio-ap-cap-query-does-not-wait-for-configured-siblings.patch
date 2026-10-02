@@ -1,0 +1,57 @@
+Subject: [PATCH] ctrl: a renewed radio's AP Capability Query does not wait for configured siblings
+
+After topology sync a radio waits in ap_cap_query_pending, and the controller
+sends the agent's AP Capability Query only when every radio of the agent is
+there. When only one radio is renewed (its em_config timed out once, it was
+marked misconfigured and AutoConfig Renew re-ran WSC for it alone), its
+siblings stay configured and never come back to ap_cap_query_pending: the
+renewed radio waits for them until its em_config times out, is renewed again
+and waits again, for ever, about every 88 seconds. While it cycles it is never
+configured, so it answers no Unassociated STA Link Metrics query and a client
+on its band never gets a complete candidate snapshot (seen on rdk-emosa-1002's
+wired extender, 2 October: its 2.4 GHz radio cycling, its 5 and 6 GHz radios
+configured, the room never settled).
+
+Only a sibling still onboarding (before ap_cap_query_pending) holds the query
+now; one past it does not. The radio that sends the query is elected among the
+radios waiting for it, since a configured sibling may be executing another
+command. The report still moves every radio that waits for it.
+
+The same wait one step earlier, at the Topology Query, is the patch before
+this one.
+
+Upstream-Status: Pending
+
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -1780,16 +1780,26 @@
+                 std::vector<em_t *> em_radios;
+                 dm_easy_mesh_t *dm = get_data_model();
+                 get_mgr()->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
++                em_t *query_em = NULL;
+                 for (auto &em : em_radios)
+                 {
+-                    if (em->get_state() != em_state_ctrl_ap_cap_query_pending){
+-                        em_printfout("radio %s is not in AP Capability query pending state, ignoring",
+-                                     util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                    // Only a sibling still onboarding (before this query) holds it. One
++                    // already past it, because it finished earlier and only this radio was
++                    // renewed, must not: waiting for it times this radio's em_config out,
++                    // renews it and waits again, for ever.
++                    if (em->get_state() < em_state_ctrl_ap_cap_query_pending){
++                        em_printfout("radio %s is in state:%d, before the AP Capability query, ignoring",
++                                     util::mac_to_string(em->get_radio_interface_mac()).c_str(), em->get_state());
+                         em_radios.clear();
+                         return;
+                     }
++                    // The radio that sends the query is elected among the radios waiting
++                    // for it: a sibling already past it may be executing another command.
++                    if ((query_em == NULL) && (em->get_state() == em_state_ctrl_ap_cap_query_pending)) {
++                        query_em = em;
++                    }
+                 }
+-                if (this == em_radios.front()){
++                if (this == query_em){
+                     em_printfout("Sending the AP query message to agent al_mac:%s on radio: %s",
+                         util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
+                         util::mac_to_string(get_radio_interface_mac()).c_str());
