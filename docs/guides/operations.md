@@ -51,6 +51,10 @@ Start only a stopped instance. Imports default to `boot.autostart=false`.
 Inside a started VM, systemd starts the nested lab and room automatically.
 Use `lxc stop "$VM"` for normal shutdown, not forced termination.
 
+The VM takes no automatic updates: an unattended upgrade restarts services under a
+running lab. Its build masks apt's daily timers and holds every snap; `apt-get` and
+`snap refresh` by hand keep working.
+
 The guest checkout is `/home/easymesh/git/meta-cmf-bananapi-vcpe`.
 Use the packaged units instead of running another room conductor or recreating
 the containers. Preserve current client/mesh identities during feature tests.

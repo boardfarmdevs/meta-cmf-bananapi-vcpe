@@ -68,7 +68,7 @@ Earlier bounded RDK evidence in `test-results/targeted-suite-repair/`:
 
 The HAL library was compiled and installed with verified rollback copies;
 that campaign did not change the controller, policy or deadlines.
-The native 100-client reconstruction also passes metrics, ownership, traffic
+The native 100-client reconstruction passes metrics, ownership, traffic
 and zero-restart checks. This is diagnostic hot-deployment evidence, not
 clean-source image acceptance or proof that the first-room query issue is fixed.
 
@@ -536,7 +536,7 @@ The missing-extender incident was a real link loss, not room presence removal.
 After enabling relay APs and bringing the two down STA interfaces up, native
 association selected `extender_3 → extender_1` and `extender_4 → extender_2`
 without a BSSID write. These are stable world roles; displayed extender
-ordinals can change after rediscovery. The prolonged outage also left both
+ordinals can change after rediscovery. The prolonged outage left both
 nodes' client-facing APs inactive. Recovering their OneWifi/agent services and
 replaying `/api/v1/metricsreporting/enable` restored APs and serving reports. Radio preparation does not provide automatic
 recovery from every native service fault during a long outage.
@@ -618,10 +618,10 @@ Receiver queue draining is not calibrated physical capacity.
 ## Current qualification
 
 The 0916 catalog has 25 rooms: 22 client-policy and three geometry-backhaul
-scenarios. The source of 16 September passes the complete 22-client-room run, independent
+scenarios. The 16 September source passes the complete 22-client-room run, independent
 report validation, unchanged native identities and default twenty restoration.
 Evidence: `/home/rev/work/release-0916/evidence/rdk-clients-final/` on rev150.
-Branch and isolation/recovery also pass; the new stronger-parent handover gate
+Branch and isolation/recovery pass; the stronger-parent handover gate
 remains unresolved. Retaining a usable old parent is not proof of proactive
 strongest-parent steering. No 25/25 or artifact acceptance is claimed.
 The new native-backhaul implementation must repeat this catalog on its rebuilt
@@ -833,7 +833,7 @@ patch set, including ABI-changing RF patch 0014, before reusing a build tree.
 This host's matching tree is `/opt/prpl-build-0908` with source
 `/opt/prplMesh-0908`; the older `/opt/prpl-build-nl80211` is not equivalent.
 An initial mismatched-library deployment crashed fronthauls at HAL attachment;
-the correctly patched build resolves it. The raw build library also has build
+the correctly patched build resolves it. The raw build library has build
 directory RUNPATHs: deploy the CMake-installed library, not `out/lib` directly.
 Dependency resolution alone does not prove C++ ABI compatibility. Failed setup
 logs remain separate from room qualification. Do not reuse those binaries.
