@@ -40,8 +40,12 @@ lab's documents are below.
 | [Release information](records/release-notes.md) | record | what a VM is built from; shipped in each VM's bundle |
 | [VirtualBox qualification](records/virtualbox-qualification.md) | record | the RDK lab in VirtualBox on a Linux host, 8 September 2026 |
 | [Rooms: design and plan](proposals/rooms-convergence.md) | proposal | each lab in its own VM behind the gateway, the builder in the labs |
-| [Optimizer workbench](proposals/optimizer-workbench.md) | proposal | uploadable optimizer policies developed against replayed journals |
 | [A retail extender](proposals/retail-easymesh-extender.md) | proposal | a retail EasyMesh extender on the RDK lab's controller |
+
+The optimizer workbench proposal (uploadable optimizer policies developed against replayed
+journals) moved on 2 October 2026 to [easymesh-optimizer](https://vcpe.dev/easymesh-optimizer/),
+with the optimizer, where it details the later stages of its proposal for pluggable
+optimizer algorithms.
 
 Keep each subject in its owning document; put evidence (JSON, logs, screenshots)
 beside the release or test artifacts, not here. Run

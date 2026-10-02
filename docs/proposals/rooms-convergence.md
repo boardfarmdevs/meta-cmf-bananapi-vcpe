@@ -305,7 +305,9 @@ offline, and the guard passes.
 Three further phases let an optimizer developer upload a policy and select it
 for room runs: a sandboxed policy host, then the SDK, registry and reports,
 then a Data Elements view. They follow Phases 2 and 3 and are designed in the
-[optimizer workbench](optimizer-workbench.md) proposal.
+optimizer workbench proposal, which moved with the optimizer to
+[easymesh-optimizer](https://vcpe.dev/easymesh-optimizer/) on 2 October 2026; there
+they are the later stages of pluggable optimizer algorithms.
 
 ## 12. What stays as it is
 
