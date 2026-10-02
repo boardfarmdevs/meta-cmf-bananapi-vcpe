@@ -32,14 +32,14 @@ ROOM_DROPIN=/etc/systemd/system/easymesh-room-service.service.d/80-wired-extende
 ROOM_MANIFEST=gen/rooms/manifests/private-client-room-walk-wired.json
 REFERENCE=${REFERENCE_EXTENDER:-bpiap}   # an existing extender: its image and binaries
 # The reference extender's binaries (OneWifi 0040/0041, unified-wifi-mesh 0213, ieee1905
-# 0009): installed in place in the lab's extenders until the images carried them (layer
-# ba10c66 on); with such an image nothing differs and nothing is copied.
+# 0009): installed in place in the lab's extenders until the images carried them (the layer
+# from 27 September on); with such an image nothing differs and nothing is copied.
 # OneWifi and its own libraries go together: a newer OneWifi with the image's libwifi_bus
 # or libwifi_webconfig never finishes starting (start timeout, restart loop).
 MATCHED=(/usr/bin/OneWifi /usr/lib/libwifi.so.0.0.0 /usr/lib/libwifi_quality_manager.so.0.0.0
     /usr/lib/libwifi_math_utils.so.0.0.0 /usr/lib/libwifi_bus.so.0.0.0 /usr/lib/libwifi_webconfig.so.0.0.0
     /usr/bin/onewifi_em_agent /usr/bin/ieee1905)
-# em_agent's start waits for a bridged backhaul; the bbappend (e8682fa) accepts an
+# em_agent's start waits for a bridged backhaul; the bbappend (27 September) accepts an
 # Ethernet port of brlan0 with carrier. Applied in place to an image without it.
 WAIT_LINE='ExecStartPre=/bin/sh -c '"'"'i=0; while [ $i -lt 150 ]; do for d in /sys/class/net/*/phy80211; do n=$(basename $(dirname $d)); if iw dev "$n" link 2>/dev/null | grep -q "Connected to" && [ -e "/sys/class/net/$n/master" ]; then exit 0; fi; done; for p in /sys/class/net/brlan0/brif/eth*; do n=$(basename $p); case $n in *virt*) continue;; esac; [ "$(cat /sys/class/net/$n/carrier 2>/dev/null)" = 1 ] && exit 0; done; i=$((i+1)); sleep 2; done; exit 0'"'"
 

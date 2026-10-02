@@ -1,4 +1,4 @@
-export const revision = '685479e0622e6eaa52711de69c5bdfcc18040f09';
+export const revision = 'bb999ef1041f5c52eb7a6847c39ba943cc584d7a';
 export const source = (path: string) =>
   `https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe/${path ? 'blob' : 'tree'}/${revision}/doc/easymesh/${path}`;
 export type Entry = {

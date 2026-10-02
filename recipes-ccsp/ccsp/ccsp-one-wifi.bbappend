@@ -376,7 +376,7 @@ CFLAGS_append = " -DHWSIM_RADIO"
 
 # 6GHz capability gate (review P1 #2). Patch 0006 disables the 6GHz radio because the
 # 6.8-lab regdomain marks 6GHz no-IR. On a 7.0 host (regtest=5/custom_03) 6GHz is
-# IR-capable and beacons -- proven in doc/easymesh/Linux-7.0-hwsim-6GHz-VLP-AP-results.md.
+# IR-capable and beacons -- proven on the lab's Linux 7.0 hosts.
 # Set HWSIM_6GHZ_CAPABLE = "1" (in the recipe or a local.conf/distro override) to keep
 # wifi2 enabled on such a host; default off preserves the 6.8 behaviour. NOTE: 6GHz also
 # mandates SAE-H2E + PMF, which patches 0005/0007 currently force to WPA2 -- enabling

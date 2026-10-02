@@ -1,6 +1,6 @@
 # Optional remote access gateway
 
-The [setup and operator manual](../../doc/easymesh/reference/deployment/remote-access.md)
+The [setup and operator manual](../../docs/reference/remote-access.md)
 owns installation, Tailscale Serve/Funnel publication, exclusive sessions,
 firewall scope, maintenance and rollback.
 

@@ -49,7 +49,7 @@ gen/tests/steering-matrix.sh 1
 
 A pass requires the Client Steering Request, source-VAP BTM transmission,
 client reassociation, controller database/API convergence and traffic. See
-[steering policy](../../doc/easymesh/concepts/steering-policy.md).
+[steering policy](../../docs/concepts/steering-policy.md).
 
 ## Rebuild the binary
 

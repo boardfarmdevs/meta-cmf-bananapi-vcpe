@@ -7,7 +7,9 @@ export default defineConfig({
   testDir: './tests',
   workers: 1,
   fullyParallel: false,
-  retries: 0,
+  // One retry in CI: the inspector test has failed now and then on GitHub's runners only
+  // (an Escape that does not close the sheet), never locally; Playwright reports it as flaky.
+  retries: process.env.CI ? 1 : 0,
   // In CI, failures also become GitHub annotations (readable without the logs).
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   use: {

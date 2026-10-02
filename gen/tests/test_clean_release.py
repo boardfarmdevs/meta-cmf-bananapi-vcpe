@@ -7,19 +7,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_single_manifest_pins_every_upstream_revision():
-    manifest = ROOT / "doc/easymesh/build/manifest.xml"
+    manifest = ROOT / "gen/build/manifest.xml"
     projects = {project.get("path", project.get("name")): project.get("revision") for project in tree.parse(manifest).findall("project")}
     assert len(projects) > 10
     assert all(len(revision) == 40 for revision in projects.values())
 
 
 def test_clean_build_uses_shared_oe_caches_and_complete_images():
-    script = ROOT / "doc/easymesh/build/scripts/build-images.sh"
+    script = ROOT / "gen/build/build-images.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     source = script.read_text()
     assert 'BUILD_DOWNLOADS:-$HOME/oe/downloads' in source
     assert 'BUILD_SSTATE:-$HOME/oe/sstate-cache' in source
-    assert 'doc/easymesh/build/manifest.xml' in source
+    assert 'gen/build/manifest.xml' in source
     assert 'DL_DIR:forcevariable = "$downloads"' in source
     assert 'SSTATE_DIR:forcevariable = "$sstate"' in source
     assert 'grep -Fx "SSTATE_DIR=\\\"$sstate\\\""' in source

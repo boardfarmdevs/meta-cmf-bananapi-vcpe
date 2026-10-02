@@ -75,7 +75,7 @@ if [[ " ${sections[*]} " == *' live '* || " ${sections[*]} " == *' rooms '* || "
 fi
 
 lab_name=${EASYMESH_LXD_NAME:-${EASYMESH_LAB_NAME:-easymesh}}
-source "$root/doc/easymesh/build/scripts/lab-config.sh" "$lab_name"
+source "$root/gen/build/lab-config.sh" "$lab_name"
 vm=$EASYMESH_LXD_NAME
 host_address=${EASYMESH_HOST_ADDRESS:-127.0.0.1}
 ssh_host=${EASYMESH_SSH_HOST:-localhost}
@@ -300,6 +300,7 @@ run_static() {
     if have_modern_node; then
         run static console-ng-model "cd '$root' && node --test gen/medium/observer/web/ng/model.test.mjs"
         for test in "$root"/gen/medium/configurator/tests/viewer/*-test.js "$root"/gen/tests/test-*.js "$root"/gen/optimizer/acceptance/test-*.js; do
+            [ -e "$test" ] || continue   # a pattern with no tests
             case $(basename "$test") in
                 *browser-test.js|viewer-sidebar-layout-test.js) continue ;;
             esac
@@ -310,6 +311,7 @@ run_static() {
     fi
     # the VM builder's and the helper rebuild's shell tests (no VM, no lxc)
     for test in "$root"/gen/vm/lxd/test-*.sh "$root"/gen/tests/test-*.sh; do
+        [ -e "$test" ] || continue
         run static "$(basename "${test%.sh}")" "cd '$root' && bash '$test'"
     done
 }

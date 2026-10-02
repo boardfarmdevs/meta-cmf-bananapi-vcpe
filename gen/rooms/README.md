@@ -19,5 +19,5 @@ and reads back atomic wmediumd generations. `stimulus`, `recommend`, and
 explicitly confirmed `act` modes separate optimizer authority from simulated room
 movement.
 
-See [the room operator manual](../../doc/easymesh/room-service/README.md)
-and [coordination contract](../../doc/easymesh/reference/rooms/architecture.md).
+See [the room operator manual](../../docs/guides/room-manual.md)
+and [coordination contract](../../docs/reference/room-coordination.md).

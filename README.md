@@ -1,70 +1,81 @@
-# meta-cmf-bananapi-vcpe
-
-Retargets the **Banana Pi R4 (MediaTek Filogic / MT7988) RDK-B broadband build**
-to **x86 userspace packaged as an LXC container** for running inside LXD on a host
-machine. The output is a `*.lxc.tar.bz2` rootfs that runs the same RDK-B userspace
-stack the physical Banana Pi runs (utopia, ccsp-*, RdkWanManager, ccsp-dhcp-mgr,
-hal-generic, rbus, sysevent, syscfg, telemetry, …) on x86 with no kernel modules.
+# meta-cmf-bananapi-vcpe: the RDK EasyMesh lab
 
 <!-- labs block: the same in every repository of the EasyMesh labs, but for the Site line -->
-**Site:** <https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/>.
-The [EasyMesh labs](https://boardfarmdevs.github.io/easymesh-labs/) serve three
+**Site:** <https://vcpe.dev/meta-cmf-bananapi-vcpe/>
+The [EasyMesh labs](https://mesh.vcpe.dev/) serve three
 goals: EasyMesh optimizer development
-([easymesh-optimizer](https://github.com/boardfarmdevs/easymesh-optimizer)) in a rich
+([easymesh-optimizer](https://vcpe.dev/easymesh-optimizer/)) in a rich
 virtual lab, on both stacks
-([RDK EasyMesh](https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/),
-[prplMesh](https://boardfarmdevs.github.io/prplmesh-lab/)); unchanged OpenSync
+([RDK EasyMesh](https://vcpe.dev/meta-cmf-bananapi-vcpe/),
+[prplMesh](https://vcpe.dev/prplmesh-lab/)); unchanged OpenSync
 pods as EasyMesh agents under a local controller, without the OpenSync cloud
-([EMOSA](https://boardfarmdevs.github.io/emosa-lab/), with the
-[OpenSync lab](https://boardfarmdevs.github.io/opensync-lab/)'s pods); and
+([EMOSA](https://vcpe.dev/emosa-lab/), with the
+[OpenSync lab](https://vcpe.dev/opensync-lab/)'s pods); and
 EasyMesh on physical hardware
-([Protocol lab](https://boardfarmdevs.github.io/easymesh-lab/)). Two core
+([Protocol lab](https://vcpe.dev/easymesh-lab/)). Two core
 components carry them: the RF medium
-([easymesh-medium](https://github.com/boardfarmdevs/easymesh-medium)) and EMOSA's
-OVSDB ⇄ EasyMesh conversion. The rest is infrastructure and learning around them.
+([easymesh-medium](https://vcpe.dev/easymesh-medium/)) and EMOSA's
+OVSDB ⇄ EasyMesh conversion. The rest is infrastructure, tools (the
+[room builder](https://vcpe.dev/easymesh-room-builder/)) and learning
+around them.
 <!-- /labs block -->
 
-Wi-Fi is provided by `mac80211_hwsim` radios moved into the container as
-`nictype: physical` NICs instead of real hardware. That is what the
-`HWSIM_RADIO`-gated patches exist for — hwsim implements no MLO, requires
-explicit multichannel adaptation for the three concurrent channel contexts,
-and advertises no MAC ACL capability, none of which the Banana Pi defaults
-expect. Patches that are not gated fix defects that are real on hardware
-too but only get exercised here; each patch header carries the trace it was
-root-caused from.
+A Yocto layer that retargets the **Banana Pi R4 (MediaTek Filogic / MT7988) RDK-B
+broadband build** to **x86 userspace packaged as LXC containers**, and the lab that runs
+them: an LXD VM with the controller, Wi-Fi extenders, a wired extender and 100 clients
+on simulated radios, the RF medium, the optimizer and an interactive room.
 
-The two machines are the two EasyMesh roles: `qemux86bpibroadband` is the
-controller (`EasyMesh with_alsap`, plus a colocated agent) and `qemux86bpiap` is
-the agent/extender (`em_extender`). Run one of each and they form a mesh over the
-simulated radios — 1905 transport, AP-Autoconfiguration, WSC M1/M2, wireless
-backhaul, and the fronthaul VAPs the controller pushes to the extender.
+The containers run the same RDK-B userspace the physical Banana Pi runs (utopia,
+ccsp-*, RdkWanManager, OneWifi, rbus, …) with no kernel modules. Wi-Fi comes from
+`mac80211_hwsim` radios moved into each container as physical NICs; the
+`HWSIM_RADIO`-gated patches adapt what hwsim lacks (MLO, three concurrent channel
+contexts, MAC ACLs), and the ungated ones fix defects that are real on hardware too.
+Each patch header carries the trace it was root-caused from. The two machines are
+the two EasyMesh roles: `qemux86bpibroadband` is the controller (with a colocated
+agent), `qemux86bpiap` the extender; together they form a mesh over the simulated
+radios: 1905 transport, AP autoconfiguration, WSC M1/M2, wireless backhaul and the
+fronthaul the controller pushes.
 
-## documentation
+## Components
 
-| | |
-|---|---|
-| [doc/easymesh](doc/easymesh) | the EasyMesh lab — start here |
-| [current state](doc/easymesh/current-state.md) | supported topology, capabilities and limitations |
-| [quick start](doc/easymesh/guide/quickstart.md) | validate and use an installed lab |
-| [architecture](doc/easymesh/concepts/architecture.md) | EasyMesh, containers, hwsim and clients |
-| [operations](doc/easymesh/guide/operations.md) | deploy, start, stop, recover and validate |
-| [experiments](doc/easymesh/experiments/README.md) | steering, RF scenarios and optimizer evaluation |
-| [EasyMesh build](doc/easymesh/build) · [doc/build](doc/build) · [doc/repo-mirror](doc/repo-mirror) · [doc/dac-lcm](doc/dac-lcm) | EasyMesh images, named VM and test tiers; other builds; local repo mirror; prpl LCM build |
+| Part | What it is |
+| --- | --- |
+| [conf/machine/](conf/machine) | the two x86 container machines |
+| [recipes-ccsp/unified-wifi-mesh/](recipes-ccsp/unified-wifi-mesh) | the EasyMesh controller and agent: fixes, the database bootstrap, `steer_drv`, the em_cli tooling, the topology page from the medium |
+| [recipes-ccsp/hal/rdk-wifi-hal/](recipes-ccsp/hal/rdk-wifi-hal) | the Wi-Fi HAL: `HWSIM_RADIO`-gated adaptations and defect fixes |
+| [recipes-ccsp/ccsp/](recipes-ccsp/ccsp) | OneWifi's radio and security defaults for hwsim; its EasyMesh translation and association snapshots |
+| [recipes-ccsp/ieee1905/](recipes-ccsp/ieee1905), [recipes-ccsp/rdk-wifi-libhostap/](recipes-ccsp/rdk-wifi-libhostap) | 1905 service lifecycle and topology publication; hostapd and supplicant fixes |
+| [recipes-core/images/](recipes-core/images) | the container image customisations |
+| [gen/build/](gen/build) | the image build: the pinned upstream manifest, the source bootstrap and the BitBake run |
+| [gen/vm/](gen/vm/README.md) | the lab VM: `gen/vm/lxd/build.sh` builds, checks and updates it, with or without EMOSA |
+| [gen/](gen/README.md) | the host-side lab tooling: container deployment, clients, steering, redeploys |
+| [gen/rooms/](gen/rooms/README.md) | the lab's live room: its launcher, manifests and bindings |
+| [gen/tests/](gen/tests/README.md) | the suites: static, browser, room and soak |
+| [gen/explorer/](gen/explorer/README.md) | the site: the system explorer and the room sandbox |
+| `gen/medium`, `gen/optimizer` | easymesh-medium and easymesh-optimizer, pinned as submodules |
 
-## layout
+## Getting started
 
-| | |
-|---|---|
-| `conf/machine/` | the two x86 container machines, `qemux86bpibroadband` and `qemux86bpiap` |
-| `recipes-ccsp/hal/rdk-wifi-hal` | Wi-Fi HAL patches — `HWSIM_RADIO`-gated adaptations plus ungated defect fixes |
-| `recipes-ccsp/ccsp/ccsp-one-wifi` | OneWifi radio/security defaults for hwsim |
-| `recipes-ccsp/ccsp/ccsp-one-wifi-libwebconfig` | EasyMesh translation, security/policy decode and live association snapshots |
-| `recipes-ccsp/unified-wifi-mesh` | EasyMesh controller/agent fixes, DB bootstrap, and the `steer_drv`/`steer.sh` + em-cli tooling |
-| `recipes-ccsp/ieee1905` | 1905 service lifecycle and topology-change publication |
-| `recipes-ccsp/rdk-wifi-libhostap` | hostapd/supplicant fixes |
-| `recipes-core/images` | image customisations for the container |
+Build the images, then a VM from them, then qualify it. The clone's parent directory
+is the workspace for the RDK sources, the builds and their evidence:
 
-Every patch header carries the trace it was root-caused from — minidump stacks,
-netlink captures, or log excerpts — so start there rather than from the diff. See
-[the patch-set reference](doc/easymesh/reference/platform/patch-set.md) for the retention and
-ownership rationale; the bbappends remain the executable patch inventory.
+```sh
+mkdir -p ~/yocto/easymesh-bpi && cd ~/yocto/easymesh-bpi
+git clone --recurse-submodules https://github.com/boardfarmdevs/meta-cmf-bananapi-vcpe.git
+cd meta-cmf-bananapi-vcpe
+bash gen/build/bootstrap-sources.sh          # the pinned RDK sources
+bash gen/build/build-images.sh both          # the controller and extender images
+source gen/build/lab-config.sh demo-a        # the VM's name, pool and ports
+EASYMESH_CONTROLLER_IMAGE=... EASYMESH_EXTENDER_IMAGE=... gen/vm/lxd/build.sh build
+gen/tests/run-easymesh-suite.sh all --yes-act
+```
+
+The [build guide](docs/guides/build.md) has the host prerequisites and every step; the
+[quickstart](docs/guides/quickstart.md) uses an installed lab.
+
+## Documentation
+
+The [site](https://vcpe.dev/meta-cmf-bananapi-vcpe/) has the system explorer and the
+room sandbox. The documents are indexed in [docs/README.md](docs/README.md): the current
+state, the architecture, the build, operations, the room manual, the tests and the
+reference, records and proposals.

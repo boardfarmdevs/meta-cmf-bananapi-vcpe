@@ -19,7 +19,7 @@ changing RF settings or room deadlines. No coherent sample means failure.
 Offline check: `python3 -m pytest -q gen/optimizer/acceptance/test_room_feature_rf_audit.py`.
 
 Phase 0 RF contract/provenance tests and the short read-only live audit are in
-the [RF assessment](https://github.com/boardfarmdevs/easymesh-medium/blob/main/docs/reference/virtual-rf-assessment.md#123-implemented-phase-0-truthfulness-baseline).
+the RF assessment (in [easymesh-medium](https://vcpe.dev/easymesh-medium/)).
 
 This directory contains live acceptance tests, long-running campaigns, build
 artifact checks and isolated unit tests. Run commands from the repository root
@@ -138,7 +138,7 @@ existing immediate live-load flow, error restoration and upload boundaries.
 `room-backhaul-features.js` is the short, explicitly armed RDK live check for
 the three geometry-backhaul rooms. It separates correct RF/policy behavior
 from observed native parent selection and checks default-room recovery.
-See the [backhaul feature procedure](../../doc/easymesh/reference/testing/room-acceptance.md#short-backhaul-feature-test).
+See the [backhaul feature procedure](../../docs/reference/room-acceptance.md#short-backhaul-feature-test).
 
 The optional nested-LXD monitoring bundle is easymesh-medium's `lxd-monitoring/`, with its
 tests there; `test_monitoring_packaging.py` checks this lab's side (the wrapper with the
@@ -149,7 +149,7 @@ python3 -m pytest -q gen/tests/test_monitoring_packaging.py
 ```
 
 Live installation, authentication and rollback checks are documented in
-[LXD UI and container monitoring](../../doc/easymesh/reference/observability/monitoring.md).
+LXD UI and container monitoring (in [easymesh-medium](https://vcpe.dev/easymesh-medium/)).
 
 `hwsim-monitor-ack.sh` is a live Linux 7 multichannel regression. It briefly
 enables the normally-down `hwsim0` radiotap monitor, generates acknowledged
@@ -351,7 +351,7 @@ Measure idle overhead or drive all selected WLAN clients concurrently:
 The JSON report combines process CPU/RSS, affinity, context switches, netlink
 drops, packet and queue telemetry, and per-client ping results. CPU is a
 percentage of one logical CPU. The accepted measurements and overload boundary
-are documented in `doc/easymesh/reference/testing/performance.md`.
+are documented in [performance](../../docs/reference/performance.md).
 
 ### `optimizer-dynamic.sh`
 
@@ -777,7 +777,7 @@ topology, model, service, process, LXD, API-latency, wmediumd, memory, storage,
 and module evidence. The host collector separates QEMU resource use from guest
 measurements. Use the same sample length and idle/traffic phase on
 every target. The complete comparison method and result table are in
-[`deployment-models.md`](../../doc/easymesh/guide/operations.md).
+[`deployment-models.md`](../../docs/guides/operations.md).
 
 ### `p0-churn-soak.py`
 
@@ -947,7 +947,7 @@ unchanged room/counters and stale-pause rejection. The demo tests
 admission, idempotent Resume and no RF/playback changes.
 
 The topology page's tests live with the page in the medium
-([topology-ui/tests](https://github.com/boardfarmdevs/easymesh-medium/blob/main/topology-ui/tests/README.md)
+(topology-ui/tests (in [easymesh-medium](https://vcpe.dev/easymesh-medium/))
 says what each holds). The `webui` section runs those without a browser against
 the medium's page assembled for RDK, as the controller image installs it, or
 against `WEBUI_STATIC_DIR` (a copy of a gateway's `/usr/ccsp/EasyMesh/static`);

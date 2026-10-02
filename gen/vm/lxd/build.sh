@@ -682,7 +682,7 @@ export_vm() {
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" \
         "$root/gen/vm/lxd/README.md" > "$bundle/README.md"
     chmod 0644 "$bundle/README.md"
-    install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"
+    install -m 0644 "$root/docs/records/release-notes.md" "$bundle/RELEASE-NOTES.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF
@@ -827,7 +827,7 @@ export_thin_vm() {
     sed "s/@EASYMESH_RELEASE_ID@/${release_id}/g" "$root/gen/vm/lxd/README.md" \
         > "$bundle/README.md"
     chmod 0644 "$bundle/README.md"
-    install -m 0644 "$root/doc/easymesh/release-notes.md" "$bundle/RELEASE-NOTES.md"
+    install -m 0644 "$root/docs/records/release-notes.md" "$bundle/RELEASE-NOTES.md"
     install -m 0644 "$trim_report" "$bundle/trim-report.txt"
     rm -f -- "$trim_report"
     cat > "$bundle/release.env" <<EOF

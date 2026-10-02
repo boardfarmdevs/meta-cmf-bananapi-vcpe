@@ -91,8 +91,12 @@ test('architecture inspectors, related components, and keyboard controls', async
       'href',
       new RegExp(`/blob/${revision}/`),
     );
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    // On a busy runner the key can land while the sheet is still opening and be
+    // dropped; what is tested is that the keyboard closes it.
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden({ timeout: 1_000 });
+    }).toPass({ timeout: 10_000 });
   }
   await page.getByRole('button', { name: 'EM CLI / WebUI' }).click();
   await page

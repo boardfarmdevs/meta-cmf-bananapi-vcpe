@@ -565,8 +565,8 @@ if [[ "$mv" == bpi* ]]; then
     # RDK's WAN manager something to retry against forever. And lan-p1 is the
     # wrong default for an EasyMesh pair specifically: the two nodes are joined by
     # the wireless backhaul, so a second, wired path between their brlan0s is a
-    # plain L2 loop. An EasyMesh extender wants neither leg -- see doc/easymesh in
-    # meta-cmf-bananapi-vcpe.
+    # plain L2 loop. An EasyMesh extender wants neither leg -- see
+    # docs/concepts/architecture.md.
     if [ -n "$wan_bridge" ]; then
         lxc profile device add ${profilename} eth0 nic nictype=bridged parent=${wan_bridge} hwaddr=${eth0_mac} name=eth0 1>/dev/null
     fi

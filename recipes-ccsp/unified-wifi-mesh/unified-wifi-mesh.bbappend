@@ -708,7 +708,7 @@ do_install_append() {
 # matches the patched libemcli ABI and serves the same "EasyMesh R6" UI as the
 # reference hardware). The ordered source patches, cross-build inputs, expected
 # target format, and final binary hash are recorded in
-# doc/easymesh/rev130-bringup-summary.md#rebuilding-the-precompiled-webui-helper.
+# gen/rebuild-em-cli-artifact.sh, which rebuilds it.
 #
 # The binary reads /nvram/static and /nvram/remoteCtrl.json. A same-node image
 # redeploy deliberately preserves /nvram, so the service drop-in refreshes the
@@ -733,8 +733,8 @@ SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_st
 # from a script: set_remote_addr(127.0.0.1,49153) -> get_network_tree_by_file(json) ->
 # exec("steer_sta OneWifiMesh", node). Built from source here (not prebuilt) so it
 # tracks the patched libemcli ABI automatically. Controller-only: libemcli.so is
-# packaged only in the broadband config. Usage + JSON schema in
-# doc/easymesh/container-hwsim-bringup-testing.md and demo/steering-demo.sh.
+# packaged only in the broadband config. Usage: gen/steer.sh and
+# docs/reference/commanded-steering.md.
 # The pre-start helper normally belongs to the redundant stock CLI package, so
 # install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {

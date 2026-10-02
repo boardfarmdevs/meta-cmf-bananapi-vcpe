@@ -4,7 +4,7 @@ This directory is an exported appliance bundle. It contains a fixed-capacity
 EasyMesh lab: controller, four extenders, 100-client capacity, hwsim and
 wmediumd. Rooms choose the online client subset; they do not resize the VM.
 
-For a source build, use `doc/easymesh/build/README.md` in the repository. That
+For a source build, use [the build guide](../../../docs/guides/build.md). That
 guide builds the BPI images first, then creates a named VM and selects test tiers.
 
 ## Import

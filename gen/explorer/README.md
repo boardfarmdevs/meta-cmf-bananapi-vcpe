@@ -3,7 +3,7 @@
 Browser-only interactive architecture documentation, published alongside the
 room sandbox at:
 
-<https://boardfarmdevs.github.io/meta-cmf-bananapi-vcpe/explorer/>
+<https://vcpe.dev/meta-cmf-bananapi-vcpe/explorer/>
 
 The four views cover architecture, illustrative network topology, protocol
 paths, and the qualification boundaries of a pinned documentation snapshot.
@@ -29,7 +29,7 @@ from Google Fonts at runtime. The original formatting configuration is retained.
 `package-lock.json` pins the dependency tree for `npm ci`.
 
 The explanatory content now pins the qualified band-steering source revision
-`685479e0622e6eaa52711de69c5bdfcc18040f09` (13 September 2026 UTC).
+the commit of 13 September 2026 (UTC).
 Architecture inspectors explain native receive-channel reporting, modeled RF
 load boundaries, passive received scans and external band policy. A fifth
 protocol walkthrough follows a band change from profile setup through native
