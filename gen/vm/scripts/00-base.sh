@@ -28,7 +28,18 @@ no_automatic_updates() {
     fi
 }
 
+# Ubuntu installs LXD on demand, from its own channel, the first time anything runs lxc or
+# lxd in the VM (lxd-installer). The lab installs its own LXD below: no on-demand install,
+# and one already under way finishes first.
+no_on_demand_lxd() {
+    systemctl mask --now lxd-installer.socket 2>/dev/null || true
+    while snap changes 2>/dev/null | grep -Eq '^[0-9]+ +(Do|Doing|Wait) .*Install "lxd"'; do
+        sleep 2
+    done
+}
+
 no_automatic_updates
+no_on_demand_lxd
 apt-get update
 apt-get install -y --no-install-recommends \
     apparmor \
@@ -109,6 +120,10 @@ if [ -f "$assets/lxd_38768.assert" ] \
     snap install "$assets/lxd_38768.snap"
 elif ! snap list lxd >/dev/null 2>&1; then
     snap install lxd --channel="$lxd_channel"
+elif [ ! -f "$assets/lxd_38768.assert" ] \
+    && [ "$(snap info lxd | awk '$1 == "tracking:" {print $2}')" != "$lxd_channel" ]; then
+    # installed on demand from Ubuntu's channel before this step: no instance exists yet
+    snap refresh lxd --channel="$lxd_channel"
 fi
 # Freeze the selected revision before any LXD database or instance is created.
 snap refresh --hold=forever lxd
