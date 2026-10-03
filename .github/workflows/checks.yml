@@ -1,0 +1,45 @@
+# The lab's static tier without a lab (gen/tests/run-easymesh-suite.sh static): the
+# documentation, the Python tests (the lab's, the medium's configurator, the optimizer's),
+# the Node tests and the VM builder's shell tests, with the medium and the optimizer at
+# the commits this repository pins. A step skipped for a missing tool fails the job.
+# The site and the explorer's tests: pages.yml.
+name: checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -q pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The static tier
+        run: bash gen/tests/run-easymesh-suite.sh static --output static-results
+      - name: Nothing skipped
+        run: |
+          python3 - <<'PY'
+          import json
+          summary = json.load(open("static-results/summary.json"))
+          print({k: summary[k] for k in ("passed", "failed", "skipped", "blocked")})
+          skipped = [t["test"] for t in summary["tests"] if t["outcome"] == "skipped"]
+          assert summary["skipped"] == 0 and not skipped, f"skipped: {skipped}"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: static-results
+          path: static-results/
