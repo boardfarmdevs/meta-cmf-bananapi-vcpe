@@ -106,8 +106,9 @@ The EMOSA option (emosa-lab, on the lab's wired LAN port; needs the wired extend
   EASYMESH_EMOSA=$emosa (1: build turns it on once the lab is accepted, as emosa does)
   EMOSA_LAB=$emosa_lab (the emosa-lab checkout, clean at the commit gen/vm/lxd/emosa-lab.env
     pins, ${emosa_pin:0:10}; EMOSA_LAB_UNPINNED=1 takes another)
-  EASYMESH_EMOSA_AGENT=$emosa_agent (the pods' agents: python, the reference, or c, the C lab
-    prototype; lab.sh agent POD python|c in the VM swaps one later)
+  EASYMESH_EMOSA_AGENT=$emosa_agent (the adapter's implementation: python, the reference, or c,
+    its fleet, GTP and agents in C with no Python installed; lab.sh agent POD python|c in
+    the VM swaps one pod's agent later)
   EMOSA_POD_IMAGE=<.../out/mvx-pod-STAMP> (the OpenSync pod image the easymesh-labs
     manifest pins, from opensync-lab's build-pod.sh)
 EOF

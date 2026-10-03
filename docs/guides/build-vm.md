@@ -133,10 +133,10 @@ backhaul, and the room service on the rooms with the pods
 `pod_2`). emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`;
 `EMOSA_LAB` names its checkout, clean at the commit `gen/vm/lxd/emosa-lab.env`
 pins). It needs the wired extender. After a reboot,
-`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` starts the
-pods' agents on emosa-lab's C lab prototype instead of the Python reference
-(`python`, the default); the two take the same configuration, and
-`lab.sh agent POD python|c` in the VM swaps one pod's agent later.
+`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` installs
+emosa-lab's adapter in C (fleet, GTP and agents; no Python) instead of the Python
+reference (the default); both take the same files, and `lab.sh agent POD python|c`
+in the VM swaps one pod's agent later.
 
 ## Estimated build phases and time
 

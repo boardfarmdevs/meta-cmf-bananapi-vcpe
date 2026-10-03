@@ -32,7 +32,10 @@ rooms (`home-a-one-client-handover`, `band-upgrade-24-5`, `received-same-band-ro
 `large-room-perimeter-counter-roam`, `traffic-quieter-ap`), `backhaul-wired-parent`
 and `fifty-client-counter-roam`. `rdk-emosa-1002` (rev120, the EMOSA option) was
 built the same day and passed readiness, the five rooms with the pods and
-`backhaul-wired-parent`. The full suite last ran on the VMs of 1 October.
+`backhaul-wired-parent`. On 3 October it took emosa-lab's adapter in C
+(`EASYMESH_EMOSA_AGENT=c`: the fleet, the GTP and the agents, with no Python) and passed
+readiness, the five rooms with the pods, `backhaul-wired-parent` and
+`fifty-client-counter-roam` again. The full suite last ran on the VMs of 1 October.
 
 The controller image carries unified-wifi-mesh 0233 and 0234: a radio the
 controller renews on its own waits neither at the Topology Query nor at the AP
