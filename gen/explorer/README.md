@@ -94,10 +94,10 @@ downloading one. Screenshots and failed-test traces stay in ignored
 
 ## Publish
 
-The site is built and published by the Pages workflow
-(`.github/workflows/pages.yml`) on every push to `main`: `pages/build` runs
-`npm ci`, `npm run build` and `npm test` here, and `pages/finish-site.py` adds the
-labs bar shared by the five lab sites. The Pages source is **GitHub Actions**.
+The site is built and published by the labs' shared Pages workflow (called from
+`.github/workflows/pages.yml`) on every push to `main`: `pages/build` runs `npm ci`,
+`npm run build` and `npm test` here, and the umbrella's `pages/finish-site.py` adds the
+labs bar shared by the labs' sites. The Pages source is **GitHub Actions**.
 
 `npm run build` writes the whole public site to `site/`: this explorer under
 `explorer/`, `pages-index.html` as the landing page, and the disconnected room
@@ -107,7 +107,7 @@ It refuses a viewer that does not default to the disconnected sandbox.
 To preview the finished site locally:
 
 ```sh
-pages/build && python3 pages/finish-site.py
+pages/build && python3 ../easymesh-labs/pages/finish-site.py   # the umbrella, checked out next to this one
 python3 -m http.server -d dist/site 8000
 ```
 

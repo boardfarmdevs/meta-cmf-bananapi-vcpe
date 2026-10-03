@@ -39,13 +39,16 @@ lab's documents are below.
 | [RF qualification](records/rf-qualification.md) | record | RF property qualification and its evidence |
 | [Release information](records/release-notes.md) | record | what a VM is built from; shipped in each VM's bundle |
 | [VirtualBox qualification](records/virtualbox-qualification.md) | record | the RDK lab in VirtualBox on a Linux host, 8 September 2026 |
-| [Rooms: design and plan](proposals/rooms-convergence.md) | proposal | each lab in its own VM behind the gateway, the builder in the labs |
 | [A retail extender](proposals/retail-easymesh-extender.md) | proposal | a retail EasyMesh extender on the RDK lab's controller |
 
 The optimizer workbench proposal (uploadable optimizer policies developed against replayed
 journals) moved on 2 October 2026 to [easymesh-optimizer](https://vcpe.dev/easymesh-optimizer/),
 with the optimizer, where it details the later stages of its proposal for pluggable
-optimizer algorithms.
+optimizer algorithms. The rooms plan (each lab in its own VM behind the gateway, the
+builder in the labs) was retired on the same day: the splits of 30 September did its
+first phases another way, remote access has its own repository, and its two remaining
+ideas (the room builder inside each lab, the Pages sites as an offline playground) are
+parked in the umbrella's proposals register ([easymesh-labs](https://mesh.vcpe.dev/)).
 
 Keep each subject in its owning document; put evidence (JSON, logs, screenshots)
 beside the release or test artifacts, not here. Run
