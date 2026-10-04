@@ -786,10 +786,18 @@ start_vm() {
     fi
     wait_agent
     pin_guest_address
-    run_root systemctl start easymesh-lab.service
     # After a VM start an extender can come back with its backhaul or fronthaul down, or
     # registered with the controller without its BSSes (rdk-1001, 1 Oct, one BSS of ten):
-    # the lab's ordered bring-up repairs that and waits for the room to settle.
+    # the lab's ordered bring-up repairs that and waits for the room to settle. When the
+    # runtime's own gate stops on it first (rdk-fast-c, 4 Oct: the wired extender's one BSS
+    # of ten), the bring-up repairs and the runtime starts once more.
+    if ! run_root systemctl start easymesh-lab.service; then
+        "$started" && run_root test -x "$bringup" || return 1
+        echo "$name: the lab's runtime stopped at a gate; ordered bring-up, then the runtime again" >&2
+        run_root "$bringup" up
+        run_root systemctl start easymesh-lab.service
+        return
+    fi
     if "$started" && run_root test -x "$bringup"; then
         run_root "$bringup" up
     fi
