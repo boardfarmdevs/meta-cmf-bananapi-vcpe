@@ -86,9 +86,12 @@ controller`): emosa-lab's C programs at the same pinned commit, logging through 
 logger into `/rdklogs/logs`, the fleet enabled and inert until `/etc/emosa-fleet.json`
 exists. Built on 3 October on rev140 (`X86EMLTRBPIBB_rdk-next_20261004013832`): it
 differs from the default image only by the package `emosa` (520 KiB); without the
-setting the image's packages are the default's. No lab runs it yet: the lab's EMOSA
-option keeps the adapter in its own container (the easymesh-labs plan's 8.6 measures it in the
-gateway).
+setting the image's packages are the default's. The lab's EMOSA option keeps the
+adapter in its own container; emosa-lab's `gateway.sh` moves it into the gateway's
+container with that package and back. There, on 3 October (rdk-emosa-1002), RDK's
+controller onboarded both pods' agents, and over 30 minutes with five rooms the gateway
+held 506 MiB median and 592 MiB peak of its 1 GiB (487 and 498 MiB with EMOSA in its own
+container), an agent about 5 MiB and 2.8 % of a core (emosa-lab's rdk-lab record).
 
 ## Access
 
