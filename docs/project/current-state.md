@@ -87,7 +87,7 @@ logger into `/rdklogs/logs`, the fleet enabled and inert until `/etc/emosa-fleet
 exists. Built on 3 October on rev140 (`X86EMLTRBPIBB_rdk-next_20261004013832`): it
 differs from the default image only by the package `emosa` (520 KiB); without the
 setting the image's packages are the default's. No lab runs it yet: the lab's EMOSA
-option keeps the adapter in its own container (emosa-lab's plan 8.6 measures it in the
+option keeps the adapter in its own container (the easymesh-labs plan's 8.6 measures it in the
 gateway).
 
 ## Access
