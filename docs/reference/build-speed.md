@@ -115,6 +115,13 @@ measured on an idle host and before the wired extender. A copy of the accepted l
 Btrfs pool took 8 s (2 s to copy, 6 s for its identities and ports), and the two labs share
 9 GiB of pool.
 
+The copy was then updated to a commit that changed the medium's daemon, console and radio
+module and a guest tool: 33 minutes, of which 5 to build and install them (the daemon and
+console 23 s with the inputs, the radio module 171 s in the VM, stages 30 and 50 86 s) and
+28 to restart and bring the lab up. In the copy, the checkout was the commit's, the loaded
+radio module was built from its medium (and matched the checksum the update recorded), and
+the guest ran the new tool. A build of the same commit would take the 73 minutes above.
+
 ## A development lab
 
 `EASYMESH_DEV_CLIENTS=20 gen/vm/lxd/build.sh build` builds a lab with 20 clients (half
