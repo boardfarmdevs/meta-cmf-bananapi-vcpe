@@ -80,6 +80,16 @@ moves an accepted VM in place: `gen/vm/lxd/build.sh update`. New images into a
 running lab: `gen/lab-redeploy.sh`. Keep old VMs stopped until their
 replacements pass.
 
+EMOSA in the controller image itself is opt-in and off by default (the recipe
+`recipes-emosa/emosa`, `EMOSA_ADAPTER = "1"`; `BUILD_EMOSA=1 gen/build/build-images.sh
+controller`): emosa-lab's C programs at the same pinned commit, logging through RDK's
+logger into `/rdklogs/logs`, the fleet enabled and inert until `/etc/emosa-fleet.json`
+exists. Built on 3 October on rev140 (`X86EMLTRBPIBB_rdk-next_20261004013832`): it
+differs from the default image only by the package `emosa` (520 KiB); without the
+setting the image's packages are the default's. No lab runs it yet: the lab's EMOSA
+option keeps the adapter in its own container (emosa-lab's plan 8.6 measures it in the
+gateway).
+
 ## Access
 
 The last-tested VM's addresses, not a health promise:
