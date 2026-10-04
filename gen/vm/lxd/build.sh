@@ -623,6 +623,7 @@ build_vm() {
     lxc config device override "$name" eth0 network="$network" \
         ipv4.address="$appliance_ipv4"
     lxc config set "$name" boot.autostart false
+    lxc config set "$name" user.easymesh.applied-commit "$meta_commit"
     # A lab from a base image shares the base's machine-id with every other one:
     # its address is pinned in the guest (pin_guest_address), as a copy's is.
     ! "$from_base" || lxc config set "$name" user.easymesh.pin-address true
@@ -1093,23 +1094,31 @@ EOF
 
 update_vm() (
     local repo=/home/easymesh/git/meta-cmf-bananapi-vcpe asset_dir=/home/easymesh/easymesh-assets
-    local host_commit guest_commit guest_medium stage medium_tools=false radio=false guest=false
+    local host_commit guest_commit applied commit guest_medium stage
+    local medium_tools=false radio=false guest=false
     instance_exists
     [ "$(instance_state)" = RUNNING ] || { echo "$name is not running: $0 start" >&2; exit 1; }
     wait_agent
     host_commit=$(git -C "$root" rev-parse HEAD)
     test -z "$(git -C "$root" status --porcelain)"
     guest_commit=$(lxc exec "$name" -- sudo -H -u easymesh git -C "$repo" rev-parse HEAD)
-    [ "$guest_commit" != "$host_commit" ] || { echo "$name is at $host_commit already"; exit 0; }
-    git -C "$root" merge-base --is-ancestor "$guest_commit" "$host_commit" || {
-        echo "$name is at $guest_commit, not an ancestor of $host_commit: build instead" >&2
-        exit 1
-    }
+    # What was last applied whole (by a build, or an update that finished its installs): an
+    # update that stopped part-way leaves the checkout ahead of it, and its rerun redoes the
+    # rest (prplMesh's prpl-fast-c, 4 Oct). A VM from before this record has its checkout.
+    applied=$(lxc config get "$name" user.easymesh.applied-commit 2>/dev/null) || true
+    applied=${applied:-$guest_commit}
+    [ "$applied" != "$host_commit" ] || { echo "$name is at $host_commit already"; exit 0; }
+    for commit in "$applied" "$guest_commit"; do
+        git -C "$root" merge-base --is-ancestor "$commit" "$host_commit" || {
+            echo "$name is at $commit, not an ancestor of $host_commit: build instead" >&2
+            exit 1
+        }
+    done
     # What a build made from the checkout and installed: the medium's daemon and console
     # (made here), its radio module (made in the guest) and the guest's services and tools.
     # An update makes and installs what changed of them, then restarts the VM, as a build's
     # cold boot does.
-    guest_medium=$(git -C "$root" rev-parse "$guest_commit:gen/medium")
+    guest_medium=$(git -C "$root" rev-parse "$applied:gen/medium")
     git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- wmediumd observer \
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' || medium_tools=true
     git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- hwsim \
@@ -1120,13 +1129,13 @@ update_vm() (
         $(sed 's|^|configurator/worlds/viewer/|' "$root/gen/medium/topology-ui/shared-modules") \
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' ||
         echo "note: the medium's topology page changed since $guest_medium; the gateway serves its image's page until a controller image built from this checkout" >&2
-    git -C "$root" diff --quiet "$guest_commit" "$host_commit" -- gen/vm/scripts/guest \
+    git -C "$root" diff --quiet "$applied" "$host_commit" -- gen/vm/scripts/guest \
         gen/vm/scripts/30-boardfarm-wan.sh gen/vm/scripts/50-runtime-service.sh \
         gen/vm/scripts/55-scale-topology.sh gen/vm/scripts/60-scale-steering-test.sh \
         gen/vm/scripts/61-return-steering-regression.sh || guest=true
     record_open update
-    printf 'FROM=%s\nMEDIUM_TOOLS=%s\nRADIO_MODULE=%s\nGUEST=%s\n' "$guest_commit" \
-        "$medium_tools" "$radio" "$guest" >> "$record_dir/environment.txt"
+    printf 'FROM=%s\nCHECKOUT=%s\nMEDIUM_TOOLS=%s\nRADIO_MODULE=%s\nGUEST=%s\n' "$applied" \
+        "$guest_commit" "$medium_tools" "$radio" "$guest" >> "$record_dir/environment.txt"
     stage=$(mktemp -d)
     trap 'record_close "$?"; rm -rf "$stage"' EXIT
     phase inputs
@@ -1216,6 +1225,7 @@ update_vm() (
         phase room
         run_root bash "$repo/gen/lab-bringup.sh" room
     fi
+    lxc config set "$name" user.easymesh.applied-commit "$host_commit"
     trap 'rm -rf "$stage"' EXIT
     record_close 0
 )
