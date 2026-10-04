@@ -61,6 +61,12 @@ strace -f -e trace=openat2 -o /tmp/easymesh-tar.strace \
 test "$(grep -c openat2 /tmp/easymesh-tar.strace)" = 0
 ```
 
+`gen/build/build-images.sh` takes `$HOME/hosttools/bin` first and runs this check on the
+tar BitBake links into its build directory, and refuses an `openat2` one: with it every
+`do_package` BitBake runs itself fails under pseudo ("unknown base path for fd"). A build
+directory keeps the tar it was first made with (`tmp/hosttools/tar`) until that link is
+removed.
+
 If the host package cannot provide `lz4c`, stage it without changing the system
 installation:
 
