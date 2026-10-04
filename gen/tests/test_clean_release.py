@@ -24,7 +24,11 @@ def test_clean_build_uses_shared_oe_caches_and_complete_images():
     assert 'SSTATE_DIR:forcevariable = "$sstate"' in source
     assert 'grep -Fx "SSTATE_DIR=\\\"$sstate\\\""' in source
     assert 'grep -Fx "DL_DIR=\\\"$downloads\\\""' in source
-    assert 'SSTATE_MIRRORS:forcevariable = ""' in source
+    # No sstate mirror unless BUILD_SSTATE_MIRROR names one, and the environment proves it
+    assert 'sstate_mirror=${BUILD_SSTATE_MIRROR:-}' in source
+    assert 'mirrors=\n[ -z "$sstate_mirror" ] || mirrors=' in source
+    assert 'SSTATE_MIRRORS:forcevariable = "$mirrors"' in source
+    assert 'grep -Fx "SSTATE_MIRRORS=\\"$mirrors\\""' in source
     assert "rdk-generic-broadband-image" in source
     assert "rdk-generic-ap-extender-image" in source
     assert 'git -C "$source_root" status --porcelain' in source

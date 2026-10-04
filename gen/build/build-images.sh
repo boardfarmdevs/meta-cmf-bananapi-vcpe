@@ -12,6 +12,11 @@ sstate=${BUILD_SSTATE:-$HOME/oe/sstate-cache}
 # opt-in; recorded as controller-emosa-*). Off by default: the default image is unchanged.
 emosa=${BUILD_EMOSA:-0}
 role_selection=${1:-both}
+# Another host's sstate cache over HTTP (http://HOST:PORT/sstate-cache): its objects are
+# fetched instead of rebuilt; the local cache stays where it is.
+sstate_mirror=${BUILD_SSTATE_MIRROR:-}
+# shellcheck source=gen/build/artifact-store.sh
+source "$source_root/gen/build/artifact-store.sh"
 
 case "$role_selection" in controller|extender|both) ;; *) echo 'usage: build-images.sh [controller|extender|both]' >&2; exit 2 ;; esac
 case "$emosa" in
@@ -42,13 +47,35 @@ for project in tree.parse(manifest).findall('project'):
         raise SystemExit(f'Pinned source mismatch: {directory}: {actual} != {expected}')
 PY
 
+mirrors=
+[ -z "$sstate_mirror" ] || mirrors="file://.* ${sstate_mirror%/}/PATH;downloadfilename=PATH"
 cat > "$workspace/clean-build.conf" <<EOF
 BB_NUMBER_THREADS:forcevariable = "$threads"
 PARALLEL_MAKE:forcevariable = "-j $threads"
 DL_DIR:forcevariable = "$downloads"
 SSTATE_DIR:forcevariable = "$sstate"
-SSTATE_MIRRORS:forcevariable = ""
+SSTATE_MIRRORS:forcevariable = "$mirrors"
 EOF
+
+# An image's key: every input bitbake reads from this checkout (the layer's recipes,
+# classes, configuration and build files, the medium's topology page and the viewer
+# modules it shares), the manifest that pins every other layer, and the variant.
+image_key() {
+    local role=$1 path medium module
+    local -a inputs=("image=$role$suffix" "manifest=$(sha256sum < "$manifest" | cut -c1-64)")
+    for path in classes conf gen/build $(cd "$source_root" && ls -d recipes-*); do
+        inputs+=("$path=$(git -C "$source_root" rev-parse "HEAD:$path")")
+    done
+    medium=$(git -C "$source_root" rev-parse HEAD:gen/medium)
+    inputs+=("topology-ui=$(git -C "$source_root/gen/medium" rev-parse "$medium:topology-ui")")
+    while read -r module; do
+        [ -n "$module" ] || continue
+        inputs+=("viewer/$module=$(git -C "$source_root/gen/medium" rev-parse \
+            "$medium:configurator/worlds/viewer/$module")")
+    done < "$source_root/gen/medium/topology-ui/shared-modules"
+    [ "$emosa" = 0 ] || inputs+=("emosa=$(git -C "$source_root" rev-parse HEAD:gen/vm/lxd/emosa-lab.env)")
+    artifact_key "${inputs[@]}"
+}
 # EMOSA's opt-in in a file of its own, given to bitbake only for this build: clean-build.conf
 # stays the default image's (a Yocto shell rebuild reads it)
 confs=(-R "$workspace/clean-build.conf")
@@ -72,6 +99,20 @@ for role in controller extender; do
         cp "$manifest" "$record/manifest.xml"
         cp clean-build.conf "$record/"
         [ "$emosa" = 0 ] || cp emosa-build.conf "$record/"
+        key=$(image_key "$role")
+        printf '%s\n' "$key" > "$record/image-key"
+        # The same inputs built anywhere before: fetch the image instead of building it
+        # (BUILD_FORCE=1 builds regardless).
+        if [ "${BUILD_FORCE:-0}" != 1 ] \
+            && artifact_fetch "rdk-image-$role$suffix" "$key" "$record/fetched"; then
+            find "$record/fetched" -maxdepth 1 -type f -name '*.rootfs.lxc.tar.bz2' \
+                -exec sha256sum {} + > "$record/images.sha256"
+            test -s "$record/images.sha256"
+            printf 'fetched\n' > "$record/source"
+            printf 'Fetched the %s image for key %s: %s\n' "$role" "$key" \
+                "$(awk '{print $2}' "$record/images.sha256")"
+            exit 0
+        fi
         if [ -f "build-$machine/conf/local.conf" ] && grep -q '##RDK_FLAVOR##' "build-$machine/conf/local.conf"; then
             mv "build-$machine/conf" "$record/incomplete-conf"
         fi
@@ -89,11 +130,27 @@ for role in controller extender; do
         bitbake "${confs[@]}" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
         grep -Fx "DL_DIR=\"$downloads\"" "$record/environment.txt"
         grep -Fx "SSTATE_DIR=\"$sstate\"" "$record/environment.txt"
-        grep -Fx 'SSTATE_MIRRORS=""' "$record/environment.txt"
+        grep -Fx "SSTATE_MIRRORS=\"$mirrors\"" "$record/environment.txt"
         cp conf/local.conf conf/bblayers.conf "$record/"
         printf 'Starting BitBake for %s; log: %s/build.log\n' "$target" "$record"
         bitbake "${confs[@]}" "$target" 2>&1 | tee "$record/build.log"
         find "tmp/deploy/images/$machine" -maxdepth 1 -type f -name '*.rootfs.lxc.tar.bz2' -exec sha256sum {} + > "$record/images.sha256"
         test -s "$record/images.sha256"
+        printf 'built\n' > "$record/source"
+        # Publish the image this build made, under its inputs' key
+        # (EASYMESH_ARTIFACT_PUBLISH; unset, nothing is published).
+        if [ -n "${EASYMESH_ARTIFACT_PUBLISH:-}" ]; then
+            entry=$(mktemp -d "$workspace/.image-entry.XXXXXX")
+            newest=$(find "tmp/deploy/images/$machine" -maxdepth 1 -type f \
+                -name '*.rootfs.lxc.tar.bz2' -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)
+            cp --reflink=auto "$newest" "$entry/"
+            {
+                printf 'KEY=%s\nIMAGE=%s\nLAYER_COMMIT=%s\n' "$key" "$role$suffix" \
+                    "$(cat "$record/layer-commit")"
+                printf 'BUILT=%s\nHOST=%s\nEVIDENCE=%s\n' "$(date -u +%FT%TZ)" "$(hostname)" "$record"
+            } > "$entry/provenance.env"
+            artifact_publish "rdk-image-$role$suffix" "$key" "$entry"
+            rm -rf -- "$entry"
+        fi
     )
 done

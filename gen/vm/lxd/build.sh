@@ -5,6 +5,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=profile.sh
 source "$root/gen/vm/lxd/profile.sh"
 source "$root/gen/vm/lxd/instance-config.sh"
+# shellcheck source-path=SCRIPTDIR source=../../build/artifact-store.sh
+source "$root/gen/build/artifact-store.sh"
 release_id=${EASYMESH_RELEASE_ID:-dev}
 case "$release_id" in
     [a-zA-Z0-9][a-zA-Z0-9._-]*) ;;
@@ -47,6 +49,8 @@ emosa_lab=${EMOSA_LAB:-$(cd "$root/.." && pwd)/emosa-lab}
 emosa_pin=$(sed -n 's/^EMOSA_LAB_COMMIT=//p' "$root/gen/vm/lxd/emosa-lab.env")
 emosa_pod_image=${EMOSA_POD_IMAGE:-}
 emosa_agent=${EASYMESH_EMOSA_AGENT:-python}
+base_mode=${EASYMESH_BASE_IMAGE:-auto}
+case "$base_mode" in auto|off|rebuild) ;; *) echo 'EASYMESH_BASE_IMAGE must be auto, off or rebuild' >&2; exit 2 ;; esac
 [[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
 [[ "$emosa_agent" =~ ^(python|c)$ ]] || { echo 'EASYMESH_EMOSA_AGENT must be python or c' >&2; exit 2; }
 [[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
@@ -289,6 +293,76 @@ record_close() {    # record_close STATUS
     record_dir=
 }
 
+# The base VM image: the build's stages that do not depend on the commit (00-base.sh,
+# 10-install-linux-7.sh, 15-prepare-base.sh, 30-boardfarm-wan.sh: the OS and its
+# packages, the kernel, nested LXD, Boardfarm and its WAN, the radio module) as an LXD
+# image named by their inputs. A build starts from it when this host or the artifact store
+# has it, and otherwise makes it on the way (EASYMESH_BASE_IMAGE=auto); off builds every
+# stage; rebuild makes it anew.
+base_image_key() {
+    local file medium
+    local -a inputs=("image=$image" "kernel=$kernel" "radios=$profile_radios"
+        "boardfarm=$boardfarm_commit" "lxd=${EASYMESH_LXD_CHANNEL:-latest/stable}"
+        "nested-storage=${EASYMESH_NESTED_LXD_STORAGE_DRIVER:-btrfs}"
+        "alpine=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}" "layout=1")
+    for file in 00-base.sh 10-install-linux-7.sh 15-prepare-base.sh 30-boardfarm-wan.sh \
+        guest/easymesh-lxd-docker-forward guest/easymesh-lxd-docker-forward.service \
+        guest/boardfarm-lab-rebuild guest/boardfarm-lab.service; do
+        inputs+=("$file=$(git -C "$root" rev-parse "HEAD:gen/vm/scripts/$file")")
+    done
+    medium=$(git -C "$root" rev-parse HEAD:gen/medium)
+    inputs+=("hwsim=$(git -C "$root/gen/medium" rev-parse "$medium:hwsim")")
+    artifact_key "${inputs[@]}"
+}
+
+base_image_available() {    # base_image_available ALIAS KEY: on this host, or fetched
+    local alias=$1 key=$2 fetched
+    local -a files
+    [ "$base_mode" = auto ] || return 1
+    lxc image info "$alias" >/dev/null 2>&1 && return 0
+    fetched=$(mktemp -d /tmp/easymesh-base-image.XXXXXX)
+    if artifact_fetch rdk-base-vm "$key" "$fetched"; then
+        mapfile -t files < <(find "$fetched" -maxdepth 1 -type f ! -name SHA256SUMS \
+            ! -name provenance.env -printf '%s %p\n' | sort -n | cut -d' ' -f2-)
+        lxc image import "${files[@]}" --alias "$alias" </dev/null
+        rm -rf -- "$fetched"
+        return 0
+    fi
+    rm -rf -- "$fetched"
+    return 1
+}
+
+publish_base_image() {      # publish_base_image ALIAS KEY: the stopped-and-restarted build
+    local alias=$1 key=$2 exported
+    # shellcheck disable=SC2016 # the guest's shell expands these
+    lxc exec "$name" -- sh -eu -c '
+        rm -rf /home/easymesh/easymesh-assets/* /home/easymesh/easymesh-provision/*
+        apt-get clean
+        journalctl --rotate >/dev/null 2>&1 || true
+        journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+        printf "%s\n" "$1" > /var/lib/easymesh-lab/base-image.key
+        sync' sh "$key"
+    lxc stop "$name" --timeout 300
+    if lxc image info "$alias" >/dev/null 2>&1; then
+        lxc image delete "$alias"
+    fi
+    lxc publish "$name" --alias "$alias" --compression zstd \
+        description="EasyMesh RDK lab base VM ($key)" </dev/null
+    lxc start "$name"
+    wait_agent
+    if [ -n "${EASYMESH_ARTIFACT_PUBLISH:-}" ]; then
+        exported=$(mktemp -d /tmp/easymesh-base-export.XXXXXX)
+        lxc image export "$alias" "$exported/" </dev/null
+        {
+            printf 'KEY=%s\nCOMMIT=%s\nBUILT=%s\nHOST=%s\n' "$key" \
+                "$(git -C "$root" rev-parse HEAD)" "$(date -u +%FT%TZ)" "$(hostname)"
+            printf 'IMAGE=%s\nKERNEL=%s\nRADIOS=%s\n' "$image" "$kernel" "$profile_radios"
+        } > "$exported/provenance.env"
+        artifact_publish rdk-base-vm "$key" "$exported"
+        rm -rf -- "$exported"
+    fi
+}
+
 storage_driver() {  # the driver of this lab's pool, or the one a build would create
     lxc storage show "$storage" 2>/dev/null | awk '$1 == "driver:" {print $2; exit}' \
         | grep . || printf '%s\n' "${EASYMESH_LXD_STORAGE_DRIVER:-dir}"
@@ -390,7 +464,7 @@ push_inputs() {
     for file in "$assets"/*; do
         lxc file push "$file" "$name/home/easymesh/easymesh-assets/$(basename "$file")"
     done
-    for file in 00-base.sh 10-install-linux-7.sh 20-prepare-lab-host.sh \
+    for file in 00-base.sh 10-install-linux-7.sh 15-prepare-base.sh 20-prepare-lab-host.sh \
         30-boardfarm-wan.sh 40-deploy-easymesh.sh 50-runtime-service.sh \
         55-scale-topology.sh 56-wired-extenders.sh 70-health-audit.sh; do
         lxc file push --mode 0755 "$root/gen/vm/scripts/$file" \
@@ -505,8 +579,20 @@ build_vm() {
     extender_name=$(basename "$extender_image")
 
     phase create
-    init_args=(lxc init "$image" "$name" --vm
-        --config limits.cpu="$cpus" --config limits.memory="$memory")
+    base_key=$(base_image_key)
+    base_alias=easymesh-rdk-base-$base_key
+    from_base=false
+    if base_image_available "$base_alias" "$base_key"; then
+        from_base=true
+    fi
+    printf 'BASE_IMAGE=%s\nFROM_BASE_IMAGE=%s\nBASE_IMAGE_MODE=%s\n' \
+        "$base_alias" "$from_base" "$base_mode" >> "$record_dir/environment.txt"
+    if "$from_base"; then
+        init_args=(lxc init "$base_alias" "$name" --vm)
+    else
+        init_args=(lxc init "$image" "$name" --vm)
+    fi
+    init_args+=(--config limits.cpu="$cpus" --config limits.memory="$memory")
     easymesh_ensure_storage_pool "$storage"
     init_args+=(--storage "$storage")
     "${init_args[@]}" </dev/null
@@ -519,31 +605,46 @@ build_vm() {
     lxc config device override "$name" eth0 network="$network" \
         ipv4.address="$appliance_ipv4"
     lxc config set "$name" boot.autostart false
+    # A lab from a base image shares the base's machine-id with every other one:
+    # its address is pinned in the guest (pin_guest_address), as a copy's is.
+    ! "$from_base" || lxc config set "$name" user.easymesh.pin-address true
     add_proxy easymesh-webui "$webui_address" "$webui_port" 8888 "$appliance_ipv4"
     add_proxy wmediumd-console "$console_address" "$console_port" 8890 "$appliance_ipv4"
     add_proxy room-demo-viewer "$room_address" "$room_port" 8891 "$appliance_ipv4"
     lxc start "$name"
     wait_agent
+    pin_guest_address
     phase push-inputs
     push_inputs "$stage"
 
-    phase base-os
-    run_root bash /home/easymesh/easymesh-provision/00-base.sh
-    phase kernel
-    run_root bash /home/easymesh/easymesh-provision/10-install-linux-7.sh
-    lxc restart "$name" --timeout 300
-    wait_agent
-    test "$(lxc exec "$name" -- uname -r)" = "$kernel"
+    if ! "$from_base"; then
+        phase base-os
+        run_root bash /home/easymesh/easymesh-provision/00-base.sh
+        phase kernel
+        run_root bash /home/easymesh/easymesh-provision/10-install-linux-7.sh
+        lxc restart "$name" --timeout 300
+        wait_agent
+        test "$(lxc exec "$name" -- uname -r)" = "$kernel"
 
-    phase lab-host
-    run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
-        HWSIM_RADIOS="$profile_radios" \
-        bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
-    lxc restart "$name" --timeout 300
-    wait_agent
+        phase base-host
+        run_root env HWSIM_RADIOS="$profile_radios" \
+            bash /home/easymesh/easymesh-provision/15-prepare-base.sh
+        lxc restart "$name" --timeout 300
+        wait_agent
+    fi
+    test "$(lxc exec "$name" -- uname -r)" = "$kernel"
     run_root bash -c 'test "$(cat /sys/module/cfg80211/version)" = lab-netns-owner-1'
     phase wan
     run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
+    if ! "$from_base" && [ "$base_mode" != off ]; then
+        phase base-image
+        publish_base_image "$base_alias" "$base_key"
+        push_inputs "$stage"
+    fi
+
+    phase lab-host
+    run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
+        bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
     # outer VM agent cannot be tracked by snapd, so appliance lifecycle runs as
     # root. Source checkout operations remain explicitly scoped to easymesh.

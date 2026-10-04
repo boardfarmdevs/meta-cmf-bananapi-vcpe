@@ -14,6 +14,7 @@ name=rdk-test
 instance_exists() { :; }
 instance_state() { cat "$temporary/state"; }
 wait_agent() { :; }
+pin_guest_address() { echo "pin" >> "$temporary/calls"; }
 lxc() { echo "lxc $*" >> "$temporary/calls"; echo RUNNING > "$temporary/state"; }
 run_root() { echo "root $*" >> "$temporary/calls"; }
 

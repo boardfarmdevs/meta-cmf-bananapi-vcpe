@@ -74,7 +74,7 @@ def test_startup_and_acceptance_require_loaded_namespace_fix():
 
 def test_clean_appliance_reboots_after_radio_module_installation():
     builder = (ROOT / "vm/lxd/build.sh").read_text()
-    installed = builder.index("bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh")
+    installed = builder.index("bash /home/easymesh/easymesh-provision/15-prepare-base.sh")
     rebooted = builder.index('lxc restart "$name" --timeout 300', installed)
     ready = builder.index("wait_agent", rebooted)
     verified = builder.index('cat /sys/module/cfg80211/version', ready)
