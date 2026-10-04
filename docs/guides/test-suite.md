@@ -47,6 +47,26 @@ gen/tests/run-easymesh-suite.sh soak --yes-act --soak-preflight-only
 Default soak: **43,200 seconds (12 hours)**. Shorter runs are shakedowns,
 not long-duration acceptance.
 
+### What a change needs
+
+`gen/tests/affected-suites.py` reads a change and prints the least the lab VM needs
+(nothing, `build.sh update`, `build.sh build`, or new BPI images first) and the
+sections that can see it, with the paths that chose each one:
+
+```sh
+gen/tests/affected-suites.py origin/master          # this branch against master
+gen/tests/affected-suites.py v1.4.0 HEAD --json      # for a script
+```
+
+It follows `gen/medium` and `gen/optimizer` into their own histories. Documents need
+nothing; the optimizer, rooms, the medium (its daemon, console and radio module too) and
+the guest's services an update and their sections; the VM's other stages a build;
+recipes, `conf/`, `classes/` and `gen/build/` new images and every section; a path it
+does not know every section. Requalify a change with what it prints. Run every
+section and the 12-hour soak at release points: a tag, a lab handed over, or a change
+to the images. The map is `RULES` in the script; `gen/tests/test_affected_suites.py`
+keeps its decisions.
+
 `--soak-preflight-only` retains source matching, full-roster preparation and
 initial/final health/RF gates without churn. Its `p0-preflight` result records
 `acceptance_eligible=false`; `total_runtime_seconds` includes final checks.

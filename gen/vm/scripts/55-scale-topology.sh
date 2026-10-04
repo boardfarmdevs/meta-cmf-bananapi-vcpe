@@ -14,6 +14,13 @@ case "$profile" in
     100|unified) profile=unified; expected_clients=100; expected_private=50; expected_iot=50 ;;
     *) echo "invalid EASYMESH_SCALE_PROFILE: $profile" >&2; exit 2 ;;
 esac
+# A development lab's fewer clients (gen/wlan-client-pool.sh checks the number).
+if [ -n "${EASYMESH_DEV_CLIENTS:-}" ]; then
+    expected_clients=$EASYMESH_DEV_CLIENTS
+    expected_private=$((EASYMESH_DEV_CLIENTS / 2))
+    expected_iot=$((EASYMESH_DEV_CLIENTS / 2))
+    export EASYMESH_DEV_CLIENTS
+fi
 [[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
     echo 'CLIENT_CREATE_PARALLELISM must be a positive integer' >&2
     exit 2

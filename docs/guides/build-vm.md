@@ -18,8 +18,10 @@ test -c /dev/kvm
 The host installer initializes LXD only if it has no pool. The VM builder creates
 a separate `dir` storage pool for each lab name when it does not already exist.
 That pool persists if the VM is deleted, so a rebuild of the same lab reuses its
-named pool. Set `EASYMESH_LXD_STORAGE_DRIVER` only when a non-`dir` LXD backend
-is intentionally required.
+named pool. `EASYMESH_LXD_STORAGE_DRIVER=btrfs` (or `zfs`) makes the new pool
+copy-on-write, a sparse 400 GiB loop file by default (`EASYMESH_LXD_STORAGE_SIZE`):
+its labs copy and snapshot in seconds (`build.sh copy`, below). LXD's snap carries
+the Btrfs tools; ZFS needs the host's module.
 
 ## Choose a lab name
 
@@ -138,6 +140,44 @@ emosa-lab's adapter in C (fleet, GTP and agents; no Python) instead of the Pytho
 reference (the default); both take the same files, and `lab.sh agent POD python|c`
 in the VM swaps one pod's agent later.
 
+## A development lab
+
+`EASYMESH_DEV_CLIENTS=20 gen/vm/lxd/build.sh build` builds a lab with 20 clients
+(half private, half IoT; any even number from 10 to 98) instead of 100: quicker to
+build and lighter to run, for work on the mesh, the medium and steering. It has no
+room service (its unit needs the full roster), its acceptance checks the 20 and the
+medium's telemetry, and `snapshot`, `export` and `export-thin` refuse it.
+Qualification and every room run need the full lab.
+
+## Faster builds: the base image, the artifact store, the records
+
+A build starts from a **base VM image** when this host or the artifact store has
+one: the stages that do not depend on the commit (`00-base.sh`,
+`10-install-linux-7.sh`, `15-prepare-base.sh`, `30-boardfarm-wan.sh`: the OS and its
+packages, the radio kernel, nested LXD and its client image, the patched radio
+module, Boardfarm and its WAN) as an LXD image named by their inputs,
+`easymesh-rdk-base-KEY`. Without one, the build makes it on the way and publishes
+it (`EASYMESH_BASE_IMAGE=auto`, the default; `off` builds every stage and publishes
+nothing; `rebuild` makes it anew). The commit's own part of the host,
+`20-prepare-lab-host.sh`, refuses a base whose radio module was built from another
+medium.
+
+The **artifact store** (the umbrella's `docs/reference/artifact-store.md`) keeps
+what is slow to build, by the inputs it was built from. With
+`EASYMESH_ARTIFACT_STORE=http://HOST:8180`, `build-images.sh` fetches the Banana Pi
+images whose inputs match this checkout instead of running BitBake, and a VM build
+fetches the base image; `BUILD_SSTATE_MIRROR=http://HOST:8180/sstate-cache` gives a
+BitBake that does run another host's sstate cache. With
+`EASYMESH_ARTIFACT_PUBLISH=DIR` or `HOST:/DIR`, what is built is published.
+
+Every build, update and copy writes a **record** to
+`../build-evidence/KIND-NAME-STAMP/` (`EASYMESH_BUILD_RECORDS` moves it):
+`environment.txt` (host, commit, image, kernel, sizes, storage driver, whether it
+started from the base image), `phases.tsv` (each phase's start and seconds),
+`summary.txt`, `exit-code` and, on failure, `failed-phase`; `latest-KIND-NAME`
+links the newest. The suite's `summary.json` carries the run's and each section's
+seconds.
+
 ## Estimated build phases and time
 
 Use **about 55 minutes** as a planning reference for a fresh 100-client VM
@@ -178,8 +218,26 @@ gen/vm/lxd/build.sh update
 gen/vm/lxd/build.sh delete
 ```
 
-`update` moves an accepted VM to the checkout's commit in place; `build.sh help`
-says when it refuses.
+`update` moves an accepted VM to the checkout's commit in place: its checkout and
+submodules (the medium, the optimizer) follow, and the room service restarts and
+settles. When the commit changes what a build installs from the checkout, the update
+makes and installs that too and restarts the VM, as a build's cold boot does: the
+medium's daemon and console (built on the host, as a build builds them), its radio
+module (built in the VM from the medium's bundle, loaded by the restart), and the
+guest's services and tools (stages 30 and 50 again, with the lab's own settings).
+Its record (below) says what it did. `gen/tests/affected-suites.py BASE` says which
+step and which suite sections a change needs ([test suite](test-suite.md)).
+
+`copy NEW` copies the VM in its storage pool as NEW, with its own LXD identities,
+address and port block (from NEW's name, or `EASYMESH_COPY_PORT_BASE`), and leaves
+it stopped; `EASYMESH_LXD_NAME=NEW gen/vm/lxd/build.sh start` starts it. A running
+VM is copied through a snapshot. On a Btrfs or ZFS pool
+(`EASYMESH_LXD_STORAGE_DRIVER=btrfs` for a new lab's pool, sized by
+`EASYMESH_LXD_STORAGE_SIZE`, 400 GiB sparse by default) the copy takes seconds and
+shares the original's blocks; on `dir` it is a full copy. A copy shares the
+original's machine-id, so its first start writes its address into its netplan: two
+labs on one bridge never take each other's lease. Experiment on copies; never run a
+suite on two copies of one lab at the same time.
 
 `delete` removes only the named VM. It deliberately leaves the matching storage
 pool intact. To remove a lab permanently, stop/delete its VM, review the exact

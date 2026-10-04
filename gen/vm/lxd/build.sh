@@ -51,6 +51,14 @@ emosa_pod_image=${EMOSA_POD_IMAGE:-}
 emosa_agent=${EASYMESH_EMOSA_AGENT:-python}
 base_mode=${EASYMESH_BASE_IMAGE:-auto}
 case "$base_mode" in auto|off|rebuild) ;; *) echo 'EASYMESH_BASE_IMAGE must be auto, off or rebuild' >&2; exit 2 ;; esac
+# A development lab: fewer clients (half private, half IoT), quicker to build and lighter
+# to run; no room service (it needs the full roster), never snapshot as accepted or exported.
+dev_clients=${EASYMESH_DEV_CLIENTS:-}
+if [ -n "$dev_clients" ] && { [[ ! $dev_clients =~ ^[1-9][0-9]$ ]] || [ $((dev_clients % 2)) -ne 0 ]; }; then
+    echo "EASYMESH_DEV_CLIENTS must be an even number from 10 to 98 (the full lab has $profile_clients)" >&2
+    exit 2
+fi
+lab_clients=${dev_clients:-$profile_clients}
 [[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
 [[ "$emosa_agent" =~ ^(python|c)$ ]] || { echo 'EASYMESH_EMOSA_AGENT must be python or c' >&2; exit 2; }
 [[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
@@ -74,8 +82,9 @@ Commands:
   export-thin check, remove provisioned nodes and export the universal offline bundle
   update      move the accepted VM forward to this checkout's commit in place, without a
               build: its checkout and submodules (the medium, the optimizer) follow, the room
-              service restarts and settles; refused when the commit changes what a build
-              installs (the medium's daemon, console or radio module, the guest's tools)
+              service restarts and settles; when the commit changes what a build installs
+              (the medium's daemon, console or radio module, the guest's services and
+              tools) the update makes and installs that too and restarts the VM
   delete      delete only the named appliance VM after showing its identity
   copy NEW    copy the VM as NEW in its storage pool (seconds on btrfs or zfs), with its own
               identities, address and port block (EASYMESH_COPY_PORT_BASE overrides); left
@@ -90,6 +99,8 @@ Build inputs:
 
 Common overrides:
   EASYMESH_LAB_PROFILE=$profile_clients (fixed capacity: 100 clients)
+  EASYMESH_DEV_CLIENTS=20 (a development lab: that many clients, no room service; never
+              snapshot as accepted or exported)
   EASYMESH_LAB_NAME=$name
   EASYMESH_LXD_NAME=$name
   EASYMESH_LXD_CPUS=$cpus
@@ -585,8 +596,8 @@ build_vm() {
     if base_image_available "$base_alias" "$base_key"; then
         from_base=true
     fi
-    printf 'BASE_IMAGE=%s\nFROM_BASE_IMAGE=%s\nBASE_IMAGE_MODE=%s\n' \
-        "$base_alias" "$from_base" "$base_mode" >> "$record_dir/environment.txt"
+    printf 'BASE_IMAGE=%s\nFROM_BASE_IMAGE=%s\nBASE_IMAGE_MODE=%s\nDEV_CLIENTS=%s\n' \
+        "$base_alias" "$from_base" "$base_mode" "$dev_clients" >> "$record_dir/environment.txt"
     if "$from_base"; then
         init_args=(lxc init "$base_alias" "$name" --vm)
     else
@@ -608,6 +619,7 @@ build_vm() {
     # A lab from a base image shares the base's machine-id with every other one:
     # its address is pinned in the guest (pin_guest_address), as a copy's is.
     ! "$from_base" || lxc config set "$name" user.easymesh.pin-address true
+    [ -z "$dev_clients" ] || lxc config set "$name" user.easymesh.dev-clients "$dev_clients"
     add_proxy easymesh-webui "$webui_address" "$webui_port" 8888 "$appliance_ipv4"
     add_proxy wmediumd-console "$console_address" "$console_port" 8890 "$appliance_ipv4"
     add_proxy room-demo-viewer "$room_address" "$room_port" 8891 "$appliance_ipv4"
@@ -658,7 +670,7 @@ build_vm() {
     phase clients
     run_root env HOME=/home/easymesh \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
-        EASYMESH_SCALE_PROFILE="$profile" \
+        EASYMESH_SCALE_PROFILE="$profile" EASYMESH_DEV_CLIENTS="$dev_clients" \
         CLIENT_CREATE_PARALLELISM="$client_create_parallelism" \
         bash /home/easymesh/easymesh-provision/55-scale-topology.sh
     phase wired-extenders
@@ -666,7 +678,7 @@ build_vm() {
         bash /home/easymesh/easymesh-provision/56-wired-extenders.sh
     phase runtime
     run_root env EASYMESH_SCALE_PROFILE="$profile" \
-        HEALTH_EXPECT_CLIENTS="$profile_clients" \
+        HEALTH_EXPECT_CLIENTS="$lab_clients" \
         bash /home/easymesh/easymesh-provision/50-runtime-service.sh
     run_root bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/install.sh --start
     # A VM NAT proxy connects to the guest NIC, not to guest loopback. Keep the
@@ -683,16 +695,22 @@ build_vm() {
     wait_agent
     run_root systemctl start easymesh-lab.service
     phase acceptance
-    check_baseline env HEALTH_EXPECT_CLIENTS="$profile_clients"
+    check_baseline env HEALTH_EXPECT_CLIENTS="$lab_clients"
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
     wait_http_ready "EasyMesh WebUI proxy" \
         "http://$proxy_check_address:$webui_port/api/v1/topology"
     wait_http_ready "wmediumd Console NG proxy" \
         "http://$proxy_check_address:$console_port/api/v2/health"
-    wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
-    run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/check-ready.py \
-        --require-room --require-survey --timeout 120
+    if [ -z "$dev_clients" ]; then
+        wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
+        run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/check-ready.py \
+            --require-room --require-survey --timeout 120
+    else
+        # a development lab has no room service: the medium's telemetry is its gate
+        run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/check-ready.py \
+            --require-survey --timeout 120
+    fi
     if [ "$emosa" != 0 ]; then
         phase emosa
         emosa_vm
@@ -805,7 +823,17 @@ check_vm() {
     check_baseline
 }
 
+refuse_dev_lab() {      # a development lab is never accepted or exported
+    local clients
+    clients=$(lxc config get "$name" user.easymesh.dev-clients 2>/dev/null) || true
+    [ -z "$clients" ] || {
+        echo "$name is a development lab with $clients clients: build the full lab to accept or export it" >&2
+        exit 1
+    }
+}
+
 snapshot_vm() {
+    refuse_dev_lab
     check_vm
     # `lxc info INSTANCE/SNAPSHOT` rejects the slash-qualified name on newer
     # LXD releases even when the snapshot exists. `lxc config show` supports
@@ -819,6 +847,7 @@ snapshot_vm() {
 export_vm() {
     local short bundle output created actual_cpus actual_memory actual_disk actual_storage trim_report
     require_command jq
+    refuse_dev_lab
     install -d "$export_dir"
     check_vm
     run_root test ! -d /opt/easymesh-observability || { echo 'Remove monitoring credentials/data before exporting; see observability/README.md' >&2; exit 1; }
@@ -908,6 +937,7 @@ export_thin_vm() {
     local short bundle output created actual_cpus actual_memory actual_disk actual_storage
     local trim_report controller_name extender_name meta_commit wmediumd_sha assets
     require_command jq
+    refuse_dev_lab
     install -d "$export_dir"
     [ -n "$controller_image" ] || { echo 'set EASYMESH_CONTROLLER_IMAGE' >&2; exit 2; }
     [ -n "$extender_image" ] || { echo 'set EASYMESH_EXTENDER_IMAGE' >&2; exit 2; }
@@ -1047,8 +1077,8 @@ EOF
 }
 
 update_vm() (
-    local repo=/home/easymesh/git/meta-cmf-bananapi-vcpe guest_assets=/home/easymesh/easymesh-assets
-    local host_commit guest_commit guest_medium stage file
+    local repo=/home/easymesh/git/meta-cmf-bananapi-vcpe asset_dir=/home/easymesh/easymesh-assets
+    local host_commit guest_commit guest_medium stage medium_tools=false radio=false guest=false
     instance_exists
     [ "$(instance_state)" = RUNNING ] || { echo "$name is not running: $0 start" >&2; exit 1; }
     wait_agent
@@ -1060,14 +1090,15 @@ update_vm() (
         echo "$name is at $guest_commit, not an ancestor of $host_commit: build instead" >&2
         exit 1
     }
-    # What a build made from the checkout and installed: the medium's daemon, console and
-    # radio module, and the guest's services and tools. A change there needs a build.
+    # What a build made from the checkout and installed: the medium's daemon and console
+    # (made here), its radio module (made in the guest) and the guest's services and tools.
+    # An update makes and installs what changed of them, then restarts the VM, as a build's
+    # cold boot does.
     guest_medium=$(git -C "$root" rev-parse "$guest_commit:gen/medium")
-    git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- wmediumd observer hwsim \
-        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' || {
-        echo "the medium's daemon, console or radio module changed since $guest_medium: build instead" >&2
-        exit 1
-    }
+    git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- wmediumd observer \
+        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' || medium_tools=true
+    git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- hwsim \
+        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' || radio=true
     # The topology page comes with the controller image (gen/medium/topology-ui, assembled by
     # its recipe): a VM build would not change it either.
     git -C "$root/gen/medium" diff --quiet "$guest_medium" HEAD -- topology-ui \
@@ -1075,22 +1106,26 @@ update_vm() (
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/*.md' ||
         echo "note: the medium's topology page changed since $guest_medium; the gateway serves its image's page until a controller image built from this checkout" >&2
     git -C "$root" diff --quiet "$guest_commit" "$host_commit" -- gen/vm/scripts/guest \
+        gen/vm/scripts/30-boardfarm-wan.sh gen/vm/scripts/50-runtime-service.sh \
         gen/vm/scripts/55-scale-topology.sh gen/vm/scripts/60-scale-steering-test.sh \
-        gen/vm/scripts/61-return-steering-regression.sh || {
-        echo "the guest's services or tools changed since $guest_commit: build instead" >&2
-        exit 1
-    }
+        gen/vm/scripts/61-return-steering-regression.sh || guest=true
+    record_open update
+    printf 'FROM=%s\nMEDIUM_TOOLS=%s\nRADIO_MODULE=%s\nGUEST=%s\n' "$guest_commit" \
+        "$medium_tools" "$radio" "$guest" >> "$record_dir/environment.txt"
     stage=$(mktemp -d)
-    trap 'rm -rf "$stage"' EXIT
+    trap 'record_close "$?"; rm -rf "$stage"' EXIT
+    phase inputs
     install -d "$stage/assets"
     make_bundle "$root" "$host_commit" "$stage/assets/meta-cmf-bananapi-vcpe.bundle"
-    make_bundle "$root/gen/medium" "$(git -C "$root" rev-parse HEAD:gen/medium)" \
-        "$stage/assets/easymesh-medium.bundle"
+    if "$medium_tools"; then
+        prepare_medium "$stage"
+    else
+        make_bundle "$root/gen/medium" "$(git -C "$root" rev-parse HEAD:gen/medium)" \
+            "$stage/assets/easymesh-medium.bundle"
+    fi
     prepare_optimizer "$stage"
-    for file in "$stage"/assets/*.bundle; do
-        lxc file push "$file" "$name$guest_assets/$(basename "$file")"
-        lxc exec "$name" -- chown easymesh:easymesh "$guest_assets/$(basename "$file")"
-    done
+    push_inputs "$stage"
+    phase checkout
     # A directory the commit turns into a submodule keeps only ignored files: bytecode,
     # some of it the root-run room service's, so root removes them.
     lxc exec "$name" -- env REPO="$repo" bash -euo pipefail -c '
@@ -1099,7 +1134,7 @@ update_vm() (
             [ ! -d "$path" ] || [ -e "$path/.git" ] || git -c safe.directory="$REPO" clean -q -fdX -- "$path"
         done
     '
-    lxc exec "$name" -- sudo -H -u easymesh env REPO="$repo" ASSETS="$guest_assets" \
+    lxc exec "$name" -- sudo -H -u easymesh env REPO="$repo" ASSETS="$asset_dir" \
         COMMIT="$host_commit" bash -euo pipefail -c '
         cd "$REPO"
         test -z "$(git status --porcelain --untracked-files=no)"
@@ -1121,7 +1156,53 @@ update_vm() (
         echo "$(git rev-parse --short HEAD): medium $(git -C gen/medium rev-parse --short HEAD)," \
             "optimizer $(git -C gen/optimizer rev-parse --short HEAD)"
     '
-    run_root bash "$repo/gen/lab-bringup.sh" room
+    if "$medium_tools"; then
+        # As 20-prepare-lab-host.sh installs them; the restart below starts them.
+        phase medium-tools
+        # shellcheck disable=SC2016 # the guest's shell expands these
+        lxc exec "$name" -- sudo -H -u easymesh env REPO="$repo" ASSETS="$asset_dir" sh -eu -c '
+            install -D -m 0755 "$ASSETS/wmediumd" "$REPO/gen/medium/wmediumd/build/wmediumd"
+            install -m 0644 "$ASSETS/wmediumd.provenance.env" \
+                "$REPO/gen/medium/wmediumd/build/wmediumd.provenance.env"
+            install -m 0755 "$ASSETS/wmediumd-console" "$REPO/gen/medium/observer/wmediumd-console"'
+        run_root sh "$repo/gen/medium/observer/install.sh"
+    fi
+    if "$radio"; then
+        # As 15-prepare-base.sh builds it, from the medium's bundle in a scratch clone. A live
+        # pool is never reloaded: the restart below loads the new module.
+        phase radio-module
+        # shellcheck disable=SC2016 # the guest's shell expands these
+        run_root env ASSETS="$asset_dir" KERNEL="$kernel" bash -euo pipefail -c '
+            medium=$(mktemp -d /tmp/easymesh-medium.XXXXXX)
+            trap "rm -rf -- $medium" EXIT
+            git clone -q "$ASSETS/easymesh-medium.bundle" "$medium/easymesh-medium"
+            git -C "$medium/easymesh-medium" checkout -q --detach origin/lxd-appliance-export
+            REFETCH=1 "$medium/easymesh-medium/hwsim/build-hwsim.sh" --6ghz --install
+            module=$(modinfo -k "$KERNEL" -F filename mac80211_hwsim)
+            test "$module" = "/lib/modules/$KERNEL/updates/mac80211_hwsim.ko"
+            grep -aq "EXPERIMENTAL wmediumd" "$module"
+            sha256sum "$module" > /var/lib/easymesh-lab/mac80211_hwsim.sha256
+            git -C "$medium/easymesh-medium" rev-parse HEAD:hwsim \
+                > /var/lib/easymesh-lab/mac80211_hwsim.source'
+    fi
+    if "$guest" || "$medium_tools"; then
+        # The stages that install the guest's services and tools, again with the lab's own
+        # settings; both leave a running lab as it is.
+        phase guest
+        run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
+        run_root bash -euo pipefail -c 'set -a; . /etc/default/easymesh-lab; set +a
+            exec bash /home/easymesh/easymesh-provision/50-runtime-service.sh'
+    fi
+    if "$medium_tools" || "$radio" || "$guest"; then
+        phase restart
+        stop_vm
+        start_vm
+    else
+        phase room
+        run_root bash "$repo/gen/lab-bringup.sh" room
+    fi
+    trap 'rm -rf "$stage"' EXIT
+    record_close 0
 )
 
 # An instance made from another (a copy, or a lab built from a base image) gets
@@ -1143,7 +1224,7 @@ reseed_identity() {     # reseed_identity INSTANCE (stopped)
 }
 
 pin_guest_address() {   # the instance's reserved address, static in the guest (running)
-    local address cidr mac interface netplan attempt actual
+    local address cidr mac interface netplan actual
     [ "$(lxc config get "$name" user.easymesh.pin-address)" = true ] || return 0
     address=$(lxc config device get "$name" eth0 ipv4.address)
     [ -n "$address" ] || return 0

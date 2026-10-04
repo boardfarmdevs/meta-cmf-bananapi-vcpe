@@ -149,6 +149,12 @@ room() {
     local i state=
     systemctl stop "$ROOM_UNIT" 2>/dev/null || true
     pool_online
+    # A development lab (fewer clients than the room's roster) has no room service: its
+    # unit's condition is the full roster, as here.
+    if ! grep -qx HEALTH_EXPECT_CLIENTS=100 /etc/default/easymesh-lab 2>/dev/null; then
+        log "a development lab ($(sed -n 's/^HEALTH_EXPECT_CLIENTS=//p' /etc/default/easymesh-lab 2>/dev/null) clients): no room service"
+        return 0
+    fi
     systemctl reset-failed "$ROOM_UNIT" 2>/dev/null || true
     systemctl start "$ROOM_UNIT"
     for i in $(seq 120); do

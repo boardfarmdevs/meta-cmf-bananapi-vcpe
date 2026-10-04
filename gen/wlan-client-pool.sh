@@ -8,6 +8,16 @@ ACTION=${1:-plan}
 PROFILE=unified
 PRIVATE_COUNT=50
 IOT_COUNT=50
+# A development lab (gen/vm/lxd/build.sh, EASYMESH_DEV_CLIENTS): fewer clients, half of them
+# private, half IoT; it has no room service and never qualifies.
+if [ -n "${EASYMESH_DEV_CLIENTS:-}" ]; then
+    if [[ ! $EASYMESH_DEV_CLIENTS =~ ^[1-9][0-9]$ ]] || [ $((EASYMESH_DEV_CLIENTS % 2)) -ne 0 ]; then
+        echo "EASYMESH_DEV_CLIENTS must be an even number from 10 to 98" >&2
+        exit 2
+    fi
+    PRIVATE_COUNT=$((EASYMESH_DEV_CLIENTS / 2))
+    IOT_COUNT=$((EASYMESH_DEV_CLIENTS / 2))
+fi
 PRIVATE_SSID=${PRIVATE_SSID:-private_ssid}
 PRIVATE_PSK=${PRIVATE_PSK:-test-fronthaul}
 IOT_SSID=${IOT_SSID:-iot_ssid}
