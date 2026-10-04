@@ -3,8 +3,8 @@
 [Documents](../README.md) · [Build a named LXD VM](../guides/build-vm.md)
 
 What makes a lab VM cheaper to build, to try things on and to requalify, from the labs'
-[faster, cheaper labs](https://github.com/boardfarmdevs/easymesh-labs/blob/main/docs/proposals/faster-labs.md)
-proposal. The prplMesh lab has the same mechanisms under the same names.
+faster, cheaper labs proposal (in [easymesh-labs](https://mesh.vcpe.dev/)). The prplMesh
+lab has the same mechanisms under the same names.
 
 ## Update in place
 
