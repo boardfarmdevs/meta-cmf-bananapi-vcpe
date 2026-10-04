@@ -127,16 +127,15 @@ a port `eth2` of `bpibroadband`'s `brlan0`), made by `gen/wired-extender.sh`
 `EASYMESH_EMOSA=1` on a build, or `build.sh emosa` on an accepted VM, adds
 emosa-lab's OpenSync adapter to the lab: EMOSA, its fleet, the pods' gateway
 (GTP) on the wired LAN port, two OpenSync pods from the pinned image
-(`EMOSA_POD_IMAGE`, `.../out/mvx-pod-STAMP`), their telemetry and their Wi-Fi
-backhaul, and the room service on the rooms with the pods
-(`gen/medium/configurator/worlds-pods`: the standard rooms plus `pod_1`,
-`pod_2`). emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`;
-`EMOSA_LAB` names its checkout, clean at the commit `gen/vm/lxd/emosa-lab.env`
-pins). It needs the wired extender. After a reboot,
-`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` installs
-emosa-lab's adapter in C (fleet, GTP and agents; no Python) instead of the Python
-reference (the default); both take the same files, and `lab.sh agent POD python|c`
-in the VM swaps one pod's agent later.
+(`EMOSA_POD_IMAGE`, `.../out/mvx-pod-STAMP`), their telemetry and Wi-Fi
+backhaul, and the rooms with the pods (`gen/medium/configurator/worlds-pods`).
+emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`; its
+`docs/concepts/rdk-lab.md`); `EMOSA_LAB` names its checkout, clean at the commit
+`gen/vm/lxd/emosa-lab.env` pins. It needs the wired extender. After a reboot,
+`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` installs the
+adapter in C instead of the Python reference. `EASYMESH_EMOSA_IN=gateway` then
+moves EMOSA into the gateway, its state on `/nvram`: the controller image's own
+package (`BUILD_EMOSA=1`, checked before the build).
 
 ## Estimated build phases and time
 

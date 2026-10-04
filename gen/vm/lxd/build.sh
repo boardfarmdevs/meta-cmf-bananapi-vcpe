@@ -48,7 +48,10 @@ emosa=${EASYMESH_EMOSA:-0}
 emosa_lab=${EMOSA_LAB:-$(cd "$root/.." && pwd)/emosa-lab}
 emosa_pin=$(sed -n 's/^EMOSA_LAB_COMMIT=//p' "$root/gen/vm/lxd/emosa-lab.env")
 emosa_pod_image=${EMOSA_POD_IMAGE:-}
-emosa_agent=${EASYMESH_EMOSA_AGENT:-python}
+# where EMOSA's fleet and agents run: emosa-lab's adapter container, or the gateway, from the
+# controller image's own package (an image built with BUILD_EMOSA=1, its adapter in C)
+emosa_in=${EASYMESH_EMOSA_IN:-container}
+if [ "$emosa_in" = gateway ]; then emosa_agent=${EASYMESH_EMOSA_AGENT:-c}; else emosa_agent=${EASYMESH_EMOSA_AGENT:-python}; fi
 base_mode=${EASYMESH_BASE_IMAGE:-auto}
 case "$base_mode" in auto|off|rebuild) ;; *) echo 'EASYMESH_BASE_IMAGE must be auto, off or rebuild' >&2; exit 2 ;; esac
 # A development lab: fewer clients (half private, half IoT), quicker to build and lighter
@@ -61,6 +64,11 @@ fi
 lab_clients=${dev_clients:-$profile_clients}
 [[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
 [[ "$emosa_agent" =~ ^(python|c)$ ]] || { echo 'EASYMESH_EMOSA_AGENT must be python or c' >&2; exit 2; }
+[[ "$emosa_in" =~ ^(container|gateway)$ ]] || { echo 'EASYMESH_EMOSA_IN must be container or gateway' >&2; exit 2; }
+[ "$emosa_in" = container ] || [ "$emosa_agent" = c ] || {
+    echo 'EASYMESH_EMOSA_IN=gateway runs the image'"'"'s adapter, in C: EASYMESH_EMOSA_AGENT=c' >&2
+    exit 2
+}
 [[ "$client_create_parallelism" =~ ^[1-9][0-9]*$ ]] || {
     echo 'CLIENT_CREATE_PARALLELISM must be a positive integer' >&2
     exit 2
@@ -127,6 +135,10 @@ The EMOSA option (emosa-lab, on the lab's wired LAN port; needs the wired extend
   EASYMESH_EMOSA_AGENT=$emosa_agent (the adapter's implementation: python, the reference, or c,
     its fleet, GTP and agents in C with no Python installed; lab.sh agent POD python|c in
     the VM swaps one pod's agent later)
+  EASYMESH_EMOSA_IN=$emosa_in (container: EMOSA's fleet and agents in emosa-lab's adapter
+    container; gateway: then in the gateway, from the controller image's own package, its
+    state on /nvram: an image from gen/build/build-images.sh with BUILD_EMOSA=1, the adapter
+    in C, EASYMESH_EMOSA_AGENT=c)
   EMOSA_POD_IMAGE=<.../out/mvx-pod-STAMP> (the OpenSync pod image the easymesh-labs
     manifest pins, from opensync-lab's build-pod.sh)
 EOF
@@ -765,6 +777,14 @@ emosa_inputs() {
         echo 'set EMOSA_POD_IMAGE to the pinned OpenSync pod image (.../out/mvx-pod-STAMP)' >&2
         exit 2
     }
+    # EMOSA in the gateway: the controller image must carry it, known before the build (its
+    # listing read whole, about 15 s: grep -q would stop tar early, a failure under pipefail)
+    if [ "$emosa_in" = gateway ] && [ -n "$controller_image" ] && ! instance_exists 2>/dev/null; then
+        tar -tjf "$controller_image" 2>/dev/null | grep 'usr/bin/emosa-fleet-c$' >/dev/null || {
+            echo "EASYMESH_EMOSA_IN=gateway: $controller_image has no EMOSA (build it with BUILD_EMOSA=1)" >&2
+            exit 2
+        }
+    fi
 }
 
 emosa_vm() {
@@ -777,9 +797,20 @@ emosa_vm() {
         echo "$name has no wired extender bpiap-004" >&2
         exit 1
     }
+    if [ "$emosa_in" = gateway ]; then
+        lxc exec "$name" -- lxc exec bpibroadband -- test -x /usr/bin/emosa-fleet-c || {
+            echo "$name: its gateway has no EMOSA (EASYMESH_EMOSA_IN=gateway needs a BUILD_EMOSA=1 controller image)" >&2
+            exit 1
+        }
+    fi
     EMOSA_VM=$name EMOSA_POD_IMAGE=$emosa_pod_image "$emosa_lab/deploy/rdk-lab/lab.sh" stage
-    EMOSA_VM=$name "$emosa_lab/deploy/rdk-lab/lab.sh" up "$emosa_agent"
+    if [ "$emosa_in" = gateway ]; then
+        EMOSA_VM=$name "$emosa_lab/deploy/rdk-lab/lab.sh" up "$emosa_agent" gateway
+    else
+        EMOSA_VM=$name "$emosa_lab/deploy/rdk-lab/lab.sh" up "$emosa_agent"
+    fi
     lxc config set "$name" user.easymesh.emosa-lab "$(emosa_commit)"
+    lxc config set "$name" user.easymesh.emosa-in "$emosa_in"
 }
 
 start_vm() {
