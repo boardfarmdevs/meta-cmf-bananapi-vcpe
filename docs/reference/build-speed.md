@@ -123,7 +123,10 @@ module and a guest tool: 33 minutes, of which 5 to build and install them (the d
 console 23 s with the inputs, the radio module 171 s in the VM, stages 30 and 50 86 s) and
 28 to restart and bring the lab up. In the copy, the checkout was the commit's, the loaded
 radio module was built from its medium (and matched the checksum the update recorded), and
-the guest ran the new tool. A build of the same commit would take the 73 minutes above.
+the guest ran the new tool. A build of the same commit would take the 73 minutes above. The
+updated copy passed `check` in full (its traffic gate too) once it had the host to itself
+but for one other lab VM; with three lab VMs running, 25 of its 100 clients had lost packets
+in that gate, as 19 of rdk-1001's did on 1 October.
 
 ## A development lab
 
