@@ -34,7 +34,9 @@ inherit cmake pkgconfig systemd python3native
 DEPENDS = "cjson openssl sqlite3 rdk-logger"
 
 # c/README.md "Logging, version and package": logging through RDK's logger into
-# /rdklogs/logs, the package's layout, the units, the bill of materials
+# /rdklogs/logs, the package's layout, the units, the bill of materials; EMOSA's
+# configuration and state on the gateway's persistent /nvram, which an image upgrade keeps,
+# and its agents' status (rewritten once a second) in RAM, /run
 EXTRA_OECMAKE = " \
     -DEMOSA_INSTALL_DATA=ON \
     -DEMOSA_RDK_LOGGER=ON \
@@ -43,6 +45,11 @@ EXTRA_OECMAKE = " \
     -DEMOSA_PROFILES_DIR=${datadir}/emosa/profiles \
     -DEMOSA_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
     -DEMOSA_DNSMASQ=${bindir}/dnsmasq \
+    -DEMOSA_FLEET_CONFIG=/nvram/emosa/fleet-config.json \
+    -DEMOSA_AGENT_CONFIG_DIR=/nvram/emosa/agents \
+    -DEMOSA_GTP_CONFIG=/nvram/emosa/gtp-config.json \
+    -DEMOSA_STATE_ROOT=/nvram/emosa/state \
+    -DEMOSA_RUN_ROOT=/run/emosa \
 "
 
 # the GRE termination point a package of its own: the gateway serves the pods' onboarding
