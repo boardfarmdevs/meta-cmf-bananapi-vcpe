@@ -680,6 +680,24 @@ hwsim_default_radios=1
 # device is present before container init/OneWifi runs.
 lxc init "${imagename}" "${containername}" -p "${profilename}" || exit 1
 hwsim_attach_radios "${profilename}" "${HWSIM_RADIOS:-$hwsim_default_radios}"
+
+# The extender image installs and enables CCSP components without their programs (and
+# their working directories). With Restart=always each failed and restarted about every
+# 10 s for as long as the lab ran, behind ten `sysevent get` polls of GwProvCheck.sh: on
+# 4 October 2026 14,700 times per unit in 42 hours. Skip each unit while its program is
+# absent; an image that carries the program runs it as before.
+if [ "$mv" = "bpiap" ]; then
+    dropin=$(mktemp) || exit 1
+    for unit in CcspPandMSsp:/usr/bin/CcspPandMSsp CcspTandDSsp:/usr/bin/CcspTandDSsp \
+            snmpSubAgent:/usr/bin/snmp_subagent CcspAdvSecuritySsp:/usr/bin/CcspAdvSecuritySsp \
+            CcspXdnsSsp:/usr/bin/CcspXdnsSsp; do
+        printf '[Unit]\nConditionPathExists=%s\n' "${unit#*:}" > "$dropin"
+        lxc file push -q --create-dirs --uid 0 --gid 0 --mode 0644 "$dropin" \
+            "${containername}/etc/systemd/system/${unit%%:*}.service.d/lab-program-present.conf" \
+            || { rm -f "$dropin"; exit 1; }
+    done
+    rm -f "$dropin"
+fi
 lxc start "${containername}" || exit 1
 
 # Build provenance: the container name no longer carries the datestamp, so record
