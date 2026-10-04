@@ -26,10 +26,11 @@ IMAGE_INSTALL_append = " systemd-analyze"
 
 # EMOSA, the OpenSync pods' EasyMesh adapter in C (recipes-emosa/emosa): opt-in and off by
 # default, so the default image is unchanged (easymesh-labs plan 5.5). EMOSA_ADAPTER = "1"
-# (local.conf, or gen/build/build-images.sh with BUILD_EMOSA=1) installs its agent and fleet;
-# its GRE termination point only with EMOSA_GTP = "1" as well (plan 5.2 decides that role).
+# (local.conf, or gen/build/build-images.sh with BUILD_EMOSA=1) installs its agent and fleet,
+# and its GRE termination point: the gateway serves the pods' onboarding and ends their GRE
+# (plan 5.2, decided 4 Oct); EMOSA_GTP = "0" leaves the GTP out.
 EMOSA_ADAPTER ??= "0"
-EMOSA_GTP ??= "0"
+EMOSA_GTP ??= "${EMOSA_ADAPTER}"
 IMAGE_INSTALL_append = "${@' emosa' if d.getVar('EMOSA_ADAPTER') == '1' else ''}"
 IMAGE_INSTALL_append = "${@' emosa-gtp' if d.getVar('EMOSA_ADAPTER') == '1' and d.getVar('EMOSA_GTP') == '1' else ''}"
 

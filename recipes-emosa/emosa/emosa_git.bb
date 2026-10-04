@@ -45,8 +45,8 @@ EXTRA_OECMAKE = " \
     -DEMOSA_DNSMASQ=${bindir}/dnsmasq \
 "
 
-# the GRE termination point apart: whether the gateway serves the pods' onboarding and
-# ends their GRE is plan 5.2's decision
+# the GRE termination point a package of its own: the gateway serves the pods' onboarding
+# and ends their GRE (plan 5.2, decided 4 Oct); an image may still leave it out (EMOSA_GTP)
 PACKAGES =+ "${PN}-gtp"
 FILES:${PN}-gtp = " \
     ${bindir}/emosa-gtp-c \
@@ -61,11 +61,12 @@ FILES:${PN} += " \
 CONFFILES:${PN} = "${sysconfdir}/default/emosa"
 
 SYSTEMD_PACKAGES = "${PN} ${PN}-gtp"
-# the fleet is inert until /etc/emosa-fleet.json exists; it enables an agent per pod
+# the fleet is inert until /etc/emosa-fleet.json exists, it enables an agent per pod; the
+# GTP is inert until /etc/emosa-gtp.json exists
 SYSTEMD_SERVICE:${PN} = "emosa-fleet.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service"
-SYSTEMD_AUTO_ENABLE:${PN}-gtp = "disable"
+SYSTEMD_AUTO_ENABLE:${PN}-gtp = "enable"
 
 # the agent's link helper: bash, iproute2's ip (a macvlan per agent)
 RDEPENDS:${PN} = "bash iproute2"

@@ -125,13 +125,14 @@ BUILD_EMOSA=1 bash gen/build/build-images.sh controller   # record: build-eviden
 
 From a Yocto shell, `EMOSA_ADAPTER = "1"` in `local.conf`, or in a file given to
 bitbake with another `-R` as the helper does (`emosa-build.conf`; `clean-build.conf`
-stays the default image's), does the same; `EMOSA_GTP = "1"` as well adds its GRE termination point (package
-`emosa-gtp`, its unit disabled). The image then has:
+stays the default image's), does the same. EMOSA's GRE termination point comes with it
+(package `emosa-gtp`; plan 5.2: the gateway serves the pods' onboarding and ends their
+GRE) unless `EMOSA_GTP = "0"`. The image then has:
 
 | Path | What |
 | --- | --- |
-| `/usr/bin/emosa-agent-c`, `emosa-fleet-c` (`emosa-gtp-c`) | the programs; `--version` names the emosa-lab revision |
-| `/lib/systemd/system/emosa-fleet.service`, `emosa-agent@.service` | the fleet, enabled and inert until `/etc/emosa-fleet.json` exists; it enables an agent per pod |
+| `/usr/bin/emosa-agent-c`, `emosa-fleet-c`, `emosa-gtp-c` | the programs; `--version` names the emosa-lab revision |
+| `/lib/systemd/system/emosa-fleet.service`, `emosa-agent@.service`, `emosa-gtp.service` | the fleet, enabled and inert until `/etc/emosa-fleet.json` exists, it enables an agent per pod; the GTP, enabled and inert until `/etc/emosa-gtp.json` exists |
 | `/etc/default/emosa` | `EMOSA_TRUNK=emlan`, `EMOSA_BRIDGE=brlan0`: the agents' macvlans on a veth pair into the controller's LAN bridge |
 | `/usr/share/emosa/` | schemas, pod profiles, example configurations, the bill of materials `emosa-c.spdx.json` |
 | `/rdklogs/logs/EMOSAFleetLog.txt`, `EMOSA_<pod>.txt` | the logs, through RDK's logger (`LOG.RDK.EMOSA` in `debug.ini`) |

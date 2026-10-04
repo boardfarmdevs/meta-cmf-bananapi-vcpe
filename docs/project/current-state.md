@@ -84,7 +84,8 @@ EMOSA in the controller image itself is opt-in and off by default (the recipe
 `recipes-emosa/emosa`, `EMOSA_ADAPTER = "1"`; `BUILD_EMOSA=1 gen/build/build-images.sh
 controller`): emosa-lab's C programs at the same pinned commit, logging through RDK's
 logger into `/rdklogs/logs`, the fleet enabled and inert until `/etc/emosa-fleet.json`
-exists. Built on 3 October on rev140 (`X86EMLTRBPIBB_rdk-next_20261004013832`): it
+exists, and (plan 5.2, decided 4 October) the GRE termination point, inert until
+`/etc/emosa-gtp.json` exists (`EMOSA_GTP = "0"` leaves it out). Built on 3 October on rev140 (`X86EMLTRBPIBB_rdk-next_20261004013832`): it
 differs from the default image only by the package `emosa` (520 KiB); without the
 setting the image's packages are the default's. The lab's EMOSA option keeps the
 adapter in its own container; emosa-lab's `gateway.sh` moves it into the gateway's
