@@ -361,6 +361,9 @@ publish_base_image() {      # publish_base_image ALIAS KEY: the stopped-and-rest
         description="EasyMesh RDK lab base VM ($key)" </dev/null
     lxc start "$name"
     wait_agent
+    # Boardfarm reconstructs its WAN at boot (a minute or more): the build goes on from
+    # the state 30-boardfarm-wan.sh left, as a lab from the base image does after it.
+    run_root systemctl start boardfarm-lab.service easymesh-lxd-docker-forward.service
     if [ -n "${EASYMESH_ARTIFACT_PUBLISH:-}" ]; then
         exported=$(mktemp -d /tmp/easymesh-base-export.XXXXXX)
         lxc image export "$alias" "$exported/" </dev/null
