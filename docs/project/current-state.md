@@ -99,15 +99,17 @@ emosa-lab 2a2d009 an agent writes its reporting policy only when the controller 
 no longer twice per periodic report (some 140 MB a day per pod at the controller's 5 s
 interval). The recipe's license is emosa-lab's: Apache-2.0. The image keeps EMOSA's
 configuration and state on `/nvram/emosa`, which an image upgrade keeps, and its agents'
-status in `/run/emosa`. Since 4 October `rdk-emosa-1002` runs that image
-(`X86EMLTRBPIBB_rdk-next_20261004180643`, deployed with `gen/lab-redeploy.sh`) with EMOSA in
-the gateway (emosa-lab `gateway.sh`; `gateway.sh off` returns it to its container); readiness
-and the five quick-requalification rooms passed there. The redeploy had left the room
-service's recovery journal (17 pool clients an earlier session paused) not matching the
-lab's inventory, so it failed closed; by the owner's decision the journal was retired into
-the lab's evidence (`room-recovery-retired-20261004`). `gen/lab-bringup.sh` restarts RDK's
-own agents after it restarts `em_ctrl`, not EMOSA's, and its topology check passes without
-the pods: after a controller restart the pods return only when their agents restart
+status in `/run/emosa`. `EASYMESH_EMOSA_IN=gateway` (with the EMOSA option) runs EMOSA
+in the gateway from that package, the image checked for it before the build. Since
+4 October `rdk-emosa-1002` runs the image built at emosa-lab ee34885
+(`X86EMLTRBPIBB_rdk-next_20261004213513`, deployed with `gen/lab-redeploy.sh`) with EMOSA in
+the gateway, set up by the build's own step with that option (`build.sh emosa`). After the
+upgrade EMOSA's fleet started its agents at boot; after a controller restart (also the one
+`gen/lab-bringup.sh` does) the pods return by themselves within about two minutes (their
+agents onboard again after 120 s without a Topology Query); readiness and the five
+quick-requalification rooms passed (one rerun after a browser screenshot timeout). A
+redeploy ends with the room service refusing to start while the pods cannot reach EMOSA:
+emosa-lab's `gateway.sh on` (or `lab.sh up c gateway`) puts the forwarding back
 (emosa-lab's rdk-lab record).
 
 ## Access
