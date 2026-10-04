@@ -97,7 +97,14 @@ With the journal bounded and kept parsed (emosa-lab f4011e8, the image's package
 again with it) the same run gave 0.46 % of a core per agent and five rooms of five. Since
 emosa-lab 2a2d009 an agent writes its reporting policy only when the controller sends one,
 no longer twice per periodic report (some 140 MB a day per pod at the controller's 5 s
-interval). The recipe's license is emosa-lab's: Apache-2.0.
+interval). The recipe's license is emosa-lab's: Apache-2.0. The image keeps EMOSA's
+configuration and state on `/nvram/emosa`, which an image upgrade keeps, and its agents'
+status in `/run/emosa`. Since 4 October `rdk-emosa-1002` runs that image
+(`X86EMLTRBPIBB_rdk-next_20261004180643`, deployed with `gen/lab-redeploy.sh`) with EMOSA in
+the gateway (emosa-lab `gateway.sh`; `gateway.sh off` returns it to its container). Its room
+service does not start: the redeploy left its recovery journal (17 pool clients an earlier
+session paused) not matching the lab's inventory, and it fails closed; the journal is kept
+for a decision (emosa-lab's rdk-lab record).
 
 ## Access
 
