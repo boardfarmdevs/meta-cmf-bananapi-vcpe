@@ -87,6 +87,34 @@ rebuilt), `phases.tsv` (each phase's start and seconds), `summary.txt`, `exit-co
 failure, `failed-phase`. `latest-KIND-NAME` links the newest. The suite's `summary.json`
 carries the run's start, end and seconds and each section's seconds.
 
+## Measured
+
+rev140 (16 CPUs, 62 GiB), 3 and 4 October 2026, with another lab VM running beside the
+builds, from the builds' records. `rdk-fast-a` was built cold and made the base image (its
+build stopped after it on an ordering fault, fixed since); `rdk-fast-b` started from that
+image, fetched from the store over HTTP and imported, and passed its acceptance.
+
+| Phase | Cold | From the base image |
+| --- | ---: | ---: |
+| assets, create, push inputs | 72 s | 117 s (the 3.2 GB image fetched and imported) |
+| base OS, kernel, base host (radio module) | 454 s | — |
+| Boardfarm and its WAN | 767 s | 2 s |
+| publishing the base image (once per key; 3.1 GiB) | 612 s | — |
+| lab host (the commit's checkout) | | 5 s |
+| mesh and the first five clients | | 852 s |
+| 95 more clients | | 1213 s |
+| the wired extender | | 636 s |
+| runtime services | | 73 s |
+| cold boot (the 100-client lab reconstructed) | | 1218 s |
+| acceptance | | 290 s |
+
+Everything before the lab host took 1293 s cold and 119 s from the base image: the base
+image saves about 20 minutes a build. The lab part, 71.5 minutes here (4287 s), is longer
+than the build guide's 55-minute reference: that was
+measured on an idle host and before the wired extender. A copy of the accepted lab on its
+Btrfs pool took 8 s (2 s to copy, 6 s for its identities and ports), and the two labs share
+9 GiB of pool.
+
 ## A development lab
 
 `EASYMESH_DEV_CLIENTS=20 gen/vm/lxd/build.sh build` builds a lab with 20 clients (half
