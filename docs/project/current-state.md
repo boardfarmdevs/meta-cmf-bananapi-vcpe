@@ -92,6 +92,9 @@ container with that package and back. There, on 3 October (rdk-emosa-1002), RDK'
 controller onboarded both pods' agents, and over 30 minutes with five rooms the gateway
 held 506 MiB median and 592 MiB peak of its 1 GiB (487 and 498 MiB with EMOSA in its own
 container), an agent about 5 MiB and 2.8 % of a core (emosa-lab's rdk-lab record).
+With the journal bounded and kept parsed (emosa-lab f4011e8, the image's package built
+again with it) the same run gave 0.46 % of a core per agent and five rooms of five. The
+recipe's license is emosa-lab's: Apache-2.0.
 
 ## Access
 
