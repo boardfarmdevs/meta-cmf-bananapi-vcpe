@@ -132,7 +132,7 @@ stays the default image's), does the same; `EMOSA_GTP = "1"` as well adds its GR
 | --- | --- |
 | `/usr/bin/emosa-agent-c`, `emosa-fleet-c` (`emosa-gtp-c`) | the programs; `--version` names the emosa-lab revision |
 | `/lib/systemd/system/emosa-fleet.service`, `emosa-agent@.service` | the fleet, enabled and inert until `/etc/emosa-fleet.json` exists; it enables an agent per pod |
-| `/etc/default/emosa` | `EMOSA_TRUNK=brlan0`: the agents' macvlans on the controller's LAN |
+| `/etc/default/emosa` | `EMOSA_TRUNK=emlan`, `EMOSA_BRIDGE=brlan0`: the agents' macvlans on a veth pair into the controller's LAN bridge |
 | `/usr/share/emosa/` | schemas, pod profiles, example configurations, the bill of materials `emosa-c.spdx.json` |
 | `/rdklogs/logs/EMOSAFleetLog.txt`, `EMOSA_<pod>.txt` | the logs, through RDK's logger (`LOG.RDK.EMOSA` in `debug.ini`) |
 
