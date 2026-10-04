@@ -24,6 +24,7 @@ lab's documents are below.
 | [Experiments](guides/experiments.md) | guide | test changes and measure convergence |
 | [Repo mirror](guides/repo-mirror.md) | guide | an optional local mirror for faster source checkouts |
 | [DAC / LCM build](guides/dac-lcm-build.md) | guide | an image with the prpl Lifecycle Manager |
+| [Build speed](reference/build-speed.md) | reference | update in place, copies, the base VM image, the artifact store, build records, a development lab |
 | [Test tiers](reference/test-tiers.md) | reference | what each test tier runs and when to use it |
 | [Room catalog](reference/room-catalog.md) | reference | every room and what to watch in it |
 | [Room acceptance](reference/room-acceptance.md) | reference | room correctness and convergence acceptance |
