@@ -101,10 +101,14 @@ interval). The recipe's license is emosa-lab's: Apache-2.0. The image keeps EMOS
 configuration and state on `/nvram/emosa`, which an image upgrade keeps, and its agents'
 status in `/run/emosa`. Since 4 October `rdk-emosa-1002` runs that image
 (`X86EMLTRBPIBB_rdk-next_20261004180643`, deployed with `gen/lab-redeploy.sh`) with EMOSA in
-the gateway (emosa-lab `gateway.sh`; `gateway.sh off` returns it to its container). Its room
-service does not start: the redeploy left its recovery journal (17 pool clients an earlier
-session paused) not matching the lab's inventory, and it fails closed; the journal is kept
-for a decision (emosa-lab's rdk-lab record).
+the gateway (emosa-lab `gateway.sh`; `gateway.sh off` returns it to its container); readiness
+and the five quick-requalification rooms passed there. The redeploy had left the room
+service's recovery journal (17 pool clients an earlier session paused) not matching the
+lab's inventory, so it failed closed; by the owner's decision the journal was retired into
+the lab's evidence (`room-recovery-retired-20261004`). `gen/lab-bringup.sh` restarts RDK's
+own agents after it restarts `em_ctrl`, not EMOSA's, and its topology check passes without
+the pods: after a controller restart the pods return only when their agents restart
+(emosa-lab's rdk-lab record).
 
 ## Access
 
