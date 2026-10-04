@@ -6,9 +6,9 @@ rdk-generic-broadband-image.bbappend; easymesh-labs plan 5.5)."
 HOMEPAGE = "https://vcpe.dev/emosa-lab/"
 SECTION = "net"
 
-# emosa-lab grants no license yet: its owner's decision (emosa-lab
-# docs/project/third-party-notices.md). Its bill of materials is in the package.
-LICENSE = "CLOSED"
+# emosa-lab's LICENSE (the Apache License 2.0); its bill of materials is in the package
+LICENSE = "Apache-2.0"
+LIC_FILES_CHKSUM = "file://../LICENSE;md5=3b83ef96387f14655fc854ddc3c6bd57"
 
 # The emosa-lab commit, the one gen/vm/lxd/emosa-lab.env pins for the lab's EMOSA option:
 # the image and the lab deploy the same adapter.
