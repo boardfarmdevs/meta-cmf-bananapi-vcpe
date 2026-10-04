@@ -136,3 +136,9 @@ lighter to run, for work on the mesh, the medium and steering. It has no room se
 unit needs the full roster), its acceptance checks its roster and the medium's telemetry,
 and `snapshot`, `export` and `export-thin` refuse it. Qualification and every room run need
 the full lab.
+
+Measured on rev140 (4 October 2026, from the same base image as the full lab above):
+`rdk-fast-d` with 20 clients built and passed its acceptance in 41.0 minutes against the
+full lab's 73.4: its clients took 8.2 minutes instead of 20.2, the wired extender 4.9
+instead of 10.6, its cold boot 11.4 instead of 20.3; the mesh's own deployment (13.8) is the
+same.
