@@ -35,7 +35,14 @@ built the same day and passed readiness, the five rooms with the pods and
 `backhaul-wired-parent`. On 3 October it took emosa-lab's adapter in C
 (`EASYMESH_EMOSA_AGENT=c`: the fleet, the GTP and the agents, with no Python) and passed
 readiness, the five rooms with the pods, `backhaul-wired-parent` and
-`fifty-client-counter-roam` again. The full suite last ran on the VMs of 1 October.
+`fifty-client-counter-roam` again. With emosa-lab after its plan 8.4 (the adapter's
+features at its production bar) the full rooms section ran on it the same day with
+the adapter in C: 26 of the catalog's 27 rooms on rev120 and the 27th
+(`home-a-wired-extender-loss-recovery`, a client move between two native extenders
+1 s past its check) in 4 of 4 runs after, the four geometry rooms, the RF stages and
+the switch through every world. The suite needs `EASYMESH_HOST_ADDRESS=192.168.2.120`
+and `EASYMESH_SSH_HOST=rev120` on rev120, where the VM's proxies listen on the host's
+address.
 
 The controller image carries unified-wifi-mesh 0233 and 0234: a radio the
 controller renews on its own waits neither at the Topology Query nor at the AP
