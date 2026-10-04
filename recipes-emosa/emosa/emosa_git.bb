@@ -1,0 +1,72 @@
+SUMMARY = "EMOSA: OpenSync pods as EasyMesh agents (the adapter in C)"
+DESCRIPTION = "EMOSA's agent, fleet and GRE termination point in C (emosa-lab, c/): each \
+OpenSync pod handed to the fleet's front port appears at the gateway's EasyMesh controller \
+as an agent of its own. An image installs it only when asked (EMOSA_ADAPTER, \
+rdk-generic-broadband-image.bbappend; easymesh-labs plan 5.5)."
+HOMEPAGE = "https://vcpe.dev/emosa-lab/"
+SECTION = "net"
+
+# emosa-lab grants no license yet: its owner's decision (emosa-lab
+# docs/project/third-party-notices.md). Its bill of materials is in the package.
+LICENSE = "CLOSED"
+
+# The emosa-lab commit, the one gen/vm/lxd/emosa-lab.env pins for the lab's EMOSA option:
+# the image and the lab deploy the same adapter.
+def emosa_lab_commit(d):
+    import os
+    import re
+    env = os.path.join(os.path.dirname(d.getVar('FILE')), '..', '..', 'gen', 'vm', 'lxd', 'emosa-lab.env')
+    bb.parse.mark_dependency(d, env)
+    with open(env) as f:
+        found = re.search(r'^EMOSA_LAB_COMMIT=([0-9a-f]{40})$', f.read(), re.MULTILINE)
+    if not found:
+        bb.fatal('%s: no EMOSA_LAB_COMMIT' % env)
+    return found.group(1)
+
+SRC_URI = "git://github.com/boardfarmdevs/emosa-lab.git;protocol=https;branch=main"
+SRCREV = "${@emosa_lab_commit(d)}"
+# the release of emosa-lab's pyproject.toml at that commit
+PV = "0.1.0+git${SRCPV}"
+S = "${WORKDIR}/git/c"
+
+inherit cmake pkgconfig systemd python3native
+
+DEPENDS = "cjson openssl sqlite3 rdk-logger"
+
+# c/README.md "Logging, version and package": logging through RDK's logger into
+# /rdklogs/logs, the package's layout, the units, the bill of materials
+EXTRA_OECMAKE = " \
+    -DEMOSA_INSTALL_DATA=ON \
+    -DEMOSA_RDK_LOGGER=ON \
+    -DEMOSA_REVISION=${@d.getVar('SRCREV')[:12]} \
+    -DEMOSA_SCHEMAS_DIR=${datadir}/emosa/schemas \
+    -DEMOSA_PROFILES_DIR=${datadir}/emosa/profiles \
+    -DEMOSA_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+    -DEMOSA_DNSMASQ=${bindir}/dnsmasq \
+"
+
+# the GRE termination point apart: whether the gateway serves the pods' onboarding and
+# ends their GRE is plan 5.2's decision
+PACKAGES =+ "${PN}-gtp"
+FILES:${PN}-gtp = " \
+    ${bindir}/emosa-gtp-c \
+    ${systemd_system_unitdir}/emosa-gtp.service \
+    ${datadir}/emosa/gtp.example.json \
+"
+FILES:${PN} += " \
+    ${systemd_system_unitdir}/emosa-agent@.service \
+    ${libexecdir}/emosa \
+    ${datadir}/emosa \
+"
+CONFFILES:${PN} = "${sysconfdir}/default/emosa"
+
+SYSTEMD_PACKAGES = "${PN} ${PN}-gtp"
+# the fleet is inert until /etc/emosa-fleet.json exists; it enables an agent per pod
+SYSTEMD_SERVICE:${PN} = "emosa-fleet.service"
+SYSTEMD_AUTO_ENABLE:${PN} = "enable"
+SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service"
+SYSTEMD_AUTO_ENABLE:${PN}-gtp = "disable"
+
+# the agent's link helper: bash, iproute2's ip (a macvlan per agent)
+RDEPENDS:${PN} = "bash iproute2"
+RDEPENDS:${PN}-gtp = "${PN} dnsmasq iproute2"

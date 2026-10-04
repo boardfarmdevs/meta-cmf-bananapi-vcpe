@@ -8,9 +8,17 @@ manifest=$source_root/gen/build/manifest.xml
 threads=${BUILD_THREADS:-$(nproc)}
 downloads=${BUILD_DOWNLOADS:-$HOME/oe/downloads}
 sstate=${BUILD_SSTATE:-$HOME/oe/sstate-cache}
+# BUILD_EMOSA=1: the controller image with EMOSA's adapter in C (EMOSA_ADAPTER, the image's
+# opt-in; recorded as controller-emosa-*). Off by default: the default image is unchanged.
+emosa=${BUILD_EMOSA:-0}
 role_selection=${1:-both}
 
 case "$role_selection" in controller|extender|both) ;; *) echo 'usage: build-images.sh [controller|extender|both]' >&2; exit 2 ;; esac
+case "$emosa" in
+    0) suffix= ;;
+    1) suffix=-emosa; [ "$role_selection" = controller ] || { echo 'BUILD_EMOSA=1 builds the controller image only' >&2; exit 2; } ;;
+    *) echo 'BUILD_EMOSA must be 0 or 1' >&2; exit 2 ;;
+esac
 [[ "$threads" =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_THREADS must be a positive integer' >&2; exit 2; }
 test -z "$(git -C "$source_root" status --porcelain)" || { echo 'commit or stash layer changes before building' >&2; exit 1; }
 test -f "$workspace/meta-cmf-bananapi/setup-environment-refboard-rdkb" || {
@@ -41,14 +49,15 @@ DL_DIR:forcevariable = "$downloads"
 SSTATE_DIR:forcevariable = "$sstate"
 SSTATE_MIRRORS:forcevariable = ""
 EOF
+[ "$emosa" = 0 ] || echo 'EMOSA_ADAPTER = "1"' >> "$workspace/clean-build.conf"
 
 for role in controller extender; do
     [ "$role_selection" = both ] || [ "$role_selection" = "$role" ] || continue
     if [ "$role" = controller ]; then machine=qemux86bpibroadband; target=rdk-generic-broadband-image
     else machine=qemux86bpiap; target=rdk-generic-ap-extender-image; fi
-    record=$evidence/$role-$(date -u +%Y%m%dT%H%M%SZ)
+    record=$evidence/$role$suffix-$(date -u +%Y%m%dT%H%M%SZ)
     mkdir -p "$record"
-    printf '%s\n' "$record" > "$evidence/latest-$role"
+    printf '%s\n' "$record" > "$evidence/latest-$role$suffix"
     printf 'Preparing %s image (%s); evidence: %s\n' "$role" "$target" "$record"
     (
         trap 'status=$?; printf "%s\n" "$status" > "$record/exit-code"; date -u +%FT%TZ > "$record/finished"' EXIT
