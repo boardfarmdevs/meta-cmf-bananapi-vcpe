@@ -19,7 +19,10 @@ makes and installs that too and restarts the VM, as a build's cold boot does:
 | the medium's radio module (`gen/medium/hwsim`) | builds it in the VM from the medium's bundle, as `15-prepare-base.sh` does; the restart loads it |
 | the guest's services and tools (`gen/vm/scripts/guest`, stages 30, 50, 55, 60, 61) | runs stages 30 and 50 again with the lab's own settings (`/etc/default/easymesh-lab`) |
 
-Its record (below) says what it rebuilt. The VM's other stages need a build. The topology
+Its record (below) says what it rebuilt. An update that stops part-way is finished by
+running it again: it starts from the last commit a build or a whole update applied
+(`user.easymesh.applied-commit`), not from the checkout it may have moved already. The VM's
+other stages need a build. The topology
 page comes with the controller image: the update notes a change to it, and a controller
 image built from the checkout brings it.
 
