@@ -17,6 +17,24 @@ role_selection=${1:-both}
 sstate_mirror=${BUILD_SSTATE_MIRROR:-}
 # shellcheck source=gen/build/artifact-store.sh
 source "$source_root/gen/build/artifact-store.sh"
+# Kirkstone's pseudo cannot follow a GNU tar that extracts through openat2 (Ubuntu's tar
+# does): every do_package BitBake runs itself then fails, "unknown base path for fd"
+# (~/yocto/fast-labs-test, 4 Oct). docs/guides/build.md builds a tar 1.34 without it in
+# $HOME/hosttools/bin: the build takes that first, and checks the tar BitBake will use.
+[ ! -x "$HOME/hosttools/bin/tar" ] || PATH=$HOME/hosttools/bin:$PATH
+tar_uses_openat2() {    # tar_uses_openat2 TAR: 0 when it extracts through openat2
+    local tar=$1 probe status
+    command -v strace >/dev/null 2>&1 || return 1    # cannot tell without strace
+    probe=$(mktemp -d)
+    mkdir -p "$probe/in/a/b" "$probe/out"
+    : > "$probe/in/a/b/c"
+    "$tar" -cf "$probe/probe.tar" -C "$probe/in" .
+    strace -f -e trace=openat2 -o "$probe/trace" \
+        "$tar" -xf "$probe/probe.tar" -C "$probe/out" >/dev/null 2>&1 || true
+    grep -q openat2 "$probe/trace" && status=0 || status=1
+    rm -rf -- "$probe"
+    return "$status"
+}
 
 case "$role_selection" in controller|extender|both) ;; *) echo 'usage: build-images.sh [controller|extender|both]' >&2; exit 2 ;; esac
 case "$emosa" in
@@ -125,8 +143,21 @@ for role in controller extender; do
             tail -60 "$record/setup.log" >&2
             exit "$setup_status"
         }
-        ! grep -q '##RDK_FLAVOR##' conf/local.conf
+        if grep -q '##RDK_FLAVOR##' conf/local.conf; then
+            echo "the RDK environment setup left conf/local.conf incomplete; see $record/setup.log" >&2
+            exit 1
+        fi
         grep -Fq 'meta-cmf-bananapi-vcpe' conf/bblayers.conf
+        # the tar BitBake links into its hosttools once, from PATH, and keeps
+        if [ -e tmp/hosttools/tar ]; then tar_for_bitbake=$(readlink -f tmp/hosttools/tar)
+        else tar_for_bitbake=$(command -v tar); fi
+        if tar_uses_openat2 "$tar_for_bitbake"; then
+            echo "$tar_for_bitbake extracts through openat2, which BitBake's pseudo cannot follow:" \
+                "build GNU tar 1.34 into \$HOME/hosttools/bin (docs/guides/build.md)" >&2
+            [ ! -e tmp/hosttools/tar ] ||
+                echo "then remove $PWD/tmp/hosttools/tar: BitBake links it again from PATH" >&2
+            exit 1
+        fi
         bitbake "${confs[@]}" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
         grep -Fx "DL_DIR=\"$downloads\"" "$record/environment.txt"
         grep -Fx "SSTATE_DIR=\"$sstate\"" "$record/environment.txt"
