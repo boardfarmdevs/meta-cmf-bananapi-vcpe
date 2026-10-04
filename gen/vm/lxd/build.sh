@@ -73,6 +73,9 @@ Commands:
               service restarts and settles; refused when the commit changes what a build
               installs (the medium's daemon, console or radio module, the guest's tools)
   delete      delete only the named appliance VM after showing its identity
+  copy NEW    copy the VM as NEW in its storage pool (seconds on btrfs or zfs), with its own
+              identities, address and port block (EASYMESH_COPY_PORT_BASE overrides); left
+              stopped: EASYMESH_LXD_NAME=NEW $0 start brings it up
   emosa       turn the EMOSA option on in the accepted lab VM: emosa-lab stages its adapter
               kit and the OpenSync pod image, then runs its option (EMOSA, fleet, the pods'
               gateway, two pods, telemetry, their Wi-Fi backhaul, the rooms with the pods)
@@ -233,6 +236,62 @@ add_proxy() {
     lxc config device add "$name" "$device" proxy nat=true \
         listen="tcp:$address:$host_port" \
         connect="tcp:$guest_address:$guest_port"
+}
+
+# Build records: a build, an update or a copy writes its phases and their durations next
+# to the BPI images' build evidence (the workspace's build-evidence/), as KIND-NAME-STAMP/:
+# environment.txt, phases.tsv, summary.txt, exit-code (and failed-phase when one failed).
+records_root=${EASYMESH_BUILD_RECORDS:-$(cd "$root/.." && pwd)/build-evidence}
+record_dir=
+phase_name=
+phase_start=
+
+record_open() {     # record_open KIND
+    local kind=$1 stamp
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    record_dir=$records_root/$kind-$name-$stamp
+    mkdir -p "$record_dir"
+    printf 'phase\tstarted\tseconds\n' > "$record_dir/phases.tsv"
+    {
+        printf 'LAB=%s\nKIND=%s\nHOST=%s\nSTARTED=%s\n' "$name" "$kind" "$(hostname)" "$stamp"
+        printf 'COMMIT=%s\n' "$(git -C "$root" rev-parse HEAD)"
+        printf 'IMAGE=%s\nKERNEL=%s\nCPUS=%s\nMEMORY=%s\n' "$image" "$kernel" "$cpus" "$memory"
+        printf 'STORAGE=%s\nSTORAGE_DRIVER=%s\n' "$storage" "$(storage_driver)"
+        printf 'CLIENT_CREATE_PARALLELISM=%s\nSHARED_HOST=%s\n' \
+            "$client_create_parallelism" "${EASYMESH_SHARED_HOST:-0}"
+    } > "$record_dir/environment.txt"
+    ln -sfn "$(basename "$record_dir")" "$records_root/latest-$kind-$name"
+    printf 'build record: %s\n' "$record_dir" >&2
+}
+
+phase() {           # phase NAME: end the running phase and start NAME ('' only ends it)
+    local now
+    now=$(date +%s)
+    if [ -n "$phase_name" ] && [ -n "$record_dir" ]; then
+        printf '%s\t%s\t%s\n' "$phase_name" "$phase_start" "$((now - phase_start))" \
+            >> "$record_dir/phases.tsv"
+        printf '[phase] %s: %ss\n' "$phase_name" "$((now - phase_start))" >&2
+    fi
+    phase_name=$1
+    phase_start=$now
+}
+
+record_close() {    # record_close STATUS
+    local status=$1 failed=$phase_name
+    [ -n "$record_dir" ] || return 0
+    phase ''
+    printf '%s\n' "$status" > "$record_dir/exit-code"
+    [ "$status" = 0 ] || printf '%s\n' "$failed" > "$record_dir/failed-phase"
+    awk -F'\t' 'NR > 1 { printf "%-24s %6d s %6.1f min\n", $1, $3, $3 / 60; total += $3 }
+        END { printf "%-24s %6d s %6.1f min\n", "total", total, total / 60 }' \
+        "$record_dir/phases.tsv" > "$record_dir/summary.txt"
+    cat "$record_dir/summary.txt" >&2
+    record_dir=
+}
+
+storage_driver() {  # the driver of this lab's pool, or the one a build would create
+    lxc storage show "$storage" 2>/dev/null | awk '$1 == "driver:" {print $2; exit}' \
+        | grep . || printf '%s\n' "${EASYMESH_LXD_STORAGE_DRIVER:-dir}"
 }
 
 make_bundle() {
@@ -437,12 +496,15 @@ build_vm() {
     }
 
     stage=$(mktemp -d /tmp/easymesh-lxd-build.XXXXXX)
-    trap 'rm -rf -- "$stage"' EXIT
+    record_open build
+    trap 'record_close "$?"; rm -rf -- "$stage"' EXIT
+    phase assets
     meta_commit=$(prepare_assets "$stage" | tail -n 1)
     wmediumd_sha=$(sha256sum "$stage/assets/wmediumd" | awk '{print $1}')
     controller_name=$(basename "$controller_image")
     extender_name=$(basename "$extender_image")
 
+    phase create
     init_args=(lxc init "$image" "$name" --vm
         --config limits.cpu="$cpus" --config limits.memory="$memory")
     easymesh_ensure_storage_pool "$storage"
@@ -462,37 +524,46 @@ build_vm() {
     add_proxy room-demo-viewer "$room_address" "$room_port" 8891 "$appliance_ipv4"
     lxc start "$name"
     wait_agent
+    phase push-inputs
     push_inputs "$stage"
 
+    phase base-os
     run_root bash /home/easymesh/easymesh-provision/00-base.sh
+    phase kernel
     run_root bash /home/easymesh/easymesh-provision/10-install-linux-7.sh
     lxc restart "$name" --timeout 300
     wait_agent
     test "$(lxc exec "$name" -- uname -r)" = "$kernel"
 
+    phase lab-host
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
         HWSIM_RADIOS="$profile_radios" \
         bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
     lxc restart "$name" --timeout 300
     wait_agent
     run_root bash -c 'test "$(cat /sys/module/cfg80211/version)" = lab-netns-owner-1'
+    phase wan
     run_root bash /home/easymesh/easymesh-provision/30-boardfarm-wan.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
     # outer VM agent cannot be tracked by snapd, so appliance lifecycle runs as
     # root. Source checkout operations remain explicitly scoped to easymesh.
+    phase mesh
     run_root env HOME=/home/easymesh \
         CONTROLLER_IMAGE="/home/easymesh/easymesh-assets/$controller_name" \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
         EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \
         bash /home/easymesh/easymesh-provision/40-deploy-easymesh.sh
+    phase clients
     run_root env HOME=/home/easymesh \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EASYMESH_SCALE_PROFILE="$profile" \
         CLIENT_CREATE_PARALLELISM="$client_create_parallelism" \
         bash /home/easymesh/easymesh-provision/55-scale-topology.sh
+    phase wired-extenders
     run_root env HOME=/home/easymesh EASYMESH_WIRED_EXTENDERS="$wired_extenders" \
         bash /home/easymesh/easymesh-provision/56-wired-extenders.sh
+    phase runtime
     run_root env EASYMESH_SCALE_PROFILE="$profile" \
         HEALTH_EXPECT_CLIENTS="$profile_clients" \
         bash /home/easymesh/easymesh-provision/50-runtime-service.sh
@@ -506,9 +577,11 @@ build_vm() {
     run_root systemctl restart wmediumd-console.service
     run_root systemctl enable easymesh-lab.service wmediumd-console.service
 
+    phase cold-boot
     lxc restart "$name" --timeout 300
     wait_agent
     run_root systemctl start easymesh-lab.service
+    phase acceptance
     check_baseline env HEALTH_EXPECT_CLIENTS="$profile_clients"
     proxy_check_address=$webui_address
     [ "$proxy_check_address" != 0.0.0.0 ] || proxy_check_address=$default_host_address
@@ -519,11 +592,15 @@ build_vm() {
     wait_http_ready "Interactive room proxy" "http://$proxy_check_address:$room_port/healthz"
     run_root python3 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/observer/check-ready.py \
         --require-room --require-survey --timeout 120
-    [ "$emosa" = 0 ] || emosa_vm
+    if [ "$emosa" != 0 ]; then
+        phase emosa
+        emosa_vm
+    fi
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
     trap - EXIT
+    record_close 0
     rm -rf -- "$stage"
 }
 
@@ -586,6 +663,7 @@ start_vm() {
         started=true
     fi
     wait_agent
+    pin_guest_address
     run_root systemctl start easymesh-lab.service
     # After a VM start an extender can come back with its backhaul or fronthaul down, or
     # registered with the controller without its BSSes (rdk-1001, 1 Oct, one BSS of ten):
@@ -945,6 +1023,109 @@ update_vm() (
     run_root bash "$repo/gen/lab-bringup.sh" room
 )
 
+# An instance made from another (a copy, or a lab built from a base image) gets
+# identities of its own, as import.sh gives an imported appliance: LXD's uuid,
+# cloud-init instance id, vsock id and MAC. Its address is then written into the
+# guest's netplan at its first start (user.easymesh.pin-address), because the
+# instances share a machine-id, and with it the DHCP client identity that would
+# make two labs on one bridge swap leases.
+reseed_identity() {     # reseed_identity INSTANCE (stopped)
+    local instance=$1 uuid vsock
+    uuid=$(cat /proc/sys/kernel/random/uuid)
+    vsock=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+    lxc config unset "$instance" volatile.eth0.hwaddr
+    lxc config set "$instance" volatile.uuid "$uuid"
+    lxc config set "$instance" volatile.uuid.generation "$uuid"
+    lxc config set "$instance" volatile.cloud-init.instance-id "$uuid"
+    lxc config set "$instance" volatile.vsock_id "$vsock"
+    lxc config set "$instance" user.easymesh.pin-address true
+}
+
+pin_guest_address() {   # the instance's reserved address, static in the guest (running)
+    local address cidr mac interface netplan attempt actual
+    [ "$(lxc config get "$name" user.easymesh.pin-address)" = true ] || return 0
+    address=$(lxc config device get "$name" eth0 ipv4.address)
+    [ -n "$address" ] || return 0
+    cidr=$(lxc network get "$network" ipv4.address)
+    mac=$(lxc config get "$name" volatile.eth0.hwaddr | tr '[:upper:]' '[:lower:]')
+    # shellcheck disable=SC2016 # the guest's shell expands these
+    interface=$(lxc exec "$name" -- sh -eu -c '
+        for file in /sys/class/net/*/address; do
+            read -r value < "$file"
+            [ "$value" = "$1" ] && { basename "$(dirname "$file")"; exit 0; }
+        done
+        exit 1' sh "$mac")
+    netplan=$(printf '%s\n' 'network:' '  version: 2' '  ethernets:' \
+        "    $interface:" '      dhcp4: false' '      accept-ra: true' '      addresses:' \
+        "        - $address/${cidr#*/}" '      routes:' '        - to: default' \
+        "          via: ${cidr%/*}" '      nameservers:' '        addresses:' \
+        "          - ${cidr%/*}")
+    if [ "$(lxc exec "$name" -- cat /etc/netplan/99-easymesh-lxd-site.yaml 2>/dev/null)" != "$netplan" ]; then
+        printf '%s\n' "$netplan" | lxc exec "$name" -- sh -eu -c '
+            umask 077
+            cat > /etc/netplan/99-easymesh-lxd-site.yaml
+            netplan generate
+            netplan apply'
+    fi
+    for _ in $(seq 1 60); do
+        actual=$(lxc exec "$name" -- ip -4 -o address show dev "$interface" scope global \
+            | awk '$3 == "inet" {split($4, field, "/"); print field[1]; exit}')
+        [ "$actual" = "$address" ] && return 0
+        sleep 1
+    done
+    echo "$name: its address $address is not installed on $interface (has: ${actual:-none})" >&2
+    return 1
+}
+
+# A copy of this lab, NEW, in the same storage pool: on a copy-on-write pool
+# (btrfs, zfs) it takes seconds and shares the source's blocks. The copy gets
+# its own identities, address and port block; it is left stopped, and its
+# first start pins its address and brings its lab up.
+copy_vm() {
+    local target=${1:-} source=$name stamp snapshot='' device listen port address
+    local target_ipv4 target_port_base
+    case "$target" in
+        [a-z0-9][a-z0-9-]*) ;;
+        *) echo "usage: $0 copy NEW-NAME (lowercase letters, numbers and hyphens)" >&2; exit 2 ;;
+    esac
+    instance_exists || { echo "$source does not exist" >&2; exit 1; }
+    ! lxc info "$target" >/dev/null 2>&1 || { echo "$target already exists" >&2; exit 1; }
+    target_port_base=${EASYMESH_COPY_PORT_BASE:-$(EASYMESH_PORT_BASE='' \
+        easymesh_instance_port_base "$target")}
+    record_open copy
+    trap 'record_close "$?"' EXIT
+    phase copy
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    if [ "$(instance_state)" = RUNNING ]; then
+        snapshot=copy-$stamp
+        lxc snapshot "$source" "$snapshot" </dev/null
+        lxc copy "$source/$snapshot" "$target" </dev/null
+        lxc delete "$source/$snapshot"
+    else
+        lxc copy "$source" "$target" --instance-only </dev/null
+    fi
+    phase configure
+    reseed_identity "$target"
+    target_ipv4=$(select_guest_ipv4)
+    lxc config device unset "$target" eth0 ipv4.address
+    lxc config device set "$target" eth0 ipv4.address "$target_ipv4"
+    for device in easymesh-webui:0:8888 wmediumd-console:1:8890 room-demo-viewer:2:8891; do
+        port=$((target_port_base + $(cut -d: -f2 <<<"$device")))
+        listen=$(lxc config device get "$target" "${device%%:*}" listen)
+        address=${listen#tcp:}
+        address=${address%:*}
+        lxc config device set "$target" "${device%%:*}" \
+            listen="tcp:$address:$port" connect="tcp:$target_ipv4:${device##*:}"
+    done
+    lxc config set "$target" user.easymesh.copied-from "$source"
+    lxc config set "$target" user.easymesh.copied-at "$stamp"
+    trap - EXIT
+    record_close 0
+    printf '%s: a copy of %s, address %s, ports %s to %s; stopped\n' \
+        "$target" "$source" "$target_ipv4" "$target_port_base" "$((target_port_base + 2))"
+    printf 'start it with: EASYMESH_LXD_NAME=%s %s start\n' "$target" "$0"
+}
+
 delete_vm() {
     instance_exists
     lxc list "$name" -c nst4m --format table
@@ -964,6 +1145,7 @@ case "${1:-}" in
     export-thin) export_thin_vm ;;
     update) update_vm ;;
     delete) delete_vm ;;
+    copy) copy_vm "${2:-}" ;;
     emosa) emosa_vm ;;
     -h|--help|help|'') usage ;;
     *) usage >&2; exit 2 ;;

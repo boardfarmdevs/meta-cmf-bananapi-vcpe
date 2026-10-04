@@ -88,6 +88,7 @@ room_service_stopped=false
 room_service_guarded=false
 full_profile_reset=false
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
+suite_started=$(date +%s)
 output_root=${output_root:-"$root/test-results/$stamp-$vm"}
 mkdir -p "$output_root/logs"
 results=$output_root/results.tsv
@@ -497,18 +498,27 @@ if "$room_service_stopped" || "$room_service_guarded"; then
     record cleanup room-service "$cleanup_result" "$cleanup_started" "$output_root/logs/cleanup-room-service.log" 'restore prior room service state'
 fi
 
-python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" "$blocked" <<'PY'
+python3 - "$results" "$output_root/summary.json" "$passed" "$failed" "$skipped" "$blocked" \
+    "$suite_started" "$(date +%s)" <<'PY'
 import json
 import pathlib
 import sys
 
 rows = []
+sections = {}
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines()[1:]:
     section, name, outcome, seconds, log, command = line.split('\t', 5)
     rows.append({'section': section, 'test': name, 'outcome': outcome,
                  'seconds': int(seconds), 'log': log, 'command': command})
+    sections[section] = sections.get(section, 0) + int(seconds)
+started, finished = int(sys.argv[7]), int(sys.argv[8])
 pathlib.Path(sys.argv[2]).write_text(json.dumps({'passed': int(sys.argv[3]), 'failed': int(sys.argv[4]),
-    'skipped': int(sys.argv[5]), 'blocked': int(sys.argv[6]), 'tests': rows}, indent=2) + '\n')
+    'skipped': int(sys.argv[5]), 'blocked': int(sys.argv[6]),
+    'started': started, 'finished': finished, 'seconds': finished - started,
+    'section_seconds': sections, 'tests': rows}, indent=2) + '\n')
+for section, seconds in sections.items():
+    print(f'{section:<12} {seconds:>7d} s {seconds / 60:>6.1f} min')
+print(f'{"total":<12} {finished - started:>7d} s {(finished - started) / 60:>6.1f} min')
 PY
 
 printf '\n===== EasyMesh suite summary =====\n'

@@ -30,8 +30,14 @@ easymesh_instance_port_base() {
 
 easymesh_ensure_storage_pool() {
     local pool=$1 driver=${EASYMESH_LXD_STORAGE_DRIVER:-dir}
+    local size=${EASYMESH_LXD_STORAGE_SIZE:-400GiB}
     lxc storage show "$pool" >/dev/null 2>&1 && return 0
     case "$driver" in dir|btrfs|zfs|lvm|ceph|cephfs) ;; *) echo "unsupported LXD storage driver: $driver" >&2; return 2 ;; esac
     echo "Creating LXD storage pool $pool with driver $driver"
-    lxc storage create "$pool" "$driver"
+    case "$driver" in
+        # A copy-on-write pool on a loop file: LXD's automatic size (at most 30 GiB) is
+        # smaller than one lab's disk. The file is sparse; copies of a lab share its blocks.
+        btrfs|zfs) lxc storage create "$pool" "$driver" size="$size" ;;
+        *) lxc storage create "$pool" "$driver" ;;
+    esac
 }
