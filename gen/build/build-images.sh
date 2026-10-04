@@ -49,7 +49,13 @@ DL_DIR:forcevariable = "$downloads"
 SSTATE_DIR:forcevariable = "$sstate"
 SSTATE_MIRRORS:forcevariable = ""
 EOF
-[ "$emosa" = 0 ] || echo 'EMOSA_ADAPTER = "1"' >> "$workspace/clean-build.conf"
+# EMOSA's opt-in in a file of its own, given to bitbake only for this build: clean-build.conf
+# stays the default image's (a Yocto shell rebuild reads it)
+confs=(-R "$workspace/clean-build.conf")
+if [ "$emosa" = 1 ]; then
+    echo 'EMOSA_ADAPTER = "1"' > "$workspace/emosa-build.conf"
+    confs+=(-R "$workspace/emosa-build.conf")
+fi
 
 for role in controller extender; do
     [ "$role_selection" = both ] || [ "$role_selection" = "$role" ] || continue
@@ -65,6 +71,7 @@ for role in controller extender; do
         git -C "$source_root" rev-parse HEAD > "$record/layer-commit"
         cp "$manifest" "$record/manifest.xml"
         cp clean-build.conf "$record/"
+        [ "$emosa" = 0 ] || cp emosa-build.conf "$record/"
         if [ -f "build-$machine/conf/local.conf" ] && grep -q '##RDK_FLAVOR##' "build-$machine/conf/local.conf"; then
             mv "build-$machine/conf" "$record/incomplete-conf"
         fi
@@ -79,13 +86,13 @@ for role in controller extender; do
         }
         ! grep -q '##RDK_FLAVOR##' conf/local.conf
         grep -Fq 'meta-cmf-bananapi-vcpe' conf/bblayers.conf
-        bitbake -R "$workspace/clean-build.conf" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
+        bitbake "${confs[@]}" -e "$target" > "$record/environment.txt" 2> "$record/environment.err"
         grep -Fx "DL_DIR=\"$downloads\"" "$record/environment.txt"
         grep -Fx "SSTATE_DIR=\"$sstate\"" "$record/environment.txt"
         grep -Fx 'SSTATE_MIRRORS=""' "$record/environment.txt"
         cp conf/local.conf conf/bblayers.conf "$record/"
         printf 'Starting BitBake for %s; log: %s/build.log\n' "$target" "$record"
-        bitbake -R "$workspace/clean-build.conf" "$target" 2>&1 | tee "$record/build.log"
+        bitbake "${confs[@]}" "$target" 2>&1 | tee "$record/build.log"
         find "tmp/deploy/images/$machine" -maxdepth 1 -type f -name '*.rootfs.lxc.tar.bz2' -exec sha256sum {} + > "$record/images.sha256"
         test -s "$record/images.sha256"
     )

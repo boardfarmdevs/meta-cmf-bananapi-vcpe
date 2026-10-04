@@ -111,6 +111,31 @@ for role in controller extender; do
 done
 ```
 
+### The controller image with EMOSA
+
+EMOSA, the adapter that makes OpenSync pods EasyMesh agents
+([emosa-lab](https://vcpe.dev/emosa-lab/)), is an opt-in feature of the controller
+image and off by default: the default image is unchanged. Its recipe
+(`recipes-emosa/emosa`) builds emosa-lab's C programs at the commit
+`gen/vm/lxd/emosa-lab.env` pins, the same one the lab's EMOSA option deploys.
+
+```sh
+BUILD_EMOSA=1 bash gen/build/build-images.sh controller   # record: build-evidence/controller-emosa-*
+```
+
+From a Yocto shell, `EMOSA_ADAPTER = "1"` in `local.conf`, or in a file given to
+bitbake with another `-R` as the helper does (`emosa-build.conf`; `clean-build.conf`
+stays the default image's), does the same; `EMOSA_GTP = "1"` as well adds its GRE termination point (package
+`emosa-gtp`, its unit disabled). The image then has:
+
+| Path | What |
+| --- | --- |
+| `/usr/bin/emosa-agent-c`, `emosa-fleet-c` (`emosa-gtp-c`) | the programs; `--version` names the emosa-lab revision |
+| `/lib/systemd/system/emosa-fleet.service`, `emosa-agent@.service` | the fleet, enabled and inert until `/etc/emosa-fleet.json` exists; it enables an agent per pod |
+| `/etc/default/emosa` | `EMOSA_TRUNK=brlan0`: the agents' macvlans on the controller's LAN |
+| `/usr/share/emosa/` | schemas, pod profiles, example configurations, the bill of materials `emosa-c.spdx.json` |
+| `/rdklogs/logs/EMOSAFleetLog.txt`, `EMOSA_<pod>.txt` | the logs, through RDK's logger (`LOG.RDK.EMOSA` in `debug.ini`) |
+
 ## Rebuild from a Yocto shell
 
 Use a fresh terminal for one role at a time. These commands source the same RDK
