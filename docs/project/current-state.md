@@ -94,8 +94,10 @@ controller onboarded both pods' agents, and over 30 minutes with five rooms the 
 held 506 MiB median and 592 MiB peak of its 1 GiB (487 and 498 MiB with EMOSA in its own
 container), an agent about 5 MiB and 2.8 % of a core (emosa-lab's rdk-lab record).
 With the journal bounded and kept parsed (emosa-lab f4011e8, the image's package built
-again with it) the same run gave 0.46 % of a core per agent and five rooms of five. The
-recipe's license is emosa-lab's: Apache-2.0.
+again with it) the same run gave 0.46 % of a core per agent and five rooms of five. Since
+emosa-lab 2a2d009 an agent writes its reporting policy only when the controller sends one,
+no longer twice per periodic report (some 140 MB a day per pod at the controller's 5 s
+interval). The recipe's license is emosa-lab's: Apache-2.0.
 
 ## Access
 
