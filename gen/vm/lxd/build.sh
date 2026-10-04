@@ -271,7 +271,7 @@ record_open() {     # record_open KIND
         printf 'LAB=%s\nKIND=%s\nHOST=%s\nSTARTED=%s\n' "$name" "$kind" "$(hostname)" "$stamp"
         printf 'COMMIT=%s\n' "$(git -C "$root" rev-parse HEAD)"
         printf 'IMAGE=%s\nKERNEL=%s\nCPUS=%s\nMEMORY=%s\n' "$image" "$kernel" "$cpus" "$memory"
-        printf 'STORAGE=%s\nSTORAGE_DRIVER=%s\n' "$storage" "$(storage_driver)"
+        printf 'STORAGE=%s\nSTORAGE_DRIVER=%s\n' "$(storage_pool)" "$(storage_driver)"
         printf 'CLIENT_CREATE_PARALLELISM=%s\nSHARED_HOST=%s\n' \
             "$client_create_parallelism" "${EASYMESH_SHARED_HOST:-0}"
     } > "$record_dir/environment.txt"
@@ -377,8 +377,12 @@ publish_base_image() {      # publish_base_image ALIAS KEY: the stopped-and-rest
     fi
 }
 
-storage_driver() {  # the driver of this lab's pool, or the one a build would create
-    lxc storage show "$storage" 2>/dev/null | awk '$1 == "driver:" {print $2; exit}' \
+storage_pool() {    # the pool the instance is in (a copy's is its original's), or this lab's
+    lxc config device get "$name" root pool 2>/dev/null | grep . || printf '%s\n' "$storage"
+}
+
+storage_driver() {  # the driver of that pool, or the one a build would create
+    lxc storage show "$(storage_pool)" 2>/dev/null | awk '$1 == "driver:" {print $2; exit}' \
         | grep . || printf '%s\n' "${EASYMESH_LXD_STORAGE_DRIVER:-dir}"
 }
 
