@@ -20,6 +20,7 @@ program = r'''
 #include "em_rooted_admission_probe.h"
 #include <cassert>
 #include <chrono>
+#include <deque>
 #include <mutex>
 #include <iostream>
 #define em_printfout(...) (void)0

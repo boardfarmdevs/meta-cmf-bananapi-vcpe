@@ -1,0 +1,45 @@
+Subject: [PATCH] ctrl: native backhaul takes an agent's station from its Device Information
+
+The native backhaul module knows an agent's backhaul station only from the device's
+backhaul_sta, which em_ctrl sets from a Backhaul STA Radio Capabilities TLV: in a
+Topology Response (RDK's agents put one there) or in the Backhaul STA Capability Report
+to its query, which em_ctrl sends only after such a Topology Response. An agent that
+reports its station the R1 way, as a non-AP STA interface with its parent BSSID in its
+Device Information TLV (EMOSA's pods), was never queried, so its node had no station:
+no serving sample was ever requested for it, a move of it (requested through
+em_ctrl, as the rooms do) was never verified, and the uncertain mark each such move left
+never cleared (rdk-1004, 5 October 2026: both pods marked for the rest of a two-hour
+run). The station learned from that interface (the backhaul STA row the controller
+keeps for it, on the agent's current parent) now stands in when backhaul_sta is unset.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/em_backhaul_ctrl.cpp	2026-10-05 14:34:37.388048798 -0700
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-10-05 14:34:44.404068486 -0700
+@@ -84,6 +84,26 @@
+             station.sta = backhaul_mac(model->get_device_info()->backhaul_sta);
+             station.parent_bssid = backhaul_mac(model->get_device_info()->backhaul_mac.mac);
+             if (!backhaul_unicast(station.sta)) station.sta.clear();
++            if (station.sta.empty() && backhaul_unicast(station.parent_bssid)) {
++                /* An agent that reports its backhaul station only in its Device Information,
++                 * as a non-AP STA interface with its parent BSSID (EMOSA's pods), never gets a
++                 * Backhaul STA Capability Query: em_ctrl sends one only for a Backhaul STA
++                 * Radio Capabilities TLV in a Topology Response. The station learned from that
++                 * interface, on the agent's current parent. Without it the agent had no serving
++                 * sample, its moves were never verified and its uncertain mark never cleared
++                 * (rdk-1004, 5 Oct 2026). */
++                for (unsigned int index = 0; index < model->m_num_bss; ++index) {
++                    const em_bss_info_t *bss = model->get_bss_info(index);
++                    if (!bss->enabled || bss->vap_mode != em_vap_mode_sta ||
++                        bss->id.haul_type != em_haul_type_backhaul ||
++                        backhaul_mac(bss->bssid.mac) != station.parent_bssid) continue;
++                    const std::string learned = backhaul_mac(bss->sta_mac);
++                    if (backhaul_unicast(learned)) {
++                        station.sta = learned;
++                        break;
++                    }
++                }
++            }
+             network.nodes[owner] = station;
+             for (unsigned int index = 0; index < model->m_num_bss; ++index) {
+                 const em_bss_info_t *bss = model->get_bss_info(index);
