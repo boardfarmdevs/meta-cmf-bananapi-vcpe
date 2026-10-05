@@ -11,7 +11,7 @@ monitor. See [operations](../guides/operations.md).
 | --- | --- |
 | Branch | `main` |
 | Development and build checkout | `rev140:/home/rev/git/easymesh-labs/meta-cmf-bananapi-vcpe` (the easymesh-labs workspace) |
-| Last-tested VM | `rev140:rdk-1002b`; with the EMOSA option `rev120:rdk-emosa-1002` |
+| Last-tested VM | `rev140:rdk-1004` (with the EMOSA option, EMOSA in the gateway); `rev120:rdk-emosa-1002` (the same, updated in place) |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd from easymesh-medium (the `gen/medium` submodule); the optimizer from easymesh-optimizer (the `gen/optimizer` submodule) |
 | Images | the controller and extender images the easymesh-labs `manifest.json` pins, with the commit each was built from |
@@ -23,6 +23,8 @@ and ten IoT clients; other rooms change presence, not permanent pool size.
 Do not enable VM autostart as part of rebuilding or optional remote access.
 
 ## Qualification
+
+`rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. Readiness and four of the five rooms below passed; `traffic-quieter-ap` stopped three times at the browser harness's screenshot timeout (45 s, also with the browser on another host), where `rdk-emosa-1002`, on the medium and optimizer pinned before 4 October, passed it: open (emosa-lab's rdk-lab record).
 
 `rdk-1002b` was built from scratch on rev140 on 2 October, from this repository as
 it is after its cleanup (the build scripts under `gen/build`, the documents under
@@ -116,11 +118,11 @@ emosa-lab's `gateway.sh on` (or `lab.sh up c gateway`) puts the forwarding back
 
 The last-tested VM's addresses, not a health promise:
 
-| View | `rdk-1002b` |
+| View | `rdk-1004` |
 | --- | --- |
-| Live room | <http://192.168.2.140:29302/> |
-| Network topology | <http://192.168.2.140:29300/> |
-| Console NG | <http://192.168.2.140:29301/> |
+| Live room | <http://192.168.2.140:29612/> |
+| Network topology | <http://192.168.2.140:29610/> |
+| Console NG | <http://192.168.2.140:29611/> |
 
 Each new VM name receives its own port block. See
 lab monitoring (in [easymesh-medium](https://vcpe.dev/easymesh-medium/)) for LXD and Grafana. The optional
