@@ -139,7 +139,7 @@ GRE) unless `EMOSA_GTP = "0"`. The image then has:
 | --- | --- |
 | `/usr/bin/emosa-agent-c`, `emosa-fleet-c`, `emosa-gtp-c` | the programs; `--version` names the emosa-lab revision |
 | `/lib/systemd/system/emosa-fleet.service`, `emosa-agent@.service`, `emosa-gtp.service` | the fleet, enabled and inert until `/etc/emosa-fleet.json` exists, it enables an agent per pod; the GTP, enabled and inert until `/etc/emosa-gtp.json` exists |
-| `/etc/default/emosa` | `EMOSA_TRUNK=emlan`, `EMOSA_BRIDGE=brlan0`: the agents' macvlans on a veth pair into the controller's LAN bridge |
+| `/etc/default/emosa` | `EMOSA_TRUNK=emlan`, `EMOSA_BRIDGE=brlan0`, `EMOSA_NETNS=emosa`: the agents' macvlans on a veth pair into the controller's LAN bridge, in a network namespace of their own (em_ctrl takes an agent whose AL MAC is on one of the gateway's interfaces for its co-located agent) |
 | `/nvram/emosa/` | where the units read EMOSA's configuration (`fleet-config.json`, `agents/`, `gtp-config.json`) and a fleet configuration keeps its state (`state/`): the gateway's persistent storage, which an image upgrade keeps; the agents' status is in `/run/emosa` (RAM), linked from their state directories. `/etc/default/emosa` names these places for the tools that configure EMOSA |
 | `/usr/share/emosa/` | schemas, pod profiles, example configurations, the bill of materials `emosa-c.spdx.json` |
 | `/rdklogs/logs/EMOSAFleetLog.txt`, `EMOSA_<pod>.txt` | the logs, through RDK's logger (`LOG.RDK.EMOSA` in `debug.ini`) |

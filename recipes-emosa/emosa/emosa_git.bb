@@ -36,7 +36,9 @@ DEPENDS = "cjson openssl sqlite3 rdk-logger"
 # c/README.md "Logging, version and package": logging through RDK's logger into
 # /rdklogs/logs, the package's layout, the units, the bill of materials; EMOSA's
 # configuration and state on the gateway's persistent /nvram, which an image upgrade keeps,
-# and its agents' status (rewritten once a second) in RAM, /run
+# and its agents' status (rewritten once a second) in RAM, /run; the agents' interfaces in a
+# network namespace of their own, emosa: the gateway's em_ctrl took an agent whose AL MAC
+# was on one of its own interfaces for its co-located agent (emosa-lab spec 2.1)
 EXTRA_OECMAKE = " \
     -DEMOSA_INSTALL_DATA=ON \
     -DEMOSA_RDK_LOGGER=ON \
@@ -50,6 +52,7 @@ EXTRA_OECMAKE = " \
     -DEMOSA_GTP_CONFIG=/nvram/emosa/gtp-config.json \
     -DEMOSA_STATE_ROOT=/nvram/emosa/state \
     -DEMOSA_RUN_ROOT=/run/emosa \
+    -DEMOSA_NETNS=emosa \
 "
 
 # the GRE termination point a package of its own: the gateway serves the pods' onboarding
@@ -75,6 +78,6 @@ SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service"
 SYSTEMD_AUTO_ENABLE:${PN}-gtp = "enable"
 
-# the agent's link helper: bash, iproute2's ip (a macvlan per agent)
+# the agent's link helper: bash, iproute2's ip (a macvlan per agent, the agents' namespace)
 RDEPENDS:${PN} = "bash iproute2"
 RDEPENDS:${PN}-gtp = "${PN} dnsmasq iproute2"
