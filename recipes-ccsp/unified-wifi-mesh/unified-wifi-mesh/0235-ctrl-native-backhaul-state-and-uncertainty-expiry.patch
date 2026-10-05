@@ -1,0 +1,138 @@
+Subject: [PATCH] ctrl: native backhaul state lines; an agent's uncertainty clears once observed again
+
+The native backhaul module stopped measuring candidates in the geometry rooms: the
+observations said candidate=unknown for every extender and backhaul-parent-handover's
+extender_3 never moved, although the extenders' serving samples were fresh and weak
+enough. Nothing said why. Every 30 s the module now says so in three lines: the counts
+(nodes, backhaul APs, candidates, stations queried, uncertain agents with their
+failures, BSSIDs dropped as ambiguous) and, per round, the reason each (candidate AP,
+station) pair was skipped (no station, unknown parent, the AP's own station, another
+channel or class, a stale or strong serving sample, no valid root path); the backhaul
+AP table (BSSID, owner, operating class, channel); and each station's parent, serving
+sample and whether it has a root path. They showed every station unrooted: the root
+was an EMOSA agent in the gateway, whose 1905 interface carried its AL MAC in the
+gateway's own namespace, so the controller had taken it for its co-located agent
+(rdk-1004, 5 October 2026; fixed in EMOSA, emosa-lab spec 2.1 and finding 17).
+
+An agent whose native move was not verified is marked uncertain: root_path() refuses
+paths through it. The mark cleared only when the agent was later seen on that move's
+exact target; when it ended anywhere else it stayed until em_ctrl restarted, and the
+agent and everything under it were left out of every root path (seen for the pods EMOSA
+serves, whose moves complete after the 15 s verification). It now also clears when the
+agent is observed, fresh, on a known parent at least 30 s after the failed move: its
+ancestry is known again, which is all the mark protects. The policy's own backoff is
+unchanged.
+
+Upstream-Status: Pending
+
+--- a/inc/em_ctrl.h	2026-10-04 23:55:22.914549263 -0700
++++ b/inc/em_ctrl.h	2026-10-04 23:55:44.119662140 -0700
+@@ -95,6 +95,7 @@
+     std::deque<backhaul_requested_t> m_backhaul_requested;
+     int64_t m_backhaul_last_query = 0;
+     uint64_t m_backhaul_round = 0;
++    int64_t m_backhaul_last_state = 0;   /* the periodic state line (every 30 s) */
+     void handle_native_backhaul_tick();
+     void collect_native_backhaul_refresh(const em_backhaul::snapshot &network, int64_t now,
+         std::vector<std::vector<unsigned char>> &outgoing);
+--- a/src/ctrl/em_backhaul_ctrl.cpp	2026-10-04 23:55:22.922549306 -0700
++++ b/src/ctrl/em_backhaul_ctrl.cpp	2026-10-05 07:58:39.092319868 -0700
+@@ -147,6 +147,19 @@
+                     static_cast<long long>(now - iterator->second.sent));
+                 m_backhaul_policy.attempted(iterator->first, now, false);
+                 iterator = m_backhaul_uncertain.erase(iterator);
++            } else if (current != network.nodes.end() && network.aps.count(current->second.parent_bssid) &&
++                current->second.serving.fresh(now) && now - iterator->second.sent >= 30000 &&
++                current->second.serving.observed >= iterator->second.sent + 30000) {
++                /* The agent never reached the target, but it is observed again, fresh, on a
++                 * known parent 30 s after the failed move: its ancestry is known, which is all
++                 * the mark protects. Kept, the mark excluded the agent and everything under it
++                 * from every root path until em_ctrl restarted (rdk-1004, 5 Oct 2026). The
++                 * policy's own backoff for the agent stays. */
++                em_printfout("Native backhaul uncertainty cleared agent=%s parent=%s target=%s elapsed_ms=%lld",
++                    backhaul_label(iterator->first).c_str(), backhaul_label(current->second.parent_bssid).c_str(),
++                    backhaul_label(iterator->second.request.target).c_str(),
++                    static_cast<long long>(now - iterator->second.sent));
++                iterator = m_backhaul_uncertain.erase(iterator);
+             } else ++iterator;
+         }
+         for (const auto &uncertain : m_backhaul_uncertain)
+@@ -245,6 +258,11 @@
+             }
+         }
+         if (now - m_backhaul_last_query >= 4000) {
++            size_t queried_stations = 0;
++            /* why each (candidate AP, station) pair was not queried: no station, unknown parent,
++             * the AP's own station, another channel or class, a stale or strong serving sample,
++             * no valid root path; then the pairs queried */
++            unsigned int skipped[7] = {0, 0, 0, 0, 0, 0, 0};
+             m_backhaul_last_query = now;
+             ++m_backhaul_round;
+             for (const auto &entry : network.nodes) {
+@@ -289,22 +307,61 @@
+                 for (const auto &candidate : network.nodes) {
+                     const auto &station = candidate.second;
+                     const auto parent = network.aps.find(station.parent_bssid);
+-                    if (station.al == network.root || station.al == ap.al || station.sta.empty() ||
+-                        parent == network.aps.end() || parent->second.al == ap.al ||
+-                        parent->second.channel != ap.channel || parent->second.op_class != ap.op_class ||
+-                        !station.serving.fresh(now) || station.serving.rcpi >= 100) continue;
++                    if (station.al == network.root || station.al == ap.al || station.sta.empty()) {
++                        ++skipped[0];
++                        continue;
++                    }
++                    if (parent == network.aps.end()) { ++skipped[1]; continue; }
++                    if (parent->second.al == ap.al) { ++skipped[2]; continue; }
++                    if (parent->second.channel != ap.channel || parent->second.op_class != ap.op_class) {
++                        ++skipped[3];
++                        continue;
++                    }
++                    if (!station.serving.fresh(now) || station.serving.rcpi >= 100) { ++skipped[4]; continue; }
+                     const auto route = em_backhaul::root_path(network, ap.al, station.al, now);
+-                    if (!route.valid) continue;
++                    if (!route.valid) { ++skipped[5]; continue; }
++                    ++skipped[6];
+                     query.stations[station.sta] = station.parent_bssid;
+                     payload.insert(payload.end(), station.sta.begin(), station.sta.end());
+                 }
+                 if (query.stations.empty()) continue;
++                queried_stations += query.stations.size();
+                 payload[3] = static_cast<unsigned char>(query.stations.size());
+                 const unsigned short mid = get_next_msg_id();
+                 m_backhaul_queries[mid] = query;
+                 outgoing.push_back(em_backhaul::frame(ap.al, controller, em_msg_type_unassoc_sta_link_metrics_query,
+                     mid, em_tlv_type_unassoc_sta_link_metric_query, payload));
+             }
++            if (now - m_backhaul_last_state >= 30000) {
++                /* what decides whether candidates are measured at all: the model's nodes and
++                 * backhaul APs, the BSSIDs dropped as ambiguous, the uncertain agents */
++                m_backhaul_last_state = now;
++                std::string uncertain_agents, ambiguous;
++                for (const auto &entry : m_backhaul_uncertain)
++                    uncertain_agents += (uncertain_agents.empty() ? "" : ",") + backhaul_label(entry.first) +
++                        "/" + std::to_string(entry.second.failures);
++                for (const auto &bssid : ambiguous_bssids)
++                    ambiguous += (ambiguous.empty() ? "" : ",") + backhaul_label(bssid);
++                em_printfout("Native backhaul state nodes=%zu aps=%zu candidates=%zu queried_stations=%zu uncertain=[%s] ambiguous=[%s] skipped=[nosta %u parent %u own %u channel %u serving %u route %u queried %u]",
++                    network.nodes.size(), network.aps.size(), network.candidates.size(), queried_stations,
++                    uncertain_agents.c_str(), ambiguous.c_str(), skipped[0], skipped[1], skipped[2], skipped[3],
++                    skipped[4], skipped[5], skipped[6]);
++                std::string table;
++                for (const auto &entry : network.aps)
++                    table += " " + backhaul_label(entry.first) + "@" + backhaul_label(entry.second.al) + "/" +
++                        std::to_string(entry.second.op_class) + "/" + std::to_string(entry.second.channel);
++                em_printfout("Native backhaul state aps:%s", table.c_str());
++                std::string stations;
++                for (const auto &entry : network.nodes) {
++                    const auto &station = entry.second;
++                    const auto route = em_backhaul::root_path(network, station.al, "", now);
++                    stations += " " + backhaul_label(station.al) + ">" + backhaul_label(station.parent_bssid) + "/" +
++                        std::to_string(station.serving.rcpi) + "/" +
++                        std::to_string(station.serving.observed ? now - station.serving.observed : -1) +
++                        (route.valid ? "/rooted" : "/unrooted");
++                }
++                em_printfout("Native backhaul state stations:%s", stations.c_str());
++            }
+         }
+     }
+     for (auto &packet : outgoing) {

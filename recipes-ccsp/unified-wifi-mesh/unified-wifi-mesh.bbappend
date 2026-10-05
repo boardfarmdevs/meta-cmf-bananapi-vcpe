@@ -198,6 +198,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0232-ctrl-steerwifibackhaul-sends-the-backhaul-steering-request.patch \
     file://0233-ctrl-renewed-radios-do-not-wait-for-configured-siblings.patch \
     file://0234-ctrl-renewed-radio-ap-cap-query-does-not-wait-for-configured-siblings.patch \
+    file://0235-ctrl-native-backhaul-state-and-uncertainty-expiry.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
