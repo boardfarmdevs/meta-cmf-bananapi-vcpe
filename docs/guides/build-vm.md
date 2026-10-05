@@ -131,8 +131,8 @@ emosa-lab's OpenSync adapter to the lab: EMOSA, its fleet, the pods' gateway
 backhaul, and the rooms with the pods (`gen/medium/configurator/worlds-pods`).
 emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`; its
 `docs/concepts/rdk-lab.md`); `EMOSA_LAB` names its checkout, clean at the commit
-`gen/vm/lxd/emosa-lab.env` pins. It needs the wired extender. After a reboot,
-`build.sh emosa` brings the pods back. `EASYMESH_EMOSA_AGENT=c` installs the
+`gen/vm/lxd/emosa-lab.env` pins. It needs the wired extender. After a stop,
+`build.sh start` brings the pods back too. `EASYMESH_EMOSA_AGENT=c` installs the
 adapter in C instead of the Python reference. `EASYMESH_EMOSA_IN=gateway` then
 moves EMOSA into the gateway, its state on `/nvram`: the controller image's own
 package (`BUILD_EMOSA=1`, checked before the build).

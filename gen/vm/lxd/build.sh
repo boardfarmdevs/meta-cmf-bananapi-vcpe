@@ -827,6 +827,18 @@ start_vm() {
     # the lab's ordered bring-up repairs that and waits for the room to settle. When the
     # runtime's own gate stops on it first (rdk-fast-c, 4 Oct: the wired extender's one BSS
     # of ten), the bring-up repairs and the runtime starts once more.
+    if "$started" && emosa_option; then
+        # A VM with the EMOSA option: its room service runs the rooms with the pods and
+        # refuses to start until they operate, and the pods, the pods' GRE termination point
+        # and EMOSA's containers do not autostart. So the bare bring-up would wait for a room
+        # that cannot start (rdk-1004, 5 Oct); emosa-lab's step brings the pods back and runs
+        # the lab's ordered bring-up itself (lab.sh rooms pods), then the runtime again.
+        run_root systemctl start easymesh-lab.service ||
+            echo "$name: the lab's runtime stopped at a gate; EMOSA's step, then the runtime again" >&2
+        emosa_start || return 1
+        run_root systemctl start easymesh-lab.service
+        return
+    fi
     if ! run_root systemctl start easymesh-lab.service; then
         "$started" && run_root test -x "$bringup" || return 1
         echo "$name: the lab's runtime stopped at a gate; ordered bring-up, then the runtime again" >&2
@@ -836,6 +848,23 @@ start_vm() {
     fi
     if "$started" && run_root test -x "$bringup"; then
         run_root "$bringup" up
+    fi
+}
+
+emosa_option() { [ -n "$(lxc config get "$name" user.easymesh.emosa-lab 2>/dev/null)" ]; }
+
+emosa_start() {
+    # emosa-lab's step again, from what is staged in the VM (as build.sh emosa ran it, no new
+    # inputs needed). With EMOSA in the gateway its fleet already started the agents; this
+    # brings the rest back: the pods' redirector address, EMOSA's containers, the GTP, the
+    # gateway's forwarding, the pods and the rooms with them.
+    local vm_lab=/opt/emosa-lab/deploy/rdk-lab/vm/lab.sh
+    emosa_option || return 0
+    run_root test -f "$vm_lab" || { echo "$name: the EMOSA option has no staged lab.sh; build.sh emosa" >&2; return 1; }
+    if [ "$(lxc config get "$name" user.easymesh.emosa-in 2>/dev/null)" = gateway ]; then
+        run_root bash "$vm_lab" up c gateway
+    else
+        run_root bash "$vm_lab" up
     fi
 }
 
