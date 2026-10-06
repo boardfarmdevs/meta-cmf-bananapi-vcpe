@@ -540,8 +540,11 @@ push_inputs() {
 }
 
 run_root() {
+    # Never a dialog in the guest: a build run from a terminal gives lxc exec one, and apt's
+    # needrestart then stopped at "Pending kernel upgrade" (rev150, 6 October).
     lxc exec "$name" -- env EASYMESH_KERNEL="$kernel" \
-        EASYMESH_RUNTIME_BRANCH="$runtime_branch" "$@"
+        EASYMESH_RUNTIME_BRANCH="$runtime_branch" \
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 "$@"
 }
 
 check_baseline() (
