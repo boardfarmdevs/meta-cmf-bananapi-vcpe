@@ -71,9 +71,10 @@ FILES:${PN} += " \
 CONFFILES:${PN} = "${sysconfdir}/default/emosa"
 
 SYSTEMD_PACKAGES = "${PN} ${PN}-gtp"
-# the fleet is inert until /etc/emosa-fleet.json exists, it enables an agent per pod; the
-# GTP is inert until /etc/emosa-gtp.json exists
-SYSTEMD_SERVICE:${PN} = "emosa-fleet.service"
+# the fleet is inert until /etc/emosa-fleet.json exists, it enables an agent per pod; its
+# forwarder until that configuration has "forward": true (the front and agent ports on the
+# gateway's LAN address); the GTP is inert until /etc/emosa-gtp.json exists
+SYSTEMD_SERVICE:${PN} = "emosa-fleet.service emosa-forward.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service"
 SYSTEMD_AUTO_ENABLE:${PN}-gtp = "enable"
