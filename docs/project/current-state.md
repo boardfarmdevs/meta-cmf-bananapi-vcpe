@@ -46,10 +46,20 @@ converge; seen on rdk-emosa-1005 with the earlier image too). With the controlle
 `X86EMLTRBPIBB_rdk-next_20261006124653`, redeployed in place, the catalog passed 27 of 27,
 em_ctrl keeping 109 lines per 30 s on average and 635 at most, no renewal in 50 minutes.
 0240 takes the data model's registration traces at em_ctrl's start to the debug channel
-too. Both labs run `X86EMLTRBPIBB_rdk-next_20261006153516` (dad7504, EMOSA's package at the
-pin cdfaddc). On rdk-1004, redeployed: the catalog 27 of 27, 103 lines per 30 s on average,
-619 at most; one window over the cap in the whole run, at a bring-up's controller restart,
-every agent onboarding at once (479 lines over; three of four starts stayed under).
+too. With `X86EMLTRBPIBB_rdk-next_20261006153516` (dad7504), on rdk-1004: the catalog 27 of
+27, 103 lines per 30 s on average, 619 at most; one window over the cap in the whole run, at
+a bring-up's controller restart, every agent onboarding at once (479 lines over; three of
+four starts stayed under). 0241 takes the rest of that onboarding (each step of each radio's
+em_config, the data model's nodes, the command candidates cancelled) to the debug channel as
+well: 912 of the 1,386 lines of the captured restart. rdk-1004 runs
+`X86EMLTRBPIBB_rdk-next_20261006175821` (8f1522e, EMOSA's package at the pin cdfaddc),
+redeployed in place: no em_ctrl line dropped in the whole run (the redeploy, three
+controller starts, the catalog); through the catalog 101 lines per 30 s on average, 459 at
+most; a bring-up's restart with all eight agents, measured, 708 in its busiest 30 s. The
+catalog passed 26 of 27: `fifty-client-counter-roam` missed its initial convergence while
+another session's build held rev140 at load 25 to 30, and passed 3 of 3 alone afterwards.
+Open: at that restart the gateway's em_agent passes its own cap (526, 2,030 and 618 lines
+dropped).
 
 `rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
 target configuration, next to `rdk-emosa-1002`, which keeps running (`EASYMESH_SHARED_HOST=1`):
