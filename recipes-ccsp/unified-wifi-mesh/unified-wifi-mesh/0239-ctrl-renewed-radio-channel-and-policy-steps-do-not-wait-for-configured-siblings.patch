@@ -1,0 +1,96 @@
+Subject: [PATCH] ctrl: a renewed radio's Channel Preference Query and policy request do not wait for configured siblings
+
+0234 let a renewed radio past the AP Capability Query; it then waited one step later. In
+channel_query_pending the controller sends the agent's Channel Preference Query only when
+every radio of the agent is there, and from the agent's first radio; in set_policy_pending
+it sends the Multi-AP Policy Config from the agent's first radio. When only one radio is
+renewed (its em_config timed out, it was marked misconfigured and AutoConfig Renew re-ran WSC
+for it alone) its siblings stay configured: the query waited for them, or the first radio,
+configured and executing nothing, sent no request. The renewed radio waited until its
+em_config timed out ("Canceling cmd: em_config because time limit exceeded"), was renewed
+and waited again, for ever (rdk-1004, 6 October 2026: the wired extender's 2.4 GHz radio
+renewed 43 times in 22 minutes, its 5 GHz radio with it; while it cycled it refused
+candidate queries with Error_Not_Ready, the optimizer's snapshot stayed incomplete and the
+rooms did not converge).
+
+As in 0233 and 0234: only a sibling still onboarding (before channel_query_pending) holds
+the query, and the radio that sends the query, or the policy request, is elected among the
+radios waiting for it. The report and the ACK still move every radio that waits.
+
+Upstream-Status: Pending
+
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -2509,17 +2509,25 @@
+                 std::vector<em_t *> em_radios;
+                 dm_easy_mesh_t *dm = get_data_model();
+                 get_mgr()->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
++                em_t *query_em = NULL;
+                 for (auto &em : em_radios) {
+-                    if (em->get_state() != em_state_ctrl_channel_query_pending) {
+-                        em_util_dbg_print(EM_CONF, "radio %s is not in channel query pending state, ignoring",
+-                            util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                    // Only a sibling still onboarding (before this query) holds it. One
++                    // already past it, because it finished earlier and only this radio was
++                    // renewed, must not: waiting for it times this radio's em_config out,
++                    // renews it and waits again, for ever.
++                    if (em->get_state() < em_state_ctrl_channel_query_pending) {
++                        em_util_dbg_print(EM_CONF, "radio %s is in state:%d, before the Channel Preference query, ignoring",
++                            util::mac_to_string(em->get_radio_interface_mac()).c_str(), em->get_state());
+                         em_radios.clear();
+                         return;
+                     }
++                    // The radio that sends the query is elected among the radios waiting
++                    // for it: a sibling already past it may be executing another command.
++                    if ((query_em == NULL) && (em->get_state() == em_state_ctrl_channel_query_pending)) {
++                        query_em = em;
++                    }
+                 }
+-                // If all radios are in Channel pref query pending state, send channel pref query on one of them, 
+-                // ignore sending channel query query on other radios
+-                if (this == em_radios.front()){
++                if (this == query_em){
+                     em_printfout("Sending the Channel pref query message to agent al_mac:%s on radio: %s",
+                         util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
+                         util::mac_to_string(get_radio_interface_mac()).c_str());
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -1060,12 +1060,21 @@
+                         return;
+                     }
+                 }
+-                // If all radios or some radios in set policy pending state, send policy config request on one of them,
+-                // ignore sending policy config request on other radios
+-                if (!em_radios.empty() && em_radios.front() == this)
++                // The radio that sends the request is elected among the radios waiting in
++                // this step: the first radio of the agent may be a sibling already
++                // configured, which sends nothing, when only this radio was renewed; it
++                // waited until its em_config timed out, was renewed and waited again.
++                em_t *policy_em = NULL;
++                for (auto &em : em_radios) {
++                    if ((em != NULL) && (em->get_state() == em_state_ctrl_set_policy_pending)) {
++                        policy_em = em;
++                        break;
++                    }
++                }
++                if (policy_em == this)
+                 {
+-                    // Check if current radio's RUID matches the first radio's RUID in the vector
+-                    if (memcmp(current_ruid, em_radios.front()->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
++                    // the elected radio is this one
++                    if (memcmp(current_ruid, policy_em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
+                          em_printfout("Sending the Policy config request message to agent al_mac:%s on radio: %s",
+                                  util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
+                                  util::mac_to_string(get_radio_interface_mac()).c_str());
+@@ -1077,9 +1086,9 @@
+                              em_printfout("Policy config request sent successfully, bytes: %d", send_result);
+                          }
+                     }
+-                } else if (!em_radios.empty() && em_radios.front() != this) {
++                } else if (policy_em != NULL && policy_em != this) {
+                     em_printfout("Policy config request message already sent by radio %s, not sending again from radio %s",
+-                              util::mac_to_string(em_radios.front()->get_radio_interface_mac()).c_str(),
++                              util::mac_to_string(policy_em->get_radio_interface_mac()).c_str(),
+                               util::mac_to_string(get_radio_interface_mac()).c_str());
+ 
+                 } else {
