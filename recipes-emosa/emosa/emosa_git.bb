@@ -24,6 +24,9 @@ def emosa_lab_commit(d):
     return found.group(1)
 
 SRC_URI = "git://github.com/boardfarmdevs/emosa-lab.git;protocol=https;branch=main"
+# RDK-B's part of the GTP (emosa-lab spec 8.2): the pods' onboarding SSID kept on OneWifi's
+# VAP across its restarts, from /nvram/emosa/podbh.conf (emosa-podbh.service)
+SRC_URI += "file://emosa-podbh-onewifi file://emosa-podbh.service"
 SRCREV = "${@emosa_lab_commit(d)}"
 # the release of emosa-lab's pyproject.toml at that commit
 PV = "0.1.0+git${SRCPV}"
@@ -62,7 +65,15 @@ FILES:${PN}-gtp = " \
     ${bindir}/emosa-gtp-c \
     ${systemd_system_unitdir}/emosa-gtp.service \
     ${datadir}/emosa/gtp.example.json \
+    ${libexecdir}/emosa/podbh-onewifi \
+    ${systemd_system_unitdir}/emosa-podbh.service \
 "
+
+do_install:append() {
+    install -d ${D}${libexecdir}/emosa ${D}${systemd_system_unitdir}
+    install -m 0755 ${WORKDIR}/emosa-podbh-onewifi ${D}${libexecdir}/emosa/podbh-onewifi
+    install -m 0644 ${WORKDIR}/emosa-podbh.service ${D}${systemd_system_unitdir}/emosa-podbh.service
+}
 FILES:${PN} += " \
     ${systemd_system_unitdir}/emosa-agent@.service \
     ${libexecdir}/emosa \
@@ -73,10 +84,11 @@ CONFFILES:${PN} = "${sysconfdir}/default/emosa"
 SYSTEMD_PACKAGES = "${PN} ${PN}-gtp"
 # the fleet is inert until /etc/emosa-fleet.json exists, it enables an agent per pod; its
 # forwarder until that configuration has "forward": true (the front and agent ports on the
-# gateway's LAN address); the GTP is inert until /etc/emosa-gtp.json exists
+# gateway's LAN address); the GTP is inert until /etc/emosa-gtp.json exists, and the pods'
+# onboarding SSID (wanted by onewifi.service) until /nvram/emosa/podbh.conf exists
 SYSTEMD_SERVICE:${PN} = "emosa-fleet.service emosa-forward.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
-SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service"
+SYSTEMD_SERVICE:${PN}-gtp = "emosa-gtp.service emosa-podbh.service"
 SYSTEMD_AUTO_ENABLE:${PN}-gtp = "enable"
 
 # the agent's link helper: bash, iproute2's ip (a macvlan per agent, the agents' namespace)

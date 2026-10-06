@@ -496,6 +496,44 @@ with open(path, "w") as fh:
 PYEOF
         bbnote "meta-cmf-bananapi-vcpe: added persistent VAP MAC generation and the applicable first-boot-safe EasyMesh AL-MAC update to $fn"
     done
+
+    # The interfaces the VAP map names beyond the fixed ten, e.g. a gateway-local VAP kept out
+    # of EasyMesh (EMOSA's pod-backhaul SSID, lnf_radius_5g on wifi1.4: libwebconfig 0014).
+    # OneWifi's stop removes every Wi-Fi interface and this script makes the fixed ten again;
+    # the HAL cannot create another itself (its VAP has no BSSID yet: NL80211_CMD_NEW_INTERFACE
+    # fails with -EADDRNOTAVAIL). Made here with a MAC of their own in /nvram/mac_addresses.txt,
+    # generated once like the fixed ones. The gateway's script only (no extender carries such
+    # a VAP), and on its own: the rewrite above skips a WORKDIR copy an earlier build rewrote.
+    f="${WORKDIR}/onewifi_pre_start_em_ctrl.sh"
+    if [ -f "$f" ] && ! grep -q 'beyond the fixed ones above' "$f"; then
+        python3 - "$f" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as fh:
+    content = fh.read()
+extra = (
+    "# The interfaces the VAP map names beyond the fixed ones above (a gateway-local VAP\n"
+    "# kept out of EasyMesh): made with a MAC of their own, generated once like the others\n"
+    "for ifn in $(grep -o '\"InterfaceName\": *\"[^\"]*\"' /nvram/InterfaceMap.json | cut -d'\"' -f4); do\n"
+    "    [ -e \"/sys/class/net/$ifn\" ] && continue\n"
+    "    mac=$(awk -v i=\"$ifn\" '$1 == i {print $2; exit}' /nvram/mac_addresses.txt)\n"
+    "    if [ -z \"$mac\" ]; then\n"
+    "        set -- $(od -An -N3 -tu1 /dev/urandom)\n"
+    "        mac=$(printf '02:00:00:%02x:%02x:%02x' \"$1\" \"$2\" \"$3\")\n"
+    "        echo \"$ifn $mac\" >> /nvram/mac_addresses.txt\n"
+    "    fi\n"
+    "    iw phy $phy interface add \"$ifn\" type __ap\n"
+    "    ip link set dev \"$ifn\" address \"$mac\"\n"
+    "    ip link set dev \"$ifn\" up\n"
+    "done\n\n"
+)
+mld = "# Set MLD interface address"
+assert content.count(mld) == 1, content.count(mld)
+with open(path, "w") as fh:
+    fh.write(content.replace(mld, extra + mld))
+PYEOF
+        bbnote "meta-cmf-bananapi-vcpe: the gateway's pre-start makes the interfaces its VAP map names beyond the fixed ten"
+    fi
 }
 do_patch[vardepsexclude] += "WIFI_NASTA_STATIONS_PATCH"
 do_patch[file-checksums] += "${WIFI_NASTA_STATIONS_PATCH}:True"

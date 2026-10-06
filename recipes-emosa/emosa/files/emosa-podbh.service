@@ -1,0 +1,18 @@
+# The pods' onboarding SSID on OneWifi's VAP, at each start of OneWifi (emosa-lab spec 8.2):
+# before the gateway's EasyMesh agent, whose application of the controller's settings
+# carries the radio's VAPs as it found them. Inert without /nvram/emosa/podbh.conf.
+[Unit]
+Description=EMOSA: the pods' onboarding SSID on OneWifi
+After=onewifi.service
+Before=em_agent.service
+PartOf=onewifi.service
+ConditionPathExists=/nvram/emosa/podbh.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/emosa/podbh-onewifi
+TimeoutStartSec=180
+
+[Install]
+WantedBy=onewifi.service

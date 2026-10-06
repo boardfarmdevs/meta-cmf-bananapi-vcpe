@@ -1,0 +1,94 @@
+Subject: [PATCH] easymesh translator: lnf_radius VAPs stay out of EasyMesh, like hotspot VAPs
+
+No EasyMesh haul type maps to an lnf_radius VAP (convert_vap_name_to_hault_type): the
+controller cannot configure one, yet the translator reported it to the agent, which
+listed it in its AP Operational BSS. RDK's controller accepts a Topology Response only
+when every operational BSS carries one of its network SSIDs (is_ssid_match): with an
+lnf_radius VAP the gateway runs itself, every Topology Response of the co-located agent
+failed ("SSID misconfiguration"), its radios stayed in topo_sync_pending, candidate
+queries to them were refused with Error_Not_Ready and steers from its BSSes waited
+until the clients' association timed out. Applying the controller's settings, the
+translator also reset the VAP (disabled, OneWifi's default SSID and security).
+
+The EMOSA pods' bootstrap SSID is such a VAP (emosa-lab spec 8.2: a fronthaul-type
+pod-backhaul SSID the gateway provides, on its own bridge, outside the controller's
+networks). lnf_radius VAPs are now skipped wherever hotspot VAPs are, in both
+directions, and their stations are not reported as the agent's clients: the VAP is
+OneWifi's alone, as a hotspot VAP is (rdk-1004, 6 October 2026).
+
+Upstream-Status: Pending
+
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -1323,7 +1323,10 @@
+         vap_map = &radio->vaps.vap_map;
+         for (unsigned int j = 0; j < radio->vaps.num_vaps; j++) {
+             vap = &vap_map->vap_array[j];
+-            if (is_vap_hotspot(wifi_prop,vap->vap_index) == true) {
++            /* lnf_radius maps to no EasyMesh haul type: a gateway-local VAP the
++             * controller cannot configure, kept out of EasyMesh like hotspot VAPs */
++            if ((is_vap_hotspot(wifi_prop,vap->vap_index) == true) ||
++                (is_vap_lnf_radius(wifi_prop, vap->vap_index) == TRUE)) {
+                 continue;
+             }
+             bss_count++;
+@@ -1582,6 +1585,11 @@
+                 wifi_util_dbg_print(WIFI_WEBCONFIG,"%s:%d: rdk_vap_info NULL\n", __func__, __LINE__);
+                 return webconfig_error_translate_to_easymesh;
+             }
++            /* The stations of an lnf_radius VAP stay out of EasyMesh with the VAP:
++             * no association events for a BSS the agent does not report. */
++            if (strncmp(rdk_vap_info->vap_name, "lnf_radius", strlen("lnf_radius")) == 0) {
++                continue;
++            }
+ 
+             /* EM must emit Client Association Events even when OneWifi publishes a
+              * FULL associated-clients refresh (empty diff map) -- otherwise clients
+@@ -2421,7 +2429,10 @@
+             vap = &vap_map->vap_array[j];
+ 
+             wifi_util_dbg_print(WIFI_WEBCONFIG,"%s:%d: vap->vap_name:%s \r\n", __func__, __LINE__, vap->vap_name);
+-            if (is_vap_hotspot(wifi_prop,vap->vap_index) == true) {
++            /* lnf_radius maps to no EasyMesh haul type: a gateway-local VAP the
++             * controller cannot configure, kept out of EasyMesh like hotspot VAPs */
++            if ((is_vap_hotspot(wifi_prop,vap->vap_index) == true) ||
++                (is_vap_lnf_radius(wifi_prop, vap->vap_index) == TRUE)) {
+                 continue;
+             }
+             iface_map = NULL;
+@@ -2710,7 +2721,10 @@
+             vap = &vap_map->vap_array[j];
+             /* Hotspot vaps have no dispatch branch below and would abort the
+                whole subdoc; skip them like the DML loop does. */
+-            if (is_vap_hotspot(wifi_prop, vap->vap_index) == TRUE) {
++            /* lnf_radius maps to no EasyMesh haul type: a gateway-local VAP the
++             * controller cannot configure, kept out of EasyMesh like hotspot VAPs */
++            if ((is_vap_hotspot(wifi_prop, vap->vap_index) == TRUE) ||
++                (is_vap_lnf_radius(wifi_prop, vap->vap_index) == TRUE)) {
+                 continue;
+             }
+             iface_map = NULL;
+@@ -3460,7 +3474,10 @@
+             count++;
+             proto->set_num_bss(proto->data_model, count);
+             wifi_util_dbg_print(WIFI_WEBCONFIG,"%s:%d: vap->vap_name:%s \r\n", __func__, __LINE__, vap->vap_name);
+-            if (is_vap_hotspot(wifi_prop,vap->vap_index) == true) {
++            /* lnf_radius maps to no EasyMesh haul type: a gateway-local VAP the
++             * controller cannot configure, kept out of EasyMesh like hotspot VAPs */
++            if ((is_vap_hotspot(wifi_prop,vap->vap_index) == true) ||
++                (is_vap_lnf_radius(wifi_prop, vap->vap_index) == TRUE)) {
+                 continue;
+             }
+             if (strstr(vap->vap_name,vap_name) == false) {
+@@ -3751,7 +3768,10 @@
+ 
+             em_vap_info = proto->get_bss_info(proto->data_model, j);//Please add NULL check TBD-P
+             wifi_util_dbg_print(WIFI_WEBCONFIG,"%s:%d: vap->vap_name:%s \r\n", __func__, __LINE__, vap->vap_name);
+-            if (is_vap_hotspot(wifi_prop,vap->vap_index) == true) {
++            /* lnf_radius maps to no EasyMesh haul type: a gateway-local VAP the
++             * controller cannot configure, kept out of EasyMesh like hotspot VAPs */
++            if ((is_vap_hotspot(wifi_prop,vap->vap_index) == true) ||
++                (is_vap_lnf_radius(wifi_prop, vap->vap_index) == TRUE)) {
+                 continue;
+             }
+ 

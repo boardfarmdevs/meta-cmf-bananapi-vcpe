@@ -1,0 +1,37 @@
+Subject: [PATCH] dhcp server: dnsmasq binds per interface (bind-dynamic)
+
+The gateway's dnsmasq served brlan0 but bound the wildcard DHCP socket without
+SO_REUSEADDR, so no other DHCP server could run on any other interface of the gateway:
+the EMOSA pods' GRE termination point serves their underlay segment (its own bridge,
+169.254.2.0/25) with its own dnsmasq, which then failed with "failed to bind DHCP
+server socket: Address already in use". With bind-dynamic each instance binds its own
+interfaces and sets SO_REUSEADDR; this one still serves only brlan0 (its interface=
+lines), and the loopback, which dnsmasq adds to every interface list. Both generators,
+the C (service_dhcp) and the shell one (rdk-1004, 6 October 2026).
+
+Upstream-Status: Pending
+
+--- a/source/scripts/init/service.d/service_dhcp_server/dhcp_server_functions.sh
++++ b/source/scripts/init/service.d/service_dhcp_server/dhcp_server_functions.sh
+@@ -1022,6 +1022,9 @@
+    then
+        echo "domain-needed" >> $LOCAL_DHCP_CONF
+        echo "bogus-priv" >> $LOCAL_DHCP_CONF
++       # each interface its own DHCP socket, so that another DHCP server can serve another
++       # interface of the gateway (the EMOSA pods' GRE termination point)
++       echo "bind-dynamic" >> $LOCAL_DHCP_CONF
+ 
+        PARTNER_ID=`syscfg get PartnerID`
+        if [ "$BOX_TYPE" = "SR213" ] || [ "$PARTNER_ID" = "sky-uk" ] ; then
+--- a/source/service_dhcp/dhcp_server_functions.c
++++ b/source/service_dhcp/dhcp_server_functions.c
+@@ -1465,6 +1465,9 @@
+         
+         fprintf(l_fLocal_Dhcp_ConfFile, "domain-needed\n");
+         fprintf(l_fLocal_Dhcp_ConfFile, "bogus-priv\n");
++        /* each interface its own DHCP socket (SO_REUSEADDR), so that another DHCP server can
++         * serve another interface of the gateway (the EMOSA pods' GRE termination point) */
++        fprintf(l_fLocal_Dhcp_ConfFile, "bind-dynamic\n");
+         fprintf(l_fLocal_Dhcp_ConfFile, "address=/.c.f.ip6.arpa/\n");
+ 
+         if (TRUE == l_bCaptivePortal_Mode)

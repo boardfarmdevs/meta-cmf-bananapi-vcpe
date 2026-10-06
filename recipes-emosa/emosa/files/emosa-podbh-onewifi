@@ -1,0 +1,45 @@
+#!/bin/sh
+# The pods' onboarding SSID on an RDK-B gateway (emosa-lab spec 8.2): OneWifi's VAP
+# PODBH_VAP (lnf_radius_5g: a gateway-local VAP kept out of EasyMesh, libwebconfig 0014)
+# given the SSID and key in /nvram/emosa/podbh.conf, at each start of OneWifi
+# (emosa-podbh.service). OneWifi keeps no VAP settings across its restarts here, and only
+# the EasyMesh VAPs get theirs back, from the controller. Inert without the configuration.
+# SPDX-License-Identifier: Apache-2.0
+CONF=${EMOSA_PODBH_CONF:-/nvram/emosa/podbh.conf}
+[ -f "$CONF" ] || exit 0
+# shellcheck source=/dev/null
+. "$CONF"
+VAP=${PODBH_VAP:-lnf_radius_5g}
+if [ -z "${PODBH_SSID:-}" ] || [ -z "${PODBH_KEY:-}" ]; then
+    echo "emosa-podbh: $CONF names no SSID or key" >&2
+    exit 1
+fi
+
+v() { rbuscli get "$1" 2>/dev/null | tr -d '\r' | awk -F': ' '/Value/ {print $2}'; }
+
+i=0    # OneWifi's data model, once it is up
+while [ -z "$(v Device.WiFi.SSIDNumberOfEntries)" ]; do
+    i=$((i + 1))
+    [ "$i" -le 60 ] || { echo "emosa-podbh: no OneWifi data model after 120 s" >&2; exit 1; }
+    sleep 2
+done
+n=1
+while [ "$n" -le 32 ] && [ "$(v "Device.WiFi.SSID.$n.Name")" != "$VAP" ]; do n=$((n + 1)); done
+[ "$n" -le 32 ] || { echo "emosa-podbh: OneWifi has no VAP $VAP (its interface map)" >&2; exit 1; }
+if [ "$(v "Device.WiFi.SSID.$n.SSID")" = "$PODBH_SSID" ] &&
+    [ "$(v "Device.WiFi.AccessPoint.$n.Security.ModeEnabled")" = WPA2-Personal ] &&
+    [ "$(v "Device.WiFi.AccessPoint.$n.SSIDAdvertisementEnabled")" = true ] &&
+    [ "$(v "Device.WiFi.SSID.$n.Enable")" = true ]; then
+    echo "emosa-podbh: $VAP is '$PODBH_SSID' already"
+    exit 0
+fi
+if ! { rbuscli set "Device.WiFi.SSID.$n.SSID" string "$PODBH_SSID" >/dev/null &&
+    rbuscli set "Device.WiFi.AccessPoint.$n.Security.ModeEnabled" string WPA2-Personal >/dev/null &&
+    rbuscli set "Device.WiFi.AccessPoint.$n.Security.KeyPassphrase" string "$PODBH_KEY" >/dev/null &&
+    rbuscli set "Device.WiFi.AccessPoint.$n.SSIDAdvertisementEnabled" boolean true >/dev/null &&
+    rbuscli set "Device.WiFi.SSID.$n.Enable" boolean true >/dev/null &&
+    rbuscli set Device.WiFi.ApplyAccessPointSettings boolean true >/dev/null; }; then
+    echo "emosa-podbh: OneWifi refused the settings of $VAP" >&2
+    exit 1
+fi
+echo "emosa-podbh: $VAP (index $n) set to '$PODBH_SSID', WPA2-Personal"
