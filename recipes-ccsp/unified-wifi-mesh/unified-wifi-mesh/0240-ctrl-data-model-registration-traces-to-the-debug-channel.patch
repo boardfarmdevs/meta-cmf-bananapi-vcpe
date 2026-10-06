@@ -1,0 +1,41 @@
+Subject: [PATCH] ctrl: the data model's registration traces to em's debug channel
+
+With 0237 to 0239 em_ctrl stayed under its journal's cap (1000 lines per 30 s) through the
+rooms, but not at its own start: lab-bringup restarts it for every room setup, and it then
+logged each Data Elements table it registered on the bus and each YANG path it converted
+for it, some 800 lines, while every agent onboarded again (rdk-emosa-1005, 6 October 2026:
+1,238 lines dropped in the window of a restart). Those traces now print through
+em_util_dbg_print, as 0237 does (/nvram/emCtrlDbg); a registration that fails stays on the
+journal.
+
+Upstream-Status: Pending
+
+--- a/src/ctrl/tr_181/wfa_data_model/tr_181.cpp
++++ b/src/ctrl/tr_181/wfa_data_model/tr_181.cpp
+@@ -378,7 +378,7 @@
+         em_printfout("bus: bus_regDataElements failed:%s\n", full_namespace);
+         return RETURN_ERR;
+     }
+-    em_printfout("bus: bus_regDataElements success:%s", full_namespace);
++    em_util_dbg_print(EM_CTRL, "bus: bus_regDataElements success:%s", full_namespace);
+ 
+     return RETURN_OK;
+ }
+@@ -1059,7 +1059,7 @@
+ std::string tr_181_t::yang_to_tr181_path(const std::string& in)
+ {
+     std::string out = in;
+-    em_printfout("Converting YANG path: %s", in.c_str());
++    em_util_dbg_print(EM_CTRL, "Converting YANG path: %s", in.c_str());
+ 
+     for (int i = 0; g_yang_map[i].yang; ++i) {
+         const std::string from = g_yang_map[i].yang;
+@@ -1229,7 +1229,7 @@
+     // 0) If property is deprecated, do not bother
+     bool deprecated = schema_is_deprecated(propertySchema);
+     if (deprecated) {
+-        em_printfout("Deprecated parameter, skip");
++        em_util_dbg_print(EM_CTRL, "Deprecated parameter, skip");
+         return;
+     }
+ 
