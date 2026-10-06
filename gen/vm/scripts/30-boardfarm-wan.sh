@@ -18,7 +18,14 @@ install -m 0644 /home/easymesh/easymesh-assets/boardfarm-lab.service \
     /etc/systemd/system/boardfarm-lab.service
 systemctl daemon-reload
 systemctl enable boardfarm-lab.service easymesh-lxd-docker-forward.service
-systemctl start boardfarm-lab.service
+# A VM made from the base image already runs the service from its boot, racing Docker's
+# preserved containers and the nested LXD: on rev150 (6 October) that run failed after 7 s,
+# this start joined it and failed the build, and the service passed when run again. One
+# more start after a bounded delay; a second failure still fails the step.
+if ! systemctl start boardfarm-lab.service; then
+    sleep 15
+    systemctl restart boardfarm-lab.service
+fi
 systemctl start easymesh-lxd-docker-forward.service
 
 test "$(docker network inspect wan-cpe1 -f '{{index .Options "com.docker.network.bridge.name"}}')" = \
