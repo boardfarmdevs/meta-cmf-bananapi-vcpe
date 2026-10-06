@@ -205,6 +205,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0239-ctrl-renewed-radio-channel-and-policy-steps-do-not-wait-for-configured-siblings.patch \
     file://0240-ctrl-data-model-registration-traces-to-the-debug-channel.patch \
     file://0241-em-onboarding-traces-to-the-debug-channel.patch \
+    file://0242-agent-document-dumps-and-traces-to-the-debug-channel-keys-out.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
