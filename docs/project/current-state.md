@@ -45,6 +45,20 @@ renewed 43 times in 22 minutes, refusing candidate queries, and the rooms did no
 converge; seen on rdk-emosa-1005 with the earlier image too). With the controller image
 `X86EMLTRBPIBB_rdk-next_20261006124653`, redeployed in place, the catalog passed 27 of 27,
 em_ctrl keeping 109 lines per 30 s on average and 635 at most, no renewal in 50 minutes.
+0240 takes the data model's registration traces at em_ctrl's start to the debug channel
+too. Both labs run `X86EMLTRBPIBB_rdk-next_20261006153516` (dad7504, EMOSA's package at the
+pin cdfaddc). On rdk-1004, redeployed: the catalog 27 of 27, 103 lines per 30 s on average,
+619 at most; one window over the cap in the whole run, at a bring-up's controller restart,
+every agent onboarding at once (479 lines over; three of four starts stayed under).
+
+`rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
+target configuration, next to `rdk-emosa-1002`, which keeps running (`EASYMESH_SHARED_HOST=1`):
+no emosa or em-gtp container from its start. Its suite with the image before 0240: readiness,
+the catalog 26 of 27 and the four geometry rooms. The 27th,
+`home-a-wired-extender-loss-recovery`, sits at its 5 s boundary there (one sample at 25 s
+still showing a client on the wired extender): it passed 3 of 7 runs on the final image and
+before, with the browser on rev120 or on rev140, the shared host at load 10 to 11; on
+rdk-1004 it passed in every catalog that day.
 
 `rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. It is the target configuration. Fixed the same day (emosa-lab's rdk-lab record): `traffic-quieter-ap`'s screenshot timeouts were the browser harness rendering in software (36ce8d5); a VM restart now brings the lab back whole (7ee964a); and RDK's native backhaul steering never measured a candidate, so `backhaul-parent-handover` failed, because em_ctrl took an EMOSA agent, whose AL MAC was on one of the gateway's interfaces, for its co-located agent: the agents now live in a network namespace of their own (ceebf4c, emosa-lab 0a4bbcb). With that gateway image, redeployed in place, it passed the room catalog (27 rooms) three times and the four geometry rooms after each of two. unified-wifi-mesh 0236 (ca7bc1e) then gave the controller the pods' backhaul stations, so a pod's move is verified and leaves no uncertain mark: two more rounds passed the geometry rooms both times and 26 of 27 catalog rooms each, `home-a-wired-extender-loss-recovery` failing once at its 5 s outage boundary (2 of 8 runs) and once at the browser harness under another build's load. A pod whose remembered backhaul BSS is gone after a restart now falls back to the configured one instead of staying on GRE (emosa-lab 83f4ce4, finding 18; emosa-lab's rdk-lab record).
 
