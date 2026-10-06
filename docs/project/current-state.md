@@ -11,7 +11,7 @@ monitor. See [operations](../guides/operations.md).
 | --- | --- |
 | Branch | `main` |
 | Development and build checkout | `rev140:/home/rev/git/easymesh-labs/meta-cmf-bananapi-vcpe` (the easymesh-labs workspace) |
-| Last-tested VM | `rev140:rdk-1004` (with the EMOSA option, EMOSA in the gateway); `rev120:rdk-emosa-1002` (the same, updated in place) |
+| Last-tested VM | `rev140:rdk-1004` and `rev120:rdk-emosa-1005` (the EMOSA option in the target configuration, no container but the pods); `rev120:rdk-emosa-1002` stopped, kept |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd from easymesh-medium (the `gen/medium` submodule); the optimizer from easymesh-optimizer (the `gen/optimizer` submodule) |
 | Images | the controller and extender images the easymesh-labs `manifest.json` pins, with the commit each was built from |
@@ -62,13 +62,17 @@ Open: at that restart the gateway's em_agent passes its own cap (526, 2,030 and 
 dropped).
 
 `rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
-target configuration, next to `rdk-emosa-1002`, which keeps running (`EASYMESH_SHARED_HOST=1`):
-no emosa or em-gtp container from its start. Its suite with the image before 0240: readiness,
-the catalog 26 of 27 and the four geometry rooms. The 27th,
-`home-a-wired-extender-loss-recovery`, sits at its 5 s boundary there (one sample at 25 s
-still showing a client on the wired extender): it passed 3 of 7 runs on the final image and
-before, with the browser on rev120 or on rev140, the shared host at load 10 to 11; on
-rdk-1004 it passed in every catalog that day.
+target configuration, next to `rdk-emosa-1002` (`EASYMESH_SHARED_HOST=1`): no emosa or
+em-gtp container from its start. Its suite with the image before 0240: readiness, the
+catalog 26 of 27 and the four geometry rooms. The 27th, `home-a-wired-extender-loss-recovery`,
+sits at its 5 s boundary (one sample at 25 s still showing a client on the wired extender):
+its 6 GHz client needs 3.7 to 4.5 s to associate elsewhere on both labs, beacon loss, a scan
+of every 6 GHz channel and a 1 s association comeback, because the AP still holds its
+earlier PMF association (emosa-lab's rdk-lab record). Its owner then stopped
+`rdk-emosa-1002` (rev120 from load 9.5 to 4), and on `X86EMLTRBPIBB_rdk-next_20261006175821`,
+redeployed in place, 1005's suite passed whole: readiness, the catalog 27 of 27 and the
+four geometry rooms with their recovery; no em_ctrl line dropped through the redeploy and
+the suite.
 
 `rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. It is the target configuration. Fixed the same day (emosa-lab's rdk-lab record): `traffic-quieter-ap`'s screenshot timeouts were the browser harness rendering in software (36ce8d5); a VM restart now brings the lab back whole (7ee964a); and RDK's native backhaul steering never measured a candidate, so `backhaul-parent-handover` failed, because em_ctrl took an EMOSA agent, whose AL MAC was on one of the gateway's interfaces, for its co-located agent: the agents now live in a network namespace of their own (ceebf4c, emosa-lab 0a4bbcb). With that gateway image, redeployed in place, it passed the room catalog (27 rooms) three times and the four geometry rooms after each of two. unified-wifi-mesh 0236 (ca7bc1e) then gave the controller the pods' backhaul stations, so a pod's move is verified and leaves no uncertain mark: two more rounds passed the geometry rooms both times and 26 of 27 catalog rooms each, `home-a-wired-extender-loss-recovery` failing once at its 5 s outage boundary (2 of 8 runs) and once at the browser harness under another build's load. A pod whose remembered backhaul BSS is gone after a restart now falls back to the configured one instead of staying on GRE (emosa-lab 83f4ce4, finding 18; emosa-lab's rdk-lab record).
 
