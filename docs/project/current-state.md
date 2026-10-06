@@ -35,6 +35,17 @@ extra interfaces, `emosa-podbh` gives the VAP its SSID at each OneWifi start, an
 gateway on their own and the room catalog (27 rooms) and the four geometry rooms passed
 twice, 62 of 62 (emosa-lab 04189dc, its rdk-lab record).
 
+The same day em_ctrl's journal came under its cap (1000 lines per 30 s): through a room
+catalog it had written 2,500 to 8,500, journald dropping the rest in every window.
+unified-wifi-mesh 0237 and 0238 print 129 statements of per-message work through em's debug
+channel instead (`/nvram/emCtrlDbg`, `/nvram/emConfDbg`), the M2 line without the networks'
+passphrases; 0239 lets a renewed radio past the Channel Preference Query and the policy
+request without waiting for configured siblings (the wired extender's 2.4 GHz radio had
+renewed 43 times in 22 minutes, refusing candidate queries, and the rooms did not
+converge; seen on rdk-emosa-1005 with the earlier image too). With the controller image
+`X86EMLTRBPIBB_rdk-next_20261006124653`, redeployed in place, the catalog passed 27 of 27,
+em_ctrl keeping 109 lines per 30 s on average and 635 at most, no renewal in 50 minutes.
+
 `rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. It is the target configuration. Fixed the same day (emosa-lab's rdk-lab record): `traffic-quieter-ap`'s screenshot timeouts were the browser harness rendering in software (36ce8d5); a VM restart now brings the lab back whole (7ee964a); and RDK's native backhaul steering never measured a candidate, so `backhaul-parent-handover` failed, because em_ctrl took an EMOSA agent, whose AL MAC was on one of the gateway's interfaces, for its co-located agent: the agents now live in a network namespace of their own (ceebf4c, emosa-lab 0a4bbcb). With that gateway image, redeployed in place, it passed the room catalog (27 rooms) three times and the four geometry rooms after each of two. unified-wifi-mesh 0236 (ca7bc1e) then gave the controller the pods' backhaul stations, so a pod's move is verified and leaves no uncertain mark: two more rounds passed the geometry rooms both times and 26 of 27 catalog rooms each, `home-a-wired-extender-loss-recovery` failing once at its 5 s outage boundary (2 of 8 runs) and once at the browser harness under another build's load. A pod whose remembered backhaul BSS is gone after a restart now falls back to the configured one instead of staying on GRE (emosa-lab 83f4ce4, finding 18; emosa-lab's rdk-lab record).
 
 `rdk-1002b` was built from scratch on rev140 on 2 October, from this repository as
