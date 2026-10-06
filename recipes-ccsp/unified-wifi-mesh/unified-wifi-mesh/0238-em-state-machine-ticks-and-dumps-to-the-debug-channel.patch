@@ -1,0 +1,512 @@
+Subject: [PATCH] em: the state machines' per-tick lines and the remaining per-message dumps to the debug channel
+
+After 0237, through a room catalog on rdk-1004 (6 October 2026), em_ctrl's journal still
+passed its cap in bursts (journald dropping 1,233 and 2,994 lines in two 30 s windows of
+the first nine minutes). What filled it: the state machines' "unhandled state" and
+"unhandled case" lines, printed for every radio at every tick it spends in a state with no
+handler (about a quarter); the policy lookup's trace of every comparison; each candidate
+query's completion (the query's own result line stays); the native backhaul module's
+per-sample observation; and the AP capability and M2 dumps, repeated at each renewal, one of
+them printing every network's passphrase.
+
+Those 62 statements now print through em_util_dbg_print as in 0237 (EM_CONF for the code
+the agent shares, EM_CTRL for the controller's own); the M2 line names the SSID and its
+authentication without the passphrase, also when debugging. What stays on the journal:
+errors and validation failures, Topology Responses and Notifications received, each
+candidate query's result, renewals, the WSC exchange's messages.
+
+Upstream-Status: Pending
+
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -1298,7 +1298,7 @@
+ 	dm_policy_t::parse_dev_radio_mac_from_key(key, &id);
+ 	dm_easy_mesh_t::macbytes_to_string(id.dev_mac, dev_mac_str);
+ 	dm_easy_mesh_t::macbytes_to_string(id.radio_mac, radio_mac_str);
+-	em_printfout("%s:%d: Net id: %s\tdev: %s\tradio: %s\tType: %d\n", __func__, __LINE__, id.net_id, dev_mac_str, radio_mac_str, id.type);
++	em_util_dbg_print(EM_CONF, "Net id: %s\tdev: %s\tradio: %s\tType: %d", id.net_id, dev_mac_str, radio_mac_str, id.type);
+ 	dm_easy_mesh_t::macbytes_to_string(id.dev_mac, dev_mac_str);
+ 
+ 	if ((dm = get_data_model(id.net_id, id.dev_mac)) == NULL) {
+@@ -1308,14 +1308,14 @@
+ 
+ 	for (i = 0; i < dm->get_num_policy(); i++) {
+ 		policy = &dm->m_policy[i];
+-        em_printfout("compare with policy[%d]: Net id: %s[%s]\tdev: %s[%s]\tradio: %s[%s]\tType: %d[%d]\n", i, policy->m_policy.id.net_id, id.net_id,
++        em_util_dbg_print(EM_CONF, "compare with policy[%d]: Net id: %s[%s]\tdev: %s[%s]\tradio: %s[%s]\tType: %d[%d]", i, policy->m_policy.id.net_id, id.net_id,
+             util::mac_to_string(policy->m_policy.id.dev_mac).c_str(), dev_mac_str,
+             util::mac_to_string(policy->m_policy.id.radio_mac).c_str(), radio_mac_str, policy->m_policy.id.type, id.type);
+ 		if ((strncmp(policy->m_policy.id.net_id, id.net_id, strlen(id.net_id)) == 0) && 
+ 				(memcmp(policy->m_policy.id.dev_mac, id.dev_mac, sizeof(mac_address_t)) == 0) && 
+ 				(memcmp(policy->m_policy.id.radio_mac, id.radio_mac, sizeof(mac_address_t)) == 0) && 
+ 				(policy->m_policy.id.type == id.type)) {
+-			em_printfout("%s:%d: Policy found for key: %s\n", __func__, __LINE__, key);
++			em_util_dbg_print(EM_CONF, "Policy found for key: %s", key);
+ 			return policy;
+ 		}
+ 	}
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -602,7 +602,7 @@
+         em_printfout("Candidate metrics response MID %u had no active command",
+             response_msg_id);
+     }
+-    em_printfout("Completed candidate metrics transaction MID %u", response_msg_id);
++    em_util_dbg_print(EM_CONF, "Completed candidate metrics transaction MID %u", response_msg_id);
+ 
+     m_unassoc_in_progress = false;
+     return 0;
+@@ -3276,7 +3276,7 @@
+             break;
+ 	    
+         default:
+-            printf("%s:%d: unhandled case %s\n", __func__, __LINE__, em_t::state_2_str(get_state()));
++            em_util_dbg_print(EM_CONF, "unhandled case %s", em_t::state_2_str(get_state()));
+             break;
+     }
+ }
+--- a/src/ctrl/em_backhaul_ctrl.cpp
++++ b/src/ctrl/em_backhaul_ctrl.cpp
+@@ -297,7 +297,7 @@
+                             strongest = candidate.first.second;
+                         }
+                     }
+-                    em_printfout("Native backhaul observation agent=%s parent=%s serving_rcpi=%d age_ms=%lld candidate=%s candidate_rcpi=%d",
++                    em_util_dbg_print(EM_CTRL, "Native backhaul observation agent=%s parent=%s serving_rcpi=%d age_ms=%lld candidate=%s candidate_rcpi=%d",
+                         backhaul_label(station.al).c_str(), backhaul_label(station.parent_bssid).c_str(),
+                         station.serving.rcpi, static_cast<long long>(station.serving.observed ? now - station.serving.observed : -1),
+                         backhaul_label(strongest).c_str(), strongest_rcpi);
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -5153,7 +5153,7 @@
+             memcpy(&auth_flags, attr->val, sizeof(uint16_t));
+             auth_flags = ntohs(auth_flags);
+             std::vector<std::string> akms = convert_wps_authtype_to_akm_strings(auth_flags);
+-            em_printfout("Recieved AKMs: (0x%04x)", auth_flags);
++            em_util_dbg_print(EM_CONF, "Recieved AKMs: (0x%04x)", auth_flags);
+             for (auto &akm : akms) {
+                 printf(" %s", akm.c_str());
+             }
+@@ -5192,7 +5192,7 @@
+             memcpy(dev_info.serial_number, attr->val, htons(attr->len));
+             set_serial_number(dev_info.serial_number);
+             //printf("%s:%d: Manufacturer:%s\n", __func__, __LINE__, dev_info.serial_number);
+-            em_printfout("Updated dm dev_info's backhaul_mac: %s and backhaul_alid: %s",
++            em_util_dbg_print(EM_CONF, "Updated dm dev_info's backhaul_mac: %s and backhaul_alid: %s",
+                 util::mac_to_string(dm->m_device.m_device_info.backhaul_mac.mac).c_str(),
+                 util::mac_to_string(dm->m_device.m_device_info.backhaul_alid.mac).c_str());
+ 
+@@ -6221,14 +6221,14 @@
+         em_printfout("Radio does not exist, return len as 0.");
+         return len;
+     }
+-    em_printfout("radio:%s haul_type=%d radio no of bss=%d",
++    em_util_dbg_print(EM_CONF, "radio:%s haul_type=%d radio no of bss=%d",
+         util::mac_to_string(get_radio_interface_mac()).c_str(), haul_type, radio->m_radio_info.number_of_bss);
+ 
+     if ((net_ssid_info = get_network_ssid_info_by_haul_type(haul_type)) == NULL) {
+         em_printfout("Could not find network ssid information for haul type %d", haul_type);
+         return 0;
+     }
+-    em_printfout("ssid: %s, passphrase: %s, Auth Type: %s\n", net_ssid_info->ssid, net_ssid_info->pass_phrase, net_ssid_info->auth_type);
++    em_util_dbg_print(EM_CONF, "ssid: %s, Auth Type: %s", net_ssid_info->ssid, net_ssid_info->auth_type);
+ 
+     auth_type = get_Auth_type_hex(net_ssid_info->auth_type);
+ 
+@@ -6359,7 +6359,7 @@
+ 	    return 0;
+     }
+ 
+-    em_printfout("Encrypted for radio:%s haul_type:%d length:%u plain_len:%u",
++    em_util_dbg_print(EM_CONF, "Encrypted for radio:%s haul_type:%d length:%u plain_len:%u",
+         util::mac_to_string(get_radio_interface_mac()).c_str(), haul_type, cipher_len + AES_BLOCK_SIZE, plain_len);
+     return static_cast<int> (cipher_len) + AES_BLOCK_SIZE;
+ }
+@@ -6580,7 +6580,7 @@
+         return -1;
+     }
+ 
+-    em_printfout("Removing previous em_config command for radio " MACSTRFMT, MAC2STR(get_radio_interface_mac()));
++    em_util_dbg_print(EM_CONF, "Removing previous em_config command for radio " MACSTRFMT, MAC2STR(get_radio_interface_mac()));
+     if (em_orch_t *orch = get_mgr()->get_orch()) {
+ 	 orch->remove_em_config_cmd_for_em(get_radio_interface_mac());
+     }
+@@ -7245,7 +7245,7 @@
+                         radio->get_orch_state() == em_orch_state_progress;
+                 });
+                 if (query_em != em_radios.end() && this == *query_em) {
+-                    em_printfout("Sending the Topology query message to agent al_mac:%s on radio: %s",
++                    em_util_dbg_print(EM_CONF, "Sending the Topology query message to agent al_mac:%s on radio: %s",
+                         util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
+                         util::mac_to_string(get_radio_interface_mac()).c_str());
+                     em_t *al_em = get_mgr()->get_al_node();
+@@ -7271,7 +7271,7 @@
+             break;
+ 
+         default:
+-            em_printfout("unhandled state:%s in config state machine.", em_t::state_2_str(get_state()));
++            em_util_dbg_print(EM_CONF, "unhandled state:%s in config state machine.", em_t::state_2_str(get_state()));
+             break;
+     }
+ 
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -2495,7 +2495,7 @@
+             }
+ 			break;
+         default:
+-            printf("%s:%d: unhandled case %s\n", __func__, __LINE__, em_t::state_2_str(get_state()));
++            em_util_dbg_print(EM_CONF, "unhandled case %s", em_t::state_2_str(get_state()));
+             break;
+ 
+     }
+@@ -2511,7 +2511,7 @@
+                 get_mgr()->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
+                 for (auto &em : em_radios) {
+                     if (em->get_state() != em_state_ctrl_channel_query_pending) {
+-                        em_printfout("radio %s is not in channel query pending state, ignoring",
++                        em_util_dbg_print(EM_CONF, "radio %s is not in channel query pending state, ignoring",
+                             util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                         em_radios.clear();
+                         return;
+@@ -2544,7 +2544,7 @@
+             // No channel action required; topology sync handled in configuration state machine.
+             break;
+         default:
+-            em_printfout("unhandled state:%s in channel state machine.", em_t::state_2_str(get_state()));
++            em_util_dbg_print(EM_CONF, "unhandled state:%s in channel state machine.", em_t::state_2_str(get_state()));
+             break;
+     }
+ }
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -1281,7 +1281,7 @@
+ 
+         unsigned char num_op_classes = src->op_classes_num;
+ 
+-        em_printfout("  Radio[%d] RUID=%s boot_only=%d scan_impact=%d "
++        em_util_dbg_print(EM_CONF, "  Radio[%d] RUID=%s boot_only=%d scan_impact=%d "
+                      "min_scan_interval=%u num_op_classes=%d",
+             i, util::mac_to_string(src->ruid).c_str(),
+             src->boot_only, src->scan_impact, ntohl(src->min_scan_interval), num_op_classes);
+@@ -1338,7 +1338,7 @@
+             unsigned char num_chan  = *tmp++;
+             sz += 2;
+ 
+-            em_printfout("    op_class[%d]: op_class=%d num_chan=%d", oi, op_class, num_chan);
++            em_util_dbg_print(EM_CONF, "    op_class[%d]: op_class=%d num_chan=%d", oi, op_class, num_chan);
+ 
+             if (sz + num_chan > len) {
+                 em_printfout("Channel scan cap TLV truncated at channel list");
+@@ -1358,7 +1358,7 @@
+             tmp += num_chan;
+             sz += num_chan;
+         }
+-        em_printfout("  Radio[%d]: stored %d op classes", i, cap_info->ch_scan.op_classes_num);
++        em_util_dbg_print(EM_CONF, "  Radio[%d]: stored %d op classes", i, cap_info->ch_scan.op_classes_num);
+     }
+     return 0;
+ }
+@@ -1494,13 +1494,13 @@
+             radio_info->unassociated_sta_link_mterics_opclass_inclusion_policy = ap_cap->unassociated_client_link_metrics_op_channels;
+             radio_info->support_rcpi_steering = ap_cap->rcpi_steering;
+         } else if (tlv->type == em_tlv_type_ap_radio_basic_cap){
+-            em_printfout("Received AP Radio Basic Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received AP Radio Basic Capability TLV");
+             handle_ap_radio_basic_cap(tlv->value, htons(tlv->len));
+         } else if (tlv->type == em_tlv_type_akm_suite){
+             em_printfout("Received AKM Suite Capabilities TLV");
+             em_configuration_t::store_akm_suite_cap(dm, tlv->value, htons(tlv->len));
+         } else if (tlv->type == em_tlv_type_ht_cap){
+-            em_printfout("Received HT Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received HT Capability TLV");
+             em_ap_ht_cap_t *ht_cap = reinterpret_cast<em_ap_ht_cap_t *>(tlv->value);
+             dm_radio_cap_t *radio_cap = dm->get_radio_cap(ht_cap->ruid);
+ 
+@@ -1511,21 +1511,21 @@
+                 }
+                 memcpy(&cap_info->ht_cap, ht_cap, sizeof(em_ap_ht_cap_t));
+ 
+-                em_printfout("HT Capabilities MCS Set for RUID %s",
++                em_util_dbg_print(EM_CONF, "HT Capabilities MCS Set for RUID %s",
+                     util::mac_to_string(ht_cap->ruid).c_str());
+-                em_printfout("\t\tHT 40MHz Support: %d",
++                em_util_dbg_print(EM_CONF, "\t\tHT 40MHz Support: %d",
+                     cap_info->ht_cap.ht_sprt_40mhz);
+-                em_printfout("\t\tGI 40MHz Support: %d",
++                em_util_dbg_print(EM_CONF, "\t\tGI 40MHz Support: %d",
+                     cap_info->ht_cap.gi_sprt_40mhz);
+-                em_printfout("\t\tGI 20MHz Support: %d",
++                em_util_dbg_print(EM_CONF, "\t\tGI 20MHz Support: %d",
+                     cap_info->ht_cap.gi_sprt_20mhz);
+-                em_printfout("\t\tmax_sprt_rx_streams:%d", cap_info->ht_cap.max_sprt_rx_streams);
+-                em_printfout("\t\tmax_sprt_tx_streams:%d", cap_info->ht_cap.max_sprt_tx_streams);
+-                em_printfout("HT Capabilities updated for radio %s", util::mac_to_string(ht_cap->ruid).c_str());
++                em_util_dbg_print(EM_CONF, "\t\tmax_sprt_rx_streams:%d", cap_info->ht_cap.max_sprt_rx_streams);
++                em_util_dbg_print(EM_CONF, "\t\tmax_sprt_tx_streams:%d", cap_info->ht_cap.max_sprt_tx_streams);
++                em_util_dbg_print(EM_CONF, "HT Capabilities updated for radio %s", util::mac_to_string(ht_cap->ruid).c_str());
+             }
+         }
+         else if (tlv->type == em_tlv_type_vht_cap){
+-            em_printfout("Received VHT Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received VHT Capability TLV");
+             em_ap_vht_cap_t *vht_cap = reinterpret_cast<em_ap_vht_cap_t *>(tlv->value);
+             dm_radio_cap_t *radio_cap = dm->get_radio_cap(vht_cap->ruid);
+             if ((vht_cap != NULL) && (radio_cap != NULL)){
+@@ -1538,7 +1538,7 @@
+             }
+         }
+         else if (tlv->type == em_tlv_type_he_cap){
+-            em_printfout("Received HE Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received HE Capability TLV");
+             em_ap_he_cap_t *he_cap = reinterpret_cast<em_ap_he_cap_t *>(tlv->value);
+             dm_radio_cap_t *radio_cap = dm->get_radio_cap(he_cap->ruid);
+ 
+@@ -1553,11 +1553,11 @@
+             }
+         }
+         else if (tlv->type == em_tlv_type_ap_wifi6_cap){
+-            em_printfout("Received wifi6 Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received wifi6 Capability TLV");
+             handle_wifi6_cap_tlv(tlv->value);
+         }
+         else if (tlv->type == em_tlv_type_wifi7_agent_cap){
+-            em_printfout("Received wifi7 Capability TLV");
++            em_util_dbg_print(EM_CONF, "Received wifi7 Capability TLV");
+             handle_wifi7_agent_cap_tlv(tlv->value);
+         }
+         else if (tlv->type == em_tlv_eht_operations){
+@@ -1660,7 +1660,7 @@
+                         em_printfout("Invalid TLV length for em_radio_capability_vendor_t");
+                         return -1;
+                     }
+-                    em_printfout("Received Radio Capability TLV");
++                    em_util_dbg_print(EM_CONF, "Received Radio Capability TLV");
+                     em_radio_capability_vendor_t radio_capability;
+                     memcpy(&radio_capability, vendor_tlv->data + sizeof(tlv_id), sizeof(em_radio_capability_vendor_t));
+                     mac_address_t mac;
+@@ -1678,7 +1678,7 @@
+                             cap_info->mode = airties_standards_to_variant(supported_standards);
+                         }
+                     }
+-                    em_printfout("Parsed Radio Capability TLV - MAC:%s standards:0x%04x",
++                    em_util_dbg_print(EM_CONF, "Parsed Radio Capability TLV - MAC:%s standards:0x%04x",
+                                  util::mac_to_string(mac).c_str(),
+                                  supported_standards);
+                 }
+@@ -1788,7 +1788,7 @@
+                     // renewed, must not: waiting for it times this radio's em_config out,
+                     // renews it and waits again, for ever.
+                     if (em->get_state() < em_state_ctrl_ap_cap_query_pending){
+-                        em_printfout("radio %s is in state:%d, before the AP Capability query, ignoring",
++                        em_util_dbg_print(EM_CONF, "radio %s is in state:%d, before the AP Capability query, ignoring",
+                                      util::mac_to_string(em->get_radio_interface_mac()).c_str(), em->get_state());
+                         em_radios.clear();
+                         return;
+@@ -1817,7 +1817,7 @@
+             break;
+ 
+         default:
+-            printf("%s:%d: unhandled case %s\n", __func__, __LINE__, em_t::state_2_str(get_state()));
++            em_util_dbg_print(EM_CONF, "unhandled case %s", em_t::state_2_str(get_state()));
+             break;
+     }
+ }
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -1331,16 +1331,16 @@
+         len = sizeof(em_ap_ht_cap_t);
+         em_printfout("MAC:%s, ht_cap.ruid: %s", util::mac_to_string(cap_info->ruid.mac).c_str(),
+             util::mac_to_string(ht_cap->ruid).c_str());
+-        em_printfout("HT Capabilities MCS Set for RUID %s",
++        em_util_dbg_print(EM_CONF, "HT Capabilities MCS Set for RUID %s",
+             util::mac_to_string(ht_cap->ruid).c_str());
+-        em_printfout("\t\tHT 40MHz Support: %d",
++        em_util_dbg_print(EM_CONF, "\t\tHT 40MHz Support: %d",
+             ht_cap->ht_sprt_40mhz);
+-        em_printfout("\t\tGI 40MHz Support: %d",
++        em_util_dbg_print(EM_CONF, "\t\tGI 40MHz Support: %d",
+             ht_cap->gi_sprt_40mhz);
+-        em_printfout("\t\tGI 20MHz Support: %d",
++        em_util_dbg_print(EM_CONF, "\t\tGI 20MHz Support: %d",
+             ht_cap->gi_sprt_20mhz);
+-        em_printfout("\t\tmax_sprt_rx_streams:%d", ht_cap->max_sprt_rx_streams);
+-        em_printfout("\t\tmax_sprt_tx_streams:%d", ht_cap->max_sprt_tx_streams);
++        em_util_dbg_print(EM_CONF, "\t\tmax_sprt_rx_streams:%d", ht_cap->max_sprt_rx_streams);
++        em_util_dbg_print(EM_CONF, "\t\tmax_sprt_tx_streams:%d", ht_cap->max_sprt_tx_streams);
+     }
+ 
+     return len;
+@@ -1628,7 +1628,7 @@
+         // AP STR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.ap_str.num_records;
+-        em_printfout("num of ap_str records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_str records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++) {
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1638,7 +1638,7 @@
+         // AP NSTR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.ap_nstr.num_records;
+-        em_printfout("num of ap_nstr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_nstr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1648,7 +1648,7 @@
+         // AP EMLSR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.ap_emlsr.num_records;
+-        em_printfout("num of ap_emlsr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_emlsr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1658,7 +1658,7 @@
+         // AP EMLMR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.ap_emlmr.num_records;
+-        em_printfout("num of ap_emlmr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_emlmr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1668,7 +1668,7 @@
+         // bSTA STR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.bsta_str.num_records;
+-        em_printfout("num of bsta_str records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_str records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1678,7 +1678,7 @@
+         // bSTA NSTR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.bsta_nstr.num_records;
+-        em_printfout("num of bsta_nstr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_nstr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1688,7 +1688,7 @@
+         // bSTA EMLSR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.bsta_emlsr.num_records;
+-        em_printfout("num of bsta_emlsr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_emlsr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -1698,7 +1698,7 @@
+         // bSTA EMLMR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         *num_records = em_wifi7_cap->mlo_cap_records.bsta_emlmr.num_records;
+-        em_printfout("num of bsta_emlmr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_emlmr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2683,7 +2683,7 @@
+     
+     em_wifi6_cap->num_role = *(buff + offset);
+     offset += static_cast<short>(sizeof(em_wifi6_cap->num_role));
+-    em_printfout("Received wifi6 cap for radio: %s and num_role:%d", util::mac_to_string(ruid).c_str(), em_wifi6_cap->num_role);
++    em_util_dbg_print(EM_CONF, "Received wifi6 cap for radio: %s and num_role:%d", util::mac_to_string(ruid).c_str(), em_wifi6_cap->num_role);
+ 
+     for (int i = 0; i < em_wifi6_cap->num_role; i++)
+     {
+@@ -2794,7 +2794,7 @@
+ 
+     for (unsigned int idx = 0; idx < num_radios; idx++) {
+         em_wifi7_cap = &dm->get_radio_cap_info(idx)->wifi7_cap;
+-        em_printfout("Updating wifi7 cap for radio[%u]:%s", idx, util::mac_to_string(dm->get_radio_cap_info(idx)->ruid.mac).c_str());
++        em_util_dbg_print(EM_CONF, "Updating wifi7 cap for radio[%u]:%s", idx, util::mac_to_string(dm->get_radio_cap_info(idx)->ruid.mac).c_str());
+ 
+         // Extract MLO support info
+         mlo_support = reinterpret_cast<em_wifi7_mlo_cap_support_tlv_t *>(buff + offset);
+@@ -2804,7 +2804,7 @@
+         // AP STR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.ap_str.num_records = *num_records;
+-        em_printfout("num of ap_str records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_str records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char)) ;
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2814,7 +2814,7 @@
+         // AP NSTR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.ap_nstr.num_records = *num_records;
+-        em_printfout("num of ap_nstr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_nstr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2824,7 +2824,7 @@
+         // AP EMLSR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.ap_emlsr.num_records = *num_records;
+-        em_printfout("num of ap_emlsr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_emlsr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2834,7 +2834,7 @@
+         // AP EMLMR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.ap_emlmr.num_records = *num_records;
+-        em_printfout("num of ap_emlmr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of ap_emlmr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2844,7 +2844,7 @@
+         // bSTA STR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.bsta_str.num_records = *num_records;
+-        em_printfout("num of bsta_str records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_str records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2854,7 +2854,7 @@
+         // bSTA NSTR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.bsta_nstr.num_records = *num_records;
+-        em_printfout("num of bsta_nstr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_nstr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2864,7 +2864,7 @@
+         // bSTA EMLSR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.bsta_emlsr.num_records = *num_records;
+-        em_printfout("num of bsta_emlsr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_emlsr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+@@ -2874,7 +2874,7 @@
+         // bSTA EMLMR Records
+         num_records = reinterpret_cast<unsigned char *>(buff + offset);
+         em_wifi7_cap->mlo_cap_records.bsta_emlmr.num_records = *num_records;
+-        em_printfout("num of bsta_emlmr records:%d", *num_records);
++        em_util_dbg_print(EM_CONF, "num of bsta_emlmr records:%d", *num_records);
+         offset += static_cast<short>(sizeof(unsigned char));
+         for (int j = 0; j < *num_records && j < EM_MAX_FREQ_RECORDS_PER_RADIO; j++){
+             record = reinterpret_cast<em_wifi7_freq_record_tlv_t *>(buff + offset);
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -157,7 +157,7 @@
+ 	}
+ 	em_util_dbg_print(EM_CTRL, "Find topology associated with bss mac: %s", util::mac_to_string(bss_mac).c_str());
+ 	if (memcmp(bss_mac, ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) {
+-		em_printfout("bss mac is zero, return NULL");
++		em_util_dbg_print(EM_CTRL, "bss mac is zero, return NULL");
+ 		return NULL;
+ 	}
+ 	// Now search for the topology containing this bss mac address.
