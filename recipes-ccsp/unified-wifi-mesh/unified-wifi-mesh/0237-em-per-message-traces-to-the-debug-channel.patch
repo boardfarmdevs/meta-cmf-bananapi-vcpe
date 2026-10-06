@@ -1,0 +1,593 @@
+Subject: [PATCH] em: per-message traces from the journal to em's debug channel
+
+em_ctrl's journal is capped by the image (LogRateLimitBurst 1000 per 30 s). Through a room
+catalog on rdk-1004 (6 October 2026) em_ctrl wrote 2,500 to 8,500 lines per 30 s: journald
+dropped 1,468 to 7,506 of them in every window, the evidence the lab's tools read from it
+(the native backhaul lines, renewals, validation failures) among them. About 70 % of what
+it kept were traces of per-message work: an unknown IE per station capability, the
+operating class table at each update, the topology tree's search at each Topology Response,
+each radio's state per orchestration step, the steps of each candidate query and each
+backhaul STA capability exchange, every 1905 ACK sent.
+
+Those 67 statements now print through em_util_dbg_print: nothing unless em's per-module
+debug switch is present (/nvram/emCtrlDbg for the controller's own code, /nvram/emConfDbg
+for the code it shares with the agent), then to /tmp/emCtrl or /tmp/emConf as before for
+em's debug output. What stays on the journal: errors and validation failures, one line per
+Topology Response and Notification received, each candidate query sent and its result, the
+native backhaul module's lines.
+
+Upstream-Status: Pending
+
+--- a/src/dm/dm_sta.cpp
++++ b/src/dm/dm_sta.cpp
+@@ -567,7 +567,7 @@
+             }
+ 
+             default:
+-                printf("%s:%d: Unknown Tag ID: %d\n", __func__, __LINE__, tag->tag_id);
++                em_util_dbg_print(EM_CONF, "Unknown Tag ID: %d", tag->tag_id);
+                 break;
+         }
+     offset += static_cast<unsigned int>(2 + tag->length);
+--- a/src/dm/dm_radio_list.cpp
++++ b/src/dm/dm_radio_list.cpp
+@@ -124,7 +124,7 @@
+         }
+ 
+         if (*pradio == radio) {
+-            printf("%s:%d: Device: %s already in list\n", __func__, __LINE__,
++            em_util_dbg_print(EM_CONF, "Device: %s already in list",
+                         dm_easy_mesh_t::macbytes_to_string(pradio->m_radio_info.intf.mac, mac_str));
+             return dm_orch_type_none;
+         }
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -2762,7 +2762,7 @@
+ em_bss_info_t* dm_easy_mesh_t::get_bsta_bss_info()
+ {
+     std::string dev_mac_str = util::mac_to_string(m_device.m_device_info.intf.mac);
+-    em_printfout("dev_mac:%s, num_bss:%d", dev_mac_str.c_str(), m_num_bss);
++    em_util_dbg_print(EM_CONF, "dev_mac:%s, num_bss:%d", dev_mac_str.c_str(), m_num_bss);
+ 
+     for (unsigned int i = 0; i < m_num_bss; i++) {
+         em_bss_info_t *bsta_info = this->get_bss_info(i);
+@@ -2785,7 +2785,7 @@
+             }
+             continue;
+         }
+-        em_printfout("radio_mac:%s backhaul bss_mac:%s radio enabled:%d sta_info enabled:%d",
++        em_util_dbg_print(EM_CONF, "radio_mac:%s backhaul bss_mac:%s radio enabled:%d sta_info enabled:%d",
+             util::mac_to_string(bsta_info->ruid.mac).c_str(),
+             util::mac_to_string(bsta_info->id.bssid).c_str(),
+             radio->m_radio_info.enabled, bsta_info->enabled);
+--- a/src/dm/dm_device_list.cpp
++++ b/src/dm/dm_device_list.cpp
+@@ -124,7 +124,7 @@
+             //printf("%s:%d: Device: %s already in list\n", __func__, __LINE__, 
+                         //dm_easy_mesh_t::macbytes_to_string(pdev->m_device_info.id.dev_mac, mac_str));
+             if (compare_db(db_client, dev) != true) {
+-                em_printfout("Dev and DB data mismatch, needs an update");
++                em_util_dbg_print(EM_CONF, "Dev and DB data mismatch, needs an update");
+                 return dm_orch_type_db_update;
+             }
+             return dm_orch_type_none;
+@@ -154,7 +154,7 @@
+             break;
+ 
+         case dm_orch_type_db_update:
+-            em_printfout("    =============== dm_orch_type_db_update");
++            em_util_dbg_print(EM_CONF, "    =============== dm_orch_type_db_update");
+             update_device(key, &dev);
+             break;
+ 
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -115,7 +115,7 @@
+     m_orch_state = em_orch_state_progress;
+ 
+     dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), mac_str);
+-	em_printfout("%s:%d: Radio: %s State: %s\n", __func__, __LINE__, mac_str, em_t::state_2_str(get_state()));
++	em_util_dbg_print(EM_CONF, "Radio: %s State: %s", mac_str, em_t::state_2_str(get_state()));
+ 
+     // now set the em state to start message exchages with peer
+     cmd_type = pcmd->m_type;
+@@ -424,7 +424,7 @@
+         case em_msg_type_client_steering_req:
+         case em_msg_type_client_steering_btm_rprt:
+         case em_msg_type_client_assoc_ctrl_req:
+-            em_printfout("  proto_process, type rcvd: %d\n", htons(cmdu->type));
++            em_util_dbg_print(EM_CONF, "  proto_process, type rcvd: %d", htons(cmdu->type));
+             em_steering_t::process_msg(data, len);
+             break;
+ 
+@@ -451,7 +451,7 @@
+ 
+         case em_msg_type_bh_sta_cap_query:
+         case em_msg_type_bh_sta_cap_rprt:
+-            em_printfout("  proto_process, type rcvd: %d", htons(cmdu->type));
++            em_util_dbg_print(EM_CONF, "  proto_process, type rcvd: %d", htons(cmdu->type));
+             em_capability_t::process_msg(data, len);
+             break;
+ 
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -885,7 +885,7 @@
+     }
+ 
+     m_topo_query_tx_cnt++;
+-    em_printfout("Topology Query (%d) Sent for radio:%s", m_topo_query_tx_cnt, util::mac_to_string(get_radio_interface_mac()).c_str());
++    em_util_dbg_print(EM_CONF, "Topology Query (%d) Sent for radio:%s", m_topo_query_tx_cnt, util::mac_to_string(get_radio_interface_mac()).c_str());
+ 
+ 	return static_cast<int> (len);
+ }
+@@ -1886,7 +1886,7 @@
+         printf("%s:%d: 1905 ACK send failed, error:%d\n", __func__, __LINE__, errno);
+         return 0;
+     }
+-    printf("%s:%d: 1905 ACK send success\n", __func__, __LINE__);
++    em_util_dbg_print(EM_CONF, "1905 ACK send success");
+ 
+     return static_cast<int> (len);
+ }
+@@ -2032,7 +2032,7 @@
+     em_bh_sta_radio_cap_t *bsta_radio_cap = reinterpret_cast<em_bh_sta_radio_cap_t*>(buff);
+     bool is_colocated = dm->get_colocated();
+ 
+-    em_printfout("Backhaul STA Radio Capabilities received, sta mac: %s for radio: %s, mac present: %d",
++    em_util_dbg_print(EM_CONF, "Backhaul STA Radio Capabilities received, sta mac: %s for radio: %s, mac present: %d",
+         util::mac_to_string(bsta_radio_cap->bsta_addr).c_str(),
+         util::mac_to_string(bsta_radio_cap->ruid).c_str(), bsta_radio_cap->bsta_mac_present);
+ 
+@@ -2049,14 +2049,14 @@
+         if ( (memcmp(dm->m_bss[i].m_bss_info.ruid.mac, bsta_radio_cap->ruid, sizeof(mac_address_t)) == 0) &&
+                 (dm->m_bss[i].m_bss_info.vap_mode == em_vap_mode_sta) ) {
+             memcpy(dm->m_bss[i].m_bss_info.sta_mac, bsta_radio_cap->bsta_addr, sizeof(mac_address_t));
+-            em_printfout("Topo Response: BSS updated with backhaul sta mac: %s for radio: %s",
++            em_util_dbg_print(EM_CONF, "Topo Response: BSS updated with backhaul sta mac: %s for radio: %s",
+                 util::mac_to_string(bsta_radio_cap->bsta_addr).c_str(),
+                 util::mac_to_string(bsta_radio_cap->ruid).c_str());
+             break;
+         }
+     }
+ 
+-    em_printfout("is_colocated val: %d for device id: %s, ctrl al_interface mac: %s, ctrl interface mac: %s",
++    em_util_dbg_print(EM_CONF, "is_colocated val: %d for device id: %s, ctrl al_interface mac: %s, ctrl interface mac: %s",
+         is_colocated, util::mac_to_string(dev->id.dev_mac).c_str(),
+         util::mac_to_string(dm->get_ctrl_al_interface_mac()).c_str(),
+         util::mac_to_string(dm->get_controller_interface_mac()).c_str());
+@@ -2065,9 +2065,9 @@
+     dm_easy_mesh_t::macbytes_to_string(bsta_radio_cap->ruid, rad_mac_str);
+ 
+     get_mgr()->io_process(em_bus_event_type_bsta_cap_req, reinterpret_cast<unsigned char *> (&rad_mac_str), sizeof(mac_addr_str_t));
+-    em_printfout("IO process for bcap query submitted with radio mac: %s", rad_mac_str);
++    em_util_dbg_print(EM_CONF, "IO process for bcap query submitted with radio mac: %s", rad_mac_str);
+ 
+-    em_printfout("Update BSTA Cap for Device id: %s",
++    em_util_dbg_print(EM_CONF, "Update BSTA Cap for Device id: %s",
+         util::mac_to_string(dev->id.dev_mac).c_str());
+ 
+     if (is_colocated != true) {
+@@ -3176,10 +3176,10 @@
+     }
+ 
+     if (found_ap_mld == true) {
+-        em_printfout("Found AP MLD details in topology response message");
++        em_util_dbg_print(EM_CONF, "Found AP MLD details in topology response message");
+         handle_ap_mld_config_tlv(tlv->value, htons(tlv->len));
+     }
+-    em_printfout("No of AP MLDs: %d", dm->m_num_ap_mld);
++    em_util_dbg_print(EM_CONF, "No of AP MLDs: %d", dm->m_num_ap_mld);
+ 
+     // Parse Associated STA MLD Configuration Report TLVs.
+     tlv = reinterpret_cast<em_tlv_t *>(buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+@@ -3194,14 +3194,14 @@
+         tmp_len -= static_cast<unsigned int>(sizeof(em_tlv_t) + htons(tlv->len));
+         tlv = reinterpret_cast<em_tlv_t *>(reinterpret_cast<unsigned char *>(tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+     }
+-    em_printfout("Total Assoc STA MLD TLVs parsed: %u, m_num_assoc_sta_mld=%u",
++    em_util_dbg_print(EM_CONF, "Total Assoc STA MLD TLVs parsed: %u, m_num_assoc_sta_mld=%u",
+         assoc_sta_mld_count, dm->m_num_assoc_sta_mld);
+ 
+     if (handle_assoc_sta_mld_topology_update(dm) == true) {
+         dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
+     }
+ 
+-    em_printfout("Src al mac: " MACSTRFMT, MAC2STR(src_al_mac));
++    em_util_dbg_print(EM_CONF, "Src al mac: " MACSTRFMT, MAC2STR(src_al_mac));
+ 
+     if (dm->get_colocated() == true) {
+         memset(dm->m_device.m_device_info.backhaul_alid.mac, 0, sizeof(mac_address_t));
+@@ -3235,7 +3235,7 @@
+         }
+     }
+ 
+-    em_printfout("updated dm dev_info's colocated: %d backhaul_mac: %s and backhaul_alid: %s", dm->get_colocated(),
++    em_util_dbg_print(EM_CONF, "updated dm dev_info's colocated: %d backhaul_mac: %s and backhaul_alid: %s", dm->get_colocated(),
+         util::mac_to_string(dm->m_device.m_device_info.backhaul_mac.mac).c_str(),
+         util::mac_to_string(dm->m_device.m_device_info.backhaul_alid.mac).c_str());
+ 
+@@ -3342,7 +3342,7 @@
+     }
+     dm->set_num_ap_mld(ap_mld_conf->num_ap_mld);
+ 
+-    em_printfout("No of AP MLDs: %d", ap_mld_conf->num_ap_mld);
++    em_util_dbg_print(EM_CONF, "No of AP MLDs: %d", ap_mld_conf->num_ap_mld);
+     ap_mld = ap_mld_conf->ap_mld;
+ 
+     for (i = 0; i < ap_mld_conf->num_ap_mld; i++) {
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -168,7 +168,7 @@
+         em_printfout("1905 ACK send failed, error:%d\n", errno);
+         return 0;
+     }
+-    em_printfout("1905 ACK send success\n");
++    em_util_dbg_print(EM_CONF, "1905 ACK send success");
+ 
+     return static_cast<int> (len);
+ }
+@@ -2071,7 +2071,7 @@
+         tlv_len -= current_tlv_size;
+         tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + current_tlv_size);
+     }
+-    em_printfout("Operating channel report recv\n");
++    em_util_dbg_print(EM_CONF, "Operating channel report recv");
+     send_1905_ack_message(ntohs(cmdu->id), ACK_FROM_CTRL);
+     return 0;
+ }
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -947,7 +947,7 @@
+         em_printfout("1905 ACK send failed, error:%d\n", errno);
+         return 0;
+     }
+-    em_printfout("1905 ACK send success\n");
++    em_util_dbg_print(EM_CONF, "1905 ACK send success");
+ 
+     return static_cast<int> (len);
+ }
+--- a/src/em/steering/em_steering.cpp
++++ b/src/em/steering/em_steering.cpp
+@@ -377,7 +377,7 @@
+         printf("%s:%d: 1905 ACK send failed, error:%d\n", __func__, __LINE__, errno);
+         return 0;
+     }
+-    printf("%s:%d: 1905 ACK send success\n", __func__, __LINE__);
++    em_util_dbg_print(EM_CONF, "1905 ACK send success");
+ 
+     return static_cast<int> (len);
+ }
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -656,7 +656,7 @@
+         return -1;
+     }
+ 
+-    em_printfout("Backhaul Sta Capability Query msg sent successfully for radio: %s", util::mac_to_string(get_radio_interface_mac()).c_str());
++    em_util_dbg_print(EM_CONF, "Backhaul Sta Capability Query msg sent successfully for radio: %s", util::mac_to_string(get_radio_interface_mac()).c_str());
+ 
+     return 0;
+ }
+@@ -1018,7 +1018,7 @@
+ 
+     em_bh_sta_radio_cap_t *bsta_radio_cap = reinterpret_cast<em_bh_sta_radio_cap_t*>(tlv_buff);
+     std::string ruid_str = util::mac_to_string(bsta_radio_cap->ruid);
+-    em_printfout("Rcvd BSTA Cap, for radio: %s, mac present: %d",
++    em_util_dbg_print(EM_CONF, "Rcvd BSTA Cap, for radio: %s, mac present: %d",
+             ruid_str.c_str(),
+             bsta_radio_cap->bsta_mac_present);
+ 
+@@ -1052,7 +1052,7 @@
+         return -1;
+     }
+ 
+-    em_printfout("Update BSTA Cap for Device id: %s", util::mac_to_string(dev->id.dev_mac).c_str());
++    em_util_dbg_print(EM_CONF, "Update BSTA Cap for Device id: %s", util::mac_to_string(dev->id.dev_mac).c_str());
+     memcpy(dm->m_device.m_device_info.backhaul_sta, bsta_radio_cap->bsta_addr, sizeof(mac_address_t));
+     dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
+     return 0;
+@@ -1147,7 +1147,7 @@
+     auto command_lock = orch->lock_commands();
+     int ret = 0;
+ 
+-    em_printfout("Backhaul Sta Capability report message rcvd");
++    em_util_dbg_print(EM_CONF, "Backhaul Sta Capability report message rcvd");
+ 
+     ret = process_single_tlv_in_1905_message(pkt_buff, pkt_len,
+             em_tlv_type_bh_sta_radio_cap,
+@@ -1166,7 +1166,7 @@
+     if (get_state() == em_state_ctrl_bsta_cap_pending) {
+         set_state(em_state_ctrl_configured);
+     }
+-    em_printfout("Cap: Bsta Capability report processed");
++    em_util_dbg_print(EM_CONF, "Cap: Bsta Capability report processed");
+ 
+     return ret;
+ }
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -2525,7 +2525,7 @@
+     }
+ 
+     if (ack.status == em_unassoc_ack_empty) {
+-        em_printfout("Unassociated STA query MID %u accepted; awaiting metrics response",
++        em_util_dbg_print(EM_CONF, "Unassociated STA query MID %u accepted; awaiting metrics response",
+             response_msg_id);
+         return 0;
+     }
+@@ -2998,11 +2998,10 @@
+         return -1;
+     }
+ 
+-    em_printfout("%s:%d: Unassoc Query sent to Agent successfully", __func__, __LINE__);
++    em_util_dbg_print(EM_CONF, "Unassoc Query sent to Agent successfully");
+ 
+     em->m_unassoc_sta_query_msg_id = ntohs(cmdu->id);
+-    em_printfout("%s:%d Stored query msg_id=%u", 
+-             __func__, __LINE__, em->m_unassoc_sta_query_msg_id);
++    em_util_dbg_print(EM_CONF, "Stored query msg_id=%u", em->m_unassoc_sta_query_msg_id);
+ 
+     m_unassoc_sta_query_msg_id  =  ntohs(cmdu->id);
+     
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -2644,7 +2644,7 @@
+ 
+     cJSON_Delete(obj);
+ 
+-    em_printfout("Returning successfully from analyze_unassoc_sta_metrics_query");
++    em_util_dbg_print(EM_CTRL, "Returning successfully from analyze_unassoc_sta_metrics_query");
+ 
+     return num;
+ }
+@@ -3895,7 +3895,7 @@
+     int num = 0;
+     dm_easy_mesh_t dm = *this;
+ 
+-    em_printfout("analyze radio mac '%s' for bsta cap request", evt->u.raw_buff);
++    em_util_dbg_print(EM_CTRL, "analyze radio mac '%s' for bsta cap request", evt->u.raw_buff);
+ 
+     evt->params.u.args.num_args = 1;
+     strncpy(evt->params.u.args.args[0], reinterpret_cast<const char*>(evt->u.raw_buff), sizeof(mac_addr_str_t));
+@@ -4822,7 +4822,7 @@
+         for (i = 0; i < dm->get_num_op_class(); i++) {
+             op_class = dm->get_op_class_by_ref(i);
+             dm_easy_mesh_t::macbytes_to_string(dm->m_op_class[i].m_op_class_info.id.ruid, radio_mac_str);
+-            printf("%s:%d: Op Class[%d] ruid: %s\tType: %d\tClass: %d\tClass: %d\n", __func__, __LINE__, i,
++            em_util_dbg_print(EM_CTRL, "Op Class[%d] ruid: %s\tType: %d\tClass: %d\tClass: %d", i,
+             	radio_mac_str, dm->m_op_class[i].m_op_class_info.id.type, dm->m_op_class[i].m_op_class_info.id.op_class,
+ 				dm->m_op_class[i].m_op_class_info.op_class);
+             snprintf(parent, sizeof(em_2xlong_string_t), "%s@%d@%d", radio_mac_str, dm->m_op_class[i].m_op_class_info.id.type, 
+@@ -4837,14 +4837,13 @@
+         } else {
+             dm->reset_db_cfg_type(db_cfg_type_op_class_list_update);
+         }
+-		printf("\n");
+     } 
+ 
+     if (dm->db_cfg_type_is_set(db_cfg_type_op_class_list_delete)) {
+         for (i = 0; i < dm->get_num_op_class(); i++) {
+             op_class = dm->get_op_class_by_ref(i);
+             dm_easy_mesh_t::macbytes_to_string(op_class.m_op_class_info.id.ruid, radio_mac_str);
+-            printf("%s:%d: Op Class[%d] ruid: %s\tType: %d\tClass: %d\n", __func__, __LINE__, i,
++            em_util_dbg_print(EM_CTRL, "Op Class[%d] ruid: %s\tType: %d\tClass: %d", i,
+             	radio_mac_str, op_class.m_op_class_info.id.type, op_class.m_op_class_info.id.op_class);
+             snprintf(parent, sizeof(em_2xlong_string_t), "%s@%d@%d", radio_mac_str, op_class.m_op_class_info.id.type, op_class.m_op_class_info.id.op_class);
+ 			criteria = dm->db_cfg_type_get_criteria(db_cfg_type_op_class_list_delete);
+@@ -9136,7 +9135,7 @@
+     std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 
+     assert(g_network_topology != NULL);
+-    em_printfout("-----Updating network topology <start>-------");
++    em_util_dbg_print(EM_CTRL, "-----Updating network topology <start>-------");
+     dm = get_first_dm();
+     while (dm != NULL) {
+         if (dm->is_controller() == false) {
+@@ -9153,12 +9152,12 @@
+ 
+             std::string dev_mac_str = util::mac_to_string(dm->m_device.m_device_info.intf.mac);
+             if (g_network_topology->find_topology(dm) == NULL) {
+-                em_printfout("New dev_mac:%s num_bss:%d added in topology.",
++                em_util_dbg_print(EM_CTRL, "New dev_mac:%s num_bss:%d added in topology.",
+                     dev_mac_str.c_str(), dm->get_num_bss());
+                 g_network_topology->add(dm);
+             } else {
+                 //Update the existing topology with the latest information.
+-                em_printfout("Update dev_mac:%s num_bss:%d already in topology.",
++                em_util_dbg_print(EM_CTRL, "Update dev_mac:%s num_bss:%d already in topology.",
+                     dev_mac_str.c_str(), dm->get_num_bss());
+                 em_network_topo_t *child_topos[EM_MAX_TOPO_CHILDREN];
+                 unsigned int num_child_topos = 0;
+@@ -9169,7 +9168,7 @@
+         }
+         dm = get_next_dm(dm);
+     }
+-    em_printfout("-----Updating network topology <end>-------");
++    em_util_dbg_print(EM_CTRL, "-----Updating network topology <end>-------");
+     g_network_topology->print_topology();
+ }
+ 
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1539,7 +1539,7 @@
+ 
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str1);
+             if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) != NULL) {
+-                em_printfout("Received bsta report, found em:%s", mac_str1);
++                em_util_dbg_print(EM_CTRL, "Received bsta report, found em:%s", mac_str1);
+             }
+             break;
+ 
+--- a/src/ctrl/em_network_topo.cpp
++++ b/src/ctrl/em_network_topo.cpp
+@@ -109,7 +109,7 @@
+ 			while (sta != NULL) {
+ 				if ((memcmp(sta->m_sta_info.id, sta_mac, sizeof(mac_address_t)) == 0) && 
+ 					(memcmp(sta->m_sta_info.bssid, m_data_model->m_bss[i].m_bss_info.id.bssid, sizeof(mac_address_t)) == 0)) {
+-					em_printfout("Found topology of sta mac: %s dev_mac:%s", sta_mac_str.c_str(), dev_mac_str.c_str());
++					em_util_dbg_print(EM_CTRL, "Found topology of sta mac: %s dev_mac:%s", sta_mac_str.c_str(), dev_mac_str.c_str());
+ 					return this;
+ 				}
+ 				sta = static_cast<dm_sta_t *> (hash_map_get_next(m_data_model->m_sta_map, sta));
+@@ -137,7 +137,7 @@
+ 	// Obtain the mesh_sta information of this dm.
+ 	em_bss_info_t *bss = dm->get_bsta_bss_info();
+ 	if (bss == NULL) {
+-		em_printfout("Backhaul sta bss not found for dev_mac:%s, return NULL", dev_mac_str.c_str());
++		em_util_dbg_print(EM_CTRL, "Backhaul sta bss not found for dev_mac:%s, return NULL", dev_mac_str.c_str());
+ 		dm->m_device.m_device_info.backhaul_mac.media = em_media_type_ieee8023ab;
+ 		return NULL;
+ 	}
+@@ -155,7 +155,7 @@
+ 			dm->m_device.m_device_info.backhaul_mac.media = em_media_type_ieee8023ab;
+ 		}
+ 	}
+-	em_printfout("Find topology associated with bss mac: %s", util::mac_to_string(bss_mac).c_str());
++	em_util_dbg_print(EM_CTRL, "Find topology associated with bss mac: %s", util::mac_to_string(bss_mac).c_str());
+ 	if (memcmp(bss_mac, ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) {
+ 		em_printfout("bss mac is zero, return NULL");
+ 		return NULL;
+@@ -173,37 +173,37 @@
+ 	em_bss_info_t* bss_info = m_data_model->get_bss_info_with_mac(bss_mac);
+ 	if (bss_info && bss_info->vap_mode == em_vap_mode_ap) {
+ 		// If we found the bss info, then return the current topology.
+-		em_printfout("Found topology of bss mac: %s num_child_topo:%d", bss_mac_str.c_str(),
++		em_util_dbg_print(EM_CTRL, "Found topology of bss mac: %s num_child_topo:%d", bss_mac_str.c_str(),
+ 			this->m_num_topologies);
+ 		return this;
+ 	}
+ 	if (bss_info) {
+-		em_printfout("Ignoring station-mode reference to parent bss mac: %s",
++		em_util_dbg_print(EM_CTRL, "Ignoring station-mode reference to parent bss mac: %s",
+ 			bss_mac_str.c_str());
+ 	}
+ 
+ 	// If not found in the current topology check recursively other child topologies.
+-	em_printfout("Could not find bss mac: %s, continuing with child topologies", bss_mac_str.c_str());
++	em_util_dbg_print(EM_CTRL, "Could not find bss mac: %s, continuing with child topologies", bss_mac_str.c_str());
+ 	for (i = 0; i < m_num_topologies; i++) {
+ 		if ((topo = m_topology[i]->find_topology_by_bss_mac(bss_mac)) != NULL) {
+-			em_printfout("Returning Found topology of bss mac: %s num_child_topo:%d",
++			em_util_dbg_print(EM_CTRL, "Returning Found topology of bss mac: %s num_child_topo:%d",
+ 				   bss_mac_str.c_str(), topo->m_num_topologies);
+ 			return topo;
+ 		}
+ 	}
+-	em_printfout("Could not find bss mac: %s in all topologies, return NULL", bss_mac_str.c_str());
++	em_util_dbg_print(EM_CTRL, "Could not find bss mac: %s in all topologies, return NULL", bss_mac_str.c_str());
+ 	return NULL;
+ }
+ 
+ void em_network_topo_t::print_topology()
+ {
+ 	std::string dev_mac_str = util::mac_to_string(m_data_model->m_device.m_device_info.intf.mac);
+-	em_printfout("Network Topology of dev_mac:%s num_child_topologies:%d", dev_mac_str.c_str(), m_num_topologies);
+-	em_printfout("---- Child Topologies[%s] <start> -----", dev_mac_str.c_str());
++	em_util_dbg_print(EM_CTRL, "Network Topology of dev_mac:%s num_child_topologies:%d", dev_mac_str.c_str(), m_num_topologies);
++	em_util_dbg_print(EM_CTRL, "---- Child Topologies[%s] <start> -----", dev_mac_str.c_str());
+ 	for (unsigned int i = 0; i < m_num_topologies; i++) {
+ 		m_topology[i]->print_topology();
+ 	}
+-	em_printfout("---- Child Topologies[%s] <end> -----", dev_mac_str.c_str());
++	em_util_dbg_print(EM_CTRL, "---- Child Topologies[%s] <end> -----", dev_mac_str.c_str());
+ }
+ 
+ em_network_topo_t *em_network_topo_t::find_topology(dm_easy_mesh_t *dm)
+@@ -214,10 +214,10 @@
+ 
+ 	dm_easy_mesh_t::macbytes_to_string(dm->m_device.m_device_info.intf.mac, tgt_dev_mac_str);
+ 	dm_easy_mesh_t::macbytes_to_string(m_data_model->m_device.m_device_info.intf.mac, src_dev_mac_str);
+-	printf("%s:%d: Trying to find topology: %s in branch: %s\n", __func__, __LINE__, tgt_dev_mac_str, src_dev_mac_str);
++	em_util_dbg_print(EM_CTRL, "Trying to find topology: %s in branch: %s", tgt_dev_mac_str, src_dev_mac_str);
+ 
+ 	if (m_data_model == dm) {
+-		printf("%s:%d: Found topology: %s in branch: %s\n", __func__, __LINE__, tgt_dev_mac_str, src_dev_mac_str);
++		em_util_dbg_print(EM_CTRL, "Found topology: %s in branch: %s", tgt_dev_mac_str, src_dev_mac_str);
+ 		return this;
+ 	}
+ 
+@@ -243,20 +243,20 @@
+ 			// we do not add it again, just return.
+ 			// This is to avoid duplicate entries in the topology.
+ 			// This can happen if the same data model is added multiple times.
+-			em_printfout("Topology for dev_mac:%s already exists, not adding again", dev_mac_str.c_str());
++			em_util_dbg_print(EM_CTRL, "Topology for dev_mac:%s already exists, not adding again", dev_mac_str.c_str());
+ 			return;
+ 		}
+ 	}
+ 	m_topology[m_num_topologies] = new em_network_topo_t(dm);
+-	em_printfout("Adding new topology for dev_mac:%s parent dev_mac:%s", dev_mac_str.c_str(),
++	em_util_dbg_print(EM_CTRL, "Adding new topology for dev_mac:%s parent dev_mac:%s", dev_mac_str.c_str(),
+ 		util::mac_to_string(m_data_model->m_device.m_device_info.intf.mac).c_str());
+ 	//Add child topologies if any
+ 	if (child_topos != NULL && num_child_topos > 0) {
+ 		memcpy(m_topology[m_num_topologies]->m_topology, child_topos, sizeof(em_network_topo_t *) * num_child_topos);
+ 		m_topology[m_num_topologies]->m_num_topologies = num_child_topos;
+-		em_printfout("Added %d child topologies to the new topo: %s", num_child_topos, dev_mac_str.c_str());
++		em_util_dbg_print(EM_CTRL, "Added %d child topologies to the new topo: %s", num_child_topos, dev_mac_str.c_str());
+ 	} else {
+-		em_printfout("No child topologies to add to the new topo: %s", dev_mac_str.c_str());
++		em_util_dbg_print(EM_CTRL, "No child topologies to add to the new topo: %s", dev_mac_str.c_str());
+ 	}
+ 	m_num_topologies++;
+ }
+@@ -271,11 +271,11 @@
+ 
+ 	// find the BH bss where al_mac of this device of data model is attached to.
+ 	if ((topo = find_topology_by_bh_associated(dm)) != NULL) {
+-		em_printfout("Found topology in backhaul association tree, adding to it");
++		em_util_dbg_print(EM_CTRL, "Found topology in backhaul association tree, adding to it");
+ 		topo->add_network_topo(dm, child_topos, num_child_topos);
+ 	}
+ 	else {
+-		em_printfout("Could not find topology in backhaul association tree, must be ethernet");
++		em_util_dbg_print(EM_CTRL, "Could not find topology in backhaul association tree, must be ethernet");
+ 		this->add_network_topo(dm, child_topos, num_child_topos);
+ 	}
+ }
+@@ -303,14 +303,14 @@
+ 		for (i = index; i < m_num_topologies - 1; i++) {
+ 			m_topology[i] = m_topology[i + 1];
+ 		}
+-		em_printfout("Found and Removed topology of dev_mac:%s in parent dm:%s num_child_topos:%d",
++		em_util_dbg_print(EM_CTRL, "Found and Removed topology of dev_mac:%s in parent dm:%s num_child_topos:%d",
+ 			dev_mac_str.c_str(), parent_dev_mac_str.c_str(), m_num_topologies);
+ 		m_num_topologies--;
+ 		return found;
+ 	}
+ 
+ 	//If the control comes here then dm is not found in topologies, check within each topologies further
+-	em_printfout("Could not find topology for dev_mac:%s in parent dm:%s, checking each child topologies",
++	em_util_dbg_print(EM_CTRL, "Could not find topology for dev_mac:%s in parent dm:%s, checking each child topologies",
+ 		dev_mac_str.c_str(), parent_dev_mac_str.c_str());
+ 	//search recursively in the child topologies
+ 	for (i = 0; i < m_num_topologies; i++) {
+@@ -318,7 +318,7 @@
+ 			return found;
+ 		}
+ 	}
+-	em_printfout("Could not find topology for dev_mac:%s in any child topologies of parent dm:%s",
++	em_util_dbg_print(EM_CTRL, "Could not find topology for dev_mac:%s in any child topologies of parent dm:%s",
+ 		dev_mac_str.c_str(), parent_dev_mac_str.c_str());
+ 	return false;
+ }
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -900,7 +900,7 @@
+                 if ((memcmp(em->get_radio_interface_mac(), rad_mac, sizeof(mac_address_t)) == 0)) {
+                     queue_push(pcmd->m_em_candidates, em);
+                     count++;
+-                    em_printfout("BSTA CAP count: %d; push to queue for em radio: %s", count, util::mac_to_string(em->get_radio_interface_mac()).c_str());
++                    em_util_dbg_print(EM_CTRL, "BSTA CAP count: %d; push to queue for em radio: %s", count, util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                     break;
+                 }
+                 break;
+@@ -932,7 +932,7 @@
+                     if (radio_matches_query) {
+                         queue_push(pcmd->m_em_candidates, em);
+                         count++;
+-                        em_printfout("Unassociated STA query selected radio %s for requested operating class",
++                        em_util_dbg_print(EM_CTRL, "Unassociated STA query selected radio %s for requested operating class",
+                                      util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                     }
+                 }
