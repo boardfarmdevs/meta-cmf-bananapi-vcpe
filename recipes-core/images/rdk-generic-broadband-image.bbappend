@@ -33,6 +33,11 @@ EMOSA_ADAPTER ??= "0"
 EMOSA_GTP ??= "${EMOSA_ADAPTER}"
 IMAGE_INSTALL_append = "${@' emosa' if d.getVar('EMOSA_ADAPTER') == '1' else ''}"
 IMAGE_INSTALL_append = "${@' emosa-gtp' if d.getVar('EMOSA_ADAPTER') == '1' and d.getVar('EMOSA_GTP') == '1' else ''}"
+# The broker the pods publish their own statistics to and EMOSA's agents subscribe at (the
+# router's, spec 3.6): mosquitto (meta-rdk-ext 1.6), inert until /etc/mosquitto/mosquitto.conf
+# exists. EMOSA_BROKER = "0" leaves it out (a broker elsewhere on the LAN).
+EMOSA_BROKER ??= "${EMOSA_ADAPTER}"
+IMAGE_INSTALL_append = "${@' mosquitto' if d.getVar('EMOSA_ADAPTER') == '1' and d.getVar('EMOSA_BROKER') == '1' else ''}"
 
 fix_cr_deviceprofile() {
     for f in ${IMAGE_ROOTFS}/usr/ccsp/cr-deviceprofile.xml \
