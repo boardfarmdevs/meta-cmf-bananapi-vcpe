@@ -2,7 +2,7 @@
 
 [Documents](../README.md)
 
-Reviewed 2 October 2026. This is the last-tested deployment, not a live health
+Reviewed 6 October 2026. This is the last-tested deployment, not a live health
 monitor. See [operations](../guides/operations.md).
 
 ## Identity
@@ -23,6 +23,17 @@ and ten IoT clients; other rooms change presence, not permanent pool size.
 Do not enable VM autostart as part of rebuilding or optional remote access.
 
 ## Qualification
+
+On 6 October `rdk-1004` took everything of EMOSA's into its gateway, the containers
+`emosa` and `em-gtp` deleted: EMOSA's ports on the gateway's LAN through its forwarder
+(1b6a68b), the pods' broker the image's mosquitto (165fdb5), and their GRE termination point
+the image's `emosa-gtp` on the gateway's own onboarding VAP, `wifi1.4` (c5abb1d: OneWifi's
+libwebconfig 0014 keeps lnf_radius VAPs out of EasyMesh, the pre-start makes the VAP map's
+extra interfaces, `emosa-podbh` gives the VAP its SSID at each OneWifi start, and utopia
+0001 has dnsmasq bind per interface). With the controller image
+`X86EMLTRBPIBB_rdk-next_20261006083201`, redeployed in place, the pods came back through the
+gateway on their own and the room catalog (27 rooms) and the four geometry rooms passed
+twice, 62 of 62 (emosa-lab 04189dc, its rdk-lab record).
 
 `rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. It is the target configuration. Fixed the same day (emosa-lab's rdk-lab record): `traffic-quieter-ap`'s screenshot timeouts were the browser harness rendering in software (36ce8d5); a VM restart now brings the lab back whole (7ee964a); and RDK's native backhaul steering never measured a candidate, so `backhaul-parent-handover` failed, because em_ctrl took an EMOSA agent, whose AL MAC was on one of the gateway's interfaces, for its co-located agent: the agents now live in a network namespace of their own (ceebf4c, emosa-lab 0a4bbcb). With that gateway image, redeployed in place, it passed the room catalog (27 rooms) three times and the four geometry rooms after each of two. unified-wifi-mesh 0236 (ca7bc1e) then gave the controller the pods' backhaul stations, so a pod's move is verified and leaves no uncertain mark: two more rounds passed the geometry rooms both times and 26 of 27 catalog rooms each, `home-a-wired-extender-loss-recovery` failing once at its 5 s outage boundary (2 of 8 runs) and once at the browser harness under another build's load. A pod whose remembered backhaul BSS is gone after a restart now falls back to the configured one instead of staying on GRE (emosa-lab 83f4ce4, finding 18; emosa-lab's rdk-lab record).
 
