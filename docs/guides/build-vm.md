@@ -23,6 +23,13 @@ blocks (easymesh-resources lab-storage). `EASYMESH_LXD_STORAGE=<lab>-pool
 EASYMESH_LXD_STORAGE_DRIVER=dir` gives a lab a `dir` pool of its own, as before; a lab
 already built stays in the pool it is in ([build speed](../reference/build-speed.md)).
 
+The lab's room evidence (`/home/easymesh/easymesh-evidence`) is on a volume of its own
+in that pool, `<lab>-evidence` (20 GiB, `EASYMESH_EVIDENCE_SIZE`; `0` for none), so the
+VM's disk holds none; an hourly timer in the VM keeps it under 80 %. The volume outlives
+the VM: a rebuild under the same name attaches it again, `copy` gives the copy a copy
+of it, an export carries none, and `build.sh evidence` puts a lab built before it on one,
+without a restart (between suites).
+
 ## Choose a lab name
 
 Source the configuration helper once per shell. It derives a VM name, storage
@@ -182,9 +189,10 @@ gen/vm/lxd/build.sh delete
 `update` moves an accepted VM to the checkout's commit in place; base images,
 copies, the artifact store and timing records: [build speed](../reference/build-speed.md).
 
-`delete` removes only the named VM. It deliberately leaves the matching storage
-pool intact. To remove a lab permanently, stop/delete its VM, review the exact
-pool name, then delete that pool with LXD. Never delete a pool shared by a VM.
+`delete` removes only the named VM: the pool and the lab's evidence volume stay. To
+remove a lab permanently, delete its VM, then its evidence (`lxc storage volume delete
+labs <lab>-evidence`) and, for a lab with a pool of its own, review the exact pool name
+and delete that pool with LXD. Never delete a pool a VM uses.
 
 New images in a running lab (the Banana Pi images built again, the VM kept): copy
 both into the VM's `/home/easymesh/easymesh-assets` and, as root in the VM, run

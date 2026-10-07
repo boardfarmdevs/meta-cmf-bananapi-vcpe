@@ -31,6 +31,29 @@ easymesh_instance_port_base() {
     printf '%s\n' "$base"
 }
 
+# The room evidence on a volume of its own (easymesh-resources lab-storage W4): LAB-evidence in
+# the lab's pool, mounted in the guest (virtiofs) at its evidence directory. Its quota bounds it
+# and the guest's hourly retention keeps it under 80 %. It outlives its lab: a rebuild or a new
+# import under the same name gets the evidence back. EASYMESH_EVIDENCE_SIZE=0: no volume, the
+# evidence on the VM's disk as before. A copy of a lab gets a copy of the volume; an export
+# carries none (LXD refuses to import a backup with a custom volume attached).
+easymesh_evidence_path=/home/easymesh/easymesh-evidence
+
+easymesh_attach_evidence() {    # easymesh_attach_evidence INSTANCE POOL: the volume, made if new
+    local instance=$1 pool=$2 volume=$1-evidence size=${EASYMESH_EVIDENCE_SIZE:-20GiB}
+    local -a create=(lxc storage volume create "$pool" "$volume")
+    [ "$size" != 0 ] || return 0
+    ! lxc config device get "$instance" evidence source >/dev/null 2>&1 || return 0
+    if ! lxc storage volume show "$pool" "$volume" >/dev/null 2>&1; then
+        # a dir pool has no quotas on most hosts: there the retention's own cap bounds it
+        lxc storage show "$pool" | awk '$1 == "driver:" {print $2}' | grep -qx dir \
+            || create+=(size="$size")
+        "${create[@]}" </dev/null
+    fi
+    lxc config device add "$instance" evidence disk pool="$pool" source="$volume" \
+        path="$easymesh_evidence_path" </dev/null
+}
+
 easymesh_ensure_storage_pool() {
     local pool=$1 driver=${EASYMESH_LXD_STORAGE_DRIVER:-zfs}
     local size=${EASYMESH_LXD_STORAGE_SIZE:-500GiB}

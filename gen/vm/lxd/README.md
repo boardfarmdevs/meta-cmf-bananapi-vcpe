@@ -18,9 +18,12 @@ newgrp lxd
 EASYMESH_LXD_NAME=my-lab ./import.sh
 ```
 
-The importer creates `my-lab-pool` with the LXD `dir` driver when necessary,
-uses it again for a later replacement, chooses a free bridge address, and derives
-a port block from the VM name. The first three ports serve the topology WebUI,
+The importer puts the VM in the host's ZFS pool for lab VMs, `labs`, and creates it
+when necessary (a sparse 500 GiB loop file; `EASYMESH_LXD_STORAGE` and
+`EASYMESH_LXD_STORAGE_DRIVER` choose another). The lab's room evidence gets a volume
+of its own there, `my-lab-evidence` (20 GiB, `EASYMESH_EVIDENCE_SIZE`; `0` for none),
+kept for a later replacement under the same name. The importer chooses a free
+bridge address and derives a port block from the VM name. The first three ports serve the topology WebUI,
 wmediumd Console and room viewer. Set `EASYMESH_PORT_BASE` only when a site
 requires a specific port range.
 
@@ -38,8 +41,9 @@ EASYMESH_LXD_NAME=my-lab ./build.sh check
 EASYMESH_LXD_NAME=my-lab ./build.sh delete
 ```
 
-`delete` removes only the named VM. It retains the matching storage pool. Review
-and remove that exact pool with LXD only when its rebuild state is no longer needed.
+`delete` removes only the named VM. The pool and the lab's evidence volume stay;
+remove the evidence with `lxc storage volume delete labs my-lab-evidence` once it is no
+longer needed. Never delete a pool another VM uses.
 
 ## Monitoring
 

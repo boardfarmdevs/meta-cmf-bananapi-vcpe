@@ -29,4 +29,33 @@ grep -Fx 'storage create labs zfs size=500GiB' "$log" >/dev/null
 EASYMESH_LXD_STORAGE_DRIVER=dir easymesh_ensure_storage_pool alpha-pool
 grep -Fx 'storage create alpha-pool dir' "$log" >/dev/null
 
+# the evidence volume: made when new (sized on a pool with quotas), attached, never twice
+pool_driver=zfs
+lxc() {
+    printf '%s\n' "$*" >> "$log"
+    case "$1 $2 $3" in
+        'config device get') return 1 ;;
+        'storage volume show') return 1 ;;
+        'storage show '*) printf 'name: %s\ndriver: %s\n' "$3" "$pool_driver" ;;
+    esac
+    return 0
+}
+: > "$log"
+easymesh_attach_evidence alpha labs
+grep -Fx 'storage volume create labs alpha-evidence size=20GiB' "$log" >/dev/null
+grep -Fx 'config device add alpha evidence disk pool=labs source=alpha-evidence path=/home/easymesh/easymesh-evidence' "$log" >/dev/null
+: > "$log"
+pool_driver=dir easymesh_attach_evidence alpha alpha-pool
+grep -Fx 'storage volume create alpha-pool alpha-evidence' "$log" >/dev/null
+: > "$log"
+EASYMESH_EVIDENCE_SIZE=0 easymesh_attach_evidence alpha labs
+test ! -s "$log"
+lxc() {
+    printf '%s\n' "$*" >> "$log"
+    [ "$1 $2 $3" = 'config device get' ] && echo alpha-evidence
+    return 0
+}
+easymesh_attach_evidence alpha labs
+if grep -q 'device add\|volume create' "$log"; then exit 1; fi
+
 echo 'PASS: named EasyMesh LXD defaults'

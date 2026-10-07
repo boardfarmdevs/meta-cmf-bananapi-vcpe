@@ -43,6 +43,16 @@ lxc() {
             ;;
         info:*) return 1 ;;
         config:get) printf '00:16:3e:aa:bb:cc\n' ;;
+        config:device)
+            # the evidence device: there once added (EASYMESH_TEST_EVIDENCE, a marker file)
+            if [ "$3" = get ] && [ "$5" = evidence ]; then
+                [ -n "${EASYMESH_TEST_EVIDENCE:-}" ] && [ -e "$EASYMESH_TEST_EVIDENCE" ] || return 1
+                printf '%s-evidence\n' "$4"
+            elif [ "$3" = add ] && [ "$5" = evidence ]; then
+                : > "${EASYMESH_TEST_EVIDENCE:?}"
+            fi
+            ;;
+        storage:volume) [ "$3" != show ] || return 1 ;;
         exec:*)
             case " $* " in
                 *' lxc query /1.0 '*)
@@ -229,4 +239,31 @@ monitoring_line=$(grep -nF 'monitoring-enabled easymesh 127.0.0.1' "$log" | cut 
 start_line=$(grep -nF 'exec easymesh -- systemctl --no-block start easymesh-lab.service ' "$log" | cut -d: -f1)
 test "$monitoring_line" -lt "$start_line"
 
-echo 'PASS: LXD import storage selection and optional monitoring before lab startup'
+# The room evidence on a volume of its own: with the bundle's instance-config.sh the import
+# makes LAB-evidence in the lab's pool, attaches it before the start, and makes its root
+# readable once the agent answers.
+install -m 0755 "$root/gen/vm/lxd/instance-config.sh" "$bundle/instance-config.sh"
+printf '%s\n' \
+    'LAB_PROFILE=small' \
+    'LAB_CLIENTS=20' \
+    'LAB_DEFAULT_NAME=storage-test' \
+    'LAB_DEFAULT_CPUS=6' \
+    'LAB_DEFAULT_MEMORY=8GiB' > "$bundle/release.env"
+: > "$log"
+EASYMESH_TEST_EVIDENCE=$stage/evidence.attached \
+EASYMESH_LXD_NAME=storage-test \
+EASYMESH_LXD_STORAGE=large-pool \
+EASYMESH_WEBUI_HOST_IP=127.0.0.1 \
+    bash "$bundle/import.sh" "$backup" > "$stage/evidence.out"
+create_line=$(grep -nFx 'storage volume create large-pool storage-test-evidence size=20GiB ' \
+    "$log" | cut -d: -f1)
+add_line=$(grep -nFx 'config device add storage-test evidence disk pool=large-pool source=storage-test-evidence path=/home/easymesh/easymesh-evidence ' \
+    "$log" | cut -d: -f1)
+start_line=$(grep -nFx 'start storage-test ' "$log" | cut -d: -f1)
+chmod_line=$(grep -nFx 'exec storage-test -- chmod 0755 /home/easymesh/easymesh-evidence ' \
+    "$log" | cut -d: -f1)
+test "$create_line" -lt "$add_line"
+test "$add_line" -lt "$start_line"
+test "$start_line" -lt "$chmod_line"
+
+echo 'PASS: LXD import storage selection, the evidence volume and optional monitoring before lab startup'

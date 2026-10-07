@@ -214,6 +214,13 @@ lxc config device set "$name" eth0 network "$network"
 # MAC; assigning an unchanged address alone is treated as a no-op.
 lxc config device unset "$name" eth0 ipv4.address
 lxc config device set "$name" eth0 ipv4.address "$guest_address"
+# The room evidence on a volume of its own in the lab's pool, kept across re-imports
+# (instance-config.sh). The backup carries none: build.sh exports without it.
+evidence=false
+if declare -F easymesh_attach_evidence >/dev/null && [ -n "$storage" ]; then
+    easymesh_attach_evidence "$name" "$storage"
+    ! lxc config device get "$name" evidence source >/dev/null 2>&1 || evidence=true
+fi
 lxc start "$name"
 
 # Imported VM disks can retain a DHCP lease and RFC4361 client identity from
@@ -233,6 +240,15 @@ done
 if [ "$agent_ready" != true ]; then
     echo "$name: LXD agent did not become ready within ${address_timeout}s" >&2
     exit 1
+fi
+# shellcheck disable=SC2154 # easymesh_evidence_path: instance-config.sh, as evidence=true
+if [ "$evidence" = true ]; then
+    # a new volume's root is 0711: readable, as the directory was
+    for attempt in $(seq 1 "$address_timeout"); do
+        lxc exec "$name" -- mountpoint -q "$easymesh_evidence_path" && break
+        [ "$attempt" -eq "$address_timeout" ] || sleep 1
+    done
+    lxc exec "$name" -- chmod 0755 "$easymesh_evidence_path"
 fi
 
 eth0_mac=$(lxc config get "$name" volatile.eth0.hwaddr | tr '[:upper:]' '[:lower:]')

@@ -93,10 +93,14 @@ Commands:
               service restarts and settles; when the commit changes what a build installs
               (the medium's daemon, console or radio module, the guest's services and
               tools) the update makes and installs that too and restarts the VM
-  delete      delete only the named appliance VM after showing its identity
+  delete      delete only the named appliance VM after showing its identity (its evidence
+              volume stays)
   copy NEW    copy the VM as NEW in its storage pool (seconds on btrfs or zfs), with its own
-              identities, address and port block (EASYMESH_COPY_PORT_BASE overrides); left
-              stopped: EASYMESH_LXD_NAME=NEW $0 start brings it up
+              identities, address and port block (EASYMESH_COPY_PORT_BASE overrides) and a
+              copy of its evidence volume; left stopped: EASYMESH_LXD_NAME=NEW $0 start
+              brings it up
+  evidence    give a running lab built before its evidence had a volume one: attached and
+              mounted, the evidence so far moved onto it, no restart (between suites)
   emosa       turn the EMOSA option on in the accepted lab VM: emosa-lab stages its adapter
               kit and the OpenSync pod image, then runs its option (EMOSA, fleet, the pods'
               gateway, two pods, telemetry, their Wi-Fi backhaul, the rooms with the pods)
@@ -117,6 +121,9 @@ Common overrides:
   EASYMESH_LXD_STORAGE=$storage (the host's ZFS pool for lab VMs, created if absent:
     EASYMESH_LXD_STORAGE_DRIVER zfs, EASYMESH_LXD_STORAGE_SIZE 500GiB; dir for a pool of
     the lab's own; an existing lab stays in the pool it is in)
+  EASYMESH_EVIDENCE_SIZE=${EASYMESH_EVIDENCE_SIZE:-20GiB} (the room evidence on a volume of its own,
+    $name-evidence in the lab's pool at $easymesh_evidence_path, kept when
+    the lab is deleted; 0: none, the evidence on the VM's disk)
   EASYMESH_PORT_BASE=$port_base (WebUI, Console and room use base, base+1 and base+2)
   EASYMESH_LXD_IPV4=<automatic static address>
   EASYMESH_WEBUI_HOST_IP=$webui_address
@@ -399,6 +406,68 @@ storage_driver() {  # the driver of that pool, or the one a build would create
     lxc storage show "$(storage_pool)" 2>/dev/null | awk '$1 == "driver:" {print $2; exit}' \
         | grep . || printf '%s\n' "${EASYMESH_LXD_STORAGE_DRIVER:-dir}"
 }
+
+# The lab's evidence volume (instance-config.sh) mounted in the running guest, its root as the
+# directory's was, root's and readable (a new volume's is 0711). Nothing to do without one.
+evidence_ready() {
+    local tries=30
+    lxc config device get "$name" evidence source >/dev/null 2>&1 || return 0
+    until run_root mountpoint -q "$easymesh_evidence_path"; do
+        tries=$((tries - 1))
+        [ "$tries" -gt 0 ] || {
+            echo "$name: the evidence volume is not mounted at $easymesh_evidence_path" >&2
+            return 1
+        }
+        sleep 2
+    done
+    run_root chmod 0755 "$easymesh_evidence_path"
+}
+
+# lxc export of the stopped lab without its evidence volume: LXD refuses to import a backup
+# with a custom volume attached ("More than one primary volume is defined in backup config"),
+# and the volume is this host's. The device comes back after the export as it was.
+export_instance() {     # export_instance OUTPUT
+    local output=$1 pool='' volume='' status=0
+    if volume=$(lxc config device get "$name" evidence source 2>/dev/null); then
+        pool=$(lxc config device get "$name" evidence pool)
+        lxc config device remove "$name" evidence </dev/null
+    fi
+    lxc export "$name" "$output" --instance-only --compression zstd </dev/null || status=$?
+    [ -z "$volume" ] || lxc config device add "$name" evidence disk pool="$pool" \
+        source="$volume" path="$easymesh_evidence_path" </dev/null
+    return "$status"
+}
+
+# A lab of its own evidence: the volume attached to a running lab, the evidence it has so
+# far moved onto it, no restart (the room service paused for the move, as for a check).
+# Between suites: a run in progress loses what it writes during the move.
+evidence_vm() (
+    [ "${EASYMESH_EVIDENCE_SIZE:-20GiB}" != 0 ] || { echo 'EASYMESH_EVIDENCE_SIZE=0: no evidence volume' >&2; exit 2; }
+    instance_exists
+    [ "$(instance_state)" = RUNNING ] || { echo "$name is not running: start it first" >&2; exit 1; }
+    wait_agent
+    restore_room=false
+    trap 'result=$?; if "$restore_room"; then run_root systemctl start easymesh-room-service.service || result=$?; fi; exit "$result"' EXIT
+    case "$(run_root systemctl show easymesh-room-service.service -p ActiveState --value)" in
+        active|activating) restore_room=true ;;
+    esac
+    run_root systemctl stop easymesh-room-service.service
+    if ! lxc config device get "$name" evidence source >/dev/null 2>&1; then
+        # the evidence so far aside; an unfinished earlier move's is already there
+        run_root sh -eu -c 'dir=$1
+            if [ -e "$dir.moving" ] && [ -e "$dir" ]; then
+                echo "both $dir and $dir.moving: an earlier move did not finish; merge them" >&2
+                exit 1
+            fi
+            [ ! -e "$dir" ] || mv -- "$dir" "$dir.moving"' sh "$easymesh_evidence_path"
+        easymesh_attach_evidence "$name" "$(storage_pool)"
+    fi
+    evidence_ready
+    run_root sh -eu -c 'dir=$1; if [ -d "$dir.moving" ]; then
+            cp -a -- "$dir.moving/." "$dir/"; rm -rf -- "$dir.moving"; fi' sh "$easymesh_evidence_path"
+    run_root df -h "$easymesh_evidence_path" | awk -v volume="$(lxc config device get "$name" evidence source)" \
+        'NR == 2 {print "evidence: " $3 " of " $2 " on volume " volume}'
+)
 
 make_bundle() {
     local repo=$1 commit=$2 output=$3 ref=refs/heads/lxd-appliance-export
@@ -704,6 +773,9 @@ build_vm() {
     fi
 
     phase lab-host
+    # the room evidence on its volume from here on: the base image carries none
+    easymesh_attach_evidence "$name" "$(storage_pool)"
+    evidence_ready
     run_root env EASYMESH_RUNTIME_COMMIT="$meta_commit" \
         bash /home/easymesh/easymesh-provision/20-prepare-lab-host.sh
     # Nested LXD is a snap. A non-login `sudo -u` process launched through the
@@ -1000,7 +1072,7 @@ export_vm() {
     output="$bundle/rdkeasymesh-${release_id}-${short}-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
-    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
+    if ! export_instance "$output"; then
         configure_no_secure_boot
         return 1
     fi
@@ -1148,7 +1220,7 @@ export_thin_vm() {
     output="$bundle/rdkeasymesh-${release_id}-${short}-thin-lxd.tar.zst"
     rm -rf -- "$bundle"
     install -d "$bundle"
-    if ! lxc export "$name" "$output" --instance-only --compression zstd </dev/null; then
+    if ! export_instance "$output"; then
         configure_no_secure_boot
         return 1
     fi
@@ -1400,7 +1472,7 @@ pin_guest_address() {   # the instance's reserved address, static in the guest (
 # first start pins its address and brings its lab up.
 copy_vm() {
     local target=${1:-} source=$name stamp snapshot='' device listen port address
-    local target_ipv4 target_port_base
+    local target_ipv4 target_port_base volume pool
     case "$target" in
         [a-z0-9][a-z0-9-]*) ;;
         *) echo "usage: $0 copy NEW-NAME (lowercase letters, numbers and hyphens)" >&2; exit 2 ;;
@@ -1420,6 +1492,14 @@ copy_vm() {
         lxc delete "$source/$snapshot"
     else
         lxc copy "$source" "$target" --instance-only </dev/null
+    fi
+    # the copy's own evidence volume, a copy of the original's (copy-on-write); a volume of an
+    # earlier lab of the copy's name is kept and attached, as a rebuild would
+    if volume=$(lxc config device get "$target" evidence source 2>/dev/null); then
+        pool=$(lxc config device get "$target" evidence pool)
+        lxc storage volume show "$pool" "$target-evidence" >/dev/null 2>&1 \
+            || lxc storage volume copy "$pool/$volume" "$pool/$target-evidence" </dev/null
+        lxc config device set "$target" evidence source="$target-evidence"
     fi
     phase configure
     reseed_identity "$target"
@@ -1444,10 +1524,15 @@ copy_vm() {
 }
 
 delete_vm() {
+    local volume pool
     instance_exists
     lxc list "$name" -c nst4m --format table
     echo "deleting only LXD appliance instance: $name"
+    volume=$(lxc config device get "$name" evidence source 2>/dev/null) || volume=''
+    [ -z "$volume" ] || pool=$(lxc config device get "$name" evidence pool)
     lxc delete "$name" --force
+    [ -z "$volume" ] || printf 'kept: its evidence, volume %s in %s (a rebuild of %s attaches it again; lxc storage volume delete %s %s)\n' \
+        "$volume" "$pool" "$name" "$pool" "$volume"
 }
 
 case "${1:-}" in
@@ -1463,6 +1548,7 @@ case "${1:-}" in
     update) update_vm ;;
     delete) delete_vm ;;
     copy) copy_vm "${2:-}" ;;
+    evidence) evidence_vm ;;
     emosa) emosa_vm ;;
     -h|--help|help|'') usage ;;
     *) usage >&2; exit 2 ;;
