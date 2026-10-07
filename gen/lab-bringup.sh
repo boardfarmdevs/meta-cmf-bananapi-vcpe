@@ -53,11 +53,24 @@ active() {    # wait (up to 10 min) for a unit in a container
 }
 
 # One complete agent per gateway and extender container (ten BSSes each), and every
-# OpenSync pod with its five.
+# OpenSync pod with its five. Devices the lab does not own (FOREIGN_DEVICES, AL MACs one per
+# line: physical pods on the controller) are not counted.
+FOREIGN_DEVICES=${EASYMESH_FOREIGN_DEVICES:-/etc/easymesh-lab/foreign-devices}
+export FOREIGN_DEVICES
+OWN_NODES='
+def own_nodes(nodes):
+    try:
+        lines = open(os.environ["FOREIGN_DEVICES"]).read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    foreign = {line.split("#")[0].strip().lower() for line in lines} - {""}
+    return [n for n in nodes if str(n.get("id") or "").lower() not in foreign]
+'
 topology_complete() {
-    curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | EXPECTED=$1 python3 -c '
-import json, os, sys
-nodes = json.load(sys.stdin).get("nodes", [])
+    curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | EXPECTED=$1 python3 -c "import os
+$OWN_NODES"'
+import json, sys
+nodes = own_nodes(json.load(sys.stdin).get("nodes", []))
 bss = lambda n: sum(len(h.get("BSSList") or []) for h in (n.get("haulTypes") or []))
 pods = [n for n in nodes if n.get("kind") == "opensync-pod"]
 agents = [n for n in nodes if n.get("kind") != "controller" and n not in pods]
@@ -66,9 +79,10 @@ sys.exit(0 if len(agents) == int(os.environ["EXPECTED"]) and all(bss(n) == 10 fo
 }
 
 incomplete() {    # the topology's nodes short of their BSSes, e.g. "Agent-1:2 Extender-3:0"
-    curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | python3 -c '
+    curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | python3 -c "import os
+$OWN_NODES"'
 import json, sys
-nodes = json.load(sys.stdin).get("nodes", [])
+nodes = own_nodes(json.load(sys.stdin).get("nodes", []))
 bss = lambda n: sum(len(h.get("BSSList") or []) for h in (n.get("haulTypes") or []))
 want = lambda n: 5 if n.get("kind") == "opensync-pod" else 10
 print(" ".join("%s:%d" % (n.get("name"), bss(n)) for n in nodes
