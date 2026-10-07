@@ -34,13 +34,13 @@ if [ "$(uname -r)" != "$expected_kernel" ]; then
 fi
 
 # Ubuntu's extras the lab does not use go (easymesh-resources lab-storage W12, ~545 MiB): the
-# cloud image's own kernel with its headers, modules and meta-packages (the VM runs
+# cloud image's own kernel with its headers, modules, tools and meta-packages (the VM runs
 # $expected_kernel, and GRUB_DEFAULT=0 boots the newest), the kernel accessories (bpftrace,
 # bcc, LLVM) and sosreport (boto). Their autoremoval also takes ubuntu-server and Python
 # packages no lab code imports (netaddr, dateutil, pexpect, magic); Boardfarm has a venv of
 # its own. The running kernel's headers stay: build.sh update builds the radio module here.
 extras=$(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'linux-image-*' 'linux-modules-*' \
-        'linux-headers-*' linux-virtual linux-generic ubuntu-kernel-accessories sosreport \
+        'linux-headers-*' 'linux-tools-*' linux-virtual linux-generic ubuntu-kernel-accessories sosreport \
         2>/dev/null | awk -v kept="${expected_kernel%-generic}" \
         '$1 == "ii" && index($2, kept) == 0 {print $2}')
 if [ -n "$extras" ]; then
