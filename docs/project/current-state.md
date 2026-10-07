@@ -105,7 +105,7 @@ sits at its 5 s boundary (one sample at 25 s still showing a client on the wired
 its 6 GHz client needs 3.7 to 4.5 s to associate elsewhere on both labs, beacon loss, a scan
 of every 6 GHz channel and a 1 s association comeback, because the AP still holds its
 earlier PMF association (emosa-lab's rdk-lab record). Since 7 October the outage gate gives
-a 6 GHz client 8 s, the others 5 s (easymesh-optimizer e7ef4b2). Its owner then stopped
+every client 8 s (easymesh-optimizer e7ef4b2, then every band). Its owner then stopped
 `rdk-emosa-1002` (rev120 from load 9.5 to 4), and on `X86EMLTRBPIBB_rdk-next_20261006175821`,
 redeployed in place, 1005's suite passed whole: readiness, the catalog 27 of 27 and the
 four geometry rooms with their recovery; no em_ctrl line dropped through the redeploy and
