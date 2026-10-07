@@ -339,7 +339,8 @@ base_image_key() {
         "alpine=${EASYMESH_ALPINE_REMOTE:-images:alpine/3.22/amd64}" "layout=1")
     for file in 00-base.sh 10-install-linux-7.sh 15-prepare-base.sh 30-boardfarm-wan.sh \
         guest/easymesh-lxd-docker-forward guest/easymesh-lxd-docker-forward.service \
-        guest/boardfarm-lab-rebuild guest/boardfarm-lab.service; do
+        guest/boardfarm-lab-rebuild guest/boardfarm-lab.service \
+        guest/boardfarm-compose-up-without-build.patch; do
         inputs+=("$file=$(git -C "$root" rev-parse "HEAD:gen/vm/scripts/$file")")
     done
     medium=$(git -C "$root" rev-parse HEAD:gen/medium)
@@ -577,6 +578,7 @@ push_inputs() {
         [easymesh-lxd-docker-forward.service]=gen/vm/scripts/guest/easymesh-lxd-docker-forward.service
         [boardfarm-lab-rebuild]=gen/vm/scripts/guest/boardfarm-lab-rebuild
         [boardfarm-lab.service]=gen/vm/scripts/guest/boardfarm-lab.service
+        [boardfarm-compose-up-without-build.patch]=gen/vm/scripts/guest/boardfarm-compose-up-without-build.patch
         [easymesh-lab-runtime]=gen/vm/scripts/guest/easymesh-lab-runtime
         [easymesh-lab.service]=gen/vm/scripts/guest/easymesh-lab.service
         [easymesh-room-service.service]=gen/vm/scripts/guest/easymesh-room-service.service
@@ -661,9 +663,9 @@ clear_secure_boot_config() {
 
 # The end of every build cleans up (easymesh-resources lab-storage W7): apt's lists and cache
 # (every later install updates first), the VM's journal bounded at 1 GiB (journald's default
-# is 4 GiB on a 96 GiB disk), Boardfarm's Docker build cache and dangling layers (its base
-# images stay: the WAN's recovery path builds from them), and the freed blocks returned to
-# the host (the disk passes discard).
+# is 4 GiB on a 96 GiB disk), Boardfarm's Docker build cache and dangling layers (again: the
+# WAN step pruned them, W5, and its recovery path builds nothing), and the freed blocks
+# returned to the host (the disk passes discard).
 cleanup_vm() {
     run_root sh -eu -c '
         apt-get clean

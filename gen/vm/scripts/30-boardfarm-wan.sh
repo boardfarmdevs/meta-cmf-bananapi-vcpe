@@ -5,6 +5,13 @@ repo=/home/easymesh/boardfarm-open-0406/boardfarm-lab-staging
 
 test "$(sudo -u easymesh git -C "$repo" rev-parse HEAD)" = \
     ddb5a2b9e1707562595afc7e4000a3b8efa3cd81
+# Boardfarm's setup brings its containers up without --build (easymesh-resources lab-storage
+# W5): it builds an image only when it is missing, so its recovery path uses the images
+# there, with no build cache and no network. A VM from the base image has it applied.
+patch=/home/easymesh/easymesh-assets/boardfarm-compose-up-without-build.patch
+if ! sudo -u easymesh git -C "$repo" apply --reverse --check "$patch" 2>/dev/null; then
+    sudo -u easymesh git -C "$repo" apply "$patch"
+fi
 
 systemctl enable --now docker
 
@@ -33,6 +40,13 @@ test "$(docker network inspect wan-cpe1 -f '{{index .Options "com.docker.network
 ip link show br-wan101 >/dev/null
 test "$(docker ps --filter 'name=^/dhcp-cpe1$' --filter 'name=^/wan-cpe1$' --format '{{.Names}}' | sort | paste -sd, -)" = \
     dhcp-cpe1,wan-cpe1
+
+# Only the images in use stay (W5), before a base image is made from this VM: the build
+# cache, the dangling layers and the build stages' bases go. bf-ssh, the images' own base,
+# stays: Boardfarm's setup checks it is there.
+docker builder prune -af >/dev/null
+docker image prune -f >/dev/null
+docker image rm debian:bookworm-slim python:3.13.5-slim-bookworm >/dev/null 2>&1 || true
 
 printf '%s\n' 'boardfarm-wan-ready' \
     > /var/lib/easymesh-lab/boardfarm.status
