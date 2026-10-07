@@ -3,7 +3,7 @@ Description=Bound the EasyMesh room evidence (the oldest room runs removed)
 
 [Service]
 Type=oneshot
-User=easymesh
+# as root: the room service and the suites write the runs as root
 Nice=19
 IOSchedulingClass=idle
 ExecStart=/usr/local/sbin/easymesh-evidence-retention
