@@ -71,6 +71,21 @@ patch since 0231). rdk-1004, redeployed with both: the catalog 27 of 27, no line
 em_ctrl or any of the six em_agents through the whole run, no passphrase in their journals;
 rdk-emosa-1005 the same, its suite whole.
 
+On 7 October both labs moved into their host's ZFS pool for lab VMs, `labs`
+(easymesh-resources lab-storage W1, W2, W11; `lxc move --storage labs`, stopped): rdk-1004
+holds 7.3 GB there (compression 2.75x), rdk-emosa-1005 6.2 GB (2.07x), and a snapshot of the
+running rdk-1004 took 288 ms and no space. Before that, inside the builds: each pod's journal
+capped at 128 MiB (emosa-lab 7a651c7: 4.1 GB each before), the end of every build cleaned up
+(03c3172), two image archives per device after a redeploy (6142d92), new labs in `labs` by
+default (a394e35): rdk-1004 from 33 to 20 GB in use, rdk-emosa-1005 from 21 to 9.9 GB. The
+move was rdk-1004's first VM restart since EMOSA went into the gateway, and it never came up:
+EMOSA's pod agents start with the gateway and kept the controller busy ("Error_Prev_Cmd_In_Progress")
+while the pods, which do not autostart, could not reach them, and the runtime's gates counted
+the pods' devices and stations. The runtime now starts the pods with the clients, defers a
+refused initial policy to the final one, and counts the native lab (5206350). Both labs then
+restarted whole with `build.sh start`: the runtime's acceptance passed, then EMOSA's step, the
+room settled with both pods provisioning.
+
 `rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
 target configuration, next to `rdk-emosa-1002` (`EASYMESH_SHARED_HOST=1`): no emosa or
 em-gtp container from its start. Its suite with the image before 0240: readiness, the
