@@ -27,6 +27,15 @@ done | paste -sd' ' - || true)
 wired_count=$(printf '%s\n' $wired_extenders | sed '/^$/d' | wc -l)
 model_devices=$((5 + wired_count))
 model_expected="$model_devices/$((3 * model_devices))/$((10 * model_devices))"
+# The EMOSA option's pods are EasyMesh devices too ("OpenSync via EMOSA"), and since EMOSA
+# runs in the gateway they onboard on their own at boot (rdk-1004, 7 Oct: 8 devices and 106
+# associated stations where the gates expected 6 and 104). The gates count the native lab:
+# the pods' devices, radios and BSSes left out, and the pods' backhaul stations (stations on
+# mesh_backhaul that no native device claims as its backhaul station).
+emosa_manufacturer='OpenSync via EMOSA'
+pod_al_sql="select substring_index(substring_index(ID,'@',2),'@',-1) from DeviceList where Manufacturer = '$emosa_manufacturer'"
+native_model_sql="select concat((select count(*) from DeviceList where Manufacturer <> '$emosa_manufacturer'),'/',(select count(*) from RadioList where substring_index(substring_index(ID,'@',2),'@',-1) not in ($pod_al_sql)),'/',(select count(*) from BSSList where substring_index(substring_index(ID,'@',2),'@',-1) not in ($pod_al_sql)))"
+native_associated_sql="select count(*) from STAList s where s.Associated = 1 and not (s.BSSID in (select BSSID from BSSList where SSID = 'mesh_backhaul') and s.MACAddress not in (select BackhaulSTA from DeviceList where Manufacturer <> '$emosa_manufacturer'))"
 state=${EASYMESH_ACCEPTANCE_STATE:-$lab_home/.local/state/easymesh-lab/reboot-acceptance}
 medium_backend=${EASYMESH_MEDIUM_BACKEND:-userspace}
 kernel_medium_parameter=/sys/module/mac80211_hwsim/parameters/kernel_medium
@@ -477,8 +486,7 @@ wait_mesh_model() {
     # model may still hold a wired extender's rows); final: every mesh node, exact totals
     local scope=${1:-final} attempt counts complete container
     for attempt in $(seq 1 48); do
-        counts=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
-            'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList))' \
+        counts=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e "$native_model_sql" \
             2>/dev/null || true)
         complete=1
         for container in $mesh $([ "$scope" = wifi ] || echo "$wired_extenders"); do
@@ -496,14 +504,22 @@ wait_mesh_model() {
 
 enable_metrics_reporting() {
     # wifi: at least the Wi-Fi mesh (a wired extender may not run yet); final: every device
-    local scope=${1:-final} attempt response devices=$model_devices
+    local scope=${1:-final} attempts=${2:-36} attempt response devices=$model_devices
     [ "$scope" = final ] || devices=5
-    for attempt in $(seq 1 12); do
+    # The controller refuses a policy while a command is in progress (em_cli: HTTP error,
+    # "Error_Prev_Cmd_In_Progress"): at boot, with EMOSA's pod agents onboarding from the
+    # gateway, for many minutes (rdk-1004, 7 Oct). Up to 36 tries by default, about 15 min.
+    for attempt in $(seq 1 "$attempts"); do
         response=$(curl -fsS --max-time 45 -X POST \
             http://127.0.0.1:8888/api/v1/metricsreporting/enable 2>/dev/null || true)
+        # Each native device has three radios; an EMOSA pod, registered on its own at boot
+        # since EMOSA runs in the gateway (rdk-1004, 7 Oct: 8 devices, 20 radios), one. The
+        # pods are what 3 * devices - radios leaves, two per pod; the native devices count.
         if jq -e --argjson devices "$devices" --arg scope "$scope" \
-                '.success == true and .radios == 3 * .devices
-                 and (if $scope == "final" then .devices == $devices else .devices >= $devices end)' \
+                '.success == true and ((3 * .devices - .radios) as $twice_pods
+                 | $twice_pods >= 0 and $twice_pods % 2 == 0
+                 and ((.devices - $twice_pods / 2) as $native
+                      | if $scope == "final" then $native == $devices else $native >= $devices end))' \
                 >/dev/null 2>&1 <<< "$response"; then
             echo "metrics policy active on $(jq -r .devices <<< "$response") devices / $(jq -r .radios <<< "$response") radios"
             return 0
@@ -581,9 +597,35 @@ live_client_count() {
         2>/dev/null
 }
 
+lab_has_emosa_pods() {    # the EMOSA option's pods (user.emosa.role=pod) are in the lab
+    lxc list -f json | jq -e 'any(.[]; .config["user.emosa.role"] == "pod")' >/dev/null 2>&1
+}
+
+start_emosa_pods() {
+    # The EMOSA option's pods start with the clients: they do not autostart, and since EMOSA
+    # runs in the gateway its agents for them start at boot and keep the controller busy
+    # until the pods reach them through the medium (rdk-1004, 7 Oct: every policy refused,
+    # the runtime killed at its start timeout). emosa-lab's step after the runtime does the
+    # rest (the pods' links, the rooms with the pods, their steering lists).
+    local pod
+    for pod in $(lxc list -f json | jq -r '.[] | select(.config["user.emosa.role"] == "pod") | .name'); do
+        [ "$(instance_state "$pod")" = RUNNING ] && continue
+        lxc start "$pod" >/dev/null 2>&1 && echo "EMOSA pod $pod started" ||
+            echo "EMOSA pod $pod did not start" >&2
+    done
+}
+
 live_client_metrics_count() {
+    # REPORTING/CLIENTS of the clients on native APs: a client on an EMOSA pod is measured
+    # through EMOSA once the pod's telemetry runs (the rooms with the pods), not here
+    # (rdk-1004, 7 Oct: the 8 clients on the pods were the 8 without RCPI)
+    local pods
+    pods=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e "$pod_al_sql" 2>/dev/null \
+        | jq -R . | jq -sc . 2>/dev/null)
     curl -fsS http://127.0.0.1:8888/api/v1/clients 2>/dev/null \
-        | jq -r '[.clients[]? | select((.client_metrics.rcpi // 0) > 0)] | length' \
+        | jq -r --argjson pods "${pods:-[]}" \
+            '[.clients[]? | select(((.connected_ap_mac // "") as $ap | $pods | index($ap)) == null)]
+             | "\([.[] | select((.client_metrics.rcpi // 0) > 0)] | length)/\(length)"' \
         2>/dev/null
 }
 
@@ -603,8 +645,9 @@ wait_client_metrics() {
             trigger_client_metric_frames
         fi
         reporting=$(live_client_metrics_count || true)
-        if [ "$reporting" = "$client_count" ]; then
-            echo "all $client_count WLAN clients report non-zero RCPI"
+        if [ -n "$reporting" ] && [ "${reporting%/*}" = "${reporting#*/}" ]; then
+            echo "all ${reporting#*/} WLAN clients on native APs report non-zero RCPI" \
+                "($((client_count - ${reporting#*/})) on EMOSA pods)"
             return 0
         fi
         # A Policy Configuration ACK proves that an Agent accepted the CMDU,
@@ -616,12 +659,12 @@ wait_client_metrics() {
         # incomplete; this is a bounded convergence loop, not an operator
         # nudge, and it stops immediately once all reports are visible.
         if [ $((attempt % 4)) -eq 0 ]; then
-            echo "metrics incomplete (${reporting:-?}/$client_count); replaying complete policy"
+            echo "metrics incomplete (${reporting:-?} on native APs); replaying complete policy"
             enable_metrics_reporting
         fi
         sleep 5
     done
-    echo "client metrics did not converge (non-zero RCPI=${reporting:-?}/$client_count)" >&2
+    echo "client metrics did not converge (non-zero RCPI=${reporting:-?} on native APs)" >&2
     return 1
 }
 
@@ -630,7 +673,7 @@ wait_clients() {
     for attempt in $(seq 1 48); do
         topology_clients=$(live_client_count || true)
         associated=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh \
-            -e 'select count(*) from STAList where Associated=1' 2>/dev/null || true)
+            -e "$native_associated_sql" 2>/dev/null || true)
         if [ "$topology_clients" = "$client_count" ] \
             && [ "$associated" = "$expected_associated" ]; then
             return 0
@@ -674,8 +717,7 @@ verify_stability_window() {
     deadline=$((SECONDS + 120))
     while :; do
         model=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
-            'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
-            2>/dev/null || true)
+            "select concat(($native_model_sql),'/',($native_associated_sql))" 2>/dev/null || true)
         topology_clients=$(live_client_count || true)
         [ "$model" = "$model_expected/$expected_associated" ] \
             && [ "$topology_clients" = "$client_count" ]
@@ -879,13 +921,21 @@ start)
     end_phase
 
     begin_phase initial_metrics_policy
-    enable_metrics_reporting wifi
+    if ! enable_metrics_reporting wifi 12; then
+        # With the EMOSA option the controller can stay busy here: since EMOSA runs in the
+        # gateway its pods' agents onboard at boot and wait for their pods, which reach the
+        # gateway only once the medium runs, phases later (rdk-1004, 7 Oct: refused for 15
+        # minutes). The policy applied after the clients converge is the one the gate holds.
+        lab_has_emosa_pods || exit 1
+        echo "initial metrics policy deferred: the controller is busy until EMOSA's pods reach it"
+    fi
     end_phase
 
     begin_phase clients
     if [ "$start_mode" != burst ]; then
         start_instances_bounded "$client_start_parallelism" $clients
     fi
+    start_emosa_pods
     run_bounded "$client_ready_parallelism" wait_client_live $clients
     end_phase
 
@@ -931,7 +981,7 @@ start)
     end_phase
     write_lifecycle_timing "$result"
     trap - EXIT
-    echo "EasyMesh cold-boot reconstruction PASS: model=$model_expected clients=$client_count/$client_count metrics=$client_count/$client_count associated=$expected_associated restarts=0"
+    echo "EasyMesh cold-boot reconstruction PASS: model=$model_expected clients=$client_count/$client_count metrics=every client on a native AP associated=$expected_associated restarts=0"
     ;;
 stop)
     begin_phase medium
@@ -962,10 +1012,11 @@ status)
     done
     verify_medium_backend
     [ "$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
-        'select concat((select count(*) from DeviceList),"/",(select count(*) from RadioList),"/",(select count(*) from BSSList),"/",(select count(*) from STAList where Associated=1))' \
+        "select concat(($native_model_sql),'/',($native_associated_sql))" \
         2>/dev/null)" = "$model_expected/$expected_associated" ]
     [ "$(live_client_count)" = "$client_count" ]
-    [ "$(live_client_metrics_count)" = "$client_count" ]
+    reporting=$(live_client_metrics_count)
+    [ -n "$reporting" ] && [ "${reporting%/*}" = "${reporting#*/}" ]
     verify_client_ipv4_ownership >/dev/null
     assert_zero_restarts >/dev/null
     verify_client_traffic >/dev/null
