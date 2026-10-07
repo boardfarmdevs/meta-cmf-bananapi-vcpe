@@ -75,6 +75,23 @@ else
     echo 'not-run (bring-up acceptance does not require a steering matrix)'
 fi
 
+echo STORAGE
+# What grows past its bound (easymesh-resources lab-storage W9): the VM's disk, each EMOSA
+# pod's journal against its 128 MiB cap (W3; warned from 160 MiB), the room evidence (from
+# 16 GiB, 80 % of the volume W4 gives it). Warnings, not failures.
+df -h / | awk 'NR == 2 {print "disk " $3 " of " $2 " used (" $5 ")"}'
+for pod in $(lxc list -f json | jq -r '.[] | select(.config["user.emosa.role"] == "pod" and .status == "Running") | .name'); do
+    mib=$(lxc exec "$pod" -- du -sm /var/log/journal 2>/dev/null | cut -f1 || true)
+    echo "pod $pod journal ${mib:-?} MiB"
+    [ "${mib:-0}" -le 160 ] || echo "WARNING: pod $pod's journal is over its 128 MiB cap"
+done
+evidence=/home/easymesh/easymesh-evidence
+if [ -d "$evidence" ]; then
+    gib=$(du -s --block-size=1G "$evidence" 2>/dev/null | cut -f1 || true)
+    echo "room evidence ${gib:-?} GiB"
+    [ "${gib:-0}" -lt 16 ] || echo "WARNING: room evidence at $gib GiB, over 80 % of the 20 GiB it should hold"
+fi
+
 echo MEMORY
 free -h | sed -n '1,2p'
 

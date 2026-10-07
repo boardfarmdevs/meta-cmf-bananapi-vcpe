@@ -901,8 +901,27 @@ stop_vm() {
     [ "$(instance_state)" != RUNNING ] || lxc stop "$name" --timeout 300
 }
 
+# The host side of the lab's storage (easymesh-resources lab-storage W9): the pool the lab is
+# in and how full it is (a warning from 80 %), and whether LXD is held (W10: an LXD refresh
+# restarts its daemon). Warnings only.
+storage_status() {
+    local pool used total pct
+    pool=$(storage_pool)
+    used=$(lxc storage info "$pool" --bytes 2>/dev/null | sed -n 's/^ *space used: "\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p')
+    total=$(lxc storage info "$pool" --bytes 2>/dev/null | sed -n 's/^ *total space: "\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p')
+    if [ -n "$used" ] && [ -n "$total" ] && [ "$total" -gt 0 ]; then
+        pct=$((used * 100 / total))
+        echo "storage: pool $pool ($(storage_driver)), $((used >> 30)) of $((total >> 30)) GiB used ($pct %)"
+        [ "$pct" -lt 80 ] || echo "WARNING: pool $pool is $pct % full"
+    fi
+    if command -v snap >/dev/null && ! snap list lxd 2>/dev/null | awk 'NR == 2 {print $NF}' | grep -q held; then
+        echo "WARNING: the LXD snap is not held: a refresh restarts its daemon (sudo snap refresh --hold lxd)"
+    fi
+}
+
 status_vm() {
     lxc list "$name" -c nst4m --format table
+    storage_status
     if [ "$(instance_state)" = RUNNING ]; then
         wait_agent
         run_root /usr/local/sbin/easymesh-labctl status
