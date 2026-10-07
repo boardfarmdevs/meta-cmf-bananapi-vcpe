@@ -53,6 +53,42 @@ echo "gateway, Wi-Fi extenders ${wifi_extenders[*]:-none}, wired extenders ${wir
 
 index() { case $1 in bpiap) ;; *) echo "-i $((10#${1#bpiap-}))" ;; esac; }
 
+# Superseded images out (easymesh-resources lab-storage W6), after a redeploy that came up:
+# of each device's image archives in the assets directory the one just deployed and the one
+# before it (the most recently copied of the others) stay; of the nested LXD's device images
+# (ofw-<device>-<date>) the ones a container runs and the newest other one per device. The
+# assets directory's other files (units, scripts, the bundles the lab runs from) are never
+# touched, nor an archive given as a path outside it.
+prune_images() {
+    local deployed kind previous f device in_use uploaded alias fp kept
+    for deployed in "$controller" "$extender"; do
+        [ "$(dirname "$deployed")" = "$ASSETS" ] || continue
+        kind=$(basename "$deployed"); kind=${kind%%_*}
+        previous=
+        for f in "$ASSETS/$kind"_*.rootfs.lxc.tar.bz2; do
+            if [ "$f" != "$deployed" ] && { [ -z "$previous" ] || [ "$f" -nt "$previous" ]; }; then
+                previous=$f
+            fi
+        done
+        for f in "$ASSETS/$kind"_*.rootfs.lxc.tar.bz2; do
+            if [ "$f" = "$deployed" ] || [ "$f" = "$previous" ]; then continue; fi
+            rm -f "$f" && echo "removed $(basename "$f")"
+        done
+    done
+    in_use=$(for c in $(lxc list -c n -f csv); do lxc config get "$c" volatile.base_image; done)
+    for device in bpiap bpibroadband; do
+        kept=0
+        while read -r uploaded alias fp; do
+            grep -qxF "$fp" <<<"$in_use" && continue
+            if [ "$kept" = 0 ]; then kept=1; continue; fi
+            lxc image delete "$alias" && echo "removed image $alias (uploaded $uploaded)"
+        done < <(for alias in $(lxc image list -c l -f csv | grep -E "^ofw-$device-[0-9]+$" || true); do
+            lxc image info "$alias" | awk -v a="$alias" '
+                /^Fingerprint:/ {fp = $2} /Uploaded:/ {up = $2 "_" $3} END {print up, a, fp}'
+        done | sort -r)
+    done
+}
+
 cd "$GEN"
 log "room stopped"; systemctl stop "$ROOM_UNIT"
 
@@ -90,6 +126,8 @@ fi
 
 log "bring-up"; ./lab-bringup.sh up
 ./lab-bringup.sh status
+
+log "superseded images"; prune_images
 
 log "images and files installed in place"
 for c in bpibroadband "${wifi_extenders[@]}" "${wired_extenders[@]}"; do
