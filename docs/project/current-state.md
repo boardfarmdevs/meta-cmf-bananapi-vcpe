@@ -11,7 +11,7 @@ monitor. See [operations](../guides/operations.md).
 | --- | --- |
 | Branch | `main` |
 | Development and build checkout | `rev140:/home/rev/git/easymesh-labs/meta-cmf-bananapi-vcpe` (the easymesh-labs workspace) |
-| Last-tested VM | `rev140:rdk-1004` and `rev120:rdk-emosa-1005` (the EMOSA option in the target configuration, no container but the pods); `rev120:rdk-emosa-1002` stopped, kept |
+| Last-tested VM | `rev140:rdk-1004` and `rev120:rdk-emosa-1005` (the EMOSA option in the target configuration, no container but the pods); `rev120:rdk-emosa-1002` retired (stopped), `rdk-emosa-1005` its successor |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd from easymesh-medium (the `gen/medium` submodule); the optimizer from easymesh-optimizer (the `gen/optimizer` submodule) |
 | Images | the controller and extender images the easymesh-labs `manifest.json` pins, with the commit each was built from |
@@ -82,7 +82,8 @@ earlier PMF association (emosa-lab's rdk-lab record). Its owner then stopped
 `rdk-emosa-1002` (rev120 from load 9.5 to 4), and on `X86EMLTRBPIBB_rdk-next_20261006175821`,
 redeployed in place, 1005's suite passed whole: readiness, the catalog 27 of 27 and the
 four geometry rooms with their recovery; no em_ctrl line dropped through the redeploy and
-the suite.
+the suite. On 7 October its owner retired `rdk-emosa-1002` (stopped, its configuration
+that of 5 October with EMOSA's containers): `rdk-emosa-1005` is its successor on rev120.
 
 `rdk-emosa-1006` (rev150, ports 28100 to 28105) was built from scratch by its owner on 6
 October in the target configuration, from main and the pinned emosa-lab cdfaddc, with the
