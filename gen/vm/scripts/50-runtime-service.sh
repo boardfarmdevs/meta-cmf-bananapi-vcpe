@@ -18,6 +18,13 @@ install -m 0644 /home/easymesh/easymesh-assets/easymesh-lab.service \
     /etc/systemd/system/easymesh-lab.service
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-room-service.service \
     /etc/systemd/system/easymesh-room-service.service
+# the room evidence bounded (easymesh-resources lab-storage W4)
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-evidence-retention \
+    /usr/local/sbin/easymesh-evidence-retention
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-evidence-retention.service \
+    /etc/systemd/system/easymesh-evidence-retention.service
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-evidence-retention.timer \
+    /etc/systemd/system/easymesh-evidence-retention.timer
 install -m 0755 /home/easymesh/easymesh-assets/easymesh-hwsim-pool \
     /usr/local/sbin/easymesh-hwsim-pool
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-hwsim-pool.service \
@@ -54,6 +61,7 @@ systemctl enable boardfarm-lab.service
 systemctl enable easymesh-hwsim-pool.service
 systemctl enable easymesh-lab.service
 systemctl enable easymesh-room-service.service
+systemctl enable easymesh-evidence-retention.timer
 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-survey-bridge.sh \
     /run/meta-cmf-wmediumd/metrics/control.sock easymesh-lab.service
 bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-control-priority.sh rdk

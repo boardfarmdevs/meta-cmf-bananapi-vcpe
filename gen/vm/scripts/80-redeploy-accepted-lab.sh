@@ -156,10 +156,18 @@ sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-health-audit" \
     /usr/local/sbin/easymesh-health-audit
 sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-lab.service" \
     /etc/systemd/system/easymesh-lab.service
+# the room evidence bounded (easymesh-resources lab-storage W4)
+sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-evidence-retention" \
+    /usr/local/sbin/easymesh-evidence-retention
+sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-evidence-retention.service" \
+    /etc/systemd/system/easymesh-evidence-retention.service
+sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-evidence-retention.timer" \
+    /etc/systemd/system/easymesh-evidence-retention.timer
 printf 'EASYMESH_SCALE_PROFILE=unified\nHEALTH_EXPECT_CLIENTS=100\n' \
     | sudo tee /etc/default/easymesh-lab >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-lab.service
+sudo systemctl enable --now easymesh-evidence-retention.timer
 sudo systemctl start easymesh-lab.service
 sudo systemctl stop easymesh-room-service.service
 

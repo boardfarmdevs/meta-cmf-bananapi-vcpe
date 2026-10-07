@@ -1,0 +1,9 @@
+[Unit]
+Description=Bound the EasyMesh room evidence (the oldest room runs removed)
+
+[Service]
+Type=oneshot
+User=easymesh
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/local/sbin/easymesh-evidence-retention

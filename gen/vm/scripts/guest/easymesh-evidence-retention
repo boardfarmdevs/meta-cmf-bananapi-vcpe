@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The room evidence bounded (easymesh-resources lab-storage W4): the oldest room runs go while
+# the evidence takes more than 80 % of its volume, or, while it shares the VM's disk, more than
+# EASYMESH_EVIDENCE_MAX_GIB (16 GiB, 80 % of the 20 GiB volume it gets). The newest run, the
+# one an interactive room session writes, always stays. Run hourly by its timer.
+set -euo pipefail
+
+root=${EASYMESH_EVIDENCE_ROOT:-/home/easymesh/easymesh-evidence}
+runs=$root/room-runs
+max_gib=${EASYMESH_EVIDENCE_MAX_GIB:-16}
+[ -d "$runs" ] || exit 0
+
+over() {
+    if mountpoint -q "$root"; then
+        [ "$(df --output=pcent "$root" | tail -1 | tr -dc '0-9')" -ge 80 ]
+    else
+        [ "$(du -s --block-size=1G "$root" | cut -f1)" -ge "$max_gib" ]
+    fi
+}
+
+shopt -s nullglob
+all=("$runs"/*/)    # sorted: the runs are named by their start time
+removed=0
+for ((i = 0; i + 1 < ${#all[@]}; i++)); do
+    over || break
+    rm -rf -- "${all[$i]}"
+    removed=$((removed + 1))
+done
+echo "room evidence: $(du -sh "$root" | cut -f1) in $root; $removed oldest runs removed"
