@@ -58,8 +58,18 @@ controller starts, the catalog); through the catalog 101 lines per 30 s on avera
 most; a bring-up's restart with all eight agents, measured, 708 in its busiest 30 s. The
 catalog passed 26 of 27: `fifty-client-counter-roam` missed its initial convergence while
 another session's build held rev140 at load 25 to 30, and passed 3 of 3 alone afterwards.
-Open: at that restart the gateway's em_agent passes its own cap (526, 2,030 and 618 lines
-dropped).
+At that restart the gateway's em_agent passed its own cap (526, 2,030 and 618 lines
+dropped), and every em_agent did all the time: in one bring-up the gateway's wrote 8,744
+lines and a Wi-Fi extender's 20,913, most of them whole JSON documents one field to a line,
+and they printed every network's passphrase on the journal. unified-wifi-mesh 0242 (4225e97)
+sends the documents and the agents' per-message traces to the debug channel, OneWifi's
+device configuration and each subdoc as their name and size, and takes the keys out of
+every line. It reaches the extenders too: both labs now run the gateway image
+`X86EMLTRBPIBB_rdk-next_20261006231122` and the extender image
+`X86EMLTRBPIAP_rdk-next_20261006232411`, the extenders' first since 29 September (every
+patch since 0231). rdk-1004, redeployed with both: the catalog 27 of 27, no line dropped by
+em_ctrl or any of the six em_agents through the whole run, no passphrase in their journals;
+rdk-emosa-1005 the same, its suite whole.
 
 `rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
 target configuration, next to `rdk-emosa-1002` (`EASYMESH_SHARED_HOST=1`): no emosa or
@@ -73,6 +83,16 @@ earlier PMF association (emosa-lab's rdk-lab record). Its owner then stopped
 redeployed in place, 1005's suite passed whole: readiness, the catalog 27 of 27 and the
 four geometry rooms with their recovery; no em_ctrl line dropped through the redeploy and
 the suite.
+
+`rdk-emosa-1006` (rev150, ports 28100 to 28105) was built from scratch by its owner on 6
+October in the target configuration, from main and the pinned emosa-lab cdfaddc, with the
+gateway image `X86EMLTRBPIBB_rdk-next_20261006175821` and the extender image of 29
+September: exit 0 in 93 minutes, the first build from scratch at that pin through the EMOSA
+step. Its first attempt stopped in the WAN step: started from rev150's cached base image,
+the Boardfarm service's boot-time run raced Docker and the nested LXD and failed; the step
+now retries it once (8c0b1aa, a new base image key). Run from a terminal, needrestart's
+kernel dialog then stopped the kernel step; the build's guest commands are now
+non-interactive (4b774bd).
 
 `rdk-1004` replaced `rdk-1002b` on rev140 on 5 October: built from scratch at d70f1c3 with the EMOSA option and `EASYMESH_EMOSA_IN=gateway` (the controller image built that day with EMOSA, emosa-lab 68515a2), 92 minutes, the lab's acceptance included. It is the target configuration. Fixed the same day (emosa-lab's rdk-lab record): `traffic-quieter-ap`'s screenshot timeouts were the browser harness rendering in software (36ce8d5); a VM restart now brings the lab back whole (7ee964a); and RDK's native backhaul steering never measured a candidate, so `backhaul-parent-handover` failed, because em_ctrl took an EMOSA agent, whose AL MAC was on one of the gateway's interfaces, for its co-located agent: the agents now live in a network namespace of their own (ceebf4c, emosa-lab 0a4bbcb). With that gateway image, redeployed in place, it passed the room catalog (27 rooms) three times and the four geometry rooms after each of two. unified-wifi-mesh 0236 (ca7bc1e) then gave the controller the pods' backhaul stations, so a pod's move is verified and leaves no uncertain mark: two more rounds passed the geometry rooms both times and 26 of 27 catalog rooms each, `home-a-wired-extender-loss-recovery` failing once at its 5 s outage boundary (2 of 8 runs) and once at the browser harness under another build's load. A pod whose remembered backhaul BSS is gone after a restart now falls back to the configured one instead of staying on GRE (emosa-lab 83f4ce4, finding 18; emosa-lab's rdk-lab record).
 
