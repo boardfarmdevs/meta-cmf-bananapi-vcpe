@@ -37,10 +37,11 @@ can see it, with the paths that chose each one ([test suite](../guides/test-suit
 `gen/vm/lxd/build.sh copy NEW` copies the VM in its storage pool as NEW, with its own LXD
 identities, address and port block (from NEW's name, or `EASYMESH_COPY_PORT_BASE`), and
 leaves it stopped; `EASYMESH_LXD_NAME=NEW gen/vm/lxd/build.sh start` starts it. A running
-VM is copied through a snapshot. On a Btrfs or ZFS pool (`EASYMESH_LXD_STORAGE_DRIVER=btrfs`
-for a new lab's pool, sized by `EASYMESH_LXD_STORAGE_SIZE`, 400 GiB sparse by default; LXD's
-snap carries the Btrfs tools, ZFS needs the host's module) the copy takes seconds and
-shares the original's blocks; on `dir` it is a full copy. A copy shares the original's
+VM is copied through a snapshot. In the host's ZFS pool `labs`, where a build puts a lab
+by default (created when absent, `EASYMESH_LXD_STORAGE_SIZE`, 500 GiB sparse; LXD's snap
+carries the ZFS tools, the host's kernel the module), the copy takes seconds and shares
+the original's blocks; in a lab's own `dir` pool (`EASYMESH_LXD_STORAGE_DRIVER=dir`) it is
+a full copy. A copy shares the original's
 machine-id, and with it the DHCP client identity: its first start writes its address into
 its netplan, so two labs on one bridge never take each other's lease. Experiment on
 copies; never run a suite on two copies of one lab at the same time.

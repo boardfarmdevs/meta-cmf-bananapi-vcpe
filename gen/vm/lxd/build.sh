@@ -114,7 +114,9 @@ Common overrides:
   EASYMESH_LXD_CPUS=$cpus
   EASYMESH_LXD_MEMORY=$memory
   EASYMESH_LXD_NETWORK=$network
-  EASYMESH_LXD_STORAGE=$storage (created as an independent dir pool if absent)
+  EASYMESH_LXD_STORAGE=$storage (the host's ZFS pool for lab VMs, created if absent:
+    EASYMESH_LXD_STORAGE_DRIVER zfs, EASYMESH_LXD_STORAGE_SIZE 500GiB; dir for a pool of
+    the lab's own; an existing lab stays in the pool it is in)
   EASYMESH_PORT_BASE=$port_base (WebUI, Console and room use base, base+1 and base+2)
   EASYMESH_LXD_IPV4=<automatic static address>
   EASYMESH_WEBUI_HOST_IP=$webui_address

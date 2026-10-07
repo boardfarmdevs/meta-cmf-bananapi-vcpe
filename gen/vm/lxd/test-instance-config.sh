@@ -8,7 +8,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 source "$root/gen/vm/lxd/instance-config.sh"
 
 test "$(EASYMESH_LXD_NAME=alpha easymesh_instance_name)" = alpha
-test "$(EASYMESH_LXD_NAME=alpha easymesh_instance_storage alpha)" = alpha-pool
+test "$(EASYMESH_LXD_NAME=alpha easymesh_instance_storage alpha)" = labs
+test "$(EASYMESH_LXD_STORAGE=alpha-pool easymesh_instance_storage alpha)" = alpha-pool
 first=$(EASYMESH_LXD_NAME=alpha easymesh_instance_port_base alpha)
 second=$(EASYMESH_LXD_NAME=alpha easymesh_instance_port_base alpha)
 test "$first" = "$second"
@@ -23,7 +24,9 @@ lxc() {
     if [ "$1 $2" = 'storage show' ]; then return 1; fi
     return 0
 }
-easymesh_ensure_storage_pool alpha-pool
+easymesh_ensure_storage_pool labs
+grep -Fx 'storage create labs zfs size=500GiB' "$log" >/dev/null
+EASYMESH_LXD_STORAGE_DRIVER=dir easymesh_ensure_storage_pool alpha-pool
 grep -Fx 'storage create alpha-pool dir' "$log" >/dev/null
 
 echo 'PASS: named EasyMesh LXD defaults'

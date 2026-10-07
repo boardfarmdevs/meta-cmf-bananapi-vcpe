@@ -15,11 +15,13 @@ newgrp lxd
 test -c /dev/kvm
 ```
 
-The host installer initializes LXD only if it has no pool. The VM builder creates
-a separate `dir` storage pool for each lab name when it does not already exist.
-That pool persists if the VM is deleted, so a rebuild of the same lab reuses its
-named pool. `EASYMESH_LXD_STORAGE_DRIVER=btrfs` makes it copy-on-write
-([build speed](../reference/build-speed.md)).
+The host installer initializes LXD only if it has no pool. The VM builder puts every
+lab in the host's one ZFS pool for lab VMs, `labs`, and creates it when it does not
+exist (a sparse 500 GiB loop file, `EASYMESH_LXD_STORAGE_SIZE`; compression on):
+snapshots and copies are copy-on-write and take seconds, and a lab and its copies share
+blocks (easymesh-resources lab-storage). `EASYMESH_LXD_STORAGE=<lab>-pool
+EASYMESH_LXD_STORAGE_DRIVER=dir` gives a lab a `dir` pool of its own, as before; a lab
+already built stays in the pool it is in ([build speed](../reference/build-speed.md)).
 
 ## Choose a lab name
 
@@ -37,7 +39,7 @@ For `demo-a`, the helper exports:
 | Setting | Value |
 | --- | --- |
 | VM | `demo-a` |
-| LXD pool | `demo-a-pool` |
+| LXD pool | `labs` (the host's, shared by its labs) |
 | topology WebUI | `EASYMESH_WEBUI_PORT` |
 | wmediumd Console | `WMEDIUMD_CONSOLE_PORT` |
 | room viewer | `EASYMESH_ROOM_DEMO_PORT` |

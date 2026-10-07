@@ -26,7 +26,7 @@ esac
 
 export EASYMESH_LAB_NAME=$easymesh_lab_name
 export EASYMESH_LXD_NAME=${EASYMESH_LXD_NAME:-$easymesh_lab_name}
-export EASYMESH_LXD_STORAGE=${EASYMESH_LXD_STORAGE:-$easymesh_lab_name-pool}
+export EASYMESH_LXD_STORAGE=${EASYMESH_LXD_STORAGE:-labs}    # the host's ZFS pool for lab VMs
 export EASYMESH_PORT_BASE=$easymesh_port_base
 export EASYMESH_WEBUI_PORT=${EASYMESH_WEBUI_PORT:-$((easymesh_port_base + 0))}
 export WMEDIUMD_CONSOLE_PORT=${WMEDIUMD_CONSOLE_PORT:-$((easymesh_port_base + 1))}

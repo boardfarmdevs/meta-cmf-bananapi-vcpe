@@ -8,9 +8,12 @@ easymesh_instance_name() {
     esac
 }
 
+# The host's one ZFS pool for its lab VMs, labs (easymesh-resources lab-storage W1, W2):
+# snapshots and copies copy-on-write, blocks compressed, a lab and its copies sharing
+# blocks. EASYMESH_LXD_STORAGE=<lab>-pool EASYMESH_LXD_STORAGE_DRIVER=dir is the old pool
+# of a lab's own; an existing lab's commands use the pool it is in (build.sh storage_pool).
 easymesh_instance_storage() {
-    local instance=$1
-    printf '%s\n' "${EASYMESH_LXD_STORAGE:-${instance}-pool}"
+    printf '%s\n' "${EASYMESH_LXD_STORAGE:-labs}"
 }
 
 easymesh_instance_port_base() {
@@ -29,8 +32,8 @@ easymesh_instance_port_base() {
 }
 
 easymesh_ensure_storage_pool() {
-    local pool=$1 driver=${EASYMESH_LXD_STORAGE_DRIVER:-dir}
-    local size=${EASYMESH_LXD_STORAGE_SIZE:-400GiB}
+    local pool=$1 driver=${EASYMESH_LXD_STORAGE_DRIVER:-zfs}
+    local size=${EASYMESH_LXD_STORAGE_SIZE:-500GiB}
     lxc storage show "$pool" >/dev/null 2>&1 && return 0
     case "$driver" in dir|btrfs|zfs|lvm|ceph|cephfs) ;; *) echo "unsupported LXD storage driver: $driver" >&2; return 2 ;; esac
     echo "Creating LXD storage pool $pool with driver $driver"
