@@ -50,12 +50,28 @@ echo TOPOLOGY
 curl -fsS http://127.0.0.1:8888/api/v1/topology | jq -r '
     .nodes[] | [.name, .id, ([.haulTypes[]?.BSSList[]?] | length),
     (.STAList | length)] | @tsv'
+# The lab's own mesh is counted, as its runtime counts it (easymesh-lab-runtime): OpenSync pods
+# through EMOSA ('OpenSync via EMOSA') are not among the expected devices, nor their radios,
+# BSSes and backhaul stations; the clients on the lab's pods are its clients. Devices the room
+# does not own (/etc/easymesh-lab/foreign-devices, physical pods on the controller) and the
+# stations on their BSSes are left out.
+emosa="'OpenSync via EMOSA'"
+al="substring_index(substring_index(ID,'@',2),'@',-1)"
+pod_al="select $al from DeviceList where Manufacturer = $emosa"
+foreign=$(sed 's/#.*//' /etc/easymesh-lab/foreign-devices 2>/dev/null | tr -d ' \t' | tr '[:upper:]' '[:lower:]' \
+    | grep -E '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$' || true)
+# shellcheck disable=SC2086 # one MAC per word
+foreign_sql=$(printf "'%s'," $foreign | sed 's/,$//')
+foreign_stations=''
+[ -z "$foreign" ] || foreign_stations=" and coalesce(s.BSSID,'') not in (select BSSID from BSSList where $al in ($foreign_sql) and BSSID is not null)"
 echo MODEL
 model=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
-    'select (select count(*) from DeviceList),
-    (select count(*) from RadioList),
-    (select count(*) from BSSList),
-    (select count(*) from STAList where Associated=1)' 2>/dev/null)
+    "select (select count(*) from DeviceList where Manufacturer <> $emosa),
+    (select count(*) from RadioList where $al not in ($pod_al)),
+    (select count(*) from BSSList where $al not in ($pod_al)),
+    (select count(*) from STAList s where s.Associated = 1 and not (s.BSSID in
+        (select BSSID from BSSList where SSID = 'mesh_backhaul') and s.MACAddress not in
+        (select BackhaulSTA from DeviceList where Manufacturer <> $emosa))$foreign_stations)" 2>/dev/null)
 echo "$model"
 read -r devices radios bsses associated <<<"$model"
 model_fail=0
@@ -66,13 +82,18 @@ fi
 echo LIVE_CLIENTS
 topology_json=$(mktemp)
 curl -fsS http://127.0.0.1:8888/api/v1/topology >"$topology_json"
-live_clients=$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' "$topology_json")
+# shellcheck disable=SC2086 # one MAC per word
+foreign_json=$(printf '%s\n' $foreign | jq -R . | jq -sc 'map(select(length > 0))')
+live_clients=$(jq -r --argjson foreign "$foreign_json" '[.nodes[] | select((.id | ascii_downcase) as $id
+    | $foreign | index($id) | not) | .STAList[]?.staMAC] | unique | length' "$topology_json")
 echo "$live_clients"
 [ "$live_clients" = "$expected_clients" ] || model_fail=1
 
+# the lab's own Wi-Fi backhauls: not a pod's (EMOSA's) nor a foreign device's
 echo BACKHAUL_SIGNALS
 read -r wireless_edges fresh_edges < <(jq -r '
-    [.edges[]? | select(.mediaType == "Wireless LAN")] as $edges |
+    [.nodes[] | select(.kind == "opensync-pod") | .id] as $pods |
+    [.edges[]? | select(.mediaType == "Wireless LAN" and (.to as $to | $pods | index($to) | not))] as $edges |
     [$edges | length,
      [$edges[] | select(.signal.status == "fresh")] | length] | @tsv
 ' "$topology_json")
