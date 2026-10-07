@@ -585,6 +585,27 @@ clear_secure_boot_config() {
     lxc config unset "$name" security.secureboot 2>/dev/null || true
 }
 
+# The end of every build cleans up (easymesh-resources lab-storage W7): apt's lists and cache
+# (every later install updates first), the VM's journal bounded at 1 GiB (journald's default
+# is 4 GiB on a 96 GiB disk), Boardfarm's Docker build cache and dangling layers (its base
+# images stay: the WAN's recovery path builds from them), and the freed blocks returned to
+# the host (the disk passes discard).
+cleanup_vm() {
+    run_root sh -eu -c '
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
+        install -d /etc/systemd/journald.conf.d
+        printf "[Journal]\nSystemMaxUse=1G\n" > /etc/systemd/journald.conf.d/50-lab.conf
+        systemctl restart systemd-journald
+        journalctl -q --vacuum-size=1G || true
+        if command -v docker >/dev/null; then
+            docker builder prune -af >/dev/null || true
+            docker image prune -f >/dev/null || true
+        fi
+        fstrim -a >/dev/null || true'
+    lxc exec "$name" -- df -h / | awk 'NR == 2 {print "cleanup: the VM uses " $3 " of " $2}'
+}
+
 build_vm() {
     # stage is global: the EXIT trap that removes it runs after this function has returned
     local meta_commit controller_name extender_name appliance_ipv4 proxy_check_address wmediumd_sha
@@ -738,6 +759,8 @@ build_vm() {
         phase emosa
         emosa_vm
     fi
+    phase cleanup
+    cleanup_vm
     # Export reruns the complete acceptance gate and excludes snapshots. Do
     # not duplicate a full VM disk automatically on non-copy-on-write pools.
     lxc config show "$name" --expanded
