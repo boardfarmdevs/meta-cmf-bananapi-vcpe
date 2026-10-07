@@ -86,6 +86,17 @@ refused initial policy to the final one, and counts the native lab (5206350). Bo
 restarted whole with `build.sh start`: the runtime's acceptance passed, then EMOSA's step, the
 room settled with both pods provisioning.
 
+Later on 7 October each lab's room evidence went onto a volume of its own (W4, 6af4e08; the
+retention runs as root, 0cdac15) and Boardfarm's recovery path stopped building (W5,
+6a5fa47). Two physical OpenSync pods (opensync-rpi's Raspberry Pis) joined rdk-1004's
+controller over Ethernet, and from the room service's next start (17:00 UTC, the evidence
+move) to 18:26 it failed every preflight: its health counted the controller's devices,
+radios and BSSes against the lab's own nodes and the plan's pods, and em_ctrl keeps a
+departed agent's rows, so taking the Pis out did not clear it. Devices the room does not
+own are now listed by AL MAC in the VM's `/etc/easymesh-lab/foreign-devices` and left out of
+the mesh health (easymesh-medium cb6b5ad) and of the controller observer (easymesh-optimizer
+d126906); rdk-1004 lists both Pis there and its room service started at its next retry.
+
 `rdk-emosa-1005` (rev120, ports 22010 to 22015) was built from scratch on 6 October in the
 target configuration, next to `rdk-emosa-1002` (`EASYMESH_SHARED_HOST=1`): no emosa or
 em-gtp container from its start. Its suite with the image before 0240: readiness, the
