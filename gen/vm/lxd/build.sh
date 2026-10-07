@@ -340,7 +340,7 @@ base_image_key() {
     for file in 00-base.sh 10-install-linux-7.sh 15-prepare-base.sh 30-boardfarm-wan.sh \
         guest/easymesh-lxd-docker-forward guest/easymesh-lxd-docker-forward.service \
         guest/boardfarm-lab-rebuild guest/boardfarm-lab.service \
-        guest/boardfarm-compose-up-without-build.patch; do
+        guest/boardfarm-lab-images.patch; do
         inputs+=("$file=$(git -C "$root" rev-parse "HEAD:gen/vm/scripts/$file")")
     done
     medium=$(git -C "$root" rev-parse HEAD:gen/medium)
@@ -578,7 +578,7 @@ push_inputs() {
         [easymesh-lxd-docker-forward.service]=gen/vm/scripts/guest/easymesh-lxd-docker-forward.service
         [boardfarm-lab-rebuild]=gen/vm/scripts/guest/boardfarm-lab-rebuild
         [boardfarm-lab.service]=gen/vm/scripts/guest/boardfarm-lab.service
-        [boardfarm-compose-up-without-build.patch]=gen/vm/scripts/guest/boardfarm-compose-up-without-build.patch
+        [boardfarm-lab-images.patch]=gen/vm/scripts/guest/boardfarm-lab-images.patch
         [easymesh-lab-runtime]=gen/vm/scripts/guest/easymesh-lab-runtime
         [easymesh-lab.service]=gen/vm/scripts/guest/easymesh-lab.service
         [easymesh-room-service.service]=gen/vm/scripts/guest/easymesh-room-service.service
@@ -662,18 +662,20 @@ clear_secure_boot_config() {
 }
 
 # The end of every build cleans up (easymesh-resources lab-storage W7): apt's lists and cache
-# (every later install updates first), the VM's journal bounded at 1 GiB (journald's default
-# is 4 GiB on a 96 GiB disk), Boardfarm's Docker build cache and dangling layers (again: the
-# WAN step pruned them, W5, and its recovery path builds nothing), and the freed blocks
+# (every later install updates first), the VM's journal bounded at 256 MiB in 32 MiB files
+# (W13; journald's default is 4 GiB on a 96 GiB disk, and the lab's own logs are in its
+# containers and its evidence), Boardfarm's Docker build cache and dangling layers (again:
+# the WAN step pruned them, W5, and its recovery path builds nothing), and the freed blocks
 # returned to the host (the disk passes discard).
 cleanup_vm() {
     run_root sh -eu -c '
         apt-get clean
         rm -rf /var/lib/apt/lists/*
         install -d /etc/systemd/journald.conf.d
-        printf "[Journal]\nSystemMaxUse=1G\n" > /etc/systemd/journald.conf.d/50-lab.conf
+        printf "[Journal]\nSystemMaxUse=256M\nSystemMaxFileSize=32M\n" > /etc/systemd/journald.conf.d/50-lab.conf
         systemctl restart systemd-journald
-        journalctl -q --vacuum-size=1G || true
+        journalctl -q --rotate || true
+        journalctl -q --vacuum-size=256M || true
         if command -v docker >/dev/null; then
             docker builder prune -af >/dev/null || true
             docker image prune -f >/dev/null || true

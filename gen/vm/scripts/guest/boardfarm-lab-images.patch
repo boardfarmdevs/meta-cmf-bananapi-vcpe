@@ -1,0 +1,88 @@
+--- a/lab/lab.py
++++ b/lab/lab.py
+@@ -261,12 +261,6 @@
+         if not base_images and not service_images:
+             return
+ 
+-        # Build base images first (in order)
+-        for image_config in base_images:
+-            name = image_config["name"]
+-            if not self.image_exists(name):
+-                self.build_docker_image(image_config)
+-
+         # Skip images no enabled component needs -- no point building
+         # bf-lan for a lab configured without lan/lan2 clients.  Built as
+         # wanted-minus-unwanted because lan and lan2 share bf-lan: one of
+@@ -285,12 +279,28 @@
+             target.add(image)
+         unused_images = unwanted - wanted
+ 
++        # Base images (in order) only when a service image must be built from them: a lab
++        # keeps the service images alone (meta-cmf-bananapi-vcpe, lab storage W14)
++        missing = [
++            image_config["name"]
++            for image_config in service_images
++            if image_config["name"] not in unused_images
++            and not self.image_exists(image_config["name"])
++        ]
++        if missing:
++            for image_config in base_images:
++                name = image_config["name"]
++                if not self.image_exists(name):
++                    self.build_docker_image(image_config)
++
+         # Build service images (in order, after base images)
+         for image_config in service_images:
+             name = image_config["name"]
+             if name in unused_images:
+                 print(f"[SKIP] {name} (no enabled component uses it)")
+                 continue
++            if self.image_exists(name):
++                continue
+             depends_on = image_config.get("depends_on", [])
+ 
+             # Check dependencies exist
+@@ -301,8 +311,7 @@
+                         "This should not happen if base images were built first."
+                     )
+ 
+-            if not self.image_exists(name):
+-                self.build_docker_image(image_config)
++            self.build_docker_image(image_config)
+ 
+     def configure_switch(self) -> None:
+         # Configure MikroTik switch VLANs.
+@@ -520,8 +529,11 @@
+             if not enabled:
+                 print(f"[SKIP] {component} containers (disabled in components)")
+                 continue
++            # No --build: build_images() has built every image these files name that
++            # was missing, so a setup (the lab's recovery path) uses the images there and
++            # needs no build cache and no network (meta-cmf-bananapi-vcpe, lab storage W5).
+             self.run_command(
+-                ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"],
++                ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+                 check=True,
+                 quiet=self.quiet,
+             )
+@@ -1452,6 +1464,9 @@
+                 quiet=self.quiet,
+             )
+ 
++        # The images stay unless BF_LAB_REMOVE_IMAGES=1: the setup after a teardown (the
++        # lab's recovery path) uses them, with no build and no network
++        # (meta-cmf-bananapi-vcpe, lab storage W5).
+         print("===Removing Docker Images ===")
+         result = subprocess.run(
+             ["docker", "images", "-q", "--filter=reference=bf-*"],
+@@ -1460,7 +1475,9 @@
+             check=False,
+         )
+         image_ids = result.stdout.strip().split()
+-        if image_ids and image_ids[0]:
++        if os.environ.get("BF_LAB_REMOVE_IMAGES") != "1":
++            print("[SKIP] the images stay (BF_LAB_REMOVE_IMAGES=1 removes them)")
++        elif image_ids and image_ids[0]:
+             self.run_command(
+                 ["docker", "rmi"] + image_ids,
+                 check=False,
