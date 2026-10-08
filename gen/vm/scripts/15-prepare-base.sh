@@ -39,9 +39,11 @@ fi
 # bcc, LLVM) and sosreport (boto). Their autoremoval also takes ubuntu-server and Python
 # packages no lab code imports (netaddr, dateutil, pexpect, magic); Boardfarm has a venv of
 # its own. The running kernel's headers stay: build.sh update builds the radio module here.
-extras=$(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'linux-image-*' 'linux-modules-*' \
+# dpkg-query exits 1 when a name matches nothing installed (a fresh VM has no meta-package or
+# sosreport at this point): that is no error here, and pipefail would end the script on it.
+extras=$({ dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'linux-image-*' 'linux-modules-*' \
         'linux-headers-*' 'linux-tools-*' linux-virtual linux-generic ubuntu-kernel-accessories sosreport \
-        2>/dev/null | awk -v kept="${expected_kernel%-generic}" \
+        2>/dev/null || true; } | awk -v kept="${expected_kernel%-generic}" \
         '$1 == "ii" && index($2, kept) == 0 {print $2}')
 if [ -n "$extras" ]; then
     # shellcheck disable=SC2086 # one package name per word
