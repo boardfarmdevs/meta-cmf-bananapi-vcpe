@@ -29,7 +29,7 @@ lab's documents are below.
 | [Room catalog](reference/room-catalog.md) | reference | every room and what to watch in it |
 | [Room acceptance](reference/room-acceptance.md) | reference | room correctness and convergence acceptance |
 | [Room coordination](reference/room-coordination.md) | reference | the room service's authority, leases and recovery |
-| [Remote access](reference/remote-access.md) | reference | the optional Tailscale gateway and exclusive sessions |
+| [Remote access](https://vcpe.dev/easymesh-remote/) | elsewhere | the hosts' gateway and exclusive sessions (easymesh-remote) |
 | [Bare metal](reference/bare-metal.md) | reference | direct radio-host operation |
 | [Metrics](reference/metrics.md) | reference | STA and AP metrics reporting |
 | [Packet capture](reference/packet-capture.md) | reference | capturing the lab's 1905 and Wi-Fi traffic |

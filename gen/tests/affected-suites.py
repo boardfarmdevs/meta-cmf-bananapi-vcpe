@@ -71,7 +71,6 @@ RULES: list[tuple[str, str, tuple[str, ...]]] = [
     # the lab's tools, run in the guest from its checkout
     ("gen/tests/*browser*", "update", ("static", "browser")),
     ("gen/tests/*", "update", ("static",)),
-    ("gen/remote-access/*", "update", ("static", "browser")),
     ("gen/explorer/*", "update", ("static", "browser")),
     ("gen/wlan-client*", "update", ("static", "live", "rooms")),
     ("gen/wpa_supplicant/*", "build", ("static", "live", "rooms")),

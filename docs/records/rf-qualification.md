@@ -314,7 +314,7 @@ clean-source VM acceptance**. Preserve their identities and failed evidence.
    `-Q` modes separately. Both deployed binaries passed their isolated `-T`
    selftests, but those do not enable or live-qualify either mode.
 
-The new checkpoint and optional remote-access tooling do not fix these remaining
+The new checkpoint does not fix these remaining
 native/fixture issues. Full-suite failures remain visible; no known-failure
 exemptions, longer convergence windows or relaxed assertions are added here.
 

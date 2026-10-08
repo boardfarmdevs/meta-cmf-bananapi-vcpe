@@ -345,11 +345,6 @@ run_browser() {
         gen/medium/configurator/tests/viewer/viewer-steering-resume-browser-test.js gen/medium/observer/tests/wmediumd-console-ng-browser-test.js; do
         run browser "$(basename "${test%.js}")" "cd '$root' && node $test"
     done
-    if have_command openssl && python3 -c 'import aiohttp' >/dev/null 2>&1; then
-        run browser remote-access "cd '$root' && node gen/tests/remote-access-browser-test.js"
-    else
-        skip browser remote-access 'install python3-aiohttp and openssl for the isolated HTTPS gateway fixture'
-    fi
     static=$(webui_static_dir)
     if [[ -n $static && -f $static/steering-cues.js ]]; then
         d3=$(find "$static" -name 'd3-*.min.js' -type f -print -quit)

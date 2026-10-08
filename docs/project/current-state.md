@@ -223,10 +223,9 @@ The last-tested VM's addresses, not a health promise:
 | Console NG | <http://192.168.2.140:29611/> |
 
 Each new VM name receives its own port block. See
-lab monitoring (in [easymesh-medium](https://vcpe.dev/easymesh-medium/)) for LXD and Grafana. The optional
-[Tailscale gateway](../reference/remote-access.md) is implemented and locally
-tested, **not installed or published**; leave it disabled for a VM's first
-qualification.
+lab monitoring (in [easymesh-medium](https://vcpe.dev/easymesh-medium/)) for LXD and Grafana. Remote
+access is the host's gateway, [easymesh-remote](https://vcpe.dev/easymesh-remote/); a published
+lab goes into its maintenance mode while it is worked on.
 
 ## Supported behavior and boundaries
 
