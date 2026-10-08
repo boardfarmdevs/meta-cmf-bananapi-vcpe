@@ -11,7 +11,7 @@ monitor. See [operations](../guides/operations.md).
 | --- | --- |
 | Branch | `main` |
 | Development and build checkout | `rev140:/home/rev/git/easymesh-labs/meta-cmf-bananapi-vcpe` (the easymesh-labs workspace) |
-| Last-tested VM | `rev140:rdk-1004`, `rev120:rdk-emosa-1005` and `rev150:rdk-emosa-1006`, all in the target configuration (below) |
+| Last-tested VM | `rev140:rdk-1004` and `rev120:rdk-emosa-1005`, both in the target configuration (below) |
 | Guest checkout | `/home/easymesh/git/meta-cmf-bananapi-vcpe` |
 | Platform | Ubuntu 24.04 / Linux 7 radio host, RDK-B containers, userspace wmediumd from easymesh-medium (the `gen/medium` submodule); the optimizer from easymesh-optimizer (the `gen/optimizer` submodule) |
 | Images | the controller and extender images the easymesh-labs `manifest.json` pins, with the commit each was built from |
@@ -33,9 +33,8 @@ brings the lab back whole, the pods with it.
 
 | VM | Host, ports | Images | Last qualification |
 | --- | --- | --- | --- |
-| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008040211` (image 14: EMOSA 4b89eab, the DHCP leases kept), extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | built from scratch on 8 October (cd9fc41, with free page reporting; 108 minutes): the build's acceptance and the health audit; image 14 redeployed in place: the health audit. On image 11, 7 October, with the Pis on its controller: the catalog 27 of 27 and the four geometry rooms |
+| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008065621` (image 15: image 14 with unified-wifi-mesh 0243, em_ctrl's crash at a new agent's first onboarding fixed; EMOSA 4b89eab, the DHCP leases kept), extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | built from scratch on 8 October (cd9fc41, with free page reporting; 108 minutes): the build's acceptance and the health audit; images 14 and 15 redeployed in place: the health audit each, then an 8-hour soak with the Pis. On image 11, 7 October, with the Pis on its controller: the catalog 27 of 27 and the four geometry rooms |
 | `rdk-emosa-1005` | rev120, 22010 to 22015 | gateway `X86EMLTRBPIBB_rdk-next_20261008001545` (image 12), the extenders as rdk-1004's | image 12 redeployed in place on 7 October: the health audit, the wired extender's outage room; the whole suite before, on image 11 |
-| `rdk-emosa-1006` | rev150, 28100 to 28105 (its owner's) | gateway `X86EMLTRBPIBB_rdk-next_20261006175821`, the extenders of 29 September | built from scratch on 6 October, exit 0 in 93 minutes |
 
 What the qualification rests on:
 
