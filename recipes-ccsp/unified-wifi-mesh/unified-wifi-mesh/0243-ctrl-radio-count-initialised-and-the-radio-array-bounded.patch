@@ -1,0 +1,158 @@
+Subject: [PATCH] ctrl: the radio count of a model built from the network initialised, the radio array bounded
+
+em_ctrl crashed (SIGSEGV) when a new agent onboarded for the first time: in one lab
+(rdk-1004, 8 October 2026) a Raspberry Pi pod's agent started, the controller answered with a
+Backhaul STA Capability Query and died in dm_radio_t::operator= under
+dm_easy_mesh_t::operator= (dm_easy_mesh.cpp:73), em_cmd_t::init, the em_cmd_bsta_cap_t
+constructor and dm_easy_mesh_ctrl_t::analyze_bsta_cap_req, reading past the top of its stack.
+
+analyze_bsta_cap_req (and the two other analyze functions that start with
+dm_easy_mesh_t dm = *this) builds its model through dm_easy_mesh_t(const dm_network_t&), the
+controller being a dm_network_t. That constructor set only m_wifi_data, so m_num_radios and the
+other counts held whatever the stack held. em_cmd_t::init then copied the model, and
+operator= copied obj.m_num_radios radios into m_radio[EM_MAX_BANDS], however many that was.
+
+The constructor now delegates to the default one, which zeroes the counts. operator= copies at
+most EM_MAX_BANDS radios. Every place that appends a radio (the two Radio Basic Capability
+handlers, put_radio, commit_config's new radio, the em_insert orchestration, the RadioList
+decode, the policy request and the radio-enable target) checks the array first and logs what
+it drops; the policy request's guard was EM_MAX_RADIO_PER_AGENT (4) against an array of
+EM_MAX_BANDS (3). Platform-independent; a candidate for upstream.
+
+Upstream-Status: Pending
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -3315,9 +3315,9 @@
+         }
+         radio = m_data_model_list.get_first_radio(dm.m_network.m_net_info.id, dm.m_device.m_device_info.intf.mac);
+         while (radio != NULL) {
+-            if (dm.m_num_radios >= EM_MAX_RADIO_PER_AGENT) {
++            if (dm.m_num_radios >= EM_MAX_BANDS) {
+                 em_printfout("SetPolicy Radio overflow guard triggered | device=%s num_radios=%u max_allowed=%u",
+-                    mac_str, dm.m_num_radios, EM_MAX_RADIO_PER_AGENT);
++                    mac_str, dm.m_num_radios, EM_MAX_BANDS);
+                 break;
+             }
+             memcpy(dm.m_radio[dm.m_num_radios].m_radio_info.intf.mac,
+@@ -3673,7 +3673,10 @@
+ 			for (k = 0; k < pdm->get_num_radios(); k++) {
+ 				pradio = &pdm->m_radio[k];
+ 				if (memcmp(radio->m_radio_info.intf.mac, pradio->m_radio_info.intf.mac, sizeof(mac_address_t)) == 0) {
+-					if (radio->m_radio_info.enabled != pradio->m_radio_info.enabled) {
++					if (radio->m_radio_info.enabled != pradio->m_radio_info.enabled &&
++							tgt.m_num_radios >= EM_MAX_BANDS) {
++						em_printfout("Radio: %s changed, not added: %u radios in target", mac_str, tgt.m_num_radios);
++					} else if (radio->m_radio_info.enabled != pradio->m_radio_info.enabled) {
+ 						em_printfout("Radio: %s changed, adding to target", mac_str);
+ 						tgt.m_radio[tgt.m_num_radios] = dm.m_radio[j];
+ 						tgt.m_num_radios++;	
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -65,11 +65,12 @@
+     m_network = obj.m_network;
+     m_ieee_1905_security = obj.m_ieee_1905_security;
+ 
+-	if (m_num_radios >= EM_MAX_BANDS) {
+-		m_num_radios = 0;
+-	}
+     this->m_num_radios = obj.m_num_radios;
+-    for (unsigned int i = 0; i < obj.m_num_radios; i++) {
++    if (this->m_num_radios > EM_MAX_BANDS) {
++        em_printfout("Radio count %u exceeds %u, copying %u", obj.m_num_radios, EM_MAX_BANDS, EM_MAX_BANDS);
++        this->m_num_radios = EM_MAX_BANDS;
++    }
++    for (unsigned int i = 0; i < this->m_num_radios; i++) {
+         m_radio[i] = obj.m_radio[i];
+     }
+ 
+@@ -157,7 +158,9 @@
+                     break;
+                 }
+             }
+-            if (i == m_num_radios) { //New Radio
++            if (i == m_num_radios && m_num_radios >= EM_MAX_BANDS) {
++                em_printfout("Radio %s not added: %u radios already", target.params, m_num_radios);
++            } else if (i == m_num_radios) { //New Radio
+                 m_radio[m_num_radios] = *(radio);
+                 radio_cap = dm.get_radio_cap(mac);
+                 if (radio_cap != NULL) {
+@@ -322,6 +325,10 @@
+                         break;
+                     }
+                     case dm_orch_type_em_insert:
++                        if (m_num_radios >= EM_MAX_BANDS) {
++                            em_printfout("Radio not inserted: %u radios already", m_num_radios);
++                            break;
++                        }
+                         m_radio[m_num_radios] = cmd->m_data_model.m_radio[0];
+                         m_num_radios++;
+ 
+@@ -1011,6 +1018,10 @@
+        		return EM_PARSE_ERR_GEN;
+ 		}
+ 		
++		if (m_num_radios >= EM_MAX_BANDS) {
++			em_printfout("RadioList has more than %u radios, the rest ignored", EM_MAX_BANDS);
++			break;
++		}
+ 		snprintf(parent, sizeof(em_long_string_t), "%s@%s", dev_mac_str, net_id);	
+ 		m_radio[m_num_radios].decode(radio_obj, parent);
+ 		m_num_radios++;
+@@ -3751,8 +3762,11 @@
+     }
+ }
+ 
++// Built from the network alone (dm_easy_mesh_t dm = *this in the controller's analyze
++// functions): the counts must start at zero like the default constructor's, or a copy of
++// this model reads as many radios as the stack happened to hold.
+ dm_easy_mesh_t::dm_easy_mesh_t(const dm_network_t& net)
+-    : m_wifi_data(nullptr)
++    : dm_easy_mesh_t()
+ {
+     memcpy(&m_device.m_device_info.id, &net.m_net_info.ctrl_id, sizeof(em_interface_t));
+     memcpy(&m_device.m_device_info.backhaul_alid, &net.m_net_info.ctrl_id, sizeof(em_interface_t));
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -380,6 +380,10 @@
+         }
+ 
+         //em_printfout("Current Number of Radios: %d", dm->get_num_radios());
++        if (dm->get_num_radios() >= EM_MAX_BANDS) {
++            em_printfout("Radio %s not added: %u radios already", key, dm->get_num_radios());
++            return;
++        }
+         dm->set_num_radios(dm->get_num_radios() + 1);
+         pradio = dm->get_radio(dm->get_num_radios() - 1);
+     }
+diff --git a/src/em/capability/em_capability.cpp b/src/em/capability/em_capability.cpp
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -1198,6 +1198,10 @@
+ 		}
+ 	}
+ 	if (radio_exists == false) {
++		if (dm->get_num_radios() >= EM_MAX_BANDS) {
++			em_printfout("Radio %s not added: %u radios already", mac_str, dm->get_num_radios());
++			return -1;
++		}
+ 		em_printfout("Radio does not exist, getting radio at index: %d", dm->get_num_radios());
+ 		radio = dm->get_radio(dm->get_num_radios());
+ 		memset(&radio->m_radio_info, 0, sizeof(em_radio_info_t));	
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6466,6 +6466,10 @@
+ 		}
+ 	}
+ 	if (radio_exists == false) {
++		if (dm->get_num_radios() >= EM_MAX_BANDS) {
++			em_printfout("Radio %s not added: %u radios already", mac_str, dm->get_num_radios());
++			return -1;
++		}
+ 		printf("%s:%d: Radio does not exist, getting radio at index: %d\n", __func__, __LINE__, dm->get_num_radios());
+ 		radio = dm->get_radio(dm->get_num_radios());
+ 		memset(&radio->m_radio_info, 0, sizeof(em_radio_info_t));	
