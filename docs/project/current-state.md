@@ -33,7 +33,7 @@ brings the lab back whole, the pods with it.
 
 | VM | Host, ports | Images | Last qualification |
 | --- | --- | --- | --- |
-| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008065621` (image 15: image 14 with unified-wifi-mesh 0243, em_ctrl's crash at a new agent's first onboarding fixed; EMOSA 4b89eab, the DHCP leases kept), extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | built from scratch on 8 October (cd9fc41, with free page reporting; 108 minutes): the build's acceptance and the health audit; images 14 and 15 redeployed in place: the health audit each, then an 8-hour soak with the Pis. On image 11, 7 October, with the Pis on its controller: the catalog 27 of 27 and the four geometry rooms |
+| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008065621` (image 15: image 14 with unified-wifi-mesh 0243, em_ctrl's crash at a new agent's first onboarding fixed; EMOSA 4b89eab, the DHCP leases kept), extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | built from scratch on 8 October (cd9fc41, with free page reporting; 108 minutes): the build's acceptance and the health audit; images 14 and 15 redeployed in place: the health audit each, then an 8-hour soak with the Pis on image 15 (passed: em_ctrl one process, 46.6 to 46.7 MB, no restart; the Pis' agents provisioning throughout). The Pis left rdk-1004 after it (8 October, 16:23 UTC). On image 11, 7 October, with the Pis on its controller: the catalog 27 of 27 and the four geometry rooms |
 | `rdk-emosa-1005` | rev120, 22010 to 22015 | gateway `X86EMLTRBPIBB_rdk-next_20261008001545` (image 12), the extenders as rdk-1004's | image 12 redeployed in place on 7 October: the health audit, the wired extender's outage room; the whole suite before, on image 11 |
 
 What the qualification rests on:
@@ -55,10 +55,11 @@ What the qualification rests on:
   its room evidence on a volume of its own (`<lab>-evidence`); the pods' journals are capped
   at 128 MiB and the VM's at 256 MiB; Boardfarm's recovery path keeps its images; the base
   image carries only the running kernel. rdk-1004, built from scratch with all of it, holds 2.9 GB on its host (5.7 in the guest); rdk-emosa-1005 6.4 GB.
-- **Devices the room does not own.** rdk-1004's two physical OpenSync pods (opensync-rpi's
-  Raspberry Pis, over Ethernet) are listed by AL MAC in the VM's
+- **Devices the room does not own.** Physical OpenSync pods on a lab's controller (opensync-rpi's
+  Raspberry Pis, over Ethernet, on rdk-1004 until 8 October) are listed by AL MAC in the VM's
   `/etc/easymesh-lab/foreign-devices` and left out of the room's health, the optimizer's
-  observer, the acceptance, the health audit and the bring-up's topology count.
+  observer, the acceptance, the health audit and the bring-up's topology count. rdk-1004 keeps
+  the Pis' two lines for their return.
 - **The outage rooms** give every client 8 s to leave an AP: a 6 GHz client needs 3.7 to
   4.5 s (beacon loss, a scan of every 6 GHz channel, a 1 s association comeback because the
   AP still holds its earlier PMF association).
