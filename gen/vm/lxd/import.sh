@@ -202,6 +202,10 @@ if lxc config set "$name" boot.mode uefi-nosecureboot 2>/dev/null; then
 else
     lxc config set "$name" security.secureboot false
 fi
+# The guest's free pages back to the host (instance-config.sh, lab-memory M1), before first boot.
+if declare -F easymesh_free_page_reporting >/dev/null; then
+    easymesh_free_page_reporting "$name"
+fi
 lxc config set "$name" boot.autostart false
 for device in easymesh-webui wmediumd-console room-demo-viewer; do
     if lxc config device show "$name" | grep -q "^${device}:"; then

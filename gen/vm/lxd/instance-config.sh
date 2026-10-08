@@ -54,6 +54,19 @@ easymesh_attach_evidence() {    # easymesh_attach_evidence INSTANCE POOL: the vo
         path="$easymesh_evidence_path" </dev/null
 }
 
+# The balloon device reports the guest's free pages to the host (easymesh-resources lab-memory
+# M1), so the VM's QEMU on the host holds what the guest uses, not its peak. Set before the
+# first boot; on an existing VM it takes effect at its next start. The guest kernel has
+# CONFIG_PAGE_REPORTING; LXD names the device qemu_balloon in the QEMU config it writes.
+easymesh_free_page_reporting() {    # easymesh_free_page_reporting INSTANCE
+    local instance=$1 conf value
+    conf=$(lxc config get "$instance" raw.qemu.conf </dev/null)
+    case $conf in *free-page-reporting*) return 0 ;; esac
+    value=$(printf '[device "qemu_balloon"]\nfree-page-reporting = "on"')
+    [ -z "$conf" ] || value=$(printf '%s\n%s' "$conf" "$value")
+    lxc config set "$instance" raw.qemu.conf "$value" </dev/null
+}
+
 easymesh_ensure_storage_pool() {
     local pool=$1 driver=${EASYMESH_LXD_STORAGE_DRIVER:-zfs}
     local size=${EASYMESH_LXD_STORAGE_SIZE:-500GiB}

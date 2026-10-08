@@ -58,4 +58,24 @@ lxc() {
 easymesh_attach_evidence alpha labs
 if grep -q 'device add\|volume create' "$log"; then exit 1; fi
 
+# free page reporting: the balloon section added once, after what raw.qemu.conf already holds
+raw=
+lxc() {
+    case "$1 $2 $4" in
+        'config get raw.qemu.conf') printf '%s' "$raw" ;;
+        'config set raw.qemu.conf') printf '%s' "$5" > "$log" ;;
+    esac
+    return 0
+}
+: > "$log"
+easymesh_free_page_reporting alpha
+test "$(cat "$log")" = "$(printf '[device "qemu_balloon"]\nfree-page-reporting = "on"')"
+raw=$(printf '[global]\nfoo = "1"')
+easymesh_free_page_reporting alpha
+test "$(cat "$log")" = "$(printf '[global]\nfoo = "1"\n[device "qemu_balloon"]\nfree-page-reporting = "on"')"
+raw=$(cat "$log")
+: > "$log"
+easymesh_free_page_reporting alpha
+test ! -s "$log"
+
 echo 'PASS: named EasyMesh LXD defaults'

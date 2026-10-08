@@ -732,6 +732,7 @@ build_vm() {
     # the exact Ubuntu source package. Disable guest Secure Boot before first
     # boot so that this locally-built module can load after installation.
     configure_no_secure_boot
+    easymesh_free_page_reporting "$name"
     set_root_disk_size
     appliance_ipv4=$(select_guest_ipv4)
     lxc config device override "$name" eth0 network="$network" \
