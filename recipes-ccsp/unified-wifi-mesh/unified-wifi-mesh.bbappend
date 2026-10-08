@@ -210,6 +210,10 @@ EASYMESH_CORE_PATCHES = " \
     file://0244-em-dpp-chirp-length-in-network-byte-order-and-wsc-answer-while-unconfigured.patch \
     file://0245-ctrl-operational-bss-radio-without-bss-parsed-within-length-bss-array-bounded.patch \
     file://0246-ctrl-bss-role-from-the-bss-configuration-report.patch \
+    file://0247-ctrl-bss-role-from-the-controllers-network-ssid.patch \
+    file://0248-ctrl-learned-backhaul-station-row-by-its-mode-and-mac.patch \
+    file://0249-ctrl-steerwifibackhaul-operating-class-on-every-band.patch \
+    file://0250-ctrl-backhaul-steering-response-for-another-station.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

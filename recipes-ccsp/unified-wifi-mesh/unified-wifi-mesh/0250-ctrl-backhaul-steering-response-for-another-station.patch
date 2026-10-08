@@ -1,0 +1,84 @@
+Subject: [PATCH] ctrl: a Backhaul Steering Response that names another of the agent's stations
+
+The native backhaul path took a Backhaul Steering Response only when it carried the request's MID
+and named the requested backhaul station, and verified the move by that station. EasyMesh sets
+neither: section 12 sets no MID rule for the response, and the response names "the associated
+backhaul STA" (17.2.33), which after a move to a BSS on another band is the agent's station on
+that band, not the one the request named (17.2.32: the station associated before the move). Such
+a move was never answered nor verified: a timeout, a failure and an uncertain mark each time.
+
+Now a response from the agent asked, for the request's target, is the request's whatever its MID,
+and the station it names is kept; the move is verified by the agent's parent being the target
+with either station.
+
+Platform-independent (the native backhaul path is the lab's own); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes the lab's native backhaul steering]
+
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -78,6 +78,9 @@ class em_ctrl_t : public em_mgr_t {
+         int64_t topology_queried = 0;
+         unsigned int topology_queries = 0;
+         bool parent_observed = false;
++        /* the backhaul STA the agent's Backhaul Steering Response names, when it is not the
++         * requested one: the station associated after a move to another band (EasyMesh 17.2.33) */
++        std::string associated{};
+     };
+     std::mutex m_backhaul_mutex;
+     em_backhaul::snapshot m_backhaul_network;
+--- a/src/ctrl/em_backhaul_ctrl.cpp
++++ b/src/ctrl/em_backhaul_ctrl.cpp
+@@ -194,7 +194,8 @@ void em_ctrl_t::handle_native_backhaul_tick()
+         if (m_backhaul_steer.mid != 0) {
+             const auto current = network.nodes.find(m_backhaul_steer.request.al);
+             const bool verified = current != network.nodes.end() &&
+-                current->second.sta == m_backhaul_steer.request.sta &&
++                (current->second.sta == m_backhaul_steer.request.sta ||
++                 (!m_backhaul_steer.associated.empty() && current->second.sta == m_backhaul_steer.associated)) &&
+                 current->second.parent_bssid == m_backhaul_steer.request.target &&
+                 current->second.serving.fresh(now) &&
+                 current->second.serving.observed >= m_backhaul_steer.sent;
+@@ -426,8 +427,14 @@ bool em_ctrl_t::handle_native_backhaul_frame(unsigned char *data, unsigned int l
+         em_backhaul::same_ap(current_ap->second, found->second.ap);
+     const bool owned_steer = m_backhaul_steer.mid != 0 && m_backhaul_steer.mid == mid &&
+         m_backhaul_steer.request.al == source;
++    /* A Backhaul Steering Response is the outstanding request's when the agent asked sends it
++     * (EasyMesh 6.1 section 12) for the request's target: no rule ties its MID to the request's,
++     * and it names the backhaul STA associated after the move (17.2.33), which after a move to a
++     * BSS on another band is another of the agent's stations. */
++    const bool steer_response = type == em_msg_type_bh_steering_rsp && m_backhaul_steer.mid != 0 &&
++        m_backhaul_steer.request.al == source;
+     std::vector<em_backhaul::wire_tlv> tlvs;
+-    if (!em_backhaul::parse_frame(data, len, tlvs)) return owned_query || owned_steer;
++    if (!em_backhaul::parse_frame(data, len, tlvs)) return owned_query || owned_steer || steer_response;
+     if (owned_steer && type == em_msg_type_1905_ack) m_backhaul_steer.acknowledged = true;
+     for (const auto &tlv : tlvs) {
+         if (tlv.type == em_tlv_type_assoc_sta_link_metric && type == em_msg_type_ap_metrics_rsp &&
+@@ -477,14 +484,15 @@ bool em_ctrl_t::handle_native_backhaul_frame(unsigned char *data, unsigned int l
+                 }
+             }
+         }
+-        if (type == em_msg_type_bh_steering_rsp && owned_steer && tlv.type == em_tlv_type_bh_steering_rsp &&
++        if (steer_response && tlv.type == em_tlv_type_bh_steering_rsp &&
+             tlv.size == sizeof(em_bh_steering_resp_t) &&
+-            backhaul_mac(tlv.value) == m_backhaul_steer.request.sta &&
+             backhaul_mac(tlv.value + 6) == m_backhaul_steer.request.target) {
++            const std::string station = backhaul_mac(tlv.value);
+             m_backhaul_steer.response = tlv.value[12] == 0;
+             m_backhaul_steer.acknowledged = true;
+-            em_printfout("Native backhaul response mid=%u result=%u sta=%s", mid, tlv.value[12],
+-                backhaul_label(m_backhaul_steer.request.sta).c_str());
++            if (station != m_backhaul_steer.request.sta) m_backhaul_steer.associated = station;
++            em_printfout("Native backhaul response mid=%u result=%u sta=%s requested_sta=%s", mid, tlv.value[12],
++                backhaul_label(station).c_str(), backhaul_label(m_backhaul_steer.request.sta).c_str());
+             if (tlv.value[12] != 0) {
+                 m_backhaul_policy.attempted(m_backhaul_steer.request.al, now, true);
+                 ++m_backhaul_steer.failures;
+@@ -500,5 +508,5 @@ bool em_ctrl_t::handle_native_backhaul_frame(unsigned char *data, unsigned int l
+         (type == em_msg_type_unassoc_sta_link_metrics_rsp && !found->second.associated)))
+         m_backhaul_queries.erase(found);
+     return (owned_query && (type == em_msg_type_unassoc_sta_link_metrics_rsp || type == em_msg_type_1905_ack)) ||
+-        (owned_steer && (type == em_msg_type_bh_steering_rsp || type == em_msg_type_1905_ack));
++        (owned_steer && type == em_msg_type_1905_ack) || steer_response;
+ }

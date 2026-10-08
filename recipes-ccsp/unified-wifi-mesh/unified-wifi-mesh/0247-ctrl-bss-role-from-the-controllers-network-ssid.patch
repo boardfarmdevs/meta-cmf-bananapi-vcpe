@@ -1,0 +1,110 @@
+Subject: [PATCH] ctrl: a BSS's role from the controller's own network SSID when the agent says none
+
+An agent that sends neither RDK's vendor operational BSS TLV nor a BSS Configuration Report (a
+Profile-1 or Profile-2 agent: the report is Profile 3 and is refused below it) said nothing about
+its BSSes' roles, so each was modelled with the default role, fronthaul. Its backhaul BSS was
+never a candidate for native backhaul steering, and the data model reported it as fronthaul.
+
+For such an agent each AP BSS now takes the role of its SSID in the controller's own network
+SSIDs, the role the controller gave that BSS in its M2: backhaul for an SSID configured for
+backhaul only, fronthaul for one configured without backhaul. An SSID configured for backhaul
+and another role, or one the controller does not configure, leaves the BSS as it is. The vendor
+TLV and the BSS Configuration Report stay the authority when present.
+
+Platform-independent; a candidate for upstream.
+
+Upstream-Status: Pending
+
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -879,6 +879,17 @@ class em_configuration_t {
+ 	 * @note Ensure that the buffer is properly allocated and the length is correctly specified.
+ 	 */
+ 	int handle_bss_configuration_report(unsigned char *buff, unsigned int len, bool roles_from_report = false);
++
++	/**!
++	 * @brief Takes each AP BSS's role from the controller's own network SSIDs.
++	 *
++	 * For an agent that sends neither RDK's vendor operational BSS TLV nor a BSS Configuration
++	 * Report: a BSS whose SSID the controller configures for backhaul only is a backhaul BSS,
++	 * one whose SSID it configures without backhaul a fronthaul BSS.
++	 *
++	 * @returns int 0.
++	 */
++	int handle_bss_roles_from_network_ssids();
+     
+ 	/**!
+ 	 * @brief Handles the MLD configuration request for BSTA.
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2074,6 +2074,60 @@ int em_configuration_t::handle_bss_configuration_report(unsigned char *buff, uns
+     return 0;
+ }
+ 
++int em_configuration_t::handle_bss_roles_from_network_ssids()
++{
++    /* An agent that sends neither RDK's vendor operational BSS TLV nor a BSS Configuration
++     * Report (a Profile-1 or Profile-2 agent; the report is Profile 3) says nothing about its
++     * BSSes' roles, so each was modelled with the default role, fronthaul, and its backhaul BSS
++     * was never a backhaul candidate. Each AP BSS now takes the role of its SSID in the
++     * controller's own network SSIDs, the role the controller gave that BSS in its M2: backhaul
++     * for an SSID configured for backhaul only, fronthaul for one configured without backhaul.
++     * An SSID configured for backhaul and another role, or one the controller does not
++     * configure, leaves the BSS as it is. */
++    dm_easy_mesh_t *dm = get_data_model();
++    bool changed = false;
++    for (unsigned int i = 0; i < dm->get_num_bss(); i++) {
++        em_bss_info_t *info = dm->get_bss_info(i);
++        if (info == NULL || info->vap_mode != em_vap_mode_ap || info->ssid[0] == '\0') {
++            continue;
++        }
++        const em_network_ssid_info_t *network = NULL;
++        for (unsigned int n = 0; n < dm->get_num_network_ssid(); n++) {
++            const em_network_ssid_info_t *candidate = dm->get_network_ssid(n)->get_network_ssid_info();
++            if (strncmp(candidate->ssid, info->ssid, sizeof(ssid_t)) == 0) {
++                network = candidate;
++                break;
++            }
++        }
++        if (network == NULL || network->num_hauls == 0) {
++            continue;
++        }
++        bool backhaul = false, other = false;
++        for (unsigned int h = 0; h < network->num_hauls && h < EM_MAX_HAUL_TYPES; h++) {
++            if (network->haul_type[h] == em_haul_type_backhaul) {
++                backhaul = true;
++            } else {
++                other = true;
++            }
++        }
++        if (backhaul && other) {
++            continue;
++        }
++        const em_haul_type_t role = backhaul ? em_haul_type_backhaul : em_haul_type_fronthaul;
++        if (info->id.haul_type != role) {
++            em_printfout("BSS role from the controller's network SSID: bssid=%s ssid=%s %s",
++                util::mac_to_string(info->bssid.mac).c_str(), info->ssid,
++                role == em_haul_type_backhaul ? "backhaul" : "fronthaul");
++            info->id.haul_type = role;
++            changed = true;
++        }
++    }
++    if (changed) {
++        dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++    }
++    return 0;
++}
++
+ int em_configuration_t::handle_bsta_mld_config_req(unsigned char *buff, unsigned int len)
+ {
+     // TODO: 
+@@ -3235,6 +3289,9 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+         // bss_conf_rep is optional; reset cursor so subsequent TLV searches still run
+         tlv = reinterpret_cast<em_tlv_t *>(buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+         tmp_len = len - static_cast<unsigned int>(sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
++        if (!vendor_bss_snapshot) {
++            handle_bss_roles_from_network_ssids();
++        }
+     }
+ 
+     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {

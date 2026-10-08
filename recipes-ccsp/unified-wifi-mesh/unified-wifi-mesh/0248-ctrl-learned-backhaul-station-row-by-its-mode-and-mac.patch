@@ -1,0 +1,107 @@
+Subject: [PATCH] ctrl: a learned backhaul station row known by its mode and MAC, not by having no radio
+
+A backhaul station that an agent reports only in Device Information (an adapter such as EMOSA) is
+kept as a backhaul-STA row whose radio identifier is the station's own MAC. Two rules assumed no
+radio of the agent has that identifier: the restore of such a row reloaded from the database
+(which keeps neither its mode nor its station), and the removal of a row whose station is no
+longer reported. A station may share its MAC with its radio's identifier (EasyMesh allows it; a
+hwsim pod's 2.4 GHz station does). Its reloaded row was then never restored, and the station was
+learned again as a second row with the same key; a row no longer reported was never removed.
+
+The removal also ran only when the response reported no station at all, so an agent that moved
+its backhaul to a station on another band kept its old station's row beside the new one: two
+backhaul STA rows, the first of which SteerWiFiBackhaul() then named.
+
+Now a reloaded row is the station's when its radio is unknown, as before, or when its BSSID is
+the station's reported parent, which no BSS of the agent's own can be. Every learned station row
+whose station this response does not report goes, also when it reports another station. A
+reloaded row of a station that shares its radio's identifier is an AP-mode row of that radio,
+which the Operational BSS TLV's stale-BSS rule removes once the radio no longer reports it.
+
+Platform-independent (completes the lab's 0236); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes 0236, a lab patch]
+
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2914,7 +2914,9 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+             scan_remaining -= scan_total;
+         }
+     }
+-    bool standard_bsta_reported = false;
++    /* the station interfaces this response reports, each with its network membership */
++    mac_address_t reported_bsta[EM_MAX_BSSS];
++    unsigned int num_reported_bsta = 0;
+     while (device_remaining >= sizeof(em_tlv_t)) {
+         em_tlv_t *device_tlv = reinterpret_cast<em_tlv_t *>(device_cursor);
+         unsigned int value_len = ntohs(device_tlv->len);
+@@ -2966,6 +2968,9 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                         memcmp(media, ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) {
+                     mac_address_t upstream_bssid;
+                     memcpy(upstream_bssid, media, sizeof(upstream_bssid));
++                    if (num_reported_bsta < EM_MAX_BSSS) {
++                        memcpy(reported_bsta[num_reported_bsta++], local_mac, sizeof(mac_address_t));
++                    }
+                     em_bss_info_t *matched_bsta = NULL;
+                     em_bss_info_t *band_bsta = NULL;
+                     unsigned int matched_bsta_index = dm->get_num_bss();
+@@ -2981,10 +2986,15 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                         /* A station learned from Device Information, reloaded from
+                          * the database after a controller restart: the database
+                          * keeps neither its mode nor its station, only its radio,
+-                         * which is the station itself. */
++                         * which is the station itself. A station may share its MAC
++                         * with its radio's identifier (EasyMesh allows it; a hwsim
++                         * pod's 2.4 GHz station does): then the row is the
++                         * station's when its BSSID is the station's reported parent,
++                         * which no BSS of the agent's own can be. */
+                         if (!vendor_bss_snapshot && bsta->vap_mode != em_vap_mode_sta &&
+-                                dm->get_radio(bsta->ruid.mac) == NULL &&
+-                                memcmp(bsta->ruid.mac, local_mac, sizeof(mac_address_t)) == 0) {
++                                memcmp(bsta->ruid.mac, local_mac, sizeof(mac_address_t)) == 0 &&
++                                (dm->get_radio(bsta->ruid.mac) == NULL ||
++                                 memcmp(bsta->bssid.mac, upstream_bssid, sizeof(mac_address_t)) == 0)) {
+                             bsta->vap_mode = em_vap_mode_sta;
+                             memcpy(bsta->sta_mac, local_mac, sizeof(mac_address_t));
+                             bsta->enabled = true;
+@@ -3062,7 +3072,6 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                     if (matched_bsta != NULL && !vendor_bss_snapshot &&
+                             memcmp(matched_bsta->ruid.mac, local_mac,
+                                 sizeof(mac_address_t)) == 0) {
+-                        standard_bsta_reported = true;
+                         /* The model's key (id.bssid) follows a parent change, or
+                          * the database and the model disagree about the row. */
+                         memcpy(matched_bsta->id.bssid, matched_bsta->bssid.mac,
+@@ -3130,14 +3139,27 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+         device_cursor += total_len;
+         device_remaining -= total_len;
+     }
+-    if (!vendor_bss_snapshot && !standard_bsta_reported) {
++    if (!vendor_bss_snapshot) {
+         for (int index = static_cast<int>(dm->get_num_bss()) - 1; index >= 0; index--) {
+             em_bss_info_t *row = dm->get_bss_info(static_cast<unsigned int>(index));
+-            /* Every backhaul row whose radio the controller does not model is
+-             * such a station, also one reloaded from the database without its
+-             * mode or station (see above). */
++            /* Such a station's row: a backhaul row in station mode, or one
++             * reloaded from the database without its mode or station (see
++             * above) whose radio the controller does not model. It goes when
++             * this response no longer reports its station, also when it reports
++             * another one: an agent that moved its backhaul to a station on
++             * another band. A reloaded row of a station that shares its radio's
++             * identifier is an AP-mode row of that radio, which the Operational
++             * BSS TLV's stale-BSS rule removes once the radio no longer reports it. */
+             if (row == NULL || row->id.haul_type != em_haul_type_backhaul ||
+-                    dm->get_radio(row->ruid.mac) != NULL) {
++                    (row->vap_mode != em_vap_mode_sta && dm->get_radio(row->ruid.mac) != NULL)) {
++                continue;
++            }
++            const unsigned char *station = row->vap_mode == em_vap_mode_sta ? row->sta_mac : row->ruid.mac;
++            bool reported = false;
++            for (unsigned int r = 0; r < num_reported_bsta && !reported; r++) {
++                reported = memcmp(reported_bsta[r], station, sizeof(mac_address_t)) == 0;
++            }
++            if (reported) {
+                 continue;
+             }
+             em_printfout("Backhaul STA no longer reported: sta=%s parent=%s",

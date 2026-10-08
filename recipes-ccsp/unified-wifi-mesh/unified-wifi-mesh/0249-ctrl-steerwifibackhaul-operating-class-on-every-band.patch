@@ -1,0 +1,117 @@
+Subject: [PATCH] ctrl: SteerWiFiBackhaul() sends the target's operating class on every band
+
+The Backhaul Steering Request carries the operating class and channel on which the target BSS
+beacons (EasyMesh 17.2.32). SteerWiFiBackhaul() derived the class from its Channel argument for
+5 GHz only: a 2.4 GHz or 6 GHz target got operating class 0, which the native tick replaced only
+for a target that is a modelled backhaul AP.
+
+Now a target the controller models (an AP BSS of any device of the network) takes its radio's
+current operating class and channel, and a Channel given with it must be that channel. Otherwise
+the class comes from Channel when that number is a 20 MHz channel of one band only (IEEE 802.11
+Annex E: 2.4 GHz 1-13 class 81 and 14 class 82; 5 GHz 36-48 115, 52-64 118, 100-144 121,
+149-177 125; 6 GHz 1-233 131). 2.4 GHz 1, 5, 9 and 13 and 5 GHz 149-177 are 6 GHz numbers as
+well: an unknown target there, or one without a Channel, is refused rather than guessed.
+
+Platform-independent (the method's native path is the lab's own); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes the lab's native SteerWiFiBackhaul() path]
+
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -661,6 +661,56 @@ cleanup:
+     return rc;
+ }
+ 
++/* The operating class and channel of a target AP BSS the controller models: its radio's
++ * current operating class. False for a BSSID no device of the network operates. */
++static bool backhaul_target_operation(dm_easy_mesh_ctrl_t *dm_ctrl, const mac_address_t target,
++    unsigned char *op_class, unsigned char *channel)
++{
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    for (dm_easy_mesh_t *model = dm_ctrl->get_first_dm(); model != NULL; model = dm_ctrl->get_next_dm(model)) {
++        for (unsigned int i = 0; i < model->get_num_bss(); i++) {
++            const em_bss_info_t *bss = model->get_bss_info(i);
++            if (bss == NULL || bss->vap_mode != em_vap_mode_ap ||
++                    memcmp(bss->bssid.mac, target, sizeof(mac_address_t)) != 0) {
++                continue;
++            }
++            for (unsigned int o = 0; o < model->m_num_opclass && o < EM_MAX_OPCLASS; o++) {
++                const em_op_class_info_t *op = model->get_op_class_info(o);
++                if (op->id.type == em_op_class_type_current && op->op_class != 0 && op->channel != 0 &&
++                        memcmp(op->id.ruid, bss->ruid.mac, sizeof(mac_address_t)) == 0) {
++                    *op_class = static_cast<unsigned char>(op->op_class);
++                    *channel = static_cast<unsigned char>(op->channel);
++                    return true;
++                }
++            }
++        }
++    }
++    return false;
++}
++
++/* The 20 MHz operating class of a channel number that belongs to one band only (IEEE 802.11
++ * Annex E): 2.4 GHz 1-13 class 81 and 14 class 82; 5 GHz 36-48 class 115, 52-64 118,
++ * 100-144 121, 149-177 125; 6 GHz 1-233 class 131. 2.4 GHz 1, 5, 9 and 13 and 5 GHz 149-177
++ * are 6 GHz channel numbers as well: 0 for those, and for a number of no band. */
++static unsigned char backhaul_op_class_of_channel(int channel)
++{
++    const bool band_24 = channel >= 1 && channel <= 14;
++    const bool band_5 = (channel >= 36 && channel <= 64 && channel % 4 == 0) ||
++        (channel >= 100 && channel <= 144 && channel % 4 == 0) ||
++        (channel >= 149 && channel <= 177 && channel % 4 == 1);
++    const bool band_6 = channel >= 1 && channel <= 233 && channel % 4 == 1;
++    if (static_cast<int>(band_24) + static_cast<int>(band_5) + static_cast<int>(band_6) != 1) {
++        return 0;
++    }
++    if (band_24) {
++        return channel == 14 ? 82 : 81;
++    }
++    if (band_5) {
++        return channel <= 48 ? 115 : channel <= 64 ? 118 : channel <= 144 ? 121 : 125;
++    }
++    return 131;
++}
++
+ bus_error_t em_ctrl_t::cmd_steerwifibh(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
+     (void)async_handle;
+@@ -898,10 +948,35 @@ invalid:
+         requested.request.sta.assign(reinterpret_cast<const char *>(bsta->sta_mac), sizeof(mac_address_t));
+         requested.request.previous.assign(reinterpret_cast<const char *>(bsta->bssid.mac), sizeof(mac_address_t));
+         requested.request.target.assign(reinterpret_cast<const char *>(target_mac), sizeof(mac_address_t));
+-        requested.channel = channel > 0 ? static_cast<unsigned char>(channel) : 0;
+-        /* 5 GHz 20 MHz operating classes (Annex E): 36-48, 52-64, 100-144, 149-165 */
+-        requested.op_class = channel >= 149 ? 125 : channel >= 100 ? 121 : channel >= 52 ? 118 :
+-            channel >= 36 ? 115 : 0;
++        /* The request carries the operating class and channel on which the target beacons
++         * (EasyMesh 17.2.32): the model's for a target it holds, and a Channel given with it
++         * must be that one; else derived from Channel, when that number names one band. An
++         * unknown target without a Channel, or on a number several bands use, is refused
++         * rather than guessed. */
++        unsigned char op_class = 0, op_channel = 0;
++        if (backhaul_target_operation(dm_ctrl, target_mac, &op_class, &op_channel)) {
++            if (channel > 0 && channel != op_channel) {
++                em_printfout("SteerWiFiBackhaul(): TargetBSS %s operates on channel %u, not %d",
++                    target, op_channel, channel);
++                if (output_params) {
++                    *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
++                }
++                return bus_error_invalid_input;
++            }
++        } else {
++            op_class = backhaul_op_class_of_channel(channel);
++            op_channel = static_cast<unsigned char>(op_class != 0 ? channel : 0);
++            if (op_class == 0) {
++                em_printfout("SteerWiFiBackhaul(): TargetBSS %s is not modelled and Channel %d names no single band",
++                    target, channel);
++                if (output_params) {
++                    *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
++                }
++                return bus_error_invalid_input;
++            }
++        }
++        requested.channel = op_channel;
++        requested.op_class = op_class;
+         {
+             std::lock_guard<std::mutex> lock(em_ctrl->m_backhaul_mutex);
+             em_ctrl->m_backhaul_requested.push_back(requested);
