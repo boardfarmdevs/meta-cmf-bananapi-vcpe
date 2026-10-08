@@ -1,0 +1,110 @@
+Subject: [PATCH] ctrl: a BSS's role from the BSS Configuration Report when the vendor operational BSS TLV gives none
+
+The controller learned a reported BSS's role (backhaul or fronthaul) only from RDK's vendor
+operational BSS TLV, which OneWifi agents send. An agent that does not send it modelled every
+BSS as fronthaul, the default, though it says each BSS's role in the BSS Configuration Report
+(EasyMesh 17.2.75: flags bit 7 backhaul BSS, bit 6 fronthaul BSS): its backhaul BSS was never a
+candidate for native backhaul steering. handle_bss_configuration_report() was empty, and its
+caller passed the TLV's length in network byte order.
+
+A Topology Response without the vendor TLV now takes, for each BSS of the report that the model
+has as an AP on that radio, the role its flags give. The vendor TLV stays the authority when
+present. Every entry is checked against the TLV's length before it is read, and the caller
+passes the length in host order. The other caller, the BSS Configuration Response, is
+unchanged.
+
+Platform-independent; a candidate for upstream.
+
+Upstream-Status: Pending
+
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -878,7 +878,7 @@
+ 	 *
+ 	 * @note Ensure that the buffer is properly allocated and the length is correctly specified.
+ 	 */
+-	int handle_bss_configuration_report(unsigned char *buff, unsigned int len);
++	int handle_bss_configuration_report(unsigned char *buff, unsigned int len, bool roles_from_report = false);
+     
+ 	/**!
+ 	 * @brief Handles the MLD configuration request for BSTA.
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2012,9 +2012,66 @@
+ 	(void)len;
+ }
+ 
+-int em_configuration_t::handle_bss_configuration_report(unsigned char *buff, unsigned int len)
++int em_configuration_t::handle_bss_configuration_report(unsigned char *buff, unsigned int len, bool roles_from_report)
+ {
+-	return 0;
++    /* An agent without the vendor operational BSS TLV says each BSS's role only here (EasyMesh
++     * 17.2.75: flags bit 7 backhaul BSS, bit 6 fronthaul BSS). Its BSSes are modelled from the
++     * AP Operational BSS TLV with the default role, fronthaul, so a backhaul BSS of such an
++     * agent was never a backhaul candidate. With roles_from_report (a Topology Response
++     * without the vendor TLV, which stays the authority when present) the reported role is
++     * taken for each BSS the model has on that radio. Every entry is checked against the TLV's
++     * length before it is read; at the first that does not fit, the rest is ignored. */
++    if (!roles_from_report || buff == NULL || len < 1) {
++        return 0;
++    }
++    dm_easy_mesh_t *dm = get_data_model();
++    const unsigned int radios = buff[0];
++    unsigned int offset = 1;
++    bool changed = false;
++    for (unsigned int r = 0; r < radios; r++) {
++        if (len - offset < sizeof(mac_address_t) + 1) {
++            break;
++        }
++        const unsigned char *ruid = buff + offset;
++        const unsigned int count = buff[offset + sizeof(mac_address_t)];
++        offset += static_cast<unsigned int>(sizeof(mac_address_t)) + 1;
++        for (unsigned int b = 0; b < count; b++) {
++            /* BSSID, flags, a reserved octet, the SSID's length, the SSID */
++            if (len - offset < sizeof(mac_address_t) + 3 ||
++                    len - offset - sizeof(mac_address_t) - 3 < buff[offset + sizeof(mac_address_t) + 2]) {
++                r = radios;
++                break;
++            }
++            const unsigned char *bssid = buff + offset;
++            const unsigned char flags = buff[offset + sizeof(mac_address_t)];
++            offset += static_cast<unsigned int>(sizeof(mac_address_t)) + 3 + buff[offset + sizeof(mac_address_t) + 2];
++            const em_haul_type_t role = (flags & 0x80) ? em_haul_type_backhaul :
++                (flags & 0x40) ? em_haul_type_fronthaul : em_haul_type_max;
++            if (role == em_haul_type_max) {
++                continue;
++            }
++            for (unsigned int i = 0; i < dm->get_num_bss(); i++) {
++                em_bss_info_t *info = dm->get_bss_info(i);
++                if (info == NULL || info->vap_mode != em_vap_mode_ap ||
++                        memcmp(info->ruid.mac, ruid, sizeof(mac_address_t)) != 0 ||
++                        memcmp(info->bssid.mac, bssid, sizeof(mac_address_t)) != 0) {
++                    continue;
++                }
++                if (info->id.haul_type != role) {
++                    em_printfout("BSS role from the BSS Configuration Report: bssid=%s %s",
++                        util::mac_to_string(bssid).c_str(),
++                        role == em_haul_type_backhaul ? "backhaul" : "fronthaul");
++                    info->id.haul_type = role;
++                    changed = true;
++                }
++                break;
++            }
++        }
++    }
++    if (changed) {
++        dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++    }
++    return 0;
+ }
+ 
+ int em_configuration_t::handle_bsta_mld_config_req(unsigned char *buff, unsigned int len)
+@@ -3170,7 +3227,7 @@
+     }
+ 
+     if (found_bss_config_rprt) {
+-        if (handle_bss_configuration_report(tlv->value, tlv->len) != 0) {
++        if (handle_bss_configuration_report(tlv->value, ntohs(tlv->len), !vendor_bss_snapshot) != 0) {
+             em_printfout("BSS Configuration Report handling failed");
+             return -1;
+         }
