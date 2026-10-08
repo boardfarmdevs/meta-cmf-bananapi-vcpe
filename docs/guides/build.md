@@ -32,12 +32,20 @@ sudo apt update
 sudo apt install -y gawk wget curl git diffstat unzip texinfo gcc build-essential \
   chrpath socat cpio python3 python3-pip python3-pexpect xz-utils debianutils \
   iputils-ping python3-git python3-jinja2 libegl1-mesa libsdl1.2-dev python3-subunit \
-  mesa-common-dev zstd liblz4-tool python-is-python3 gnupg locales strace qemu-kvm snapd
+  mesa-common-dev zstd liblz4-tool python-is-python3 gnupg locales strace qemu-kvm snapd \
+  gcc-multilib
 mkdir -p "$HOME/bin" "$HOME/hosttools/bin" "$HOME/oe/downloads" "$HOME/oe/sstate-cache"
 curl -o "$HOME/bin/repo" https://storage.googleapis.com/git-repo-downloads/repo
 chmod +x "$HOME/bin/repo"
 export PATH="$HOME/hosttools/bin:$HOME/bin:$PATH"
 ```
+
+`gcc-multilib` (through `libc6-dev-i386`) puts the 32-bit glibc headers' links
+(`/usr/include/bits`, `/usr/include/gnu`) on the host. Today `ieee1905-em`'s Rust build
+(`rbus-sys`, bindgen) runs libclang for `i686-rdk-linux-gnu` without the target's sysroot,
+so it reads the host's `/usr/include`: without that package `do_compile` fails with
+`'bits/libc-header-start.h' file not found`. The proper fix is the target's sysroot for
+bindgen; until then the package is required.
 
 The Kirkstone-era build requires GNU tar without the newer `openat2` behavior.
 Build and place GNU tar 1.34 ahead of `/usr/bin` before creating a build directory:
