@@ -1,0 +1,75 @@
+Subject: [PATCH] em: a DPP chirp's 1905 TLV length in network byte order, and a chirp without DPP answered by WSC while a radio is unconfigured
+
+1. The 1905 TLV length is big-endian, but the DPP Chirp Value TLV's length went to the Easy
+   Connect code through SWAP_LITTLE_ENDIAN(), which converts from little-endian: right for
+   Easy Connect attributes, wrong for 1905 TLVs. On a little-endian host the length
+   is taken in the wrong byte order, so ec_util::parse_dpp_chirp_tlv()'s check of the
+   hash length against the remaining data no longer bounds its copy (an out-of-bounds
+   read). The same mistake was in the agent's
+   handling of a chirp in the AP-Autoconfiguration Response and in the controller's Chirp
+   Notification; all three now use ntohs(). The remaining SWAP_LITTLE_ENDIAN() uses apply to
+   Easy Connect attributes.
+2. With no DPP URI given for an agent, the configurator finds no connection context for the
+   chirp's hash and sent nothing, so a profile 3 agent that chirps got no AP-Autoconfiguration
+   Response and never sent an M1. A chirp the configurator does not handle is now answered as
+   a search without a chirp, and the agent onboards by WSC.
+3. Such an agent keeps chirping every few seconds after WSC and answers each response with a
+   new M1, which re-onboarded it every minute. The chirp is now answered only while one of the
+   agent's radios is not configured (a new agent, or one misconfigured); a configured agent
+   that loses its configuration is renewed by the SSID mismatch check.
+
+Platform-independent; a candidate for upstream.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -6629,7 +6629,7 @@
+     em_tlv_t *dpp_chirp_tlv = em_msg_t(buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t), len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_tlv(em_tlv_type_dpp_chirp_value);
+     if (dpp_chirp_tlv) {
+         em_printfout("Found DPP Chirp in Autoconfig Response, forwarding to EC");
+-        return get_ec_mgr().handle_autoconf_resp_chirp(reinterpret_cast<em_dpp_chirp_value_t*>(dpp_chirp_tlv->value), SWAP_LITTLE_ENDIAN(dpp_chirp_tlv->len), hdr->src);
++        return get_ec_mgr().handle_autoconf_resp_chirp(reinterpret_cast<em_dpp_chirp_value_t*>(dpp_chirp_tlv->value), ntohs(dpp_chirp_tlv->len), hdr->src);
+     }
+ 
+     if (get_is_dpp_onboarding()) {
+@@ -6726,7 +6726,25 @@
+     em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
+     if (dpp_chirp_tlv) {
+         em_printfout("Found DPP Chirp in Autoconfig Search (extended), forwarding to EC");
+-        return ec_mgr.handle_autoconf_chirp(reinterpret_cast<em_dpp_chirp_value_t*>(dpp_chirp_tlv->value), SWAP_LITTLE_ENDIAN(dpp_chirp_tlv->len), al_mac, ntohs(cmdu->id), peer_is_emplus);
++        if (ec_mgr.handle_autoconf_chirp(reinterpret_cast<em_dpp_chirp_value_t*>(dpp_chirp_tlv->value), ntohs(dpp_chirp_tlv->len), al_mac, ntohs(cmdu->id), peer_is_emplus)) {
++            return 1;
++        }
++        // No DPP bootstrapping for this chirp (no URI given). An agent that chirps keeps chirping after WSC, and answers
++        // every response with a new M1: answer only while one of its radios is not configured (a new agent, or one
++        // misconfigured), so that it can onboard with WSC (M1/M2) instead of waiting for a response; a configured agent
++        // that loses its configuration is renewed by the SSID mismatch check.
++        std::vector<em_t *> agent_radios;
++        get_mgr()->get_all_em_for_al_mac(al_mac, agent_radios);
++        bool configured = !agent_radios.empty() && std::all_of(agent_radios.begin(), agent_radios.end(), [](em_t *radio) {
++            return radio->get_state() >= em_state_ctrl_wsc_m2_sent && radio->get_state() != em_state_ctrl_misconfigured;
++        });
++        if (configured) {
++            em_printfout("No DPP bootstrapping for the chirp of %s, its radios configured: no response",
++                util::mac_to_string(al_mac).c_str());
++            return 0;
++        }
++        em_printfout("No DPP bootstrapping for the chirp of %s: autoconfig response without a chirp, onboarding by WSC",
++            util::mac_to_string(al_mac).c_str());
+     }
+     
+     int msg_len = create_autoconfig_resp_msg(msg, band, al_mac, ntohs(cmdu->id), nullptr, 0, peer_is_emplus);
+diff --git a/src/em/prov/em_provisioning.cpp b/src/em/prov/em_provisioning.cpp
+--- a/src/em/prov/em_provisioning.cpp
++++ b/src/em/prov/em_provisioning.cpp
+@@ -480,7 +480,7 @@
+     EM_ASSERT_NOT_NULL(chirp_tlv->value, -1, "DPP Chirp Value TLV value is NULL in DPP Chirp Notification message");
+     em_dpp_chirp_value_t* chirp = reinterpret_cast<em_dpp_chirp_value_t*> (tlv->value);
+ 
+-    if (!m_ec_manager->process_chirp_notification(chirp, SWAP_LITTLE_ENDIAN(tlv->len), src_al_mac)) {
++    if (!m_ec_manager->process_chirp_notification(chirp, ntohs(tlv->len), src_al_mac)) {
+         em_printfout("Failed to process chirp notification");
+         return -1;
+     }

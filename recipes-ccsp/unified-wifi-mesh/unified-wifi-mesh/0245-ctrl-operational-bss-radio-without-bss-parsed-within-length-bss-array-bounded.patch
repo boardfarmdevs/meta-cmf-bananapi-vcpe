@@ -1,0 +1,91 @@
+Subject: [PATCH] ctrl: a radio with no operational BSS accepted, the AP Operational BSS TLV parsed within its length and the BSS array bounded
+
+The Topology Response's AP Operational BSS TLV (17.2.4) was mandatory with at least 18 bytes,
+header included: one radio with one BSS and an empty SSID. A radio that operates no BSS (none
+of its BSSes running, or none up yet) is 11 bytes, which the specification allows, and
+em_msg_t::validate() dropped the whole Topology Response for it, every time the agent sent
+one. The minimum is now the header and the number of radios (4).
+
+handle_ap_operational_bss() read the radios and BSSes the TLV declares without checking them
+against its length (its caller passed the length in network byte order, unused), and added a
+new BSS at m_bss[m_num_bss] without checking EM_MAX_BSSS. It now gets the length in host
+order, checks every radio and BSS entry fits in it before reading any (a TLV whose entries do
+not fit is ignored), and logs and skips a BSS when the array is full.
+
+Platform-independent; a candidate for upstream.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2090,7 +2090,30 @@
+ 	char time_date[EM_DATE_TIME_BUFF_SZ];
+ 
+ 	dm = get_data_model();
+-            
++
++    // the radios and BSSes the TLV declares within its length, before anything is read from them
++    {
++        const unsigned char *p = buff, *end = buff + len;
++        bool fits = len >= sizeof(em_ap_op_bss_t);
++        unsigned int radios = fits ? reinterpret_cast<const em_ap_op_bss_t *> (p)->radios_num : 0;
++        p += sizeof(em_ap_op_bss_t);
++        for (unsigned int r = 0; fits && r < radios; r++) {
++            fits = static_cast<size_t> (end - p) >= sizeof(em_ap_op_bss_radio_t);
++            unsigned int count = fits ? reinterpret_cast<const em_ap_op_bss_radio_t *> (p)->bss_num : 0;
++            p += fits ? sizeof(em_ap_op_bss_radio_t) : 0;
++            for (unsigned int b = 0; fits && b < count; b++) {
++                fits = static_cast<size_t> (end - p) >= sizeof(em_ap_operational_bss_t);
++                size_t entry = fits ? sizeof(em_ap_operational_bss_t) + reinterpret_cast<const em_ap_operational_bss_t *> (p)->ssid_len : 0;
++                fits = fits && static_cast<size_t> (end - p) >= entry;
++                p += fits ? entry : 0;
++            }
++        }
++        if (!fits) {
++            em_printfout("Operational BSS TLV: its radios and BSSes do not fit its %u bytes, ignored", len);
++            return -1;
++        }
++    }
++
+     // first verify that dm has all the radios
+     ap = reinterpret_cast<em_ap_op_bss_t *> (buff);
+     radio = const_cast<em_ap_op_bss_radio_t *> (ap->radios);
+@@ -2137,7 +2160,13 @@
+         all_bss_len = 0;
+         for (j = 0; j < radio->bss_num; j++) {
+             dm_bss = dm->get_bss(radio->ruid, bss->bssid);
+-		
++
++			if (dm_bss == NULL && dm->get_num_bss() >= EM_MAX_BSSS) {
++				em_printfout("BSS %s not added: %u BSSes already", util::mac_to_string(bss->bssid).c_str(), dm->get_num_bss());
++				all_bss_len += static_cast<unsigned int> (sizeof(em_ap_operational_bss_t) + bss->ssid_len);
++				bss = reinterpret_cast<em_ap_operational_bss_t *> (reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_operational_bss_t) + bss->ssid_len);
++				continue;
++			}
+ 			if (dm_bss == NULL) {
+ 				dm_bss = &dm->m_bss[dm->m_num_bss];
+ 				dm_bss->init();
+@@ -3115,7 +3144,7 @@
+     }
+ 
+ 
+-        int rc = handle_ap_operational_bss(tlv->value, tlv->len);
++        int rc = handle_ap_operational_bss(tlv->value, ntohs(tlv->len));
+         if (rc != 0) {
+             if (rc == -2) {
+                 em_printfout("Failed to handle operational BSS due to SSID misconfiguration.");
+diff --git a/src/em/em_msg.cpp b/src/em/em_msg.cpp
+--- a/src/em/em_msg.cpp
++++ b/src/em/em_msg.cpp
+@@ -605,7 +605,9 @@
+ void em_msg_t::topo_resp()
+ {
+     m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_device_info, mandatory, "table 6-10 of IEEE-1905-1", 19); 
+-    m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_operational_bss, mandatory, "17.2.4 of Wi-Fi Easy Mesh 5.0", 18);
++    // the header and the number of radios: a radio may operate no BSS (one running none of
++    // its BSSes, or none up yet), which is 11 bytes, and must not drop the whole response
++    m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_operational_bss, mandatory, "17.2.4 of Wi-Fi Easy Mesh 5.0", 4);
+     m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_supported_service, optional, "17.2.1 of Wi-Fi Easy Mesh 5.0", 5);
+     m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_associated_clients, optional, "17.2.5 of Wi-Fi Easy Mesh 5.0", 20);
+     m_tlv_member[m_num_tlv++] = em_tlv_member_t(em_tlv_type_profile, (m_profile > em_profile_type_1) ? mandatory:bad, "17.2.47 of Wi-Fi Easy Mesh 5.0", 4);

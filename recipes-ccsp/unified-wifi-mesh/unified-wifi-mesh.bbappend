@@ -207,6 +207,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0241-em-onboarding-traces-to-the-debug-channel.patch \
     file://0242-agent-document-dumps-and-traces-to-the-debug-channel-keys-out.patch \
     file://0243-ctrl-radio-count-initialised-and-the-radio-array-bounded.patch \
+    file://0244-em-dpp-chirp-length-in-network-byte-order-and-wsc-answer-while-unconfigured.patch \
+    file://0245-ctrl-operational-bss-radio-without-bss-parsed-within-length-bss-array-bounded.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
