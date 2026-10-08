@@ -33,8 +33,8 @@ brings the lab back whole, the pods with it.
 
 | VM | Host, ports | Images | Last qualification |
 | --- | --- | --- | --- |
-| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008001545`, extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | image 12 redeployed in place on 7 October: the health audit (once a client's address was repaired, below), the wired extender's outage room; earlier that day on image 11, with the Pis on its controller, the catalog 27 of 27 and the four geometry rooms |
-| `rdk-emosa-1005` | rev120, 22010 to 22015 | the same | image 12 redeployed in place on 7 October: the health audit, the wired extender's outage room; the whole suite before, on image 11 |
+| `rdk-1004` | rev140, 29610 to 29615 | gateway `X86EMLTRBPIBB_rdk-next_20261008040211` (image 14: EMOSA 4b89eab, the DHCP leases kept), extenders `X86EMLTRBPIAP_rdk-next_20261006232411` | built from scratch on 8 October (cd9fc41, with free page reporting; 108 minutes): the build's acceptance and the health audit; image 14 redeployed in place: the health audit. On image 11, 7 October, with the Pis on its controller: the catalog 27 of 27 and the four geometry rooms |
+| `rdk-emosa-1005` | rev120, 22010 to 22015 | gateway `X86EMLTRBPIBB_rdk-next_20261008001545` (image 12), the extenders as rdk-1004's | image 12 redeployed in place on 7 October: the health audit, the wired extender's outage room; the whole suite before, on image 11 |
 | `rdk-emosa-1006` | rev150, 28100 to 28105 (its owner's) | gateway `X86EMLTRBPIBB_rdk-next_20261006175821`, the extenders of 29 September | built from scratch on 6 October, exit 0 in 93 minutes |
 
 What the qualification rests on:
@@ -55,7 +55,7 @@ What the qualification rests on:
 - **Storage** (easymesh-resources lab-storage). Every lab is in its host's ZFS pool `labs`,
   its room evidence on a volume of its own (`<lab>-evidence`); the pods' journals are capped
   at 128 MiB and the VM's at 256 MiB; Boardfarm's recovery path keeps its images; the base
-  image carries only the running kernel. rdk-1004 holds 7.2 GB, rdk-emosa-1005 6.4 GB.
+  image carries only the running kernel. rdk-1004, built from scratch with all of it, holds 2.9 GB on its host (5.7 in the guest); rdk-emosa-1005 6.4 GB.
 - **Devices the room does not own.** rdk-1004's two physical OpenSync pods (opensync-rpi's
   Raspberry Pis, over Ethernet) are listed by AL MAC in the VM's
   `/etc/easymesh-lab/foreign-devices` and left out of the room's health, the optimizer's
@@ -80,9 +80,10 @@ Open, each with what shows it in the easymesh-labs
 - The gateway forgets its DHCP leases at every start (meta-cmf-filogic's utopia bbappend),
   while the clients keep their addresses and never ask again; dnsmasq can then give an
   address a client off the air still holds to a pod or an extender, and that client's
-  traffic goes to the other device. Fixed in this repository's `utopia.bbappend`, in the
-  gateway images built after 7 October; until a lab runs one, a client the health audit
-  fails after a gateway start is repaired with a new lease (`udhcpc -i wlan0 -n -q` in it).
+  traffic goes to the other device. Fixed in this repository's `utopia.bbappend`, from
+  image 13 (rdk-1004 since 8 October); in a lab still on an older image, a client the
+  health audit fails after a gateway start is repaired with a new lease (`udhcpc -i wlan0
+  -n -q` in it).
 
 Build and test one lab at a time on rev140: with a second lab running, the
 build's traffic check loses packets. With a lab VM and its browser on one host,
