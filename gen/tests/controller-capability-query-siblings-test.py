@@ -25,6 +25,7 @@ program = r'''
 #include <string>
 #include <vector>
 #define em_printfout(...) ((void)0)
+#define em_util_dbg_print(...) ((void)0)
 enum {
     em_state_ctrl_unconfigured = 0x100,
     em_state_ctrl_wsc_m1_pending,

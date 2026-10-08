@@ -32,6 +32,7 @@ program = r'''
 #include <string>
 #include <vector>
 #define em_printfout(...) ((void)0)
+#define em_util_dbg_print(...) ((void)0)
 using mac_address_t = unsigned char[6];
 using mac_addr_str_t = char[18];
 constexpr int EM_MAX_TLV_MEMBERS = 16, em_profile_type_2 = 2;
