@@ -133,47 +133,26 @@ a port `eth2` of `bpibroadband`'s `brlan0`), made by `gen/wired-extender.sh`
 
 ## The EMOSA option
 
-`EASYMESH_EMOSA=1` on a build, or `build.sh emosa` on an accepted VM, adds
-emosa-lab's OpenSync adapter to the lab: EMOSA, its fleet, the pods' gateway
-(GTP) on the wired LAN port, two OpenSync pods from the pinned image
-(`EMOSA_POD_IMAGE`, `.../out/mvx-pod-STAMP`), their telemetry and Wi-Fi
-backhaul, and the rooms with the pods (`gen/medium/configurator/worlds-pods`).
-emosa-lab owns the steps (`deploy/rdk-lab/lab.sh stage`, then `up`; its
-`docs/concepts/rdk-lab.md`); `EMOSA_LAB` names its checkout, clean at the commit
-`gen/vm/lxd/emosa-lab.env` pins. It needs the wired extender. After a stop,
-`build.sh start` brings the pods back too. `EASYMESH_EMOSA_AGENT=c` installs the
-adapter in C instead of the Python reference. `EASYMESH_EMOSA_IN=gateway` then
-moves EMOSA into the gateway, its state on `/nvram`: the controller image's own
-package (`BUILD_EMOSA=1`, checked before the build).
+`EASYMESH_EMOSA=1` on a build, or `build.sh emosa` on an accepted VM, adds emosa-lab's
+OpenSync adapter: two OpenSync pods from the pinned image (`EMOSA_POD_IMAGE`,
+`.../out/mvx-pod-STAMP`), their Wi-Fi backhaul and the rooms with the pods
+(`gen/medium/configurator/worlds-pods`). With `EASYMESH_EMOSA_IN=gateway`, the target
+configuration, EMOSA (its fleet, one agent per pod, the pods' gateway GTP) runs in the
+gateway from the controller image's own package (`BUILD_EMOSA=1`, checked before the
+build), its state on `/nvram`; without it, in containers of its own on the wired LAN port.
+emosa-lab owns the steps (`deploy/rdk-lab/lab.sh`; its `docs/concepts/rdk-lab.md`);
+`EMOSA_LAB` names its checkout, clean at the commit `gen/vm/lxd/emosa-lab.env` pins. It
+needs the wired extender. After a stop, `build.sh start` brings the pods back too.
+`EASYMESH_EMOSA_AGENT=c` installs a container adapter in C instead of the Python reference.
 
-## Estimated build phases and time
+## Build time
 
-Use **about 55 minutes** as a planning reference for a fresh 100-client VM
-with Btrfs-backed nested storage and eight client-creation workers. The example
-below was reconstructed from provisioning markers and service logs, from VM
-creation through final readiness. These are observed phase durations, not
-timeouts or guaranteed performance; CPU, storage, download speeds, caches and
-competing workloads affect the result.
-
-| Phase | Example duration |
-| --- | ---: |
-| VM creation, input upload and base OS | 2m 23s |
-| Kernel installation and first reboot | 1m 05s |
-| Nested LXD/hwsim preparation and second reboot | 2m 38s |
-| Boardfarm/WAN setup | 9m 08s |
-| Initial mesh deployment and first five clients | 10m 10s |
-| Additional extenders and expansion to 100 clients | 13m 55s |
-| Runtime/Console installation, final reboot and WAN readiness | 2m 11s |
-| Cold-boot reconstruction and acceptance | 11m 45s |
-| Final audit, room startup and readiness | 1m 35s |
-| **Measured total** | **54m 50s** |
-
-The total excludes the separate BPI image builds, host-side asset preparation
-before VM creation, optional monitoring setup, and the subsequent
-[full room/soak test suite](test-suite.md). Build-time acceptance does not
-replace that suite. Client expansion includes association/convergence checks,
-not just container creation; cold-boot acceptance verifies reconstruction after
-the final reboot. Do not shorten these gates merely to match the estimate.
+A fresh lab takes about an hour on rev140; with the EMOSA option in the gateway about 90
+minutes, its acceptance included. A base VM image takes about 20 minutes off a build. The
+build log names each phase; the timing records and the ways to a shorter build are in
+[build speed](../reference/build-speed.md). The build's acceptance does not replace the
+[full room/soak test suite](test-suite.md), and its gates are not shortened to match an
+estimate.
 
 ## Operate, rebuild and remove
 
