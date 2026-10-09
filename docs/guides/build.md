@@ -41,11 +41,12 @@ export PATH="$HOME/hosttools/bin:$HOME/bin:$PATH"
 ```
 
 `gcc-multilib` (through `libc6-dev-i386`) puts the 32-bit glibc headers' links
-(`/usr/include/bits`, `/usr/include/gnu`) on the host. Today `ieee1905-em`'s Rust build
-(`rbus-sys`, bindgen) runs libclang for `i686-rdk-linux-gnu` without the target's sysroot,
-so it reads the host's `/usr/include`: without that package `do_compile` fails with
-`'bits/libc-header-start.h' file not found`. The proper fix is the target's sysroot for
-bindgen; until then the package is required.
+(`/usr/include/bits`, `/usr/include/gnu`) on the host. `ieee1905-em`'s Rust build
+(`rbus-sys`, bindgen) ran libclang for `i686-rdk-linux-gnu` without the target's sysroot,
+so it read the host's `/usr/include`: without that package `do_compile` failed with
+`'bits/libc-header-start.h' file not found`. The recipe now gives bindgen the target's
+sysroot (`BINDGEN_EXTRA_CLANG_ARGS`, `ieee1905-em.bbappend`); the package stays in the list
+until a build on a host without it confirms that.
 
 The Kirkstone-era build requires GNU tar without the newer `openat2` behavior.
 Build and place GNU tar 1.34 ahead of `/usr/bin` before creating a build directory:

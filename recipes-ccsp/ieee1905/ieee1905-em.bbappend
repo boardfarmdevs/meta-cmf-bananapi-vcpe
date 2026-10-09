@@ -10,6 +10,12 @@ PREMIRRORS:prepend = "https://crates.io/api/v1/crates/([^/]+)/.* https://static.
 # (qemux86bpiap), so this recipe -- and this fix -- never applies to the plain
 # broadband container build.
 SRC_URI += "file://0001-rbus-sys-use-TARGET-not-HOST-for-bindgen-clang-arg.patch"
+
+# 0001 has bindgen parse the rbus headers for the target, but libclang still searched the build
+# host's /usr/include for the C library's own headers: a host without the 32-bit glibc headers
+# (gcc-multilib's libc6-dev-i386) failed with 'bits/libc-header-start.h' file not found. The
+# target's sysroot instead, as the C compiler has it.
+export BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${STAGING_DIR_TARGET}"
 SRC_URI += "file://0002-topology-gc-notify-expired-neighbors.patch"
 SRC_URI += "file://0003-topology-forward-local-change-to-al-sap.patch"
 SRC_URI += "file://0004-topology-age-only-on-received-evidence.patch"
