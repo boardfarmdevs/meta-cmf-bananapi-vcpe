@@ -7,13 +7,16 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
 eval "$(sed -n '/^stamp() /p;/^medium_counts()/,/^}/p;/^medium_snapshot()/,/^}/p;/^medium_round()/,/^}/p;
+    /^radio_drops_snapshot()/,/^}/p;/^radio_drops_round()/,/^}/p;
     /^traffic_round()/,/^}/p;/^traffic_rounds()/,/^}/p' "$root/gen/tests/health-audit.sh")"
 medium_runtime=$temporary    # no medium log: its refusals count 0
 curl() { return 7; }         # no medium telemetry: each round says so
 
-# lxc exec CLIENT -- ping ...: the loss of this round for the client, from a script of rounds
+# lxc exec CLIENT -- ping ...: the loss of this round for the client, from a script of rounds;
+# lxc list: no devices, so no radios' drops: each round says so
 lxc() {
     local round loss
+    [ "$1" != list ] || return 0
     round=$(cat "$temporary/round")
     loss=$(sed -n "${round}p" "$temporary/losses")
     case " $loss " in *" $2 "*) echo "10 packets transmitted, 6 received, 40% packet loss" ;;
@@ -40,6 +43,7 @@ for round in 1 2; do
     grep -Eq "^ROUND_TIME round=$round start=[0-9T:.-]+Z end=[0-9T:.-]+Z medium_before cmd2=0 cmd3=0 medium_during cmd2=0 cmd3=0$" "$temporary/out"
     test "$(grep -c "^LINK round=$round wlan-client" "$temporary/out")" = 3
     grep -qx "MEDIUM_ROUND round=$round medium unavailable" "$temporary/out"
+    grep -qx "RADIO_DROPS round=$round unavailable" "$temporary/out"
 done
 if run 2 "wlan-client-001" "wlan-client-002"; then # lossy twice: fails
     echo 'two lossy rounds must fail' >&2; exit 1

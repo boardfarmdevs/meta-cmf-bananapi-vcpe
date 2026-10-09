@@ -407,9 +407,14 @@ started, and for how long). A lossy round is so told apart: clients just
 associated for minutes with no refusals is a fault. A logged refusal is one whose
 clone record the medium had already overwritten (0039 keeps 65536), so it read
 hwsim's reply late: `MEDIUM_ROUND` gives the round's traffic by kind
-(management, data, multicast), its tracked and other refusals, the medium's
-queue delay and depth maxima (marked `(new)` when the round raised them) and
-wmediumd's CPU seconds, or `medium unavailable` without its telemetry.
+(management, data, multicast), its tracked and other refusals, its queue-bound
+drops (easymesh-medium 0040; `-` before it), the medium's lifetime queue delay
+and depth maxima (marked `(new)` when the round raised them) and wmediumd's CPU
+seconds, or `medium unavailable` without its telemetry. A refused TX status
+(cmd 3) is a frame hwsim had already dropped, its radio's queue to the medium
+full: `RADIO_DROPS` names the radios whose `d_tx_dropped` (hwsim's count, read
+with `ethtool -S` in each device's network namespace) rose in the round, most
+first, or `none`.
 
 Useful overrides are `HEALTH_PING_COUNT`, `HEALTH_PING_INTERVAL`,
 `HEALTH_PING_MAX_LOSS`, `RESULTS_FILE` and `EASYMESH_REPO`. The default packet

@@ -282,24 +282,58 @@ medium_snapshot() {    # the medium's counters now, one line: its telemetry summ
     { curl -fsS --max-time 3 "${medium_telemetry:-http://127.0.0.1:8890/api/v1/telemetry}" 2>/dev/null || true; } |
         jq -r --arg ticks "${ticks:--}" '.packet_metrics.summary | [.frames_seen, .management_frames,
             .data_frames, .multicast_frames, .netlink_clone_einval, .netlink_other_errors,
-            .queue_delay_usec_max, .queue_depth_max] + [$ticks] | map(tostring) | join(" ")' 2>/dev/null || true
+            .queue_delay_usec_max, .queue_depth_max, (.drops_queue_bound // "-")] + [$ticks] |
+            map(tostring) | join(" ")' 2>/dev/null || true
 }
+# The queue maxima are the medium's since it started (marked (new) when the round raised them);
+# its queue-bound drops (0040; - before it) are the round's own.
 medium_round() {    # medium_round BEFORE AFTER: the medium in a round, from two snapshots
     local -a b a
-    local i cpu=-
+    local i cpu=- bound=-
     read -ra b <<<"$1"
     read -ra a <<<"$2"
-    [[ "${#b[@]}" -eq 9 && "${#a[@]}" -eq 9 ]] || { echo "medium unavailable"; return 0; }
+    [[ "${#b[@]}" -eq 10 && "${#a[@]}" -eq 10 ]] || { echo "medium unavailable"; return 0; }
     for i in 0 1 2 3 4 5 6 7; do
         [[ "${b[$i]}" =~ ^[0-9]+$ && "${a[$i]}" =~ ^[0-9]+$ ]] || { echo "medium unavailable"; return 0; }
     done
     if [[ "${b[8]}" =~ ^[0-9]+$ && "${a[8]}" =~ ^[0-9]+$ ]]; then
-        cpu=$(awk -v t=$((a[8] - b[8])) -v hz="$(getconf CLK_TCK)" 'BEGIN {printf "%.1f", t / hz}')
+        bound=$((a[8] - b[8]))
+    fi
+    if [[ "${b[9]}" =~ ^[0-9]+$ && "${a[9]}" =~ ^[0-9]+$ ]]; then
+        cpu=$(awk -v t=$((a[9] - b[9])) -v hz="$(getconf CLK_TCK)" 'BEGIN {printf "%.1f", t / hz}')
     fi
     echo "frames=$((a[0] - b[0])) management=$((a[1] - b[1])) data=$((a[2] - b[2]))" \
         "multicast=$((a[3] - b[3])) clone_einval=$((a[4] - b[4])) other_errors=$((a[5] - b[5]))" \
-        "queue_delay_max_usec=${a[6]}$([ "${a[6]}" = "${b[6]}" ] || echo '(new)')" \
-        "queue_depth_max=${a[7]}$([ "${a[7]}" = "${b[7]}" ] || echo '(new)') wmediumd_cpu_s=$cpu"
+        "queue_bound_drops=$bound" \
+        "lifetime_queue_delay_max_usec=${a[6]}$([ "${a[6]}" = "${b[6]}" ] || echo '(new)')" \
+        "lifetime_queue_depth_max=${a[7]}$([ "${a[7]}" = "${b[7]}" ] || echo '(new)') wmediumd_cpu_s=$cpu"
+}
+# A TX status the medium sends late is refused (cmd 3) when hwsim has dropped the frame already: a
+# radio's frames waiting for the medium past hwsim's queue limit are dropped, the oldest first, and
+# counted in its d_tx_dropped. Which radios is what tells a slow medium on one channel from one
+# radio's backlog (rdk-1004, 9 October 20:10Z: 6,060 refusals in one round, channel 36).
+radio_drops_snapshot() {    # every lab radio's hwsim drops now: "DEVICE/phyN COUNT" lines
+    local name pid
+    lxc list -c np --format csv </dev/null 2>/dev/null | while IFS=, read -r name pid; do
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+        timeout 5 nsenter -t "$pid" -n iw dev 2>/dev/null |
+            awk '/^phy#/ {phy = substr($1, 5)} /Interface/ && phy != "" && !seen[phy]++ {print phy, $2}' |
+            while read -r phy interface; do
+                timeout 5 nsenter -t "$pid" -n ethtool -S "$interface" 2>/dev/null |
+                    awk -v key="$name/phy$phy" '$1 == "d_tx_dropped:" {print key, $2}'
+            done
+    done
+    return 0    # a device gone or without hwsim radios is left out, not the audit's failure
+}
+radio_drops_round() {    # radio_drops_round BEFORE AFTER: the radios whose hwsim drops rose, most first
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "unavailable"
+        return 0
+    fi
+    awk 'NR == FNR {before[$1] = $2; next}
+        ($1 in before) && $2 > before[$1] {print $2 - before[$1], $1}' \
+        <(printf '%s\n' "$1") <(printf '%s\n' "$2") |
+        sort -k1,1nr | awk '{line = line sep $2 "=" $1; sep = " "} END {print line == "" ? "none" : line}'
 }
 traffic_round() {    # traffic_round ROUND: one parallel round; fails if any client exceeds the loss bar
     local client pid fail=0 completed=0
@@ -338,19 +372,22 @@ traffic_round() {    # traffic_round ROUND: one parallel round; fails if any cli
     return "$fail"
 }
 traffic_rounds() {    # up to ping_rounds rounds, a pause after each lossy one; the last decides
-    local round start end mark rc before after
+    local round start end mark rc before after drops_before drops_after
     mark=${audit_start:-$(stamp)}
     for ((round = 1; round <= ping_rounds; round++)); do
         [ "$round" = 1 ] || echo "ROUND $round"
+        drops_before=$(radio_drops_snapshot)
         before=$(medium_snapshot)
         start=$(stamp)
         rc=0
         traffic_round "$round" || rc=1
         end=$(stamp)
         after=$(medium_snapshot)
+        drops_after=$(radio_drops_snapshot)
         echo "ROUND_TIME round=$round start=$start end=$end" \
             "medium_before $(medium_counts "$mark" "$start") medium_during $(medium_counts "$start" "$end")"
         echo "MEDIUM_ROUND round=$round $(medium_round "$before" "$after")"
+        echo "RADIO_DROPS round=$round $(radio_drops_round "$drops_before" "$drops_after")"
         mark=$end
         [ "$rc" = 1 ] || return 0
         [ "$round" -lt "$ping_rounds" ] || return 1
