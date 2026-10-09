@@ -17,6 +17,29 @@ ping_exec_timeout=${HEALTH_PING_EXEC_TIMEOUT:-20}
 # build's round, then every later check passed).
 ping_rounds=${HEALTH_PING_ROUNDS:-2}
 ping_settle=${HEALTH_PING_SETTLE_SECONDS:-30}
+# A failed traffic check keeps the medium's state beside it: once the medium restarts (a
+# redeploy, a reproduction) the run's record is gone (image 18's first audit on rdk-1004,
+# 8 October, could not be explained afterwards). The last five are kept.
+medium_runtime=${HEALTH_MEDIUM_RUNTIME:-/run/meta-cmf-wmediumd}
+medium_telemetry=${HEALTH_MEDIUM_TELEMETRY_URL:-http://127.0.0.1:8890/api/v1/telemetry}
+medium_evidence_root=${HEALTH_MEDIUM_EVIDENCE_DIR:-$repo/tmp/test-results/medium-evidence}
+medium_evidence() {    # the medium's telemetry, configuration and logs (each bounded by -L) now
+    local dir file old saved=
+    dir=$medium_evidence_root/$(date -u +%Y%m%dT%H%M%SZ)
+    mkdir -p "$dir" || return 0
+    if curl -fsS --max-time 10 "$medium_telemetry" > "$dir/telemetry.json" 2>/dev/null; then
+        saved="telemetry.json"
+    else
+        rm -f "$dir/telemetry.json"
+    fi
+    for file in wmediumd.cfg wmediumd.log wmediumd.log.1 wmediumd.log.prev wmediumd.log.prev.1; do
+        [ -r "$medium_runtime/$file" ] && cp "$medium_runtime/$file" "$dir/" 2>/dev/null &&
+            saved="$saved $file"
+    done
+    while IFS= read -r old; do rm -rf -- "$old"; done < <(
+        find "$medium_evidence_root" -mindepth 1 -maxdepth 1 -type d -name '20*Z' | sort | head -n -5)
+    echo "MEDIUM_EVIDENCE $dir (${saved# })"
+}
 # The lab's extenders on a wired backhaul (gen/wired-extender.sh): one more device each,
 # with three radios and ten BSSes, but no backhaul station association and no Wi-Fi edge.
 wired=$(for c in $(lxc list -c n --format csv | grep -E '^bpiap-[0-9]{3}$' | sort -V); do
@@ -295,6 +318,8 @@ if [ -s "$results" ]; then
         printf "pass=%d/%d link_avg=%.0fms link_max=%dms db_avg=%.0fms db_max=%dms api_avg=%.0fms api_max=%dms loss_avg=%.1f%% loss_max=%d%%\n", pass, n, sl/n, ml, sd/n, md, sa/n, ma, loss/n, mx
     }' "$results"
 fi
+
+[ "$traffic_fail" = 0 ] || medium_evidence
 
 echo MEMORY
 free -h | sed -n '1,2p'
