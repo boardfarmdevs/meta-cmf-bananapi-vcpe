@@ -51,6 +51,45 @@ WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH := "${THISDIR}/${BPN}/0039-preserve-backhaul
 WIFI_NASTA_STATIONS_PATCH := "${THISDIR}/${BPN}/0040-nasta-sixty-four-stations-per-channel.patch"
 WIFI_BACKHAUL_RECONNECT_PATCH := "${THISDIR}/${BPN}/0041-backhaul-reconnect-one-attempt-per-scan.patch"
 SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no file://0037-native-backhaul-root-admission.patch;apply=no file://0038-native-backhaul-root-revocation.patch;apply=no"
+LAYER_ONEWIFI_PATCH_DIR := "${THISDIR}/${BPN}"
+
+# Every file the layer's patches (the recipe's *_PATCH variables naming a patch in this layer's
+# directory, never another layer's) touch, back to the fetched revision (S is its git checkout),
+# the files they create and old .orig/.rej removed.
+def restore_layer_patched_files(d, s):
+    import os
+    import subprocess
+    if not os.path.isdir(os.path.join(s, '.git')):
+        return
+    layer_dir = os.path.realpath(d.getVar('LAYER_ONEWIFI_PATCH_DIR'))
+    files = set()
+    for key in d.keys():
+        if not key.endswith('_PATCH'):
+            continue
+        path = d.getVar(key) or ''
+        if not path.endswith('.patch') or not os.path.isfile(path):
+            continue
+        if os.path.dirname(os.path.realpath(path)) != layer_dir:
+            continue
+        with open(path, 'rb') as stream:
+            for line in stream:
+                if line.startswith(b'+++ b/'):
+                    files.add(line[6:].split(b'\t')[0].strip().decode())
+    if not files:
+        return
+    listed = subprocess.run(['git', '-C', s, 'ls-files', '-z', '--'] + sorted(files),
+                            stdout=subprocess.PIPE, check=True).stdout
+    tracked = {name for name in listed.decode().split('\0') if name}
+    if tracked:
+        subprocess.run(['git', '-C', s, 'checkout', '--'] + sorted(tracked), check=True)
+    for name in sorted(files):
+        leftovers = [name + '.orig', name + '.rej'] + ([] if name in tracked else [name])
+        for leftover in leftovers:
+            if os.path.isfile(os.path.join(s, leftover)):
+                os.remove(os.path.join(s, leftover))
+    bb.note('meta-cmf-bananapi-vcpe: %d files the layer patches touch restored to the fetched '
+            'revision' % len(files))
+
 python do_patch_append() {
     import os
     import subprocess
@@ -83,6 +122,15 @@ python do_patch_append() {
         bb.fatal('meta-cmf-bananapi-vcpe: patch is neither cleanly applicable '
                  'nor already applied:\n%s' %
                  forward.stdout.decode('utf-8', errors='replace'))
+
+    # The "already applied" test above cannot work patch by patch once a later patch rewrites
+    # an earlier one's lines: a do_patch run again on a tree it patched before (its inputs
+    # changed, no rm_work) met "reconciling hwsim live association snapshots" neither
+    # applicable nor already applied (rev140, 9 October). Every file the layer's patches touch
+    # is first restored from the fetched revision, the files they create and old .orig/.rej
+    # removed: each run applies them all to the same text. (No other patch reaches this tree:
+    # the recipe applies none of its own.)
+    restore_layer_patched_files(d, s)
 
     with open(d.getVar('WIFI_SCHEDULER_STATUS_API_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
