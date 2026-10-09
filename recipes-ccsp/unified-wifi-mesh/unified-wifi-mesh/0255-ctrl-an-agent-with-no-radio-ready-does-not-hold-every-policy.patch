@@ -1,0 +1,136 @@
+Subject: [PATCH] ctrl: an agent with no radio ready does not hold every policy
+
+The lab's 0187 sends an explicit set_policy from one radio of the agent that is ready for it,
+and when none is, it took the agent's first radio anyway. A command on a radio that is not
+ready waits out its time limit and is cancelled, and the next set_policy for the agent is pushed
+on it again; set_policy commands run one at a time, so every agent's policy waits behind it. On
+rdk-1004 (9 October, gateway image 21) a Wi-Fi extender sent no M1 after the controller's
+restart: its set_policy was pushed 23 times and cancelled on its time limit 7 times in 13
+minutes, no Policy Config Request went to it, and the lab runtime's metrics policy (POST
+metricsreporting/enable) never succeeded, three cold starts in a row.
+
+Now the command goes to a radio in a state for a policy, idle if one is, else busy with
+another command (it waits for that, as before). An agent with no radio in such a state gets no
+command: its policy goes to the live model and the database at once, as a completed command
+commits it (commit_set_policy, shared with the command's completion), the command completes,
+and the agent gets that policy in its onboarding's own policy step, from the live model, and
+its metric reporting part at each topology sync. Another agent's policy is no longer held by
+it.
+
+Platform-independent (completes the lab's 0187); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes 0187, a lab patch]
+
+diff --git a/inc/em_orch_ctrl.h b/inc/em_orch_ctrl.h
+index cc38ec5..a4e9971 100644
+--- a/inc/em_orch_ctrl.h
++++ b/inc/em_orch_ctrl.h
+@@ -94,7 +94,18 @@ public:
+ 	 * @returns True if the EM is ready for orchestration finalization, false otherwise.
+ 	 */
+ 	bool is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em);
+-    
++
++	/**!
++	 * @brief Commits a set_policy command's policies to the agent's live data model and the DB.
++	 *
++	 * Done when the command completes on its radio, or at once for an agent with no radio
++	 * ready for a policy, which gets the committed policy in its onboarding's policy step.
++	 *
++	 * @param[in] pcmd The set_policy command.
++	 * @param[in] em A radio of the agent the command is for.
++	 */
++	void commit_set_policy(em_cmd_t *pcmd, em_t *em);
++
+ 	/**!
+ 	 * @brief Handles the orchestration of transient commands.
+ 	 *
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 6bec01a..3eda713 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -300,17 +300,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+ 
+ 		case em_cmd_type_set_policy:
+             if (em->get_state() == em_state_ctrl_configured) {
+-                // Commit policies from the command DM to the live data model and DB
+-                dm_easy_mesh_t *cmd_dm = pcmd->get_data_model();
+-                dm_easy_mesh_t *live_dm = em->get_data_model();
+-                if (cmd_dm != NULL && live_dm != NULL) {
+-                    for (unsigned int p = 0; p < cmd_dm->get_num_policy(); p++) {
+-                        live_dm->set_policy(cmd_dm->m_policy[p]);
+-                    }
+-                    // Trigger DB write
+-                    cmd_dm->set_db_cfg_param(db_cfg_type_policy_list_update, "");
+-                    m_mgr->update_tables(cmd_dm);
+-                }
++                commit_set_policy(pcmd, em);
+                 return true;
+             }
+ 			break;
+@@ -344,6 +334,21 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+     return false;
+ }
+ 
++void em_orch_ctrl_t::commit_set_policy(em_cmd_t *pcmd, em_t *em)
++{
++    // Commit policies from the command DM to the live data model and DB
++    dm_easy_mesh_t *cmd_dm = pcmd->get_data_model();
++    dm_easy_mesh_t *live_dm = em->get_data_model();
++    if (cmd_dm != NULL && live_dm != NULL) {
++        for (unsigned int p = 0; p < cmd_dm->get_num_policy(); p++) {
++            live_dm->set_policy(cmd_dm->m_policy[p]);
++        }
++        // Trigger DB write
++        cmd_dm->set_db_cfg_param(db_cfg_type_policy_list_update, "");
++        m_mgr->update_tables(cmd_dm);
++    }
++}
++
+ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+ {
+     switch (pcmd->m_type) {
+@@ -688,13 +693,40 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
+         std::vector<em_t *> em_radios;
+         m_mgr->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
+         if (!em_radios.empty()) {
+-            auto selected = em_radios.front();
++            // a radio ready for a policy and idle, else one ready but busy with another command
++            // (the policy waits for it)
++            em_t *selected = NULL, *busy = NULL;
+             for (auto radio : em_radios) {
+-                if (radio && radio->get_orch_state() != em_orch_state_progress &&
+-                    is_em_ready_for_orch_exec(pcmd, radio)) {
++                if (radio == NULL || !is_em_ready_for_orch_exec(pcmd, radio)) {
++                    continue;
++                }
++                if (radio->get_orch_state() != em_orch_state_progress) {
+                     selected = radio;
+                     break;
+                 }
++                if (busy == NULL) {
++                    busy = radio;
++                }
++            }
++            if (selected == NULL) {
++                selected = busy;
++            }
++            if (selected == NULL) {
++                // No radio of the agent is in a state for a policy (it has not onboarded again,
++                // after a controller restart): a command on one would wait out its time limit,
++                // and be pushed and cancelled again, with every other policy behind it,
++                // set_policy running one at a time. The policy goes to the live model as a
++                // completed command's does: the agent gets it in its onboarding's policy step
++                // (from the live model), its metric reporting part again at each topology sync.
++                for (auto radio : em_radios) {
++                    if (radio != NULL) {
++                        commit_set_policy(pcmd, radio);    // the agent's model: any of its radios'
++                        break;
++                    }
++                }
++                em_printfout("Set Policy: agent %s has no radio ready; its policy committed, sent when it onboards",
++                    util::mac_to_string(dm->get_agent_al_interface_mac()).c_str());
++                return count;
+             }
+             em_printfout("Set Policy: %s pushed to queue", util::mac_to_string(selected->get_radio_interface_mac()).c_str());
+             queue_push(pcmd->m_em_candidates, selected);

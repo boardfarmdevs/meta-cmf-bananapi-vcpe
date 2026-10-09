@@ -28,6 +28,15 @@ readiness = function(orchestration, "bool em_orch_ctrl_t::is_em_ready_for_orch_e
 candidates = function(orchestration, "unsigned int em_orch_ctrl_t::build_candidates(")
 candidates = function(candidates, "if (pcmd->m_type == em_cmd_type_set_policy)")
 dispatch = function(policy, "void em_policy_cfg_t::process_ctrl_state(")
+# 0255: the command never goes to a radio that is not in a state for a policy (0187's fallback to
+# the agent's first radio held every policy, rdk-1004, 9 October), and the policy an agent with no
+# such radio is given is committed as a completed command's is
+assert "front()" not in candidates, "the set_policy candidate falls back to the agent's first radio"
+completion = function(orchestration, "bool em_orch_ctrl_t::is_em_ready_for_orch_fini(")
+completion = completion[completion.index("case em_cmd_type_set_policy:"):]
+assert "commit_set_policy(pcmd, em);" in completion[:completion.index("break;")]
+commit = function(orchestration, "void em_orch_ctrl_t::commit_set_policy(")
+assert "live_dm->set_policy(cmd_dm->m_policy[p]);" in commit and "m_mgr->update_tables(cmd_dm);" in commit
 constants = sorted(set(re.findall(r"\bem_(?:cmd_type|state_ctrl|orch_state)_\w+", readiness + candidates + dispatch)))
 constants.append("em_orch_state_idle")
 program = r'''
@@ -70,8 +79,11 @@ struct Manager {
 };
 struct em_orch_ctrl_t {
     Manager *m_mgr;
+    unsigned commits;
+    em_t *committed;
     bool is_em_ready_for_orch_exec(em_cmd_t *, em_t *);
     unsigned int build_candidates(em_cmd_t *);
+    void commit_set_policy(em_cmd_t *, em_t *em) { commits++; committed = em; }
 };
 struct em_policy_cfg_t : em_t {
     Manager *manager;
@@ -94,7 +106,7 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd) {
 DISPATCH
 int main() {
     Manager manager;
-    em_orch_ctrl_t orchestrator{&manager};
+    em_orch_ctrl_t orchestrator{&manager, 0, nullptr};
     em_cmd_t command;
     em_policy_cfg_t first, selected, sibling;
     for (auto radio : {&first, &selected, &sibling}) {
@@ -119,13 +131,31 @@ int main() {
     assert(orchestrator.build_candidates(&command) == 1);
     assert(command.candidates.front() == &first);
     command.candidates.clear();
+    // every radio busy: the first in a state for a policy, and the policy waits for it
     for (auto radio : manager.radios) radio->orch = em_orch_state_progress;
     assert(orchestrator.build_candidates(&command) == 1);
     assert(command.candidates.front() == &first);
     command.candidates.clear();
-    manager.radios.clear();
+    first.state = em_state_ctrl_wsc_m2_sent;
+    assert(orchestrator.build_candidates(&command) == 1);
+    assert(command.candidates.front() == &sibling);
+    command.candidates.clear();
+    // 0255: no radio in a state for a policy (the agent has not onboarded again): no command
+    // to hold every other policy, the policy committed to the agent's live model, none sent
+    for (auto radio : manager.radios) { radio->state = em_state_ctrl_wsc_m2_sent; radio->orch = em_orch_state_idle; }
+    unsigned sent_before = first.sent + selected.sent + sibling.sent;
+    assert(orchestrator.commits == 0);
     assert(orchestrator.build_candidates(&command) == 0);
     assert(command.candidates.empty());
+    assert(orchestrator.commits == 1 && orchestrator.committed == &first);
+    assert(first.sent + selected.sent + sibling.sent == sent_before);
+    first.state = em_state_ctrl_configured;
+    assert(orchestrator.build_candidates(&command) == 1 && orchestrator.commits == 1);
+    assert(command.candidates.front() == &first);
+    command.candidates.clear();
+    manager.radios.clear();
+    assert(orchestrator.build_candidates(&command) == 0);
+    assert(command.candidates.empty() && orchestrator.commits == 1);
     manager.radios = {&first, &selected, &sibling};
     command.m_type = em_cmd_type_em_config;
     for (auto radio : manager.radios) radio->state = em_state_ctrl_set_policy_pending;
@@ -169,4 +199,4 @@ with tempfile.TemporaryDirectory(prefix="policy-submission-") as temporary:
     (directory / "main.go").write_text(go_program)
     (directory / "go.mod").write_text("module policy_test\n\ngo 1.19\n")
     subprocess.run(["go", "run", "."], cwd=directory, check=True)
-print("PASS selected policy owner, cold-state admission, unchanged onboarding and bounded truthful CLI submission")
+print("PASS selected policy owner, cold-state admission, an agent with no radio ready committed and not held (0255), unchanged onboarding and bounded truthful CLI submission")

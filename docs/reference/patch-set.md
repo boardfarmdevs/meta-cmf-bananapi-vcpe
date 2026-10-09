@@ -432,6 +432,7 @@ python3 gen/tests/controller-steer-backhaul-op-class-test.py "$UNIFIED_SRC"
 python3 gen/tests/controller-backhaul-steering-response-test.py "$UNIFIED_SRC"
 python3 gen/tests/controller-removed-bss-database-test.py "$UNIFIED_SRC"
 python3 gen/tests/controller-radio-retire-test.py "$UNIFIED_SRC"
+python3 gen/tests/policy-submission-test.py "$UNIFIED_SRC"
 python3 gen/tests/unassoc-result-state-test.py "$UNIFIED_SRC"
 python3 gen/tests/btm-report-state-test.py "$UNIFIED_SRC"
 python3 gen/tests/unassoc-query-dispatch-test.py "$UNIFIED_SRC"
@@ -554,6 +555,17 @@ explicit previous-command-in-progress rejection is retried within its budget.
 The compiled native/Go regression is `gen/tests/policy-submission-test.py`.
 Successful queue admission still does not prove an agent ACK or fresh metrics;
 live acceptance must observe those separately.
+
+Patch `0255` completes it: with no radio of the agent in a state for a policy,
+`0187` took the agent's first radio anyway, and that command waited out its time
+limit and was pushed again, holding every other agent's policy (set_policy runs
+one at a time; `rdk-1004`, 9 October: three cold starts could not apply the
+metrics policy while one extender had not onboarded again). The command now goes
+to a ready radio, idle if one is, else busy (it waits for it); an agent with none
+gets no command, its policy is committed to the live model and the database as a
+completed command's is (`commit_set_policy`), and it gets it in its onboarding's
+policy step. The same regression covers it: no fallback to the first radio, the
+busy fallback, the commit with nothing sent, and the completion's commit.
 
 ### Image provenance
 

@@ -218,6 +218,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0252-ctrl-a-policy-ack-leaves-a-radio-with-its-own-request-pending.patch \
     file://0253-ctrl-a-radio-its-agent-no-longer-reports-is-retired.patch \
     file://0254-ctrl-a-moving-backhaul-station-keeps-its-row.patch \
+    file://0255-ctrl-an-agent-with-no-radio-ready-does-not-hold-every-policy.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
