@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
+"""A policy ACK configures the radio whose request it answers and the agent's radios that sent
+none (0226), not one with a request of its own outstanding (0252). With em.cpp as a second
+argument: a radio entering set_policy_pending starts with no request outstanding (0252)."""
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
 
 source = Path(sys.argv[1]).read_text()
+if len(sys.argv) > 2:
+    em_source = Path(sys.argv[2]).read_text()
+    entries = re.findall(r"(.*\n.*\n)\s*m_sm\.set_state\(em_state_ctrl_set_policy_pending\);", em_source)
+    assert len(entries) == 2, entries
+    for before in entries:
+        assert "m_policy_req_msg_id = 0;" in before, before
 start = source.index("int em_policy_cfg_t::handle_1905_ack(")
 implementation = source[start:source.index("\n}\n", start) + 3]
 program = r'''
@@ -20,6 +30,9 @@ constexpr int em_state_ctrl_configured = 1, em_state_ctrl_set_policy_pending = 2
 struct __attribute__((packed)) em_raw_hdr_t { mac_address_t dst, src; unsigned short ether_type; };
 struct __attribute__((packed)) em_cmdu_t { unsigned char version, reserved; unsigned short type, id; unsigned char fragment, flags; };
 void em_printfout(const char *, ...) {}
+enum { EM_CONF };
+void em_debug(int, const char *, ...) {}
+#define em_util_dbg_print(module, ...) em_debug(module, __VA_ARGS__)
 struct em_orch_t {
     std::recursive_mutex mutex;
     std::unique_lock<std::recursive_mutex> lock_commands() {
@@ -59,11 +72,14 @@ int main() {
         em_t owner{em_state_ctrl_set_policy_pending, 42, 0, 0};
         em_t sibling{pending, 0, 123, 456};
         em_t other_policy{em_state_ctrl_set_policy_pending, 99, 0, 0};
-        policy.manager.radios = {&sibling, &other_policy, &owner};
+        em_t waiting{em_state_ctrl_set_policy_pending, 0, 0, 0};    // sent nothing (0226)
+        policy.manager.radios = {&sibling, &other_policy, &waiting, &owner};
         assert(policy.handle_1905_ack(frame, sizeof(frame)) == 0);
         assert(owner.state == em_state_ctrl_configured && owner.m_policy_req_msg_id == 0);
         assert(sibling.state == pending && sibling.candidate_mid == 123 && sibling.steering_mid == 456);
+        // its own request outstanding: only that request's ACK configures it (0252)
         assert(other_policy.state == em_state_ctrl_set_policy_pending && other_policy.m_policy_req_msg_id == 99);
+        assert(waiting.state == em_state_ctrl_configured && waiting.m_policy_req_msg_id == 0);
         assert(policy.handle_1905_ack(frame, sizeof(frame)) == 0);
         assert(sibling.state == pending && other_policy.state == em_state_ctrl_set_policy_pending);
         owner = {em_state_ctrl_set_policy_pending, 42, 0, 0};

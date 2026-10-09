@@ -1,0 +1,60 @@
+Subject: [PATCH] ctrl: a policy ACK leaves a radio with its own request pending
+
+0226 lets a Multi-AP Policy Config ACK configure every radio of the agent waiting in
+set_policy_pending: em_config sends the agent's policy from one radio and the others wait for
+it. It configured a radio with a request of its own outstanding as well (a set_policy command
+on that radio, or a radio that sent in an earlier round): that radio's command completed and
+its policy was committed to the model and the database though the agent had acknowledged
+another request, and if that radio's request was lost the controller held a policy the agent
+never applied.
+
+Now the ACK configures the radio whose request it answers and the radios that sent none; a
+radio with its own request outstanding stays in the step and sends again until its own ACK
+arrives. A radio entering the step starts with no request outstanding, so the MID of a
+cancelled request cannot hold it there.
+
+Platform-independent (completes the lab's 0226); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes 0226, a lab patch]
+
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index b38a778..c2c8e61 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -206,6 +206,8 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+             } else if ((pcmd->get_orch_op() == dm_orch_type_channel_pref) && (m_sm.get_state() == em_state_ctrl_ap_cap_report_received)) {
+                 m_sm.set_state(em_state_ctrl_channel_query_pending);
+             } else if ((pcmd->get_orch_op() == dm_orch_type_policy_cfg) && (m_sm.get_state() == em_state_ctrl_channel_queried)) {
++                // no request of its own yet: a cancelled one's MID must not hold it in the step
++                m_policy_req_msg_id = 0;
+                 m_sm.set_state(em_state_ctrl_set_policy_pending);
+             } else if ((pcmd->get_orch_op() == dm_orch_type_channel_sel) && (m_sm.get_state() == em_state_ctrl_configured)) {
+                 m_sm.set_state(em_state_ctrl_channel_select_pending);
+@@ -288,6 +290,7 @@ void em_t::orch_execute(em_cmd_t *pcmd)
+             break;
+ 
+ 		case em_cmd_type_set_policy:
++            m_policy_req_msg_id = 0;
+             m_sm.set_state(em_state_ctrl_set_policy_pending);
+             break;
+ 
+diff --git a/src/em/policy_cfg/em_policy_cfg.cpp b/src/em/policy_cfg/em_policy_cfg.cpp
+index 23dbbed..60874b7 100644
+--- a/src/em/policy_cfg/em_policy_cfg.cpp
++++ b/src/em/policy_cfg/em_policy_cfg.cpp
+@@ -982,10 +982,13 @@ int em_policy_cfg_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+     }
+     // The policy is the agent's: em_config sends it once, from the agent's
+     // first radio, and the others wait in the same step. The ACK configures
+-    // them too, or they stay in set_policy_pending.
++    // them too, or they stay in set_policy_pending. A radio with a request of
++    // its own outstanding waits for that request's ACK: another request's ACK
++    // does not acknowledge it, and it keeps sending until its own arrives.
+     if (match_found) {
+         for (auto &em : em_radios) {
+-            if (em->get_state() == em_state_ctrl_set_policy_pending) {
++            if (em->get_state() == em_state_ctrl_set_policy_pending &&
++                    (em->m_policy_req_msg_id == 0 || em->m_policy_req_msg_id == response_msg_id)) {
+                 em->m_policy_req_msg_id = 0;
+                 em->set_state(em_state_ctrl_configured);
+             }
