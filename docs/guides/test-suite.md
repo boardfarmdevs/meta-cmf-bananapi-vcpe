@@ -69,6 +69,14 @@ section and the 12-hour soak at release points: a tag, a lab handed over, or a c
 to the images. The map is `RULES` in the script; `gen/tests/test_affected_suites.py`
 keeps its decisions.
 
+New images also need the lab's cold start, which a redeploy and `lab-bringup.sh` never
+take: `gen/vm/lxd/build.sh restart`, the runtime's start reaching its cold-boot
+reconstruction PASS (`journalctl -u easymesh-lab`), then the health audit. The
+controller loads its model from its database, every agent onboards again and the
+metrics policy goes to them all. On `rdk-1004` (9 October) image 21 passed its
+redeploy, audits and rooms, and its cold start could not apply that policy
+(unified-wifi-mesh 0255).
+
 `--soak-preflight-only` retains source matching, full-roster preparation and
 initial/final health/RF gates without churn. Its `p0-preflight` result records
 `acceptance_eligible=false`; `total_runtime_seconds` includes final checks.

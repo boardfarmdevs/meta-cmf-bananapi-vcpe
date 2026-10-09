@@ -192,16 +192,7 @@ gen/lab-redeploy.sh X86EMLTRBPIBB_rdk-next_<stamp>.rootfs.lxc.tar.bz2 X86EMLTRBP
 It deploys the gateway and every extender again, each keeping its identity (its
 nvram), restores em_cli, a wired LAN port and a wired extender where the lab has
 them, then brings the lab up with `gen/lab-bringup.sh up`. Never while a room suite
-runs.
-
-A redeploy and `lab-bringup.sh` never take the lab's cold start: the runtime's start
-after a VM restart, with the controller loading its model from its database, every
-agent onboarding again and the metrics policy applied to them all. An image is
-qualified on a lab only once that passes too: `gen/vm/lxd/build.sh restart`, the
-runtime's start completing (`systemctl status easymesh-lab`, the cold-boot
-reconstruction PASS line), then the health audit. On `rdk-1004` (9 October) image 21
-passed its redeploy, two health audits and the rooms, and its cold start then could not
-apply the metrics policy (open work).
+runs. Cold start: see [test suite](test-suite.md).
 
 For a portable appliance, use `export-thin` only after the appropriate VM test
 tier passes. The exported bundle can be imported under another lab name by
