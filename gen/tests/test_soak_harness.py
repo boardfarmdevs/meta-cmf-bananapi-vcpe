@@ -84,6 +84,8 @@ def soak_execution(tmp_path, monkeypatch):
         },
         "new_kernel_failures": {},
         "new_coredumps": {},
+        # the five-node lab (lab_composition.py), read from LXD in a lab VM
+        "composition": soak.Composition(),
     }
     for name, value in probes.items():
         monkeypatch.setattr(soak, name, Mock(return_value=value))
