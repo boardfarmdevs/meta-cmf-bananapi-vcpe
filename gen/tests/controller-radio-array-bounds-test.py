@@ -67,6 +67,7 @@ struct dm_easy_mesh_t {
     webconfig_subdoc_data_t *m_wifi_data;
     unsigned int m_num_preferences, m_num_interfaces, m_num_radios, m_num_opclass, m_num_policy,
         m_num_bss, m_num_ap_mld, m_num_net_ssids, m_num_assoc_sta_mld;
+    unsigned int m_num_removed_bss = 0;    /* 0251: the BSS rows removed, for the database */
     em_db_cfg_param_t m_db_cfg_param;
     bool m_colocated, m_is_ctlr;
     dm_device_t m_device;

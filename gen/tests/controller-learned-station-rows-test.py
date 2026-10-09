@@ -88,6 +88,9 @@ struct dm_easy_mesh_t {
         m_num_bss--;
     }
     void set_db_cfg_param(db_cfg_type_t, const char *) { updates++; }
+    /* the rows removed, for their database rows to go too (0251) */
+    std::vector<em_bss_info_t> removed;
+    void remember_removed_bss(const em_bss_info_t *bss) { removed.push_back(*bss); }
 };
 
 static int stations(dm_easy_mesh_t *dm, unsigned char *device_cursor, unsigned int device_remaining,
@@ -201,6 +204,9 @@ int main()
     assert(station(dm, RADIO_24) && memcmp(station(dm, RADIO_24)->bssid.mac, POD1_BH, 6) == 0);
     assert(!station(dm, STA_5));
     assert(station_rows(dm) == 1);
+    if (@RECORDS@) {   /* 0251: the removed row is recorded for the database */
+        assert(!dm.removed.empty() && memcmp(dm.removed.back().ruid.mac, STA_5, 6) == 0);
+    }
     assert(own_aps(dm));
     /* the same again: nothing changes */
     unsigned int rows = dm.m_num_bss;
@@ -243,7 +249,8 @@ int main()
     }
     return 0;
 }
-'''.replace("@SLICE@", stations)
+'''.replace("@SLICE@", stations).replace(
+    "@RECORDS@", "true" if "remember_removed_bss" in stations else "false")
 
 with tempfile.TemporaryDirectory() as tmp:
     src, exe = Path(tmp) / "stations.cpp", Path(tmp) / "stations"

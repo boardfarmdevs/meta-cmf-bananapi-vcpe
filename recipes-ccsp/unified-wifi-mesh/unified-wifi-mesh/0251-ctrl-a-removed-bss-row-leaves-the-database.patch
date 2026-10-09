@@ -1,0 +1,168 @@
+Subject: [PATCH] ctrl: a BSS row the model removes leaves the database, also its radio's last
+
+The BSS list update deletes a device's database rows that the model no longer holds, but only
+for a radio that still has a row in the model: a radio not yet seen during an agent's
+incremental onboarding keeps its rows. A backhaul station learned from Device Information (an
+adapter such as EMOSA) is kept as a row whose radio identifier is the station's own MAC, which
+no other row has. When the model removed such a row (a station no longer reported, 0248, or a
+stale per-device bSTA), the radio had no row left, so its database row stayed. An agent that
+moved its backhaul to its station on another band kept its old station's row in the database
+beside the new one (rdk-1004, 9 October: 73 BSS rows where the model holds 72), and a
+controller restart would load it back.
+
+Now the model records each row it removes, and the update deletes the database row of every
+recorded one it does not hold again, then forgets them. A radio not yet seen keeps its rows as
+before.
+
+Platform-independent (completes the lab's 0236 and 0248); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes 0236 and 0248, lab patches]
+
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index 876c264..f216c57 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -69,6 +69,11 @@ public:
+     dm_radio_cap_t     m_radio_cap[EM_MAX_BANDS];
+     unsigned int    m_num_bss;    
+     dm_bss_t    m_bss[EM_MAX_BSSS];
++    /* BSS rows the model removed whose database rows go at the next BSS list update:
++     * a learned backhaul station's row is its radio's only one, which the update's
++     * reconciliation keeps otherwise (dm_bss_list_t::reconcile_device_bss) */
++    unsigned int    m_num_removed_bss;
++    em_bss_id_t     m_removed_bss[EM_MAX_BSSS];
+     dm_dpp_t        m_dpp;
+     em_cmd_ctx_t    m_cmd_ctx;
+     unsigned int 	m_num_opclass;    
+@@ -1472,6 +1477,26 @@ public:
+ 	 * @note Ensure the index is valid and within the range of existing entries.
+ 	 */
+ 	void remove_bss_by_index(unsigned int index);
++
++	/**
++	 * @brief Records a BSS row the model removes, for its database row to go too.
++	 *
++	 * The next BSS list update deletes the database row of every recorded BSS that the
++	 * model does not hold again, also when it was its radio's last row.
++	 *
++	 * @param[in] bss The row being removed (its device, radio, BSSID and haul type).
++	 */
++	void remember_removed_bss(const em_bss_info_t *bss);
++
++	/**
++	 * @brief Whether a database row (radio, BSSID, haul type) is one the model removed.
++	 */
++	bool is_removed_bss(const unsigned char *ruid, const unsigned char *bssid, em_haul_type_t haul_type);
++
++	/**
++	 * @brief Forgets the removed rows once their database rows are gone.
++	 */
++	void clear_removed_bss() { m_num_removed_bss = 0; }
+ 	
+ 	/**!
+ 	 * @brief Finds a matching BSS (Basic Service Set) based on the provided BSS ID.
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index 63fd053..35f0092 100644
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -194,8 +194,13 @@ int dm_bss_list_t::reconcile_device_bss(db_client_t& db_client,
+         }
+ 
+         /* Do not prune a radio which has not yet appeared during incremental
+-         * onboarding.  Once present, its per-device BSS set is authoritative. */
+-        if (radio_present && !exact_present) {
++         * onboarding.  Once present, its per-device BSS set is authoritative.
++         * A row the model removed goes also when it was its radio's last: a
++         * learned backhaul station's row, whose radio identifier is the
++         * station's own and no other row has. */
++        if (!exact_present && (radio_present ||
++                dm.is_removed_bss(current.m_bss_info.ruid.mac,
++                    current.m_bss_info.bssid.mac, current.m_bss_info.id.haul_type))) {
+             stale.push_back(current);
+         }
+     }
+@@ -207,6 +212,7 @@ int dm_bss_list_t::reconcile_device_bss(db_client_t& db_client,
+         }
+         update_list(bss, dm_orch_type_db_delete);
+     }
++    dm.clear_removed_bss();
+ 
+     return 0;
+ }
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index e3d0537..4be2717 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -3311,6 +3311,36 @@ void dm_easy_mesh_t::remove_bss_by_index(unsigned int index)
+     m_num_bss--;
+ }
+ 
++void dm_easy_mesh_t::remember_removed_bss(const em_bss_info_t *bss)
++{
++    if (bss == NULL || is_removed_bss(bss->ruid.mac, bss->bssid.mac, bss->id.haul_type)) {
++        return;
++    }
++    if (m_num_removed_bss >= EM_MAX_BSSS) {
++        printf("%s:%d: removed BSS rows full; a database row may stay\n", __func__, __LINE__);
++        return;
++    }
++    em_bss_id_t *removed = &m_removed_bss[m_num_removed_bss++];
++    memset(removed, 0, sizeof(*removed));
++    memcpy(removed->dev_mac, bss->id.dev_mac, sizeof(mac_address_t));
++    memcpy(removed->ruid, bss->ruid.mac, sizeof(mac_address_t));
++    memcpy(removed->bssid, bss->bssid.mac, sizeof(mac_address_t));
++    removed->haul_type = bss->id.haul_type;
++}
++
++bool dm_easy_mesh_t::is_removed_bss(const unsigned char *ruid, const unsigned char *bssid,
++    em_haul_type_t haul_type)
++{
++    for (unsigned int i = 0; i < m_num_removed_bss; i++) {
++        if (memcmp(m_removed_bss[i].ruid, ruid, sizeof(mac_address_t)) == 0 &&
++                memcmp(m_removed_bss[i].bssid, bssid, sizeof(mac_address_t)) == 0 &&
++                m_removed_bss[i].haul_type == haul_type) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ dm_bss_t *dm_easy_mesh_t::find_matching_bss(em_bss_id_t *id)
+ {
+ 	unsigned int i;
+@@ -3748,6 +3778,7 @@ void dm_easy_mesh_t::reset()
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
++    m_num_removed_bss = 0;
+     m_num_ap_mld = 0;
+     m_num_assoc_sta_mld = 0;
+     m_db_cfg_param.db_cfg_type = db_cfg_type_none;
+@@ -3786,6 +3817,7 @@ dm_easy_mesh_t::dm_easy_mesh_t()
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
++    m_num_removed_bss = 0;
+     m_num_ap_mld = 0;
+     m_num_net_ssids = 0;
+     m_num_assoc_sta_mld = 0;
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index a2d6ce2..8319c28 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -3120,6 +3120,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                                 "Removing stale per-device bSTA: sta=%s bssid=%s",
+                                 util::mac_to_string(candidate->sta_mac).c_str(),
+                                 util::mac_to_string(candidate->bssid.mac).c_str());
++                            dm->remember_removed_bss(candidate);
+                             dm->remove_bss_by_index(
+                                 static_cast<unsigned int>(stale_idx));
+                             if (static_cast<unsigned int>(stale_idx) <
+@@ -3165,6 +3166,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+             em_printfout("Backhaul STA no longer reported: sta=%s parent=%s",
+                 util::mac_to_string(row->ruid.mac).c_str(),
+                 util::mac_to_string(row->bssid.mac).c_str());
++            dm->remember_removed_bss(row);
+             dm->remove_bss_by_index(static_cast<unsigned int>(index));
+             ret = 1;
+             dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
