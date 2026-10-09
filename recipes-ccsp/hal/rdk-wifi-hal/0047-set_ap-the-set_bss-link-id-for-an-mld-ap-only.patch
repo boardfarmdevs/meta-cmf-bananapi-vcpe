@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000047 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Fri, 9 Oct 2026 14:55:00 -0700
+Subject: [PATCH] set_ap: the SET_BSS link ID for an MLD AP only
+
+With hostapd 2.11 and CONFIG_GENERIC_MLO, wifi_drv_set_ap passed
+params->mld_link_id as the SET_BSS link ID for every BSS. That field (a
+u8, 0 otherwise) means something for an MLD BSS only; nl80211 refuses a
+link ID for a non-MLD interface, and on the SET_BSS path that failure
+fails the AP's start. The START_AP/NEW_BEACON message in the same
+function sends the link ID only when params->mld_ap: SET_BSS now does
+the same. Reached on a platform with PLATFORM_FLAGS_SET_BSS, Banana Pi
+since 0046.
+
+Upstream-Status: Pending
+---
+ wifi_hal_nl80211.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/wifi_hal_nl80211.c
++++ b/wifi_hal_nl80211.c
+@@ -17879,7 +17879,9 @@
+ #endif
+ 
+ #if HOSTAPD_VERSION >= 211 && defined(CONFIG_GENERIC_MLO)
+-    link_id = params->mld_link_id;
++    /* a link ID only for an MLD AP, as in the beacon above: mld_link_id (a u8, never "none")
++     * means something for an MLD BSS only, and nl80211 refuses a link ID for any other */
++    link_id = params->mld_ap ? params->mld_link_id : NL80211_DRV_LINK_ID_NA;
+ #endif // HOSTAPD_VERSION >= 211 && CONFIG_GENERIC_MLO
+ 
+     interface->beacon_set = 1;
+-- 
+2.43.0

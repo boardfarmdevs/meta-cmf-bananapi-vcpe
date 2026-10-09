@@ -17,18 +17,13 @@ with the pods' 10 BSSs, beacons alone held channel 6 47 % busy.
 
 The Banana Pi R4 runs mac80211 (mt76), as the lab does
 (mac80211_hwsim): the platform now sets PLATFORM_FLAGS_SET_BSS and
-sends the BSS parameters as hostapd does. That path put an MLO link ID
-on every SET_BSS once hostapd is 2.11 with CONFIG_GENERIC_MLO, from
-params->mld_link_id, which means something for an MLD BSS only (a u8,
-0 otherwise); nl80211 refuses a link ID for a non-MLD interface, and
-the failure fails the AP's start. The link ID now follows
-params->mld_ap, as the START_AP/NEW_BEACON message above already does.
+sends the BSS parameters as hostapd does. That path's MLO link ID is
+0047's, which this patch needs.
 
 Upstream-Status: Pending
 ---
  platform/banana-pi/platform.c | 7 ++++++-
- src/wifi_hal_nl80211.c        | 4 +++-
- 2 files changed, 9 insertions(+), 2 deletions(-)
+ 1 file changed, 6 insertions(+), 1 deletion(-)
 
 --- a/platform/banana-pi/platform.c
 +++ b/platform/banana-pi/platform.c
@@ -46,18 +41,5 @@ Upstream-Status: Pending
      return 0;
  }
  
---- a/src/wifi_hal_nl80211.c
-+++ b/src/wifi_hal_nl80211.c
-@@ -17879,7 +17879,9 @@
- #endif
- 
- #if HOSTAPD_VERSION >= 211 && defined(CONFIG_GENERIC_MLO)
--    link_id = params->mld_link_id;
-+    /* a link ID only for an MLD AP, as in the beacon above: mld_link_id (a u8, never "none")
-+     * means something for an MLD BSS only, and nl80211 refuses a link ID for any other */
-+    link_id = params->mld_ap ? params->mld_link_id : NL80211_DRV_LINK_ID_NA;
- #endif // HOSTAPD_VERSION >= 211 && CONFIG_GENERIC_MLO
- 
-     interface->beacon_set = 1;
 -- 
 2.43.0

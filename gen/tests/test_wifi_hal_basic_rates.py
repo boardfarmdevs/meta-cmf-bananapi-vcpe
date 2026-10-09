@@ -1,8 +1,8 @@
 """rdk-wifi-hal 0046: the Banana Pi platform programs its BSS's basic rates into the kernel
 (NL80211_CMD_SET_BSS), so mac80211 sends beacons and broadcasts at the lowest basic rate and
-not at 1 Mbit/s; the SET_BSS link ID only for an MLD AP, which nl80211 requires.
+not at 1 Mbit/s; 0047: the SET_BSS link ID only for an MLD AP, which nl80211 requires.
 
-The patch's own lines (the platform's flags, the link ID) are compiled into a model of
+The patches' own lines (the platform's flags, the link ID) are compiled into a model of
 wifi_drv_set_ap's SET_BSS step against a model of nl80211's link ID rule."""
 from pathlib import Path
 import re
@@ -13,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCH = ROOT / "recipes-ccsp/hal/rdk-wifi-hal/0046-banana-pi-program-the-bss-basic-rates.patch"
+LINK_PATCH = ROOT / "recipes-ccsp/hal/rdk-wifi-hal/0047-set_ap-the-set_bss-link-id-for-an-mld-ap-only.patch"
 BBAPPEND = (ROOT / "recipes-ccsp/hal/rdk-wifi-hal.bbappend").read_text()
 
 
@@ -24,21 +25,25 @@ def code(text):    # without its comment lines
     return "\n".join(line for line in text.splitlines() if not re.match(r"\s*(/\*|\*(\s|/|$))", line))
 
 
-def hunk(path):
-    return re.search(rf"^\+\+\+ b/{re.escape(path)}\n(.*?)(?=^--- |^-- \n|\Z)", PATCH.read_text(),
+def hunk(path, patch=PATCH):
+    return re.search(rf"^\+\+\+ b/{re.escape(path)}\n(.*?)(?=^--- |^-- \n|\Z)", patch.read_text(),
                      re.MULTILINE | re.DOTALL).group(1)
 
 
-def test_the_patch_is_well_formed_and_applied_from_the_git_directory_after_the_platform_patches():
-    subprocess.run(["git", "apply", "--numstat", str(PATCH)], check=True, capture_output=True)
+def test_the_patches_are_well_formed_0046_a_platform_patch_last_0047_in_the_series():
+    for patch in (PATCH, LINK_PATCH):
+        subprocess.run(["git", "apply", "--numstat", str(patch)], check=True, capture_output=True)
     assert 'PLATFORM_BASIC_RATES_PATCH := "${THISDIR}/${BPN}/0046-banana-pi-program-the-bss-basic-rates.patch"' \
         in BBAPPEND
-    # above S (git/src): from the git directory, as the other platform patches, and after them
-    block = BBAPPEND[BBAPPEND.index("PLATFORM_BASIC_RATES_PATCH :="):]
-    assert "os.path.dirname(d.getVar('S'))" in block and "'patch', '-p1', '-N', '-d'" in block
-    assert BBAPPEND.index("PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH'), 'rb')") < BBAPPEND.index(
-        "PLATFORM_BASIC_RATES_PATCH'), 'rb')")
+    # 0046 changes platform/ only (above S): the last of the platform patches
+    assert re.findall(r"^\+\+\+ b/(\S+)", PATCH.read_text(), re.M) == ["platform/banana-pi/platform.c"]
+    platform = BBAPPEND[BBAPPEND.index("bananapi_platform_patches(d, ["):]
+    assert platform.index("'PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH'") < platform.index("'PLATFORM_BASIC_RATES_PATCH'")
     assert 'do_patch[file-checksums] += "${PLATFORM_BASIC_RATES_PATCH}:True"' in BBAPPEND
+    # 0047 changes S's own file: in the series, after 0045
+    assert re.findall(r"^\+\+\+ b/(\S+)", LINK_PATCH.read_text(), re.M) == ["wifi_hal_nl80211.c"]
+    assert BBAPPEND.index("file://0045-") < BBAPPEND.index(
+        'SRC_URI += "file://0047-set_ap-the-set_bss-link-id-for-an-mld-ap-only.patch"')
 
 
 def model(flags_line, link_line):
@@ -109,7 +114,7 @@ def run(tmp_path, program):
 
 def test_banana_pi_programs_the_basic_rates_and_the_link_id_is_an_mld_aps_only(tmp_path):
     flags = code(added(hunk("platform/banana-pi/platform.c")))
-    link = "\n".join(line for line in added(hunk("src/wifi_hal_nl80211.c")).splitlines()
+    link = "\n".join(line for line in added(hunk("wifi_hal_nl80211.c", LINK_PATCH)).splitlines()
                      if line.strip().startswith("link_id"))
     assert "PLATFORM_FLAGS_SET_BSS" in flags and link.strip()
     assert run(tmp_path, model(flags, link)) == 0
@@ -117,7 +122,7 @@ def test_banana_pi_programs_the_basic_rates_and_the_link_id_is_an_mld_aps_only(t
 
 def test_the_old_code_left_the_kernel_without_basic_rates_or_failed_the_ap(tmp_path):
     old_flags = "    *flags = PLATFORM_FLAGS_STA_INACTIVITY_TIMER | PLATFORM_FLAGS_CONTROL_PORT_FRAME;"
-    new_link = [line for line in added(hunk("src/wifi_hal_nl80211.c")).splitlines()
+    new_link = [line for line in added(hunk("wifi_hal_nl80211.c", LINK_PATCH)).splitlines()
                 if line.strip().startswith("link_id")][0]
     # without the flag: no basic rates in the kernel (mac80211 at 1 Mbit/s)
     assert run(tmp_path, model(old_flags, new_link)) != 0

@@ -123,32 +123,52 @@ PLATFORM_HWSIM_STA_LIVENESS_PATCH := "${THISDIR}/${BPN}/0028-hwsim-filter-inacti
 PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH := "${THISDIR}/${BPN}/0033-hwsim-filter-stale-peers-by-medium-ownership.patch"
 PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH := "${THISDIR}/${BPN}/0038-hwsim-sample-current-serving-link-rf.patch"
 
+# The platform patches change platform/banana-pi/platform.c, above S (git/src): applied with
+# patch from the git directory, after the series, in this order. do_patch runs again on a
+# tree it patched before when only its own inputs changed (a build host without rm_work):
+# plain patch -N then refused them as "previously applied" and stopped the build (the K8,
+# 9 October, at 0036), and a patch-by-patch "already there" test cannot work, later ones
+# rewriting earlier ones' lines. So the files they touch, platform/ only, are first restored
+# from the fetched revision, and every one is applied to that, each time the same.
+def bananapi_platform_patches(d, patches):
+    import os, subprocess
+    git_dir = os.path.dirname(d.getVar('S'))
+    texts, files = [], set()
+    for variable, note in patches:
+        with open(d.getVar(variable), 'rb') as f:
+            text = f.read()
+        texts.append((note, text))
+        for line in text.splitlines():
+            if line.startswith(b'+++ b/'):
+                files.add(line[6:].split(b'\t')[0].decode())
+    outside = sorted(name for name in files if not name.startswith('platform/'))
+    if outside:
+        bb.fatal("meta-cmf-bananapi-vcpe: a platform patch changes %s, outside platform/: "
+                 "give it to the series in S instead" % ", ".join(outside))
+    if os.path.isdir(os.path.join(git_dir, '.git')):
+        subprocess.run(['git', '-C', git_dir, 'checkout', '--'] + sorted(files), check=True)
+    for name in files:
+        for leftover in (name + '.orig', name + '.rej'):
+            if os.path.exists(os.path.join(git_dir, leftover)):
+                os.remove(os.path.join(git_dir, leftover))
+    for note, text in texts:
+        if note:
+            bb.note("meta-cmf-bananapi-vcpe: " + note)
+        subprocess.run(['patch', '-p1', '-N', '--no-backup-if-mismatch', '-d', git_dir],
+                       input=text, check=True)
+
 python do_patch_append() {
-    import subprocess, os
-    s = d.getVar('S')
-    git_dir = os.path.dirname(s)
-    with open(d.getVar('PLATFORM_HWSIM_SURVEY_PATCH'), 'rb') as survey_patch:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=survey_patch, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: applying NULL-map guard to platform_create_vap")
-    with open(d.getVar('PLATFORM_CREATE_VAP_NULL_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: applying NULL-hapd->mld guard to platform_create_vap")
-    with open(d.getVar('PLATFORM_CREATE_VAP_MLD_NULL_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: fixing backhaul AP SSID/passphrase defaults")
-    with open(d.getVar('PLATFORM_BACKHAUL_SSID_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: including WDS child interfaces in station stats")
-    with open(d.getVar('PLATFORM_WDS_STA_METRICS_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: filtering inactive hwsim station rows")
-    with open(d.getVar('PLATFORM_HWSIM_STA_LIVENESS_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    bb.note("meta-cmf-bananapi-vcpe: filtering stale hwsim peers by medium ownership")
-    with open(d.getVar('PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=f, check=True)
-    with open(d.getVar('PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH'), 'rb') as signal_patch:
-        subprocess.run(['patch', '-p1', '-N', '-d', git_dir], stdin=signal_patch, check=True)
+    bananapi_platform_patches(d, [
+        ('PLATFORM_HWSIM_SURVEY_PATCH', None),
+        ('PLATFORM_CREATE_VAP_NULL_PATCH', "applying NULL-map guard to platform_create_vap"),
+        ('PLATFORM_CREATE_VAP_MLD_NULL_PATCH', "applying NULL-hapd->mld guard to platform_create_vap"),
+        ('PLATFORM_BACKHAUL_SSID_PATCH', "fixing backhaul AP SSID/passphrase defaults"),
+        ('PLATFORM_WDS_STA_METRICS_PATCH', "including WDS child interfaces in station stats"),
+        ('PLATFORM_HWSIM_STA_LIVENESS_PATCH', "filtering inactive hwsim station rows"),
+        ('PLATFORM_HWSIM_ASSOC_OWNERSHIP_PATCH', "filtering stale hwsim peers by medium ownership"),
+        ('PLATFORM_HWSIM_CURRENT_SIGNAL_PATCH', None),
+        ('PLATFORM_BASIC_RATES_PATCH', "programming the BSS basic rates on Banana Pi"),
+    ])
 }
 # The *_PATCH variables hold absolute paths, so referencing them from do_patch put
 # this layer's checkout location into its basehash and no two trees could share
@@ -343,15 +363,9 @@ SRC_URI += "file://0045-lab-wired-backhaul-never-connects-its-station.patch"
 # The Banana Pi platform (mac80211: mt76, and mac80211_hwsim in the lab) sends the BSS's
 # basic rates to the kernel with NL80211_CMD_SET_BSS, as hostapd does; without them
 # mac80211 sent beacons and broadcasts at 1 Mbit/s on 2.4 GHz though they advertise
-# OFDM-only basic rates. The SET_BSS link ID follows mld_ap. It changes
-# platform/banana-pi/platform.c, above S, so it is applied from the git directory like
-# the platform patches above, after them.
+# OFDM-only basic rates (0046, a platform patch, applied above, last). That path's MLO link
+# ID only for an MLD AP: 0047, in the series.
 PLATFORM_BASIC_RATES_PATCH := "${THISDIR}/${BPN}/0046-banana-pi-program-the-bss-basic-rates.patch"
-python do_patch_append() {
-    import subprocess, os
-    bb.note("meta-cmf-bananapi-vcpe: programming the BSS basic rates on Banana Pi")
-    with open(d.getVar('PLATFORM_BASIC_RATES_PATCH'), 'rb') as f:
-        subprocess.run(['patch', '-p1', '-N', '-d', os.path.dirname(d.getVar('S'))], stdin=f, check=True)
-}
 do_patch[vardepsexclude] += "PLATFORM_BASIC_RATES_PATCH"
 do_patch[file-checksums] += "${PLATFORM_BASIC_RATES_PATCH}:True"
+SRC_URI += "file://0047-set_ap-the-set_bss-link-id-for-an-mld-ap-only.patch"

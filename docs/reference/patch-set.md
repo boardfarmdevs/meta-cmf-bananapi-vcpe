@@ -26,7 +26,7 @@ These are not hwsim policy and are candidates for their owning upstreams:
 - correct nl80211 ACL attribute encoding;
 - program the Banana Pi BSS's basic rates into mac80211 (`NL80211_CMD_SET_BSS`),
   so beacons and broadcasts go at the lowest basic rate the beacons advertise
-  and not at 1 Mbit/s, with a link ID for an MLD AP only (rdk-wifi-hal 0046,
+  and not at 1 Mbit/s, with a link ID for an MLD AP only (rdk-wifi-hal 0046 and 0047,
   `gen/tests/test_wifi_hal_basic_rates.py`);
 - guard uninitialized supplicant/MLO objects and validate MLO link IDs;
 - select the interface BSSID for management frames;
