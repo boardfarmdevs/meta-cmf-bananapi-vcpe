@@ -216,6 +216,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0250-ctrl-backhaul-steering-response-for-another-station.patch \
     file://0251-ctrl-a-removed-bss-row-leaves-the-database.patch \
     file://0252-ctrl-a-policy-ack-leaves-a-radio-with-its-own-request-pending.patch \
+    file://0254-ctrl-a-moving-backhaul-station-keeps-its-row.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

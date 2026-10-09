@@ -10,7 +10,10 @@ identifier:
 - a move to its 2.4 GHz station keeps one station row: the 2.4 GHz one, the 5 GHz row goes;
 - the way back removes the 2.4 GHz row, although a radio has its identifier;
 - a 2.4 GHz row reloaded from the database (AP mode, no station) is restored, not learned twice;
-- a response with no station removes every learned row;
+- a response with no station connected removes every learned row, at the second such
+  response in a row when the series has 0254 (a station between parents keeps its row for
+  one response, and its row moves to the new parent; another station connected replaces it
+  at once);
 - the agent's own AP BSSes are never touched, nor anything of an agent with the vendor TLV;
 - every prefix of a response is read only as far as it goes.
 """
@@ -34,6 +37,11 @@ slice_start = configuration.index(start_marker)
 slice_end = configuration.index(end_marker, slice_start)
 stations = configuration[slice_start:slice_end]
 assert "Backhaul STA no longer reported" in stations, "the removal of stations no longer reported"
+# 0254: the responses in a row with no station connected before a learned row goes
+import re
+base = (root / "inc/em_base.h").read_text()
+grace = re.search(r"#define EM_BSTA_UNREPORTED_RESPONSES (\d+)", base)
+grace = int(grace.group(1)) if grace else 1
 
 program = r'''
 #include <arpa/inet.h>
@@ -44,6 +52,7 @@ program = r'''
 #define em_printfout(...) ((void)0)
 #define EM_MAX_BSSS 24
 #define EM_MEDIA_WIFI_ROLE_STA 0x40
+#define EM_BSTA_UNREPORTED_RESPONSES @GRACE@
 typedef unsigned char mac_address_t[6];
 typedef char em_long_string_t[64];
 static const mac_address_t ZERO_MAC_ADDR = {0, 0, 0, 0, 0, 0};
@@ -91,6 +100,21 @@ struct dm_easy_mesh_t {
     /* the rows removed, for their database rows to go too (0251) */
     std::vector<em_bss_info_t> removed;
     void remember_removed_bss(const em_bss_info_t *bss) { removed.push_back(*bss); }
+    /* learned stations unreported in responses with no station connected (0254) */
+    std::vector<std::pair<std::string, unsigned int>> unreported;
+    unsigned int count_unreported_bsta(const unsigned char *sta)
+    {
+        std::string key(reinterpret_cast<const char *>(sta), 6);
+        for (auto &u : unreported) if (u.first == key) return ++u.second;
+        unreported.push_back({key, 1});
+        return 1;
+    }
+    void clear_unreported_bsta(const unsigned char *sta)
+    {
+        std::string key(reinterpret_cast<const char *>(sta), 6);
+        for (auto it = unreported.begin(); it != unreported.end(); ++it)
+            if (it->first == key) { unreported.erase(it); return; }
+    }
 };
 
 static int stations(dm_easy_mesh_t *dm, unsigned char *device_cursor, unsigned int device_remaining,
@@ -108,6 +132,8 @@ static const mac_address_t POD1_BH = {0x72, 0, 0, 0, 0x6a, 0};
 static const mac_address_t OWN_BH = {0x72, 0, 0, 0, 0x6c, 0};
 static const mac_address_t OWN_FH = {0x82, 0, 0, 0, 0x6c, 0};
 static const mac_address_t ETH = {0x02, 0xc2, 0xb8, 0x31, 0x3a, 0xf8};
+static const mac_address_t EXT_5 = {0x02, 0, 0, 0x3d, 0x8b, 0x6d};    /* another parent on 5 GHz */
+static const unsigned char *const NONE = ZERO_MAC_ADDR;                /* a station not connected */
 
 struct entry { const unsigned char *mac; const unsigned char *parent; unsigned char band; };
 /* one Device Information TLV, then the end of message */
@@ -216,9 +242,37 @@ int main()
     play(dm, {{ETH, nullptr, 0}, {STA_5, GATEWAY_5, 0x03}});
     assert(!station(dm, RADIO_24) && station(dm, STA_5) && station_rows(dm) == 1);
     assert(own_aps(dm));
-    /* no station reported (a wired uplink): every learned row goes */
+    /* no station connected (a wired uplink): every learned row goes, at the GRACE-th such
+     * response in a row (0254: a station between parents keeps its row for one) */
+    for (unsigned int n = 1; n < EM_BSTA_UNREPORTED_RESPONSES; n++) {
+        play(dm, {{ETH, nullptr, 0}});
+        assert(station(dm, STA_5) && station_rows(dm) == 1);
+    }
     play(dm, {{ETH, nullptr, 0}});
     assert(station_rows(dm) == 0 && own_aps(dm));
+
+    if (EM_BSTA_UNREPORTED_RESPONSES > 1) {
+        /* 0254: a move to another parent on the same band, a response in between with the
+         * station not connected: its row stays and moves to the new parent, nothing removed */
+        dm_easy_mesh_t moving = pod();
+        play(moving, {{ETH, nullptr, 0}, {STA_5, GATEWAY_5, 0x03}});
+        size_t removed = moving.removed.size();
+        play(moving, {{ETH, nullptr, 0}, {STA_5, NONE, 0x03}});
+        assert(station(moving, STA_5) && memcmp(station(moving, STA_5)->bssid.mac, GATEWAY_5, 6) == 0);
+        play(moving, {{ETH, nullptr, 0}, {STA_5, EXT_5, 0x03}});
+        assert(station(moving, STA_5) && memcmp(station(moving, STA_5)->bssid.mac, EXT_5, 6) == 0);
+        assert(station_rows(moving) == 1 && moving.removed.size() == removed && moving.unreported.empty());
+        /* its count ends when it is reported again: one more gap is again one response kept */
+        play(moving, {{ETH, nullptr, 0}, {STA_5, NONE, 0x03}});
+        assert(station(moving, STA_5));
+        play(moving, {{ETH, nullptr, 0}, {STA_5, NONE, 0x03}});
+        assert(!station(moving, STA_5) && station_rows(moving) == 0 && moving.unreported.empty());
+        /* another station connected: the row of the one not reported goes at once */
+        play(moving, {{ETH, nullptr, 0}, {STA_5, GATEWAY_5, 0x03}});
+        play(moving, {{ETH, nullptr, 0}, {STA_5, NONE, 0x03}, {RADIO_24, POD1_BH, 0x01}});
+        assert(!station(moving, STA_5) && station(moving, RADIO_24) && station_rows(moving) == 1);
+        assert(own_aps(moving));
+    }
 
     /* a 2.4 GHz row reloaded from the database: AP mode, no station; restored, not learned twice */
     dm_easy_mesh_t reloaded = pod();
@@ -250,7 +304,8 @@ int main()
     return 0;
 }
 '''.replace("@SLICE@", stations).replace(
-    "@RECORDS@", "true" if "remember_removed_bss" in stations else "false")
+    "@RECORDS@", "true" if "remember_removed_bss" in stations else "false").replace(
+    "@GRACE@", str(grace))
 
 with tempfile.TemporaryDirectory() as tmp:
     src, exe = Path(tmp) / "stations.cpp", Path(tmp) / "stations"

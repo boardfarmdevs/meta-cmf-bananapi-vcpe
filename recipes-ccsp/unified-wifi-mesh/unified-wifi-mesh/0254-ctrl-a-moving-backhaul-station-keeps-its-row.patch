@@ -1,0 +1,152 @@
+Subject: [PATCH] ctrl: a backhaul station between parents keeps its learned row
+
+The lab's 0248 learns a backhaul station an agent reports only in its Topology Response's
+Device Information (an adapter such as EMOSA, or any agent whose station row the controller
+learns that way) and removes the row as soon as a response no longer reports the station
+connected. A response that comes while the station moves to another parent (it left the old
+one, not yet with the new) reports none of the agent's stations connected, so the row went and
+was learned again from the next response, 10 to 15 s later, though the station stayed with the
+mesh; with 0251 its database row went too. On rdk-1004 (9 October) the room service's health,
+which counts the controller's rows, dipped during every such move: a geometry room's hold
+failed on one sample (71 BSS rows of 72).
+
+Now a learned station row stays through a response that reports none of the agent's stations
+connected, for EM_BSTA_UNREPORTED_RESPONSES (2) such responses in a row, and the parent update
+moves it to the new parent once the station is reported again. It goes at the second such
+response (the agent's uplink is gone or wired), and at once when the response reports another
+station connected (a move to another band), as before.
+
+Platform-independent (completes the lab's 0248 and 0251); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes 0248 and 0251, lab patches]
+
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index f216c57..6db40e5 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -74,6 +74,10 @@ public:
+      * reconciliation keeps otherwise (dm_bss_list_t::reconcile_device_bss) */
+     unsigned int    m_num_removed_bss;
+     em_bss_id_t     m_removed_bss[EM_MAX_BSSS];
++    /* learned backhaul stations the agent's last Topology Responses reported with none of its
++     * stations connected (a move under way), each with the number of such responses in a row */
++    unsigned int    m_num_unreported_bsta;
++    struct { mac_address_t sta; unsigned int responses; } m_unreported_bsta[EM_MAX_BSSS];
+     dm_dpp_t        m_dpp;
+     em_cmd_ctx_t    m_cmd_ctx;
+     unsigned int 	m_num_opclass;    
+@@ -1497,6 +1501,20 @@ public:
+ 	 * @brief Forgets the removed rows once their database rows are gone.
+ 	 */
+ 	void clear_removed_bss() { m_num_removed_bss = 0; }
++
++	/**
++	 * @brief Counts a Topology Response that reports none of the agent's backhaul stations
++	 * connected, for a learned station row it does not report.
++	 *
++	 * @param[in] sta The learned backhaul station.
++	 * @returns The number of such responses in a row, this one included.
++	 */
++	unsigned int count_unreported_bsta(const unsigned char *sta);
++
++	/**
++	 * @brief Ends the count of a station that is reported again, or whose row goes.
++	 */
++	void clear_unreported_bsta(const unsigned char *sta);
+ 	
+ 	/**!
+ 	 * @brief Finds a matching BSS (Basic Service Set) based on the provided BSS ID.
+diff --git a/inc/em_base.h b/inc/em_base.h
+index 6907ada..59883f3 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -52,6 +52,9 @@ extern "C"
+ #define EM_MAX_E4_TABLE_CHANNEL 64
+ #define EM_DATE_TIME_BUFF_SZ	64
+ #define EM_PROTO_TOUT   1
++/* Topology Responses in a row that report none of an agent's backhaul stations connected
++ * before its learned station row goes: one comes while a station moves to another parent */
++#define EM_BSTA_UNREPORTED_RESPONSES 2
+ #define EM_METRICS_REQ_MULT 5
+ #define EM_MGR_TOUT     250 // in milliseconds
+ #define EM_1_TOUT_MULT 	(1000 / EM_MGR_TOUT)
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index 4be2717..0cc6235 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -3328,6 +3328,31 @@ void dm_easy_mesh_t::remember_removed_bss(const em_bss_info_t *bss)
+     removed->haul_type = bss->id.haul_type;
+ }
+ 
++unsigned int dm_easy_mesh_t::count_unreported_bsta(const unsigned char *sta)
++{
++    for (unsigned int i = 0; i < m_num_unreported_bsta; i++) {
++        if (memcmp(m_unreported_bsta[i].sta, sta, sizeof(mac_address_t)) == 0) {
++            return ++m_unreported_bsta[i].responses;
++        }
++    }
++    if (m_num_unreported_bsta >= EM_MAX_BSSS) {
++        return ~0u;    /* no room to count: as if long unreported */
++    }
++    memcpy(m_unreported_bsta[m_num_unreported_bsta].sta, sta, sizeof(mac_address_t));
++    m_unreported_bsta[m_num_unreported_bsta].responses = 1;
++    return m_unreported_bsta[m_num_unreported_bsta++].responses;
++}
++
++void dm_easy_mesh_t::clear_unreported_bsta(const unsigned char *sta)
++{
++    for (unsigned int i = 0; i < m_num_unreported_bsta; i++) {
++        if (memcmp(m_unreported_bsta[i].sta, sta, sizeof(mac_address_t)) == 0) {
++            m_unreported_bsta[i] = m_unreported_bsta[--m_num_unreported_bsta];
++            return;
++        }
++    }
++}
++
+ bool dm_easy_mesh_t::is_removed_bss(const unsigned char *ruid, const unsigned char *bssid,
+     em_haul_type_t haul_type)
+ {
+@@ -3779,6 +3804,7 @@ void dm_easy_mesh_t::reset()
+     m_num_policy = 0;
+     m_num_bss = 0;
+     m_num_removed_bss = 0;
++    m_num_unreported_bsta = 0;
+     m_num_ap_mld = 0;
+     m_num_assoc_sta_mld = 0;
+     m_db_cfg_param.db_cfg_type = db_cfg_type_none;
+@@ -3818,6 +3844,7 @@ dm_easy_mesh_t::dm_easy_mesh_t()
+     m_num_policy = 0;
+     m_num_bss = 0;
+     m_num_removed_bss = 0;
++    m_num_unreported_bsta = 0;
+     m_num_ap_mld = 0;
+     m_num_net_ssids = 0;
+     m_num_assoc_sta_mld = 0;
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 8319c28..a4d1491 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -3161,8 +3161,23 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+                 reported = memcmp(reported_bsta[r], station, sizeof(mac_address_t)) == 0;
+             }
+             if (reported) {
++                dm->clear_unreported_bsta(station);
+                 continue;
+             }
++            /* A response that reports none of the agent's stations connected can come
++             * while its station moves to another parent (left the old one, not yet with
++             * the new): the row stays for that response, and the parent update above
++             * moves it once the station is reported again. It goes at the next such
++             * response in a row (the agent's uplink is gone or wired), or at once when
++             * the response reports another station connected (a move to another band). */
++            if (num_reported_bsta == 0 &&
++                    dm->count_unreported_bsta(station) < EM_BSTA_UNREPORTED_RESPONSES) {
++                em_printfout("Backhaul STA not reported connected, kept while it moves: sta=%s parent=%s",
++                    util::mac_to_string(row->ruid.mac).c_str(),
++                    util::mac_to_string(row->bssid.mac).c_str());
++                continue;
++            }
++            dm->clear_unreported_bsta(station);
+             em_printfout("Backhaul STA no longer reported: sta=%s parent=%s",
+                 util::mac_to_string(row->ruid.mac).c_str(),
+                 util::mac_to_string(row->bssid.mac).c_str());
