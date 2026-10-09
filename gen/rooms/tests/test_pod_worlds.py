@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 import unittest
 
+from room_service.backhaul import PodBackhaul
 from room_service.conductor import load_manifest
 from room_service.worlds import BoundWorlds
 from wmdcfg.world import load_json
@@ -19,6 +20,8 @@ NATIVE = CONFIGURATOR / "worlds"
 PODS = CONFIGURATOR / "worlds-pods"
 STANDARD = CONFIGURATOR / "worlds-wired"
 MANIFEST = REPO / "gen/rooms/manifests/private-client-room-walk-pods.json"
+# the rooms about the pods themselves, which have no standard room (worlds-pods POD_ROOMS)
+POD_ROOMS = {"backhaul-pod-chain"}
 
 
 def _bound(root: Path, world_path: Path) -> BoundWorlds:
@@ -43,9 +46,12 @@ class PodWorldTests(unittest.TestCase):
         worlds = _bound(PODS, PODS / "golden/home-a-private-client-room-walk.world.json")
         catalog = worlds.catalog()
         standard = _bound(STANDARD, STANDARD / "golden/home-a-private-client-room-walk.world.json").catalog()
-        # the same rooms as the lab's standard ones, under the same IDs
-        self.assertEqual([entry["id"] for entry in catalog["worlds"]],
+        # the same rooms as the lab's standard ones, under the same IDs, and the pods' own
+        self.assertEqual([entry["id"] for entry in catalog["worlds"] if entry["id"] not in POD_ROOMS],
                          [entry["id"] for entry in standard["worlds"]])
+        self.assertEqual({entry["id"] for entry in catalog["worlds"]} - POD_ROOMS,
+                         {entry["id"] for entry in standard["worlds"]})
+        self.assertLessEqual(POD_ROOMS, {entry["id"] for entry in catalog["worlds"]})
         self.assertEqual(catalog["mesh_devices"], standard["mesh_devices"] + 2)
         self.assertEqual(catalog["worlds_root"], "gen/medium/configurator/worlds-pods")
         world, layout = worlds.select("home-a-stationary")
@@ -56,12 +62,32 @@ class PodWorldTests(unittest.TestCase):
 
     def test_every_pod_room_is_the_standard_room_plus_the_pods(self):
         for path in sorted((PODS / "golden").glob("*.world.json")):
+            if path.name.removesuffix(".world.json") in POD_ROOMS:
+                continue
             pods, standard = load_json(path), load_json(STANDARD / "golden" / path.name)
             self.assertEqual(set(pods["roles"]) - set(standard["roles"]), {"pod_1", "pod_2"}, path.name)
             self.assertEqual(pods["wired_backhaul"], ["extender_5"], path.name)
             self.assertEqual(pods["mobility"], standard["mobility"], path.name)
             for index, (a, b) in enumerate(zip(pods["generations"], standard["generations"])):
                 self.assertEqual(a["positions"]["extender_5"], b["positions"]["extender_5"], f"{path.name} {index}")
+
+    def test_the_pod_chain_room_puts_pod_2_under_pod_1(self):
+        worlds = _bound(PODS, PODS / "golden/home-a-private-client-room-walk.world.json")
+        world, layout = worlds.select("backhaul-pod-chain")
+        self.assertEqual(layout["name"], "backhaul-courtyard-pod-chain")
+        self.assertEqual(world["backhaul_rf"], "geometry")
+        self.assertEqual(world["wired_backhaul"], ["extender_5"])
+        roles = {role for role, kind in world["roles"].items() if kind == "fronthaul_ap"}
+        self.assertEqual(roles, {"gateway", "extender_1", "extender_2", "extender_3", "extender_4", "extender_5",
+                                 "pod_1", "pod_2"})
+        # its pods' parents, as the room service chooses them
+        bindings = {role: {"role_type": "fronthaul_ap", "container": role} for role in roles}
+        bindings["extender_5"].update(backhaul="wired", wired_guard="hal")
+        for pod in ("pod_1", "pod_2"):
+            bindings[pod].update(adapter="emosa", fronthaul_frequencies_mhz={"2.4": 2437}, backhaul_stations=[
+                {"interface": "bhaul-sta-50", "band": "5"}, {"interface": "bhaul-sta-24", "band": "2.4"}])
+        self.assertEqual(PodBackhaul({"bindings": bindings}).targets(world),
+                         {"pod_1": "extender_1", "pod_2": "pod_1"})
 
     def test_the_lab_rooms_are_unchanged(self):
         worlds = _bound(NATIVE, NATIVE / "golden/home-a-private-client-room-walk.world.json")
