@@ -1,0 +1,444 @@
+Subject: [PATCH] ctrl: a radio its agent no longer reports is retired
+
+The controller kept every radio an agent ever had. An agent whose radio was replaced (a pod's
+USB adapter, or the lab's hwsim radio lost at a pod's re-creation) reports a new radio under
+the same AL MAC, and the old one stayed in the model and the database beside it: its BSSes
+counted in the topology, AutoConfig Renew sent to it every 40 s for good, and all of it loaded
+again at every em_ctrl restart. handle_ap_operational_bss only removes the BSSes a listed radio
+no longer has, never a radio the agent leaves out. On rdk-1004 (9 October) the lab's bring-up
+refused the topology on such a radio (6 BSSes where the pod's agent reports 5) six times.
+
+An agent lists every radio it has in its Topology Response's AP Operational BSS TLV (an RDK
+agent also one with no BSS up). Now the controller counts, per agent, the responses in a row
+that leave a radio of its model out; at EM_RADIO_UNREPORTED_RESPONSES (3) the radio is stale.
+The controller's manager retires it before the dirty models are written: out of every command
+(pending ones drop it, active ones cancel it), its em out of the map with its thread told to
+exit (the object is kept: its thread may be finishing an event, and active commands finish
+with it), then the radio's and its operating classes' database rows and global entries, and
+the model's radio, capabilities, operating classes and BSS rows, which leave the database at
+the next BSS list update (0251). A list longer than the model's radios is not counted.
+
+Platform-independent; with the lab's 0251. Upstream candidate after review (a radio's removal
+is not handled upstream).
+
+Upstream-Status: Pending
+
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index f216c57..1e1ba9f 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -67,6 +67,13 @@ public:
+     unsigned int    m_num_radios;
+     dm_radio_t  m_radio[EM_MAX_BANDS];
+     dm_radio_cap_t     m_radio_cap[EM_MAX_BANDS];
++    /* the agent's radios its last Topology Responses left out of their AP Operational BSS TLV,
++     * each with the number of such responses in a row; those left out long enough are stale,
++     * for the controller's manager to retire (em_ctrl_t::retire_stale_radios) */
++    unsigned int    m_num_unreported_radio;
++    struct { mac_address_t ruid; unsigned int responses; } m_unreported_radio[EM_MAX_BANDS];
++    unsigned int    m_num_stale_radio;
++    mac_address_t   m_stale_radio[EM_MAX_BANDS];
+     unsigned int    m_num_bss;    
+     dm_bss_t    m_bss[EM_MAX_BSSS];
+     /* BSS rows the model removed whose database rows go at the next BSS list update:
+@@ -1909,6 +1916,27 @@ public:
+ 	 * @returns The number of radios.
+ 	 */
+ 	unsigned int get_num_radios() { return m_num_radios; }
++
++	/**
++	 * @brief Notes the radios an agent's Topology Response lists in its AP Operational BSS TLV.
++	 *
++	 * A radio of the model the TLV leaves out of EM_RADIO_UNREPORTED_RESPONSES responses in a row
++	 * becomes stale: the agent no longer has it. A radio listed again starts afresh.
++	 *
++	 * @returns The number of radios that became stale with this response.
++	 */
++	unsigned int note_reported_radios(const mac_address_t *reported, unsigned int num_reported);
++
++	/**
++	 * @brief Takes one stale radio, for the controller's manager to retire.
++	 */
++	bool take_stale_radio(mac_address_t ruid);
++
++	/**
++	 * @brief Removes a radio the agent no longer has: its BSS rows (recorded for the database,
++	 * as 0251 does), its operating classes and capabilities, the radio, and its count.
++	 */
++	void retire_radio(const unsigned char *ruid);
+     
+ 	/**!
+ 	 * @brief Retrieves the number of radios.
+diff --git a/inc/dm_easy_mesh_ctrl.h b/inc/dm_easy_mesh_ctrl.h
+index 85b0b20..865e93d 100644
+--- a/inc/dm_easy_mesh_ctrl.h
++++ b/inc/dm_easy_mesh_ctrl.h
+@@ -1836,6 +1836,13 @@ public:
+ 	 * before calling this function.
+ 	 */
+ 	int update_tables(dm_easy_mesh_t *dm);
++
++	/**
++	 * @brief Retires a radio its agent no longer has: its database rows and global entries (the
++	 * radio, its operating classes), then the model's (dm_easy_mesh_t::retire_radio), whose BSS
++	 * rows leave the database at the next BSS list update (0251).
++	 */
++	void retire_radio(dm_easy_mesh_t *dm, const unsigned char *ruid);
+     
+ 	/**!
+ 	 * @brief Deletes a data model associated with the given network ID and AL MAC address.
+diff --git a/inc/em_base.h b/inc/em_base.h
+index 6907ada..0610398 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -213,6 +213,9 @@ extern "C"
+ static const mac_address_t EM_GLOBAL_MAC_ADDRESS = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+ 
+ #define EM_MAX_BANDS    3
++/* Topology Responses in a row whose AP Operational BSS TLV leaves out a radio of the agent before
++ * the controller retires that radio: the agent no longer has it (an adapter replaced) */
++#define EM_RADIO_UNREPORTED_RESPONSES 3
+ #define EM_MAX_BSSS     EM_MAX_BANDS*8  
+ #define EM_MAX_AKMS     10
+ #define EM_MAX_HAUL_TYPES   8
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index 7f7cbbc..836ceaa 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -247,6 +247,13 @@ public:
+ 	 * @note This function does not take any parameters and does not return any value.
+ 	 */
+ 	void handle_dirty_dm();
++
++	/**
++	 * @brief Retires the radios agents no longer report (dm_easy_mesh_t::note_reported_radios):
++	 * out of every command, then the em out of the map, then the model's and database's rows.
++	 * On the manager thread, before the dirty models are written.
++	 */
++	void retire_stale_radios();
+     
+ 	/**!
+ 	 * @brief Handles the specified event.
+diff --git a/inc/em_mgr.h b/inc/em_mgr.h
+index ef8644d..044b177 100644
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -187,6 +187,15 @@ public:
+ 	 * @note Ensure that the interface is valid and initialized before calling this function.
+ 	 */
+ 	void delete_node(em_interface_t* ruid);
++
++	/**!
++	 * @brief Retires a radio's em: out of the map, so no frame, command or lookup reaches it, and its
++	 * thread told to exit. The object is kept, not freed: its thread may still be finishing an event,
++	 * and commands that held it finish with it (one em object per retired radio, which is rare).
++	 *
++	 * @returns The retired em, or NULL when the map has none for the radio.
++	 */
++	em_t *retire_node(const unsigned char *ruid);
+     
+ 	/**!
+ 	 * @brief Deletes nodes from the data structure.
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+index 1505f39..445671a 100644
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -247,6 +247,13 @@ public:
+ 	 */
+ 	void remove_em_config_cmd_for_em(unsigned char *radio_mac);
+ 
++	/**!
++	 * @brief Takes a radio's em out of every command: out of the pending ones' candidates (a
++	 * command left with none goes), cancelled in the active ones, which then finish without it.
++	 * @param[in] radio_mac The radio being retired.
++	 */
++	void remove_em_from_commands(const unsigned char *radio_mac);
++
+ 	/**!
+ 	 * @brief Resets the command time for a specific command type.
+ 	 *
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index f969390..f96df62 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -4758,6 +4758,26 @@ int dm_easy_mesh_ctrl_t::load_tables()
+     return 0;
+ }
+ 
++void dm_easy_mesh_ctrl_t::retire_radio(dm_easy_mesh_t *dm, const unsigned char *ruid)
++{
++    dm_radio_t *radio = dm->get_radio(ruid);
++
++    for (unsigned int i = 0; i < dm->get_num_op_class(); i++) {
++        dm_op_class_t *op_class = dm->get_op_class(i);
++        if (memcmp(op_class->m_op_class_info.id.ruid, ruid, sizeof(mac_address_t)) != 0) {
++            continue;
++        }
++        dm_op_class_list_t::update_db(m_db_client, dm_orch_type_db_delete, op_class->get_op_class_info());
++        dm_op_class_list_t::update_list(*op_class, dm_orch_type_db_delete);
++    }
++    if (radio != NULL) {
++        dm_radio_list_t::update_db(m_db_client, dm_orch_type_db_delete, radio->get_radio_info());
++        dm_radio_list_t::update_list(*radio, dm_orch_type_db_delete);
++    }
++    dm->retire_radio(ruid);
++    dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
++}
++
+ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+ {
+     //dm_orch_type_t type = dm_orch_type_none;
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 1784c12..f559bba 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -701,9 +701,28 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
+ 
+ void em_ctrl_t::handle_dirty_dm()
+ {
++	retire_stale_radios();
+ 	m_data_model.handle_dirty_dm();
+ }
+ 
++void em_ctrl_t::retire_stale_radios()
++{
++	for (dm_easy_mesh_t *dm = m_data_model.get_first_dm(); dm != NULL; dm = m_data_model.get_next_dm(dm)) {
++		mac_address_t ruid;
++		while (dm->take_stale_radio(ruid)) {
++			// commands first, then the map, then the model: no command or lookup meets a
++			// radio half removed, and the retired em's thread is told to exit before it
++			m_orch->remove_em_from_commands(ruid);
++			em_t *em = retire_node(ruid);
++			m_data_model.retire_radio(dm, ruid);
++			em_printfout("Radio %s retired: agent %s no longer reports it (%s)",
++				util::mac_to_string(ruid).c_str(),
++				util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
++				em != NULL ? "its em stopped" : "it had no em");
++		}
++	}
++}
++
+ void em_ctrl_t::handle_5s_tick()
+ {
+ 	// A Topology Notification is multicast and has no acknowledgement.  Poll
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index 4be2717..bbf992a 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -2244,6 +2244,91 @@ dm_radio_t *dm_easy_mesh_t::get_radio(unsigned int index)
+ 	}
+ }
+ 
++unsigned int dm_easy_mesh_t::note_reported_radios(const mac_address_t *reported, unsigned int num_reported)
++{
++    unsigned int stale = 0;
++    for (unsigned int i = 0; i < m_num_radios; i++) {
++        const unsigned char *ruid = m_radio[i].m_radio_info.intf.mac;
++        bool listed = false;
++        for (unsigned int r = 0; r < num_reported && !listed; r++) {
++            listed = memcmp(reported[r], ruid, sizeof(mac_address_t)) == 0;
++        }
++        unsigned int slot = m_num_unreported_radio;
++        for (unsigned int u = 0; u < m_num_unreported_radio; u++) {
++            if (memcmp(m_unreported_radio[u].ruid, ruid, sizeof(mac_address_t)) == 0) {
++                slot = u;
++                break;
++            }
++        }
++        if (listed) {
++            if (slot < m_num_unreported_radio) {
++                m_unreported_radio[slot] = m_unreported_radio[--m_num_unreported_radio];
++            }
++            continue;
++        }
++        if (slot == m_num_unreported_radio) {
++            if (m_num_unreported_radio >= EM_MAX_BANDS) {
++                continue;
++            }
++            memcpy(m_unreported_radio[slot].ruid, ruid, sizeof(mac_address_t));
++            m_unreported_radio[slot].responses = 0;
++            m_num_unreported_radio++;
++        }
++        if (++m_unreported_radio[slot].responses == EM_RADIO_UNREPORTED_RESPONSES &&
++                m_num_stale_radio < EM_MAX_BANDS) {
++            memcpy(m_stale_radio[m_num_stale_radio++], ruid, sizeof(mac_address_t));
++            stale++;
++        }
++    }
++    return stale;
++}
++
++bool dm_easy_mesh_t::take_stale_radio(mac_address_t ruid)
++{
++    if (m_num_stale_radio == 0) {
++        return false;
++    }
++    memcpy(ruid, m_stale_radio[--m_num_stale_radio], sizeof(mac_address_t));
++    return true;
++}
++
++void dm_easy_mesh_t::retire_radio(const unsigned char *ruid)
++{
++    for (int i = static_cast<int>(m_num_bss) - 1; i >= 0; i--) {
++        em_bss_info_t *bss = &m_bss[i].m_bss_info;
++        if (memcmp(bss->ruid.mac, ruid, sizeof(mac_address_t)) == 0) {
++            remember_removed_bss(bss);
++            remove_bss_by_index(static_cast<unsigned int>(i));
++        }
++    }
++    for (int i = static_cast<int>(m_num_opclass) - 1; i >= 0; i--) {
++        if (memcmp(m_op_class[i].m_op_class_info.id.ruid, ruid, sizeof(mac_address_t)) == 0) {
++            for (unsigned int k = static_cast<unsigned int>(i); k + 1 < m_num_opclass; k++) {
++                m_op_class[k] = m_op_class[k + 1];
++            }
++            m_num_opclass--;
++        }
++    }
++    for (unsigned int i = 0; i < m_num_radios; i++) {
++        if (memcmp(m_radio[i].m_radio_info.intf.mac, ruid, sizeof(mac_address_t)) != 0) {
++            continue;
++        }
++        /* the capabilities are the radios' by index */
++        for (unsigned int k = i; k + 1 < m_num_radios; k++) {
++            m_radio[k] = m_radio[k + 1];
++            m_radio_cap[k] = m_radio_cap[k + 1];
++        }
++        m_num_radios--;
++        break;
++    }
++    for (unsigned int u = 0; u < m_num_unreported_radio; u++) {
++        if (memcmp(m_unreported_radio[u].ruid, ruid, sizeof(mac_address_t)) == 0) {
++            m_unreported_radio[u] = m_unreported_radio[--m_num_unreported_radio];
++            break;
++        }
++    }
++}
++
+ dm_radio_t *dm_easy_mesh_t::get_radio(const mac_address_t mac)
+ {
+     unsigned int i = 0;
+@@ -3775,6 +3860,8 @@ void dm_easy_mesh_t::reset()
+     m_num_preferences = 0;
+     m_num_interfaces = 0;
+     m_num_radios = 0;
++    m_num_unreported_radio = 0;
++    m_num_stale_radio = 0;
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
+@@ -3814,6 +3901,8 @@ dm_easy_mesh_t::dm_easy_mesh_t()
+     m_num_preferences = 0;
+     m_num_interfaces = 0;
+     m_num_radios = 0;
++    m_num_unreported_radio = 0;
++    m_num_stale_radio = 0;
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 8319c28..6cfa874 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2225,6 +2225,30 @@ int em_configuration_t::handle_ap_operational_bss(unsigned char *buff, unsigned
+         }
+     }
+ 
++    // The radios the agent lists (an RDK agent lists every radio it has, also one with no BSS
++    // up): a radio of the model left out of several responses in a row is no longer the
++    // agent's (an adapter replaced), and the controller's manager retires it
++    // (em_ctrl_t::retire_stale_radios). A list longer than the model's radios is not counted.
++    if (get_service_type() == em_service_type_ctrl &&
++            reinterpret_cast<const em_ap_op_bss_t *> (buff)->radios_num <= EM_MAX_BANDS) {
++        mac_address_t listed[EM_MAX_BANDS];
++        unsigned int num_listed = reinterpret_cast<const em_ap_op_bss_t *> (buff)->radios_num;
++        const unsigned char *p = buff + sizeof(em_ap_op_bss_t);
++        for (unsigned int r = 0; r < num_listed; r++) {
++            const em_ap_op_bss_radio_t *entry = reinterpret_cast<const em_ap_op_bss_radio_t *> (p);
++            memcpy(listed[r], entry->ruid, sizeof(mac_address_t));
++            p += sizeof(em_ap_op_bss_radio_t);
++            for (unsigned int b = 0; b < entry->bss_num; b++) {
++                p += sizeof(em_ap_operational_bss_t) +
++                    reinterpret_cast<const em_ap_operational_bss_t *> (p)->ssid_len;
++            }
++        }
++        if (dm->note_reported_radios(listed, num_listed) > 0) {
++            em_printfout("Operational BSS TLV: a radio of agent %s left out of %d responses in a row, to be retired",
++                util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(), EM_RADIO_UNREPORTED_RESPONSES);
++        }
++    }
++
+     // first verify that dm has all the radios
+     ap = reinterpret_cast<em_ap_op_bss_t *> (buff);
+     radio = const_cast<em_ap_op_bss_radio_t *> (ap->radios);
+diff --git a/src/em/em_mgr.cpp b/src/em/em_mgr.cpp
+index 8424443..a69baa4 100644
+--- a/src/em/em_mgr.cpp
++++ b/src/em/em_mgr.cpp
+@@ -196,6 +196,24 @@ void em_mgr_t::delete_node(em_interface_t *ruid)
+ 
+ }
+ 
++em_t *em_mgr_t::retire_node(const unsigned char *ruid)
++{
++    em_t *em;
++    mac_addr_str_t mac_str;
++
++    dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *> (ruid), mac_str);
++    pthread_mutex_lock(&m_mutex);
++    em = static_cast<em_t *>(hash_map_get(m_em_map, mac_str));
++    if (em != NULL) {
++        hash_map_remove(m_em_map, mac_str);
++    }
++    pthread_mutex_unlock(&m_mutex);
++    if (em != NULL) {
++        em->stop();
++    }
++    return em;
++}
++
+ em_t *em_mgr_t::create_node(em_interface_t *ruid, em_freq_band_t band, dm_easy_mesh_t *dm, bool is_al_mac,em_profile_type_t profile, em_service_type_t type)
+ {
+     em_t *em = NULL;
+diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index e950a65..3f201e5 100644
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -283,6 +283,38 @@ void em_orch_t::cancel_command(em_cmd_type_t type, std::vector<em_t*> &em_radios
+     reset_cmd_time(m_cmd_map, type);
+ }
+ 
++void em_orch_t::remove_em_from_commands(const unsigned char *radio_mac)
++{
++    auto command_lock = lock_commands();
++    em_cmd_t *pcmd;
++    em_t *em;
++
++    for (int i = static_cast<int>(queue_count(m_pending)) - 1; i >= 0; i--) {
++        pcmd = static_cast<em_cmd_t *>(queue_peek(m_pending, static_cast<unsigned int>(i)));
++        for (int j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; j >= 0; j--) {
++            em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, static_cast<unsigned int>(j)));
++            if (memcmp(radio_mac, em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
++                queue_remove(pcmd->m_em_candidates, static_cast<unsigned int>(j));
++            }
++        }
++        if (queue_count(pcmd->m_em_candidates) == 0) {
++            queue_remove(m_pending, static_cast<unsigned int>(i));
++            pop_stats(pcmd);
++            destroy_command(pcmd);
++        }
++    }
++
++    for (int i = static_cast<int>(queue_count(m_active)) - 1; i >= 0; i--) {
++        pcmd = static_cast<em_cmd_t *>(queue_peek(m_active, static_cast<unsigned int>(i)));
++        for (int j = static_cast<int>(queue_count(pcmd->m_em_candidates)) - 1; j >= 0; j--) {
++            em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, static_cast<unsigned int>(j)));
++            if (memcmp(radio_mac, em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
++                em->set_orch_state(em_orch_state_cancel);
++            }
++        }
++    }
++}
++
+ void em_orch_t::remove_em_config_cmd_for_em(unsigned char *radio_mac)
+ {
+     auto command_lock = lock_commands();

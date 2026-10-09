@@ -21,10 +21,10 @@ Platform-independent (completes the lab's 0248 and 0251); not for upstream on it
 Upstream-Status: Inappropriate [completes 0248 and 0251, lab patches]
 
 diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
-index f216c57..6db40e5 100644
+index 1e1ba9f..d433226 100644
 --- a/inc/dm_easy_mesh.h
 +++ b/inc/dm_easy_mesh.h
-@@ -74,6 +74,10 @@ public:
+@@ -81,6 +81,10 @@ public:
       * reconciliation keeps otherwise (dm_bss_list_t::reconcile_device_bss) */
      unsigned int    m_num_removed_bss;
      em_bss_id_t     m_removed_bss[EM_MAX_BSSS];
@@ -35,7 +35,7 @@ index f216c57..6db40e5 100644
      dm_dpp_t        m_dpp;
      em_cmd_ctx_t    m_cmd_ctx;
      unsigned int 	m_num_opclass;    
-@@ -1497,6 +1501,20 @@ public:
+@@ -1504,6 +1508,20 @@ public:
  	 * @brief Forgets the removed rows once their database rows are gone.
  	 */
  	void clear_removed_bss() { m_num_removed_bss = 0; }
@@ -57,7 +57,7 @@ index f216c57..6db40e5 100644
  	/**!
  	 * @brief Finds a matching BSS (Basic Service Set) based on the provided BSS ID.
 diff --git a/inc/em_base.h b/inc/em_base.h
-index 6907ada..59883f3 100644
+index 0610398..f54fdf2 100644
 --- a/inc/em_base.h
 +++ b/inc/em_base.h
 @@ -52,6 +52,9 @@ extern "C"
@@ -71,10 +71,10 @@ index 6907ada..59883f3 100644
  #define EM_MGR_TOUT     250 // in milliseconds
  #define EM_1_TOUT_MULT 	(1000 / EM_MGR_TOUT)
 diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
-index 4be2717..0cc6235 100644
+index bbf992a..f625f65 100644
 --- a/src/dm/dm_easy_mesh.cpp
 +++ b/src/dm/dm_easy_mesh.cpp
-@@ -3328,6 +3328,31 @@ void dm_easy_mesh_t::remember_removed_bss(const em_bss_info_t *bss)
+@@ -3413,6 +3413,31 @@ void dm_easy_mesh_t::remember_removed_bss(const em_bss_info_t *bss)
      removed->haul_type = bss->id.haul_type;
  }
  
@@ -106,7 +106,7 @@ index 4be2717..0cc6235 100644
  bool dm_easy_mesh_t::is_removed_bss(const unsigned char *ruid, const unsigned char *bssid,
      em_haul_type_t haul_type)
  {
-@@ -3779,6 +3804,7 @@ void dm_easy_mesh_t::reset()
+@@ -3866,6 +3891,7 @@ void dm_easy_mesh_t::reset()
      m_num_policy = 0;
      m_num_bss = 0;
      m_num_removed_bss = 0;
@@ -114,7 +114,7 @@ index 4be2717..0cc6235 100644
      m_num_ap_mld = 0;
      m_num_assoc_sta_mld = 0;
      m_db_cfg_param.db_cfg_type = db_cfg_type_none;
-@@ -3818,6 +3844,7 @@ dm_easy_mesh_t::dm_easy_mesh_t()
+@@ -3907,6 +3933,7 @@ dm_easy_mesh_t::dm_easy_mesh_t()
      m_num_policy = 0;
      m_num_bss = 0;
      m_num_removed_bss = 0;
@@ -123,10 +123,10 @@ index 4be2717..0cc6235 100644
      m_num_net_ssids = 0;
      m_num_assoc_sta_mld = 0;
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
-index 8319c28..a4d1491 100644
+index 6cfa874..e109fa1 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -3161,8 +3161,23 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+@@ -3185,8 +3185,23 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
                  reported = memcmp(reported_bsta[r], station, sizeof(mac_address_t)) == 0;
              }
              if (reported) {
