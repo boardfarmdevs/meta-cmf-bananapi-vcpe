@@ -155,4 +155,7 @@ EOF
     fi
 }
 
+require recipes-core/images/vcpe-arp-hardening.inc
+
+
 ROOTFS_POSTPROCESS_COMMAND_append = " fix_ccspwebui; fix_cr_deviceprofile; vcpe_drop_boot_sleeps; vcpe_fix_dnsmasq_lan_deps; vcpe_fix_sync_ordering; vcpe_fix_lcm_cthulhu_cgroup; vcpe_fix_syslog_ng_cthulhu_include;"
