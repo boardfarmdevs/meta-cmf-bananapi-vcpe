@@ -41,7 +41,10 @@ boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfa
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
 extender_image=${EASYMESH_EXTENDER_IMAGE:-}
 export_dir=${EASYMESH_LXD_EXPORT_DIR:-$root/gen/vm/lxd/artifacts}
-runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short HEAD)}
+# the VM's copy of this checkout is named after its branch; a detached checkout (one synced at
+# a pin, as the umbrella's ./sync gives) names it after its commit
+runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short -q HEAD ||
+    echo "detached-$(git -C "$root" rev-parse --short=12 HEAD)")}
 client_create_parallelism=${CLIENT_CREATE_PARALLELISM:-8}
 wired_extenders=${EASYMESH_WIRED_EXTENDERS:-1}
 emosa=${EASYMESH_EMOSA:-0}
@@ -484,8 +487,32 @@ make_bundle() {
 # The RF medium: easymesh-medium at the commit this lab pins (gen/medium). Its
 # bundle becomes the guest's submodule; the daemon and the console are built here
 # from that commit (the lab commits no binaries) and installed in the guest.
+# What building the medium here takes (wmediumd: C against libnl and libconfig; its console:
+# Go at the version observer/go.mod names), each missing piece named before a build starts
+# rather than a compiler's error minutes into it (a fresh Ubuntu 22.04 host, 9 October).
+medium_build_tools() {
+    local missing=() library go_need go_have
+    command -v pkg-config >/dev/null || missing+=("pkg-config")
+    for library in libnl-3.0:libnl-3-dev libnl-genl-3.0:libnl-genl-3-dev libconfig:libconfig-dev; do
+        pkg-config --exists "${library%%:*}" 2>/dev/null || missing+=("${library#*:}")
+    done
+    go_need=$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$root/gen/medium/observer/go.mod")
+    if ! command -v go >/dev/null; then
+        missing+=("Go $go_need or later (Ubuntu 22.04's golang-go is 1.18: the go snap)")
+    else
+        go_have=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+        [ "$(printf '%s\n%s\n' "$go_need" "$go_have" | sort -V | head -1)" = "$go_need" ] ||
+            missing+=("Go $go_need or later (this host has ${go_have:-an unknown version})")
+    fi
+    [ "${#missing[@]}" -eq 0 ] && return
+    echo "building the medium on this host needs:" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    exit 1
+}
+
 prepare_medium() {
     local stage=$1 assets=$1/assets medium=$root/gen/medium pinned
+    medium_build_tools
     pinned=$(git -C "$root" rev-parse HEAD:gen/medium)
     [ "$(git -C "$medium" rev-parse HEAD 2>/dev/null)" = "$pinned" ] || {
         echo "gen/medium is not at the pinned $pinned: git submodule update --init gen/medium" >&2

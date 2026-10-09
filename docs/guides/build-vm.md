@@ -13,7 +13,12 @@ On the Ubuntu 22.04 build host, from the layer checkout:
 sudo gen/vm/lxd/install-host.sh
 newgrp lxd
 test -c /dev/kvm
+# the RF medium is compiled here (the builder names what is missing)
+sudo apt-get install -y pkg-config libnl-3-dev libnl-genl-3-dev libconfig-dev
+sudo snap install go --classic      # 22.04's golang-go (1.18) is too old
 ```
+
+A detached checkout works: the VM's copy is named after its commit.
 
 The host installer initializes LXD only if it has no pool. The VM builder puts every
 lab in the host's one ZFS pool for lab VMs, `labs`, and creates it when it does not
@@ -64,11 +69,9 @@ pool if needed, creates the VM, assigns a free bridge address, installs only
 commit-bounded source/assets, provisions the fixed client capacity and starts
 the lab.
 
-Every new VM includes **wmediumd Console NG**, its updated daemon telemetry,
-the room observer endpoint and survey bridge. No separate Go/Node install is
-needed in the VM. The final build gate checks NG telemetry and matching room
-and survey sources, not just whether a web page answers. The console uses the
-same named port; its header includes the manual and RF property field guide.
+Every new VM includes **wmediumd Console NG** (daemon telemetry, the room observer
+endpoint, the survey bridge) on the named port; the final gate checks its telemetry and
+matching room and survey sources, not just that a page answers.
 
 Fresh appliances use a Btrfs-backed nested LXD pool, so the 100 client roots
 are copy-on-write clones of the prepared client image. Use eight bounded client
@@ -76,16 +79,22 @@ workers for a faster first build; final association and convergence gates remain
 unchanged. Set `EASYMESH_NESTED_LXD_STORAGE_DRIVER=dir` or
 `CLIENT_CREATE_PARALLELISM=1` only for compatibility diagnosis.
 
-Workers share one short-lived hwsim allocation session. It inventories existing
-profile radio assignments once, reserves new radios under the allocator lock,
-then lets container creation and readiness continue in parallel. The build log
-reports the client-provisioning duration for direct build-to-build comparison.
+Workers share one hwsim allocation session; the build log reports the
+client-provisioning time.
+
+The images are those the last builds recorded, verified (`controller-emosa` after
+`BUILD_EMOSA=1`); the [artifact store](../reference/build-speed.md#the-artifact-store) keeps
+those a later build removed.
 
 ```sh
-controller=$(find "$HOME/yocto/easymesh-bpi/build-qemux86bpibroadband/tmp/deploy/images" \
-  -name '*.rootfs.lxc.tar.bz2' -type f | head -n 1)
-extender=$(find "$HOME/yocto/easymesh-bpi/build-qemux86bpiap/tmp/deploy/images" \
-  -name '*.rootfs.lxc.tar.bz2' -type f | head -n 1)
+recorded_image() {   # ROLE BUILD_DIR
+  local record
+  record=$(cat "$HOME/yocto/easymesh-bpi/build-evidence/latest-$1") &&
+    (cd "$2" && sha256sum -c --quiet "$record/images.sha256" >&2) &&
+    echo "$2/$(awk '{print $2; exit}' "$record/images.sha256")"
+}
+controller=$(recorded_image controller "$HOME/yocto/easymesh-bpi/build-qemux86bpibroadband")
+extender=$(recorded_image extender "$HOME/yocto/easymesh-bpi/build-qemux86bpiap")
 test -n "$controller" && test -n "$extender"
 CLIENT_CREATE_PARALLELISM=8 \
 EASYMESH_CONTROLLER_IMAGE="$controller" EASYMESH_EXTENDER_IMAGE="$extender" \
