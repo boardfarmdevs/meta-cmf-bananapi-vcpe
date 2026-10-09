@@ -21,7 +21,8 @@ grep -Eq '(vmx|svm)' /proc/cpuinfo || {
 }
 
 apt-get update
-apt-get install -y qemu-kvm snapd zstd
+# jq: the suite's host-side checks read JSON with it, as the lab's own scripts do in the VM
+apt-get install -y qemu-kvm snapd zstd jq
 if ! snap list lxd >/dev/null 2>&1; then
     snap install lxd
 fi

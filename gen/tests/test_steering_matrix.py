@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -47,6 +48,7 @@ def test_source_is_verified_after_scan_and_before_request():
     assert body.index('verify_steering_source "$client"') < body.index('/usr/bin/steer.sh')
 
 
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed on this host")
 def test_the_end_counts_the_labs_own_clients_not_backhaul_station_rows():
     # rdk-1009, 9 October: 50 moves passed, then a bare count of every station row (the
     # extenders' and pods' backhaul stations among them) differed and the matrix exited mute

@@ -117,7 +117,7 @@ fresh native utilization on every wireless hop; unverified context fails.
 
 ## Prerequisites
 
-Host tools: `python3`, `pytest`, Node 22+, `npm`, `lxc`, `ssh`, `curl`. Proxies derive from lab names and bind to
+Host tools: `python3`, `pytest`, Node 22+, `npm`, `lxc`, `ssh`, `curl`, `jq` (install-host.sh installs it). Proxies derive from lab names and bind to
 the LAN address, not loopback. Inspect
 `lxc config device show "$EASYMESH_LXD_NAME"` and export its `listen` host IP
 as `EASYMESH_HOST_ADDRESS` when `127.0.0.1` cannot reach them.

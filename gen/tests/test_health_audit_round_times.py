@@ -4,10 +4,15 @@ medium_counts, traffic_round, traffic_rounds): a lossy first round right after a
 told apart from a fault by them."""
 from pathlib import Path
 import re
+import shutil
 import subprocess
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 AUDIT = (ROOT / "gen/tests/health-audit.sh").read_text()
+# the medium's telemetry is read with jq, a host tool of the suite (install-host.sh)
+needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed on this host")
 
 LOG_1 = """\
 2026-10-09T13:19:59.000001Z nl: cmd 2, seq 1: Invalid argument
@@ -83,6 +88,7 @@ SUMMARY = ('{"packet_metrics": {"summary": {"frames_seen": %d, "management_frame
            ' "queue_delay_usec_max": %d, "queue_depth_max": 40}}}')
 
 
+@needs_jq
 def test_a_round_shows_the_mediums_traffic_refusals_backlog_and_cpu(tmp_path):
     # the shell itself stands in for wmediumd: its CPU ticks are real
     body = '''echo $$ > "$medium_runtime/wmediumd.pid"
@@ -100,6 +106,7 @@ medium_round "$before" "$after"
                         r"queue_delay_max_usec=2500000\(new\) queue_depth_max=40 wmediumd_cpu_s=\d+\.\d", line)
 
 
+@needs_jq
 def test_without_the_mediums_telemetry_the_round_says_so(tmp_path):
     assert medium('medium_round "$(medium_snapshot)" "$(medium_snapshot)"', tmp_path, "return 7") == \
         "medium unavailable"
