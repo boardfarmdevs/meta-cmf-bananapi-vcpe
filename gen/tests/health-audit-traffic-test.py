@@ -64,6 +64,7 @@ exec </dev/null
 status_section() { :; }
 status_wait() { :; }
 ping_count=10 ping_interval=1 ping_max_loss=0 ping_exec_attempts=2 ping_exec_timeout=5
+ping_rounds=1 ping_settle=0
 ''' + f"expected_clients={expected}\n" + body + '\nexit "$traffic_fail"\n')
         environment = dict(os.environ, PATH=str(directory) + ":" + os.environ["PATH"],
                            STUB_CONFIG=str(config_path), STUB_CALLS=str(calls_path),
