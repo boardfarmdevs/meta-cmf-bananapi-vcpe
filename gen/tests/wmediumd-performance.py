@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 from typing import Any
 from urllib.request import urlopen
@@ -151,6 +152,11 @@ def main() -> int:
         help="Console telemetry URL; pass an empty value when unavailable",
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--max-loss-percent", type=float,
+        help="fail (exit 1) when the ping workload loses more than this: a load the medium "
+             "cannot carry measures nothing and can leave the lab broken",
+    )
     args = parser.parse_args()
     if args.duration < 5 or args.ping_interval < 0.001:
         parser.error("duration must be >= 5 and ping interval must be >= 0.001")
@@ -243,6 +249,11 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered)
     print(rendered, end="")
+    loss = result["traffic"]["loss_percent"]
+    if args.max_loss_percent is not None and selected and loss > args.max_loss_percent:
+        print(f"FAIL: the ping workload lost {loss:.1f}% of {transmitted} pings, more than "
+              f"{args.max_loss_percent:g}%: the medium did not carry it", file=sys.stderr)
+        return 1
     return 0
 
 

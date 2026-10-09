@@ -352,6 +352,11 @@ The JSON report combines process CPU/RSS, affinity, context switches, netlink
 drops, packet and queue telemetry, and per-client ping results. CPU is a
 percentage of one logical CPU. The accepted measurements and overload boundary
 are documented in [performance](../../docs/reference/performance.md).
+`--max-loss-percent` fails the ping workload (exit 1) above that loss. The suite's
+`medium-ping` runs every client at a ping per 100 ms for 30 s with a 10 % bar
+(rdk-1004, 9 October: 1.3 % lost, 38 % of a core, the queue empty right after),
+then `medium-recovery`, the health audit, before the steering runs. Every 10 ms
+from 100 clients left rdk-1009's medium 28 minutes behind and its extenders down.
 
 ### `optimizer-dynamic.sh`
 

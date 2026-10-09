@@ -381,7 +381,16 @@ run_live() {
     run live optimizer "$(guest_command "sed 's/^expected_clients: .*/expected_clients: $clients/' gen/optimizer/configs/threshold-policy.yaml > '$optimizer_policy' && python3 gen/tests/optimizer-live-smoke.py --cycles 5 --interval 1 --policy '$optimizer_policy'; status=\$?; rm -f '$optimizer_policy'; exit \$status")"
     run live candidate-rcpi "$(guest_command 'python3 gen/tests/candidate-rcpi-test.py')"
     run live medium-idle "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode idle --duration 30 --output '$guest_repo/test-results-wmediumd-idle.json'")"
-    run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --output '$guest_repo/test-results-wmediumd-ping.json'")"
+    # A load the medium carries (a ping every 100 ms from every client), with a loss bar, and
+    # the lab back to health after it before anything else runs: every 10 ms from 100 clients
+    # (10,000 a second through the single-threaded medium) delivered 1.6 % and left the Wi-Fi
+    # extenders down, and the steering and the soak after it failed on that lab, not their own
+    # (rdk-1009 on the K8, 9 October).
+    run live medium-ping "$(guest_command "python3 gen/tests/wmediumd-performance.py --mode ping --duration 30 --ping-interval 0.1 --max-loss-percent 10 --output '$guest_repo/test-results-wmediumd-ping.json'")"
+    run live medium-recovery "$(guest_command "HEALTH_EXPECT_CLIENTS='$clients' bash gen/tests/health-audit.sh")" || {
+        skip live dependents 'the lab did not come back to health after the medium load; see the medium-recovery log'
+        return
+    }
     run live steering-private "$(guest_command "RESULTS_FILE='$guest_repo/test-results/$stamp/steering-private.csv' bash gen/tests/steering-matrix.sh 1 --ssid private_ssid")"
     run live steering-iot "$(guest_command "RESULTS_FILE='$guest_repo/test-results/$stamp/steering-iot.csv' bash gen/tests/steering-matrix.sh 1 --ssid iot_ssid")"
 }

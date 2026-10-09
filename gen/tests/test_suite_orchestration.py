@@ -190,3 +190,33 @@ echo "$skipped $required_skipped"
     assert "skip browser public-viewer 'set PUBLIC_VIEWER_URL to the published viewer base URL' optional" in SUITE
     final = SUITE.rstrip().splitlines()[-1]
     assert final == "((failed == 0 && blocked == 0 && required_skipped == 0 && passed > 0))"
+
+
+def test_the_medium_load_is_one_it_carries_and_the_lab_is_healthy_after_it_before_steering():
+    # every 10 ms from 100 clients left rdk-1009's medium 28 minutes behind and its extenders down,
+    # and the steering after it failed on that lab (the K8, 9 October)
+    live = function("run_live")
+    ping = re.search(r"run live medium-ping .*", live).group()
+    assert "--ping-interval 0.1" in ping and "--max-loss-percent 10" in ping
+    assert live.index("run live medium-ping") < live.index("run live medium-recovery") \
+        < live.index("live steering-private")
+    script = '''
+root=/fixture
+vm=fixture
+guest_repo=/guest
+stamp=run
+EASYMESH_WEBUI_PORT=1
+WMEDIUMD_CONSOLE_PORT=2
+EASYMESH_ROOM_DEMO_PORT=3
+prepare_lab() { return 0; }
+lab_client_count() { echo 100; }
+qualify_client_profile() { return 0; }
+guest_command() { printf '%s' "$1"; }
+run() { printf '%s\\n' "$*"; [[ "$2" != medium-recovery ]]; }
+skip() { printf 'skip %s\\n' "$*"; }
+''' + function("run_live") + '\nrun_live\n'
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "HEALTH_EXPECT_CLIENTS='100' bash gen/tests/health-audit.sh" in result.stdout
+    assert "skip live dependents" in result.stdout
+    assert "steering" not in result.stdout.split("live medium-recovery", 1)[1]
