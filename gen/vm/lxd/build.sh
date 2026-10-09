@@ -756,6 +756,11 @@ build_vm() {
     init_args+=(--config limits.cpu="$cpus" --config limits.memory="$memory")
     easymesh_ensure_storage_pool "$storage"
     init_args+=(--storage "$storage")
+    # The root's size at creation: LXD sizes the new volume then, from the pool's default
+    # when none is given, and a base image whose root is larger (published from a 96 GiB VM)
+    # does not fit (the K8, 9 October: a 10 GiB default, "Source image size exceeds specified
+    # volume size"). set_root_disk_size below then finds it already so.
+    init_args+=(--device "root,size=$disk")
     "${init_args[@]}" </dev/null
     # The appliance builds the narrowly-scoped multichannel hwsim module from
     # the exact Ubuntu source package. Disable guest Secure Boot before first
