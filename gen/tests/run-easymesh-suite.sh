@@ -97,6 +97,7 @@ printf 'section\ttest\tresult\tseconds\tlog\tcommand\n' > "$results"
 passed=0
 failed=0
 skipped=0
+required_skipped=0    # skipped tests of a requested section: the run is not qualified
 blocked=0
 
 record() {
@@ -117,12 +118,13 @@ run() {
     [[ $status == passed ]]
 }
 
-skip() {
+skip() {    # skip SECTION NAME REASON [optional]: skipped is not passed, unless optional
     local section=$1 name=$2 reason=$3 started log
     started=$(date +%s)
     log=$output_root/logs/"$section-$name.log"
     printf 'SKIPPED: %s\n' "$reason" | tee "$log"
     record "$section" "$name" skipped "$started" "$log" "$reason"
+    [ "${4:-}" = optional ] || ((required_skipped += 1))
 }
 
 have_command() { command -v "$1" >/dev/null 2>&1; }
@@ -356,7 +358,7 @@ run_browser() {
     if [[ -n ${PUBLIC_VIEWER_URL:-} ]]; then
         run browser public-viewer "cd '$root' && node gen/tests/viewer-public-site-browser-test.js '$PUBLIC_VIEWER_URL'"
     else
-        skip browser public-viewer 'set PUBLIC_VIEWER_URL to the published viewer base URL'
+        skip browser public-viewer 'set PUBLIC_VIEWER_URL to the published viewer base URL' optional
     fi
 }
 
@@ -519,4 +521,9 @@ PY
 printf '\n===== EasyMesh suite summary =====\n'
 printf 'passed: %d  failed: %d  skipped: %d  blocked: %d\n' "$passed" "$failed" "$skipped" "$blocked"
 printf 'results: %s\nsummary: %s\n' "$results" "$output_root/summary.json"
-((failed == 0 && blocked == 0))
+# Skipped is not passed: a requested section's skipped test (its prerequisites missing) or a
+# run where nothing passed is not a qualification, and exits nonzero like a failure (the
+# rooms section skipped whole on the K8, 9 October, had exited 0). The public viewer is optional.
+((required_skipped == 0)) || printf 'not qualified: %d required test(s) skipped\n' "$required_skipped"
+((passed > 0)) || printf 'not qualified: nothing passed\n'
+((failed == 0 && blocked == 0 && required_skipped == 0 && passed > 0))

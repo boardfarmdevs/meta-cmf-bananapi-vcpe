@@ -167,3 +167,26 @@ skip() { return 1; }
     assert "live steering-iot" in result.stdout
     assert "/guest/test-results/run/steering-private.csv" in result.stdout
     assert "/guest/test-results/run/steering-iot.csv" in result.stdout
+
+
+def test_a_skipped_required_test_or_nothing_passed_is_not_a_qualification():
+    # the K8's rooms section, skipped whole without its browser prerequisites, exited 0 (9 October)
+    script = '''
+set -e
+output_root=$1
+mkdir -p "$output_root/logs"
+results=$output_root/results.tsv
+passed=0 failed=0 skipped=0 required_skipped=0 blocked=0
+''' + function("record") + function("skip") + '''
+skip rooms browser 'install Playwright/Chromium' >/dev/null
+skip browser public-viewer 'set PUBLIC_VIEWER_URL' optional >/dev/null
+echo "$skipped $required_skipped"
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run(["bash", "-c", script, "test", directory], check=True,
+                                capture_output=True, text=True)
+    assert result.stdout.split() == ["2", "1"]
+    assert "skip browser public-viewer 'set PUBLIC_VIEWER_URL to the published viewer base URL' optional" in SUITE
+    final = SUITE.rstrip().splitlines()[-1]
+    assert final == "((failed == 0 && blocked == 0 && required_skipped == 0 && passed > 0))"

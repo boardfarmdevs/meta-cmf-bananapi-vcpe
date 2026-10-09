@@ -17,7 +17,9 @@ gen/tests/run-easymesh-suite.sh all --yes-act
 
 Results go into timestamped `test-results/`: per-command logs,
 `results.tsv` scorecard and machine-readable `summary.json`. Nonzero exit means
-failure or blocked qualification. **Skipped/blocked is not passed.**
+failure, blocked qualification, a requested section's test skipped (its prerequisites
+missing) or nothing passed; only the public viewer may be skipped. **Skipped/blocked is
+not passed.**
 
 ## Sections
 
