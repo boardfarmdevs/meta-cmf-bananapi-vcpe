@@ -48,6 +48,12 @@ install -m 0755 /home/easymesh/easymesh-assets/easymesh-select-thin-profile \
     /usr/local/sbin/easymesh-select-thin-profile
 install -m 0644 /home/easymesh/easymesh-assets/easymesh-thin-firstboot.service \
     /etc/systemd/system/easymesh-thin-firstboot.service
+# the lab's cores, its containers' included, kept in the VM across its restarts (a restart
+# gave apport's pattern back and disarmed a hand-set one, rdk-1004, 9 October)
+install -m 0755 /home/easymesh/easymesh-assets/easymesh-save-core \
+    /usr/local/sbin/easymesh-save-core
+install -m 0644 /home/easymesh/easymesh-assets/easymesh-core-watch.service \
+    /etc/systemd/system/easymesh-core-watch.service
 
 # Boardfarm reconstructs its two-container WAN lab and br-wan101 first. The EasyMesh
 # runtime then starts LXD nodes in dependency order.
@@ -62,6 +68,8 @@ systemctl enable easymesh-hwsim-pool.service
 systemctl enable easymesh-lab.service
 systemctl enable easymesh-room-service.service
 systemctl enable easymesh-evidence-retention.timer
+systemctl enable easymesh-core-watch.service
+systemctl restart easymesh-core-watch.service    # the pattern now; it touches no lab process
 /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-survey-bridge.sh \
     /run/meta-cmf-wmediumd/metrics/control.sock easymesh-lab.service
 bash /home/easymesh/git/meta-cmf-bananapi-vcpe/gen/medium/wmediumd/install-control-priority.sh rdk

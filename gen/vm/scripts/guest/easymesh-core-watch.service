@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep the EasyMesh lab's cores, its containers' included, in the VM's /var/crash
+# after apport, which sets its own pattern when it starts, and after the boot's sysctls
+After=apport.service systemd-sysctl.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo "|/usr/local/sbin/easymesh-save-core %%e %%P %%t" > /proc/sys/kernel/core_pattern'
+
+[Install]
+WantedBy=multi-user.target

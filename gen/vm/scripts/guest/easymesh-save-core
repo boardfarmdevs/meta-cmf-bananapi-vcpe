@@ -1,0 +1,12 @@
+#!/bin/sh
+# The lab VM's core pattern pipe (easymesh-core-watch.service): a crashing process's core, its
+# containers' included, into the VM's own /var/crash as core.NAME.PID.TIME (the kernel runs
+# this in the VM's namespaces with the global PID; a path pattern would write into the crashing
+# container's own root, and apport drops the containers' cores). Bounded: 1 GiB a core, the
+# newest 10 kept. For the extenders' OneWifi SEGV (open work "RDK extenders' OneWifi segfaults").
+#   |/usr/local/sbin/easymesh-save-core %e %P %t
+dir=${EASYMESH_CORE_DIR:-/var/crash}
+mkdir -p "$dir"
+head -c 1073741824 > "$dir/core.$1.$2.$3"
+# shellcheck disable=SC2012 # the names are core.NAME.PID.TIME, no newlines
+ls -1t "$dir"/core.* 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f -- "$old"; done

@@ -623,6 +623,8 @@ push_inputs() {
         [easymesh-thin-firstboot]=gen/vm/scripts/guest/easymesh-thin-firstboot
         [easymesh-select-thin-profile]=gen/vm/scripts/guest/easymesh-select-thin-profile
         [easymesh-thin-firstboot.service]=gen/vm/scripts/guest/easymesh-thin-firstboot.service
+        [easymesh-save-core]=gen/vm/scripts/guest/easymesh-save-core
+        [easymesh-core-watch.service]=gen/vm/scripts/guest/easymesh-core-watch.service
     )
     for file in "${!guest_assets[@]}"; do
         lxc file push --mode 0755 "$root/${guest_assets[$file]}" \
