@@ -38,6 +38,10 @@ program = r'''
 #define em_printfout(...) ((void)0)
 using mac_address_t = unsigned char[6];
 enum { CONSTANTS };
+enum { EM_CONF };
+void em_debug(int, const char *, ...) {}
+#define em_util_dbg_print(module, ...) em_debug(module, __VA_ARGS__)
+namespace util { std::string mac_to_string(const unsigned char *) { return "fixture"; } }
 struct dm_easy_mesh_t {
     mac_address_t mac{};
     unsigned char *get_agent_al_interface_mac() { return mac; }
@@ -49,6 +53,7 @@ struct em_t {
     int get_state() { return state; }
     int get_orch_state() { return orch; }
     unsigned char *get_radio_interface_mac() { return mac; }
+    static const char *state_2_str(int) { return "fixture"; }
 };
 void queue_push(std::vector<em_t *> *queue, em_t *radio) { queue->push_back(radio); }
 struct em_cmd_t {

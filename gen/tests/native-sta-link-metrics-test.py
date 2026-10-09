@@ -69,6 +69,9 @@ void *hash_map_get_next(queue_t *queue, void *value) {
     return found == queue->end() || ++found == queue->end() ? nullptr : *found;
 }
 void em_printfout(const char *, ...) {}
+enum { EM_CONF };
+void em_debug(int, const char *, ...) {}
+#define em_util_dbg_print(module, ...) em_debug(module, __VA_ARGS__)
 namespace util {
 std::string mac_to_string(const unsigned char *address) { return std::to_string(address[5]); }
 }
@@ -94,6 +97,8 @@ struct dm_easy_mesh_t {
     unsigned short message_id = 0;
     Dpp dpp;
     Dpp *get_dpp() { return &dpp; }
+    mac_address_t agent_al{};
+    unsigned char *get_agent_al_interface_mac() { return agent_al; }
     unsigned short get_msg_id() { return message_id; }
     static void macbytes_to_string(const unsigned char *, char *text) { strcpy(text, "02:00:00:00:00:01"); }
 };
@@ -108,6 +113,7 @@ struct em_cmd_t {
     dm_orch_type_t get_orch_op() { return dm_orch_type_sta_link_metrics; }
     const char *get_cmd_name() { return "fixture"; }
     void set_start_time() { starts++; }
+    void deinit() {}
     static const char *get_orch_op_str(dm_orch_type_t) { return "fixture"; }
     static const char *get_cmd_type_str(em_cmd_type_t) { return "fixture"; }
 };
@@ -171,6 +177,11 @@ struct em_t : em_metrics_t, em_configuration_t, em_capability_t {
     void set_btm_report_prev_state(em_state_t) {}
     unsigned short get_btm_report_msg_id() { return 0; }
     void orch_execute(em_cmd_t *);
+    // the controller's policy step (em_policy_cfg_t); not reached by these agent cases
+    bool m_policy_metrics_only = false;
+    unsigned short m_policy_req_msg_id = 0;
+    bool policy_resend_due(unsigned char *) { return false; }
+    int send_policy_cfg_request_msg() { return 0; }
 };
 em_cmd_t *em_metrics_t::get_current_cmd() { return static_cast<em_t *>(this)->m_cmd; }
 dm_easy_mesh_t *em_metrics_t::get_data_model() { return &static_cast<em_t *>(this)->live; }

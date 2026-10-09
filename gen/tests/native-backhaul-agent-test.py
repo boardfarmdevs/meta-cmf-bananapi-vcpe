@@ -342,6 +342,10 @@ void root_case(const std::string &name) {
     agent.poll_native_root_admission();
     assert(agent.node.sent.size() == 2 && agent.node.sent.back() != first_query);
     if (name == "renewal-500" || name == "admitted-renews") return;
+    // an admitted link's renewal (sent at +500) has renewal_window_ms before it is revoked;
+    // only the first proof has proof_window_ms (0213: a busy medium is not a lost path)
+    const uint64_t renewal_sent = initial + 500;
+    const uint64_t revoke_due = renewal_sent + em_rooted_admission::renewal_window_ms;
     if (name == "admit-queue-failure") {
         agent.set_failure = false;
         assert(em_rooted_admission::controller_reply(agent.node.sent.back().data(),
@@ -353,7 +357,7 @@ void root_case(const std::string &name) {
     if (name == "changed-context-not-revoked") {
         ++agent.root_generation;
         agent.actual_parent = target_mac;
-        fixture_now_ms = initial + 2750;
+        fixture_now_ms = revoke_due + 250;
         agent.poll_native_root_admission();
         assert(agent.root_writes == 1 && agent.m_root_admission.pending());
         return;
@@ -366,18 +370,22 @@ void root_case(const std::string &name) {
     if (name == "late-renewal-reply-cannot-suppress-revoke") {
         assert(em_rooted_admission::controller_reply(agent.node.sent.back().data(),
             agent.node.sent.back().size(), agent.m_data_model.controller, response));
-        fixture_now_ms = initial + 2501;
+        fixture_now_ms = revoke_due + 1;
         agent.process_native_root_reply(response.data(), response.size());
-        fixture_now_ms = initial + 2750;
+        fixture_now_ms = revoke_due + 250;
         agent.poll_native_root_admission();
         assert(agent.root_writes == 2 && agent.root_written[21] == 2 && agent.writes == 0);
         return;
     }
-    fixture_now_ms = initial + 2500;
+    // unanswered past the first proof's window: retried, not revoked
+    fixture_now_ms = renewal_sent + em_rooted_admission::proof_window_ms + 250;
+    agent.poll_native_root_admission();
+    assert(agent.root_writes == 1 && agent.m_root_admission.pending());
+    fixture_now_ms = revoke_due;
     agent.poll_native_root_admission();
     assert(agent.root_writes == 1);
     if (name == "revoke-queue-failure") agent.set_failure = true;
-    fixture_now_ms = initial + 2750;
+    fixture_now_ms = revoke_due + 250;
     agent.poll_native_root_admission();
     assert(agent.root_writes == 2 && agent.root_written[21] == 2 && agent.writes == 0);
     assert(agent.root_written[7] == 1 &&

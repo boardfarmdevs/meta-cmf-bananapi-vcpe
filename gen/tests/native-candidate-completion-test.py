@@ -98,17 +98,23 @@ void serialize(dm_easy_mesh_t *agent_dm, cJSON *dev_obj) {
 SERIALIZER
 }
 void em_printfout(const char *, ...) {}
+enum { EM_CONF };
+void em_debug(int, const char *, ...) {}
+#define em_util_dbg_print(module, ...) em_debug(module, __VA_ARGS__)
 bool valid_message = true;
 struct em_msg_t {
     em_msg_t(int, int, unsigned char *, unsigned int) {}
     int validate(char **) { return valid_message; }
 };
+struct em_t;
 struct em_orch_t {
     std::recursive_mutex mutex;
     int completed = 0;
+    em_t *completed_owner = nullptr;
     auto lock_commands() { return std::unique_lock<std::recursive_mutex>(mutex); }
-    bool complete_command(int kind) {
+    bool complete_command(int kind, em_t *owner = nullptr) {
         assert(kind == em_cmd_type_unassoc_sta_query);
+        completed_owner = owner;
         completed++;
         return true;
     }
@@ -180,6 +186,8 @@ int main() {
         auto frame = response(owner, count);
         assert(receiver.handle_unassoc_sta_link_metrics_rsp(frame.data(), frame.size()) == 0);
         assert(owner.state == em_state_ctrl_configured && owner.mid == 0);
+        // the command completed is the one the owner radio runs, not another radio's
+        assert(manager.orchestration.completed_owner == &owner);
         assert(owner.model.m_num_unassoc_sta_metrics == count);
         assert(owner.model.m_unassoc_sta_metrics_received_ms > 0);
         assert(owner.model.m_unassoc_sta_metrics_msg_id == 77 + count);
@@ -341,6 +349,9 @@ func sample(count int) snapshot {
 func runQuery(test *testing.T, baseline snapshot, after func() snapshot, bound time.Duration) (*httptest.ResponseRecorder, int) {
     test.Helper()
     candidateRequests = newCandidateCoordinator(1, 32)
+    // polls share a read for up to candidateStateShareAge: a case starts with none, as a
+    // query does when the last one's read is older than that
+    sharedCandidateState.at = time.Time{}
     submitted := 0
     var current snapshot
     submitCandidateQuery = func([]byte) error {

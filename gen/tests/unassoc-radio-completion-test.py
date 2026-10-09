@@ -95,6 +95,9 @@ struct em_cmd_t {
     dm_easy_mesh_t *get_data_model() { return &model; }
 };
 void em_printfout(const char *, ...) {}
+enum { EM_AGENT, EM_CONF };
+void em_debug(int, const char *, ...) {}
+#define em_util_dbg_print(module, ...) em_debug(module, __VA_ARGS__)
 namespace util {
 std::string mac_to_string(const unsigned char *mac) { return std::to_string(mac[5]); }
 }
