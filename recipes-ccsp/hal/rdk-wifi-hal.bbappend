@@ -339,3 +339,19 @@ SRC_URI += "file://0025-read-standard-station-signal-when-chain-signal-is-absent
 # /nvram/lab_wired_backhaul) never connects its backhaul station, and so never
 # closes its root admission: it can be a Wi-Fi extender's backhaul parent.
 SRC_URI += "file://0045-lab-wired-backhaul-never-connects-its-station.patch"
+
+# The Banana Pi platform (mac80211: mt76, and mac80211_hwsim in the lab) sends the BSS's
+# basic rates to the kernel with NL80211_CMD_SET_BSS, as hostapd does; without them
+# mac80211 sent beacons and broadcasts at 1 Mbit/s on 2.4 GHz though they advertise
+# OFDM-only basic rates. The SET_BSS link ID follows mld_ap. It changes
+# platform/banana-pi/platform.c, above S, so it is applied from the git directory like
+# the platform patches above, after them.
+PLATFORM_BASIC_RATES_PATCH := "${THISDIR}/${BPN}/0046-banana-pi-program-the-bss-basic-rates.patch"
+python do_patch_append() {
+    import subprocess, os
+    bb.note("meta-cmf-bananapi-vcpe: programming the BSS basic rates on Banana Pi")
+    with open(d.getVar('PLATFORM_BASIC_RATES_PATCH'), 'rb') as f:
+        subprocess.run(['patch', '-p1', '-N', '-d', os.path.dirname(d.getVar('S'))], stdin=f, check=True)
+}
+do_patch[vardepsexclude] += "PLATFORM_BASIC_RATES_PATCH"
+do_patch[file-checksums] += "${PLATFORM_BASIC_RATES_PATCH}:True"

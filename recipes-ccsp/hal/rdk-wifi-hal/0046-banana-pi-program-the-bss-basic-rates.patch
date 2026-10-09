@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000046 Mon Sep 17 00:00:00 2001
+From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Date: Fri, 9 Oct 2026 13:45:00 -0700
+Subject: [PATCH] banana-pi: program the BSS's basic rates into the kernel
+
+OneWifi's 2.4 GHz BSSs advertise OFDM-only basic rates (6, 12 and 24
+Mbit/s), but on the Banana Pi platform wifi_drv_set_ap never tells the
+kernel: only a platform with PLATFORM_FLAGS_SET_BSS sends
+NL80211_CMD_SET_BSS with NL80211_ATTR_BSS_BASIC_RATES, and only the
+Intel platform sets it. The Banana Pi path, set_bss_param(), sends AP
+isolation alone. mac80211's basic rate set stays empty, so it sends
+beacons, broadcasts and probe responses at the band's lowest rate,
+1 Mbit/s on 2.4 GHz: a 234-byte beacon takes 2,094 us of air instead
+of 344 us. Measured in the lab (mac80211_hwsim, 9 October): all 7,501
+beacons in 59 s from the 13 RDK BSSs on channel 6 went at 1 Mbit/s;
+with the pods' 10 BSSs, beacons alone held channel 6 47 % busy.
+
+The Banana Pi R4 runs mac80211 (mt76), as the lab does
+(mac80211_hwsim): the platform now sets PLATFORM_FLAGS_SET_BSS and
+sends the BSS parameters as hostapd does. That path put an MLO link ID
+on every SET_BSS once hostapd is 2.11 with CONFIG_GENERIC_MLO, from
+params->mld_link_id, which means something for an MLD BSS only (a u8,
+0 otherwise); nl80211 refuses a link ID for a non-MLD interface, and
+the failure fails the AP's start. The link ID now follows
+params->mld_ap, as the START_AP/NEW_BEACON message above already does.
+
+Upstream-Status: Pending
+---
+ platform/banana-pi/platform.c | 7 ++++++-
+ src/wifi_hal_nl80211.c        | 4 +++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+--- a/platform/banana-pi/platform.c
++++ b/platform/banana-pi/platform.c
+@@ -724,7 +724,12 @@ int platform_flags_init(int *flags)
+ int platform_flags_init(int *flags)
+ {
+     wifi_hal_dbg_print("%s:%d \n",__func__,__LINE__);
+-    *flags = PLATFORM_FLAGS_STA_INACTIVITY_TIMER | PLATFORM_FLAGS_CONTROL_PORT_FRAME;
++    /* mac80211 (mt76, mac80211_hwsim): the BSS's basic rates, ERP and HT protection go to the
++     * kernel with NL80211_CMD_SET_BSS, as hostapd sends them; without them mac80211 sends
++     * beacons, broadcasts and probe responses at the band's lowest rate (1 Mbit/s on 2.4 GHz)
++     * while the beacons advertise OFDM-only basic rates. */
++    *flags = PLATFORM_FLAGS_SET_BSS | PLATFORM_FLAGS_STA_INACTIVITY_TIMER |
++             PLATFORM_FLAGS_CONTROL_PORT_FRAME;
+     return 0;
+ }
+ 
+--- a/src/wifi_hal_nl80211.c
++++ b/src/wifi_hal_nl80211.c
+@@ -17879,7 +17879,9 @@
+ #endif
+ 
+ #if HOSTAPD_VERSION >= 211 && defined(CONFIG_GENERIC_MLO)
+-    link_id = params->mld_link_id;
++    /* a link ID only for an MLD AP, as in the beacon above: mld_link_id (a u8, never "none")
++     * means something for an MLD BSS only, and nl80211 refuses a link ID for any other */
++    link_id = params->mld_ap ? params->mld_link_id : NL80211_DRV_LINK_ID_NA;
+ #endif // HOSTAPD_VERSION >= 211 && CONFIG_GENERIC_MLO
+ 
+     interface->beacon_set = 1;
+-- 
+2.43.0
