@@ -83,10 +83,8 @@ hysteresis. Its corrected 12 dB divider gives relay/other-child/gateway SNR
 passed branching but missed Default candidate coverage at 19/20; the new
 combined run passes recovery too. Component replacement occurs outside scenarios.
 
-Use assembled native sources, not the layer. The retry fixture still requires
-held candidate 0206 (without it: NOT APPLICABLE, exit 77); the admission fixture
-covers 0246's per-agent query admission; the beacon fixture now exercises the
-enabled HAL patch:
+Use assembled native sources, not the layer. The retry fixture requires held
+0206 (else exit 77); the beacon fixture exercises the enabled HAL patch:
 
 ```sh
 python3 gen/tests/candidate-query-admission-test.py "$MESH_SOURCE"
