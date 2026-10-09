@@ -69,3 +69,49 @@ def test_each_round_reports_its_times_and_the_medium_and_each_client_its_link():
     # the medium's helpers sit in the traffic section, which the traffic test runs on its own
     section = AUDIT[AUDIT.index('status_section "End-to-end traffic"'):AUDIT.index('if [ -s "$results" ]')]
     assert "stamp() {" in section and "medium_counts() {" in section
+
+
+def medium(script_body, tmp_path, curl_body):
+    script = "set -euo pipefail\n" + f"medium_runtime={tmp_path}\n" + \
+        "medium_telemetry=http://fixture/api/v1/telemetry\n" + \
+        f"curl() {{ {curl_body}; }}\n" + function("medium_snapshot") + function("medium_round") + script_body
+    return subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True).stdout.strip()
+
+
+SUMMARY = ('{"packet_metrics": {"summary": {"frames_seen": %d, "management_frames": 80, "data_frames": 20,'
+           ' "multicast_frames": 70, "netlink_clone_einval": 5, "netlink_other_errors": %d,'
+           ' "queue_delay_usec_max": %d, "queue_depth_max": 40}}}')
+
+
+def test_a_round_shows_the_mediums_traffic_refusals_backlog_and_cpu(tmp_path):
+    # the shell itself stands in for wmediumd: its CPU ticks are real
+    body = '''echo $$ > "$medium_runtime/wmediumd.pid"
+before=$(medium_snapshot)
+n=1
+after=$(medium_snapshot)
+echo "$before"
+medium_round "$before" "$after"
+'''
+    curl = (f"if [ \"${{n:-0}}\" = 1 ]; then echo '{SUMMARY % (1500, 9, 2500000)}';"
+            f" else echo '{SUMMARY % (100, 4, 900000)}'; fi")
+    snapshot, line = medium(body, tmp_path, curl).splitlines()
+    assert re.fullmatch(r"100 80 20 70 5 4 900000 40 \d+", snapshot)
+    assert re.fullmatch(r"frames=1400 management=0 data=0 multicast=0 clone_einval=0 other_errors=5 "
+                        r"queue_delay_max_usec=2500000\(new\) queue_depth_max=40 wmediumd_cpu_s=\d+\.\d", line)
+
+
+def test_without_the_mediums_telemetry_the_round_says_so(tmp_path):
+    assert medium('medium_round "$(medium_snapshot)" "$(medium_snapshot)"', tmp_path, "return 7") == \
+        "medium unavailable"
+    nulls = '{"packet_metrics": {"available": false, "summary": {}}}'
+    assert medium('medium_round "$(medium_snapshot)" "$(medium_snapshot)"', tmp_path, f"echo '{nulls}'") == \
+        "medium unavailable"
+
+
+def test_each_round_reports_the_medium_beside_its_times():
+    rounds = function("traffic_rounds")
+    assert rounds.index("before=$(medium_snapshot)") < rounds.index('traffic_round "$round"') \
+        < rounds.index("after=$(medium_snapshot)")
+    assert 'echo "MEDIUM_ROUND round=$round $(medium_round "$before" "$after")"' in rounds
+    section = AUDIT[AUDIT.index('status_section "End-to-end traffic"'):AUDIT.index('if [ -s "$results" ]')]
+    assert "medium_snapshot() {" in section and "medium_round() {" in section

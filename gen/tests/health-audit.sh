@@ -273,6 +273,34 @@ medium_counts() {    # medium_counts FROM TO: the medium's cmd 2 and cmd 3 refus
             if ($0 ~ /cmd 2,/) c2++; else if ($0 ~ /cmd 3,/) c3++ }
             END { printf "cmd2=%d cmd3=%d", c2, c3 }'
 }
+# A logged refusal is one whose clone record was overwritten before hwsim's reply was read
+# (0039: 65536 records): the medium behind. Its telemetry shows how far and on what traffic.
+medium_snapshot() {    # the medium's counters now, one line: its telemetry summary's and CPU ticks
+    local pid ticks=-
+    pid=$(cat "${medium_runtime:-/run/meta-cmf-wmediumd}/wmediumd.pid" 2>/dev/null) &&
+        ticks=$(awk '{print $14 + $15}' "/proc/$pid/stat" 2>/dev/null) || ticks=-
+    { curl -fsS --max-time 3 "${medium_telemetry:-http://127.0.0.1:8890/api/v1/telemetry}" 2>/dev/null || true; } |
+        jq -r --arg ticks "${ticks:--}" '.packet_metrics.summary | [.frames_seen, .management_frames,
+            .data_frames, .multicast_frames, .netlink_clone_einval, .netlink_other_errors,
+            .queue_delay_usec_max, .queue_depth_max] + [$ticks] | map(tostring) | join(" ")' 2>/dev/null || true
+}
+medium_round() {    # medium_round BEFORE AFTER: the medium in a round, from two snapshots
+    local -a b a
+    local i cpu=-
+    read -ra b <<<"$1"
+    read -ra a <<<"$2"
+    [[ "${#b[@]}" -eq 9 && "${#a[@]}" -eq 9 ]] || { echo "medium unavailable"; return 0; }
+    for i in 0 1 2 3 4 5 6 7; do
+        [[ "${b[$i]}" =~ ^[0-9]+$ && "${a[$i]}" =~ ^[0-9]+$ ]] || { echo "medium unavailable"; return 0; }
+    done
+    if [[ "${b[8]}" =~ ^[0-9]+$ && "${a[8]}" =~ ^[0-9]+$ ]]; then
+        cpu=$(awk -v t=$((a[8] - b[8])) -v hz="$(getconf CLK_TCK)" 'BEGIN {printf "%.1f", t / hz}')
+    fi
+    echo "frames=$((a[0] - b[0])) management=$((a[1] - b[1])) data=$((a[2] - b[2]))" \
+        "multicast=$((a[3] - b[3])) clone_einval=$((a[4] - b[4])) other_errors=$((a[5] - b[5]))" \
+        "queue_delay_max_usec=${a[6]}$([ "${a[6]}" = "${b[6]}" ] || echo '(new)')" \
+        "queue_depth_max=${a[7]}$([ "${a[7]}" = "${b[7]}" ] || echo '(new)') wmediumd_cpu_s=$cpu"
+}
 traffic_round() {    # traffic_round ROUND: one parallel round; fails if any client exceeds the loss bar
     local client pid fail=0 completed=0
     local -a pids=()
@@ -310,16 +338,19 @@ traffic_round() {    # traffic_round ROUND: one parallel round; fails if any cli
     return "$fail"
 }
 traffic_rounds() {    # up to ping_rounds rounds, a pause after each lossy one; the last decides
-    local round start end mark rc
+    local round start end mark rc before after
     mark=${audit_start:-$(stamp)}
     for ((round = 1; round <= ping_rounds; round++)); do
         [ "$round" = 1 ] || echo "ROUND $round"
+        before=$(medium_snapshot)
         start=$(stamp)
         rc=0
         traffic_round "$round" || rc=1
         end=$(stamp)
+        after=$(medium_snapshot)
         echo "ROUND_TIME round=$round start=$start end=$end" \
             "medium_before $(medium_counts "$mark" "$start") medium_during $(medium_counts "$start" "$end")"
+        echo "MEDIUM_ROUND round=$round $(medium_round "$before" "$after")"
         mark=$end
         [ "$rc" = 1 ] || return 0
         [ "$round" -lt "$ping_rounds" ] || return 1
