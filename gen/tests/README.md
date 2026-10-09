@@ -394,6 +394,13 @@ from every provisioned WLAN client in parallel, summarizes an existing
 steering matrix CSV, and prints host memory. It fails on any service restart
 or client packet loss above the configured limit.
 
+Each traffic round prints `ROUND_TIME` (its start and end, UTC, and the medium's
+netlink refusals, cmd 2 and cmd 3, from its timed log before and during the
+round) and a `LINK` line per client (the BSSID it was associated to as the round
+started, and for how long). A lossy round is so told apart: clients just
+(re)associated and radios scanning (cmd 2) are convergence, loss on links
+associated for minutes with no refusals is a fault.
+
 Useful overrides are `HEALTH_PING_COUNT`, `HEALTH_PING_INTERVAL`,
 `HEALTH_PING_MAX_LOSS`, `RESULTS_FILE` and `EASYMESH_REPO`. The default packet
 loss limit is zero.

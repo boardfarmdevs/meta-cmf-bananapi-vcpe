@@ -23,6 +23,7 @@ ping_settle=${HEALTH_PING_SETTLE_SECONDS:-30}
 medium_runtime=${HEALTH_MEDIUM_RUNTIME:-/run/meta-cmf-wmediumd}
 medium_telemetry=${HEALTH_MEDIUM_TELEMETRY_URL:-http://127.0.0.1:8890/api/v1/telemetry}
 medium_evidence_root=${HEALTH_MEDIUM_EVIDENCE_DIR:-$repo/tmp/test-results/medium-evidence}
+audit_start=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)    # the medium's refusals counted from here (traffic_rounds)
 medium_evidence() {    # the medium's telemetry, configuration and logs (each bounded by -L) now
     local dir file old saved=
     dir=$medium_evidence_root/$(date -u +%Y%m%dT%H%M%SZ)
@@ -259,11 +260,28 @@ for ((client_index = 0; client_index < expected_clients; client_index++)); do
         exit 1
     fi
 done
-traffic_round() {    # one parallel round; fails if any client exceeds the loss bar
+# Each round's times, the medium's netlink refusals before and during it (its timed log,
+# easymesh-medium 0038) and every client's link as it starts: a first round lossy right after a
+# bring-up (rdk-1004, 9 October 13:18Z: 44 of 100 clients, none 30 s later, the loss behind every
+# agent) is told apart by them from a fault, convergence (clients just (re)associated, radios
+# scanning: cmd 2) from loss on settled links.
+stamp() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+medium_counts() {    # medium_counts FROM TO: the medium's cmd 2 and cmd 3 refusals between two stamps
+    { cat "${medium_runtime:-/run/meta-cmf-wmediumd}/wmediumd.log.1" \
+        "${medium_runtime:-/run/meta-cmf-wmediumd}/wmediumd.log" 2>/dev/null || true; } |
+        awk -v from="$1" -v to="$2" '$1 >= from && $1 <= to {
+            if ($0 ~ /cmd 2,/) c2++; else if ($0 ~ /cmd 3,/) c3++ }
+            END { printf "cmd2=%d cmd3=%d", c2, c3 }'
+}
+traffic_round() {    # traffic_round ROUND: one parallel round; fails if any client exceeds the loss bar
     local client pid fail=0 completed=0
     local -a pids=()
     for client in "${traffic_clients[@]}"; do
         (
+            # its AP and how long it has been associated to it, as the round starts
+            link=$(timeout "$ping_exec_timeout" lxc exec "$client" -- iw dev wlan0 station dump \
+                </dev/null 2>/dev/null | awk '/^Station/ {b = $2} /connected time/ {c = $3}
+                END {printf "bssid=%s connected=%s", b ? b : "none", c != "" ? c "s" : "-"}') || true
             ping_output=
             for ((attempt = 1; attempt <= ping_exec_attempts; attempt++)); do
                 if ping_output=$(timeout "$ping_exec_timeout" \
@@ -275,6 +293,7 @@ traffic_round() {    # one parallel round; fails if any client exceeds the loss 
             done
             loss=$(sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p' <<<"$ping_output")
             echo "$client ${loss:-FAIL}"
+            echo "LINK round=$1 $client $link"
             loss_value=${loss%%%}
             [[ "$loss_value" =~ ^[0-9]+$ ]] \
                 && [ "$loss_value" -le "$ping_max_loss" ]
@@ -291,10 +310,18 @@ traffic_round() {    # one parallel round; fails if any client exceeds the loss 
     return "$fail"
 }
 traffic_rounds() {    # up to ping_rounds rounds, a pause after each lossy one; the last decides
-    local round
+    local round start end mark rc
+    mark=${audit_start:-$(stamp)}
     for ((round = 1; round <= ping_rounds; round++)); do
         [ "$round" = 1 ] || echo "ROUND $round"
-        traffic_round && return 0
+        start=$(stamp)
+        rc=0
+        traffic_round "$round" || rc=1
+        end=$(stamp)
+        echo "ROUND_TIME round=$round start=$start end=$end" \
+            "medium_before $(medium_counts "$mark" "$start") medium_during $(medium_counts "$start" "$end")"
+        mark=$end
+        [ "$rc" = 1 ] || return 0
         [ "$round" -lt "$ping_rounds" ] || return 1
         echo "SETTLE: packets lost in round $round; measuring again in ${ping_settle}s"
         sleep "$ping_settle"
