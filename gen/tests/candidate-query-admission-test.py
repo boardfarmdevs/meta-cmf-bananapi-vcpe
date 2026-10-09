@@ -37,6 +37,9 @@ program = r'''
 #include <string>
 #include <vector>
 #define em_printfout(...) ((void)0)
+#define em_util_dbg_print(...) ((void)0)
+#define em_util_info_print(...) ((void)0)
+#define em_util_error_print(...) ((void)0)
 enum { CONSTANTS };
 using em_cmd_type_t = int;
 using em_orch_state_t = int;
@@ -70,7 +73,14 @@ struct dm_easy_mesh_t {
     static void macbytes_to_string(unsigned char *, char *text) { text[0] = 0; }
 };
 namespace util { std::string mac_to_string(unsigned char *) { return "radio"; } }
-struct em_bus_event_t { int type = em_cmd_type_unassoc_sta_query; };
+/* An event's AlMac, which the series reads from its JSON (0246's unassoc_query_agent, here a
+ * model of it): a query to one agent waits only for one in flight to the same agent; an event
+ * without an AlMac keeps the single flight of its type. */
+struct em_bus_event_t { int type = em_cmd_type_unassoc_sta_query; bool has_al = false; mac_address_t al = {}; };
+inline bool unassoc_query_agent(em_bus_event_t *evt, mac_address_t al_mac) {
+    if (evt->has_al) memcpy(al_mac, evt->al, sizeof(mac_address_t));
+    return evt->has_al;
+}
 struct em_cmd_t;
 struct em_t {
     int state = em_state_ctrl_configured, orchestration = em_orch_state_idle;
@@ -215,6 +225,16 @@ int main(int count, char **arguments) {
         assert(orch.submit_command(healthy_query));
         orch.advance_commands(false);
         assert(healthy.owner == healthy_query && healthy_query->starts == 1);
+#if PER_AGENT
+        /* the query in flight is to the healthy agent: another agent's waits for nothing */
+        em_bus_event_t to_healthy, to_startup;
+        to_healthy.has_al = to_startup.has_al = true;
+        memcpy(to_healthy.al, healthy.model.al, sizeof(mac_address_t));
+        memcpy(to_startup.al, startup.model.al, sizeof(mac_address_t));
+        assert(orch.is_cmd_type_in_progress(&to_healthy));
+        assert(!orch.is_cmd_type_in_progress(&to_startup));
+        std::puts("PASS: a query waits only for one in flight to its own agent");
+#endif
         std::puts("PASS: startup query rejected before global type registration; healthy agent can immediately collect");
     }
 }
@@ -222,6 +242,10 @@ int main(int count, char **arguments) {
     'READINESS', readiness).replace('METHODS', methods)
 with tempfile.TemporaryDirectory(prefix='candidate-query-admission-') as directory:
     executable = Path(directory) / 'test'
+    # 0246 and later admit a query per agent (unassoc_query_agent); a source before it, one
+    # query of the type at a time
+    per_agent = 'unassoc_query_agent(' in methods
     subprocess.run(['g++', '-std=c++14', '-Wall', '-Wextra', '-Werror', '-pthread',
+                    f'-DPER_AGENT={int(per_agent)}',
                     '-x', 'c++', '-', '-o', str(executable)], input=program, text=True, check=True)
     subprocess.run([str(executable), *sys.argv[2:]], check=True)

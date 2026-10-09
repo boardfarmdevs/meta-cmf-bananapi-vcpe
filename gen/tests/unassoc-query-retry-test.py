@@ -16,6 +16,11 @@ clear = re.search(r"        void clear_unassoc_sta_query_msg_id\(\)\s*\{[^}]*\}"
 orchestration = (root / "src/orch/em_orch_ctrl.cpp").read_text()
 cancel_function = re.search(r"void em_orch_ctrl_t::pre_process_cancel\(.*?\n}", orchestration, re.S).group()
 cancel = cancel_function.split("case em_cmd_type_unassoc_sta_query:", 1)[1].split("default:", 1)[0]
+if "m_unassoc_sta_query_transmits" not in sender:
+    # the series retries an outstanding query by its command's timeout (0071); the sender's own
+    # bounded retransmission is held candidate 0206 (docs/reference/room-acceptance.md)
+    print("NOT APPLICABLE: the source has no held 0206 (the sender's own retransmission); this check is for it")
+    sys.exit(77)
 program = r'''
 #include <arpa/inet.h>
 #include <cassert>
@@ -43,6 +48,9 @@ struct steady_clock {
 #define em_tlv_type_eom 0
 #define em_profile_type_3 3
 #define em_printfout(...) ((void)0)
+#define em_util_dbg_print(...) ((void)0)
+#define em_util_info_print(...) ((void)0)
+#define em_util_error_print(...) ((void)0)
 enum { em_state_ctrl_configured, em_state_ctrl_unassoc_sta_link_metrics_pending, unrelated_state };
 using mac_address_t = unsigned char[6];
 struct em_cmdu_t { unsigned char version, reserved; unsigned short type,id; unsigned char fragment,last_frag_ind:1,relay_ind:1,other:6; } __attribute__((packed));
