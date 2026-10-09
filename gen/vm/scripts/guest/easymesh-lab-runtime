@@ -504,13 +504,20 @@ wait_mesh_model() {
 
 enable_metrics_reporting() {
     # wifi: at least the Wi-Fi mesh (a wired extender may not run yet); final: every device
-    local scope=${1:-final} attempts=${2:-36} attempt response devices=$model_devices
+    local scope=${1:-final} attempts=${2:-36} attempt response devices=$model_devices pods bound
     [ "$scope" = final ] || devices=5
+    # em_cli applies the policy device by device, each with up to 8 s to be admitted, up to
+    # 8 s for its commit and 2 s after it: a successful apply on the lab's controller devices
+    # (its own and the EMOSA pods') can take that long, more than a fixed 45 s (rdk-1004,
+    # 9 October: one took over 50 s, and every try counted as a failure)
+    pods=$(lxc list -f json 2>/dev/null | jq '[.[] | select(.config["user.emosa.role"] == "pod")] | length' 2>/dev/null)
+    bound=$(( 18 * (model_devices + ${pods:-0}) + 15 ))
     # The controller refuses a policy while a command is in progress (em_cli: HTTP error,
     # "Error_Prev_Cmd_In_Progress"): at boot, with EMOSA's pod agents onboarding from the
-    # gateway, for many minutes (rdk-1004, 7 Oct). Up to 36 tries by default, about 15 min.
+    # gateway, for many minutes (rdk-1004, 7 Oct). Up to 36 tries by default, within the
+    # unit's start timeout.
     for attempt in $(seq 1 "$attempts"); do
-        response=$(curl -fsS --max-time 45 -X POST \
+        response=$(curl -fsS --max-time "$bound" -X POST \
             http://127.0.0.1:8888/api/v1/metricsreporting/enable 2>/dev/null || true)
         # Each native device has three radios; an EMOSA pod, registered on its own at boot
         # since EMOSA runs in the gateway (rdk-1004, 7 Oct: 8 devices, 20 radios), one. The

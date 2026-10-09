@@ -170,6 +170,14 @@ room() {
         return 0
     fi
     systemctl reset-failed "$ROOM_UNIT" 2>/dev/null || true
+    # The room service requires the lab's runtime: with the runtime not active, starting it
+    # runs the runtime's whole cold start first (its radio reset included), which happened
+    # silently (rdk-1004, 9 October: every up after a failed start). Said, and done on its own.
+    if ! systemctl is-active --quiet easymesh-lab.service; then
+        log "the lab's runtime is $(systemctl is-active easymesh-lab.service 2>/dev/null): its cold start first, which the room service requires (up to 30 minutes)"
+        systemctl start easymesh-lab.service ||
+            die "the lab's runtime did not start (journalctl -u easymesh-lab.service)"
+    fi
     systemctl start "$ROOM_UNIT"
     for i in $(seq 120); do
         state=$(room_settled) && { log "room $state"; return 0; }
