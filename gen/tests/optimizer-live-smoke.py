@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only five-Agent optimizer acceptance against a running hwsim lab."""
+"""Read-only optimizer acceptance against a running hwsim lab, its mesh counted from the lab."""
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -19,6 +20,9 @@ from optimizer.model import parse_time
 from optimizer.observer import ControllerObserver
 from optimizer.policy import ThresholdPolicy
 from optimizer.state import PolicyState
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lab_composition import composition  # noqa: E402
 
 
 def selected_same_band_candidates(snapshot, selected_sta_macs):
@@ -46,6 +50,12 @@ def main() -> int:
         "--policy",
         default=str(REPO / "gen" / "optimizer" / "configs" / "threshold-policy.yaml"),
     )
+    parser.add_argument(
+        "--expected-devices",
+        type=int,
+        help="the controller's devices (default: the lab's, lab_composition.py: its Wi-Fi nodes, "
+        "wired extenders and pods; the policy's own count is a fixed lab's)",
+    )
     args = parser.parse_args()
     if (
         args.cycles < 1
@@ -58,7 +68,9 @@ def main() -> int:
             "interval cannot be negative"
         )
 
-    policy = ThresholdPolicy(load_policy(args.policy))
+    config = load_policy(args.policy)
+    expected_devices = args.expected_devices if args.expected_devices is not None else composition().devices
+    policy = ThresholdPolicy(replace(config, expected_devices=expected_devices))
     provider = ControllerCandidateProvider(
         args.base_url,
         allow_simulated=True,

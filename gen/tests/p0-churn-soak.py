@@ -33,6 +33,8 @@ sys.path.insert(0, str(CONFIGURATOR))
 
 from wmdcfg.actuator import ControlClient  # noqa: E402
 from wmdcfg.inventory import discover  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lab_composition import Composition, composition  # noqa: E402
 
 
 MESH = ("bpibroadband", "bpiap", "bpiap-001", "bpiap-002", "bpiap-003")
@@ -417,16 +419,26 @@ def topology_ssid_counts(document: dict) -> dict[str, int]:
     return dict(sorted(Counter(stations.values()).items()))
 
 
+# The lab's own mesh, as health-audit.sh counts it: OpenSync pods through EMOSA ('OpenSync via
+# EMOSA') and their radios, BSSes and backhaul stations are not the lab's agents; the clients on
+# the pods' BSSes are the lab's clients.
+EMOSA = "'OpenSync via EMOSA'"
+DEVICE_AL = "substring_index(substring_index(ID,'@',2),'@',-1)"
+POD_ALS = f"select {DEVICE_AL} from DeviceList where Manufacturer = {EMOSA}"
+
+
 def model_counts() -> dict[str, int]:
     query = (
-        "select (select count(*) from DeviceList),"
-        "(select count(*) from RadioList),"
-        "(select count(*) from BSSList),"
-        "(select count(*) from STAList where Associated=1);"
+        f"select (select count(*) from DeviceList where Manufacturer <> {EMOSA}),"
+        f"(select count(*) from RadioList where {DEVICE_AL} not in ({POD_ALS})),"
+        f"(select count(*) from BSSList where {DEVICE_AL} not in ({POD_ALS})),"
+        "(select count(*) from STAList s where s.Associated=1 and not (s.BSSID in"
+        " (select BSSID from BSSList where SSID = 'mesh_backhaul') and s.MACAddress not in"
+        f" (select BackhaulSTA from DeviceList where Manufacturer <> {EMOSA})));"
     )
-    text = lxc(
-        "bpibroadband", f"mysql -N -ubpi -proot OneWifiMesh -e '{query}' 2>/dev/null"
-    )
+    # the query as an argument, not in the shell's words: it quotes strings
+    text = run("lxc", "exec", "bpibroadband", "--", "sh", "-c",
+               'mysql -N -ubpi -proot OneWifiMesh -e "$1" 2>/dev/null', "sh", query)
     values = [int(value) for value in text.split()]
     if len(values) != 4:
         raise RuntimeError(f"unexpected model counts: {text!r}")
@@ -529,6 +541,8 @@ class Soak:
         self.carousel_cursor = 0
         self.clients: tuple[str, ...] = ()
         self.expected_ssids: dict[str, int] = {}
+        # the lab's mesh, counted from the lab (lab_composition.py), read once at the start
+        self.lab: Composition = composition()
 
     def request_stop(self, signum, frame) -> None:
         self.stop_requested = True
@@ -576,13 +590,10 @@ class Soak:
         medium = medium_snapshot(self.args.socket)
         errors = []
         expected_clients = len(self.clients)
-        if counts != {"nodes": 6, "clients": expected_clients, "edges": 5}:
-            errors.append(f"topology={counts}")
-        if model != {
-            "devices": 5, "radios": 15, "bss": 50,
-            "associated": expected_clients + 4,
-        }:
-            errors.append(f"model={model}")
+        if counts != self.lab.topology(expected_clients):
+            errors.append(f"topology={counts}, expected={self.lab.topology(expected_clients)}")
+        if model != self.lab.native_model(expected_clients):
+            errors.append(f"model={model}, expected={self.lab.native_model(expected_clients)}")
         client_count = live_client_api_count(clients_document)
         if client_count != expected_clients:
             errors.append(f"client_api={client_count}")

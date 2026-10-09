@@ -226,8 +226,14 @@ mapfile -t target_rows < <(jq -nr \
       | [([$topology.nodes[] | select(.id == $bss.device_id) | .name][0]
           // $bss.device_id), $bss.bssid] | @tsv' | sort -V)
 
-if [ "${#clients[@]}" -eq 0 ] || [ "${#target_rows[@]}" -ne 5 ]; then
-    echo "expected a non-empty $ssid cohort and 5 target agents; found ${#clients[@]} and ${#target_rows[@]}" >&2
+# One 5 GHz BSS on the cohort's SSID per agent of the lab's own: its Wi-Fi nodes and its wired
+# extenders, counted from the lab (lab_composition.py); the OpenSync pods serve 2.4 GHz only
+targets=$(python3 "$(dirname "$0")/lab_composition.py" --native) || {
+    echo "cannot count the lab's agents (lab_composition.py)" >&2
+    exit 2
+}
+if [ "${#clients[@]}" -eq 0 ] || [ "${#target_rows[@]}" -ne "$targets" ]; then
+    echo "expected a non-empty $ssid cohort and $targets target agents; found ${#clients[@]} and ${#target_rows[@]}" >&2
     exit 1
 fi
 status_section "Commanded steering matrix"
