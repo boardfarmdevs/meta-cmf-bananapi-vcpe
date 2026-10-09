@@ -216,9 +216,18 @@ if ((${#requested_clients[@]})); then
     done
     mapfile -t clients < <(printf '%s\n' "${requested_clients[@]}" | sort -Vu)
 fi
+# The lab's own WLAN clients (each wlan-client's station MAC, read once): the topology's count of
+# them before and after the matrix. Every station row would count the extenders' and the pods'
+# backhaul stations too, learned and dropped as they move (rdk-1009, 9 October: 50 moves passed,
+# then the end's count differed and the matrix exited without a word).
+lab_client_macs=$(lxc list -c n --format csv | grep -E '^wlan-client(-[0-9]{3})?$' |
+    xargs -r -P 8 -I{} lxc exec {} -- cat /sys/class/net/wlan0/address 2>/dev/null | sort -u)
+lab_clients_in_topology() {    # lab_clients_in_topology TOPOLOGY: how many of the lab's clients it holds
+    jq -r '[.nodes[].STAList[]?.staMAC | ascii_downcase] | unique[]' <<<"$1" |
+        grep -Fxc -f <(printf '%s\n' "$lab_client_macs") || true
+}
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
-expected_total_clients=$(jq -r \
-    '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")
+expected_total_clients=$(lab_clients_in_topology "$topology")
 bsses=$(curl -fsS http://127.0.0.1:8888/api/v1/bsses)
 mapfile -t target_rows < <(jq -nr \
     --argjson topology "$topology" --argjson bsses "$bsses" --arg ssid "$ssid" '
@@ -246,8 +255,19 @@ failures=0
 for ((round=1; round <= rounds; round++)); do
     for ((index=0; index < ${#clients[@]}; index++)); do
         client=${clients[$index]}
-        sta=$(client_mac "$client")
-        source=$(client_bssid "$client")
+        # A cohort client unreadable or not associated at its turn (5 s to reassociate) is a
+        # failed move, named, and the matrix goes on: it exited without a word (rdk-1009,
+        # 9 October, the first private client)
+        sta=
+        source=
+        if ! sta=$(client_mac "$client") || ! source=$(client_bssid "$client" 50); then
+            echo "FAIL: $client has no station MAC or is not associated before its move${sta:+ (sta $sta)}" >&2
+            failures=$((failures + 1))
+            printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "$round" "$client" "${sta:-unknown}" - none - -1 -1 -1 -1 unknown FAIL \
+                "$run_id" - "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" | tee -a "$results"
+            continue
+        fi
         target_index=$(( (index + round) % ${#target_rows[@]} ))
         IFS=$'\t' read -r target_name target <<< "${target_rows[$target_index]}"
         if [ "$target" = "$source" ]; then
@@ -364,8 +384,11 @@ done
 restore_medium
 
 topology=$(curl -fsS http://127.0.0.1:8888/api/v1/topology)
-[ "$(jq -r '[.nodes[].STAList[]?.staMAC] | unique | length' <<<"$topology")" \
-    -eq "$expected_total_clients" ]
+final_total_clients=$(lab_clients_in_topology "$topology")
+if [ "$final_total_clients" -ne "$expected_total_clients" ]; then
+    echo "FAIL: the topology holds $final_total_clients of the lab's clients after the matrix, $expected_total_clients before" >&2
+    failures=$((failures + 1))
+fi
 if ((failures == 0)); then
     status_pass "Steering matrix complete: $((rounds * ${#clients[@]}))/$((rounds * ${#clients[@]})) passed."
 else
