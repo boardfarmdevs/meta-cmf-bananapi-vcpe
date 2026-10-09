@@ -6,7 +6,9 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
-eval "$(sed -n '/^traffic_round()/,/^}/p;/^traffic_rounds()/,/^}/p' "$root/gen/tests/health-audit.sh")"
+eval "$(sed -n '/^stamp() /p;/^medium_counts()/,/^}/p;/^traffic_round()/,/^}/p;/^traffic_rounds()/,/^}/p' \
+    "$root/gen/tests/health-audit.sh")"
+medium_runtime=$temporary    # no medium log: its refusals count 0
 
 # lxc exec CLIENT -- ping ...: the loss of this round for the client, from a script of rounds
 lxc() {
@@ -32,6 +34,11 @@ run() {    # ROUNDS LOSSES...: one line of lossy clients per round
 run 2 "wlan-client-001" ""                       # lossy, then settled: passes
 grep -q '^SETTLE: packets lost in round 1' "$temporary/out"
 grep -q '^wlan-client-001 40%' "$temporary/out"
+# each round its times and the medium's refusals, each client its link
+for round in 1 2; do
+    grep -Eq "^ROUND_TIME round=$round start=[0-9T:.-]+Z end=[0-9T:.-]+Z medium_before cmd2=0 cmd3=0 medium_during cmd2=0 cmd3=0$" "$temporary/out"
+    test "$(grep -c "^LINK round=$round wlan-client" "$temporary/out")" = 3
+done
 if run 2 "wlan-client-001" "wlan-client-002"; then # lossy twice: fails
     echo 'two lossy rounds must fail' >&2; exit 1
 fi
