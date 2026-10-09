@@ -174,7 +174,8 @@ room() {
     for i in $(seq 120); do
         state=$(room_settled) && { log "room $state"; return 0; }
         if [ "$(systemctl is-active "$ROOM_UNIT")" = failed ]; then
-            die "room service failed: $(journalctl -u "$ROOM_UNIT" -n 40 --no-pager -q | grep -o 'session failed: .*' | tail -1)"
+            # the service's own last word: a session's failure, or the inventory's (a node's radios)
+            die "room service failed: $(journalctl -u "$ROOM_UNIT" -n 40 --no-pager -q -o cat | sed -n 's/^room-service: //p' | tail -1)"
         fi
         sleep 5
     done
