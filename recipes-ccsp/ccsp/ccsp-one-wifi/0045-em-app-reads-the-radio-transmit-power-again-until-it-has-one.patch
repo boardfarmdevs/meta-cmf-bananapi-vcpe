@@ -1,0 +1,180 @@
+Subject: [PATCH] EM app: a radio's transmit power read again until it has a reading, and when it changes
+
+The EM app read each radio's transmit power from the HAL once, when the monitor started (0044
+records it as the radio's measured TransmitPowerdBm). The HAL reads a radio's power from its
+primary interface, which reports one only while it runs on a channel: a radio not up yet at
+that moment had no reading for good, and the co-located agent's Operating Channel Report said
+0 dBm for it (every extender of the RDK lab, whose OneWifi starts before its radios are up). A
+radio that comes back later, or whose power a configuration apply changes, was not read again.
+
+A radio is now read again on its channel change indication (up on a channel, or on a new one)
+and on a 5 s tick while any radio has no reading; once all have one, every 60 s. A reading
+taken or changed is recorded as measured and the radio subdoc is sent again, which carries it
+to the agent; a radio that reads none keeps its last reading. The first reading of each radio,
+and a radio still without one when first read, are logged at INFO with the uptime, so a cold
+start shows when each radio's power became known.
+
+Upstream-Status: Pending
+
+diff --git a/source/apps/em/wifi_em.c b/source/apps/em/wifi_em.c
+index db6ad81..35f3716 100644
+--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -24,6 +24,7 @@
+ #include "wifi_em_util_threshold.h"
+ #include "wifi_hal.h"
+ #include "wifi_hal_ap.h"
++#include "wifi_hal_rdk_framework.h"
+ #include "wifi_mgr.h"
+ #include <stdbool.h>
+ #include <stdint.h>
+@@ -3168,6 +3169,97 @@ static int em_handle_ap_metrics_query(wifi_app_t *app, const char *encoded)
+     return ap_report_push_cb(&request);
+ }
+ 
++// The radios' transmit power readings (TransmitPowerdBm, beside TR-181's percentage). The HAL
++// reads a radio's power from its primary interface, which reports one only while it runs on a
++// channel: a radio not up yet when the monitor starts has no reading, and the co-located
++// agent's Operating Channel Report then says 0 dBm. A radio is therefore read again on its
++// channel change indication (up on a channel, or on a new one) and on a 5 s tick while any radio
++// has no reading, every 60 s once all have one (a configuration apply that changes the power,
++// a radio that came back under the same index). A reading taken or changed is recorded as
++// measured and the radio subdoc sent again, which carries it to the agent. The first reading of
++// each radio, and a radio still without one when first read, are logged at INFO with the uptime.
++#define EM_TX_POWER_TICK_MSEC    5000
++#define EM_TX_POWER_REFRESH_MSEC 60000
++
++static int em_tx_power_sched_id = 0;
++static bool em_tx_power_all_read = false;
++static bool em_tx_power_none_logged[MAX_NUM_RADIOS];
++
++static long em_uptime_sec(void)
++{
++    struct timespec now;
++
++    return (clock_gettime(CLOCK_MONOTONIC, &now) == 0) ? (long)now.tv_sec : -1;
++}
++
++// One radio's HAL reading (dBm), recorded and sent on when new or changed. Returns true when the
++// radio has a reading: a radio that reads none keeps its last one.
++static bool em_tx_power_read(unsigned int radio_index, const char *reason)
++{
++    ULONG curr_txpower = 0;
++    bool measured = false;
++    int previous, rc;
++
++    if (radio_index >= MAX_NUM_RADIOS) {
++        return true;
++    }
++    previous = webconfig_get_radio_tx_power_dbm(radio_index, &measured);
++    rc = wifi_hal_getRadioTransmitPower((INT)radio_index, &curr_txpower);
++    if (rc != RETURN_OK || curr_txpower == 0) {
++        if (!measured && !em_tx_power_none_logged[radio_index]) {
++            em_tx_power_none_logged[radio_index] = true;
++            wifi_util_info_print(WIFI_EM,
++                "%s:%d: radio_index=%u no transmit power reading yet (%s, rc=%d, uptime %ld s)\n",
++                __func__, __LINE__, radio_index, reason, rc, em_uptime_sec());
++        }
++        return measured;
++    }
++    if (measured && previous == (int)curr_txpower) {
++        return true;
++    }
++    // The HAL's reading is in dBm. The radio's TransmitPower is TR-181's percentage, its
++    // configured value, and stays as it is: the reading travels beside it.
++    webconfig_set_radio_tx_power_dbm(radio_index, (int)curr_txpower, true);
++    if (!measured) {
++        wifi_util_info_print(WIFI_EM,
++            "%s:%d: radio_index=%u first transmit power reading %lu dBm (%s, uptime %ld s)\n",
++            __func__, __LINE__, radio_index, curr_txpower, reason, em_uptime_sec());
++    } else {
++        wifi_util_info_print(WIFI_EM, "%s:%d: radio_index=%u transmit power reading %d -> %lu dBm (%s)\n",
++            __func__, __LINE__, radio_index, previous, curr_txpower, reason);
++    }
++    // the radio subdoc carries the reading to the co-located agent
++    get_wifimgr_obj()->ctrl.webconfig_state |= ctrl_webconfig_state_radio_cfg_rsp_pending;
++    return true;
++}
++
++static void em_tx_power_read_all(const char *reason)
++{
++    unsigned int num_radios = getNumberRadios();
++    bool all = true;
++
++    for (unsigned int i = 0; i < num_radios && i < MAX_NUM_RADIOS; i++) {
++        if (!em_tx_power_read(i, reason)) {
++            all = false;
++        }
++    }
++    em_tx_power_all_read = all;
++}
++
++static int em_tx_power_tick(void *arg)
++{
++    static unsigned int ticks = 0;
++
++    (void)arg;
++    ticks++;
++    if (!em_tx_power_all_read) {
++        em_tx_power_read_all("retry");
++    } else if ((ticks % (EM_TX_POWER_REFRESH_MSEC / EM_TX_POWER_TICK_MSEC)) == 0) {
++        em_tx_power_read_all("refresh");
++    }
++    return TIMER_TASK_COMPLETE;
++}
++
+ void handle_em_command_event(wifi_app_t *app, wifi_event_t *event)
+ {
+     switch (event->sub_type) {
+@@ -3179,29 +3271,12 @@ void handle_em_command_event(wifi_app_t *app, wifi_event_t *event)
+     }
+     case wifi_event_type_notify_monitor_done:
+         is_monitor_done = TRUE;
+-        {
+-            unsigned int num_radios = getNumberRadios();
+-            for (unsigned int i = 0; i < num_radios; i++) {
+-                ULONG curr_txpower = 0;
+-                int rc = wifi_hal_getRadioTransmitPower((INT)i, &curr_txpower);
+-                if (rc != RETURN_OK) {
+-                    wifi_util_error_print(WIFI_EM, "%s:%d: failed to read tx power for radio_index=%u (rc=%d)\n",
+-                        __func__, __LINE__, i, rc);
+-                    continue;
+-                }
+-                if (curr_txpower == 0) {
+-                    wifi_util_error_print(WIFI_EM, "%s:%d: tx power reported as 0 for radio_index=%u; no reading\n",
+-                        __func__, __LINE__, i);
+-                    continue;
+-                }
+-
+-                // The HAL's reading is in dBm. The radio's TransmitPower is TR-181's
+-                // percentage, its configured value, and stays as it is: the reading
+-                // travels beside it (TransmitPowerdBm in the radio subdoc).
+-                webconfig_set_radio_tx_power_dbm(i, (int)curr_txpower, true);
+-                wifi_util_info_print(WIFI_EM, "%s:%d: radio_index=%u curr_txpower=%lu dBm\n",
+-                    __func__, __LINE__, i, curr_txpower);
+-            }
++        em_tx_power_read_all("monitor start");
++        if (em_tx_power_sched_id == 0 && app != NULL && app->ctrl != NULL &&
++            scheduler_add_timer_task(app->ctrl->sched, FALSE, &em_tx_power_sched_id, em_tx_power_tick,
++                NULL, EM_TX_POWER_TICK_MSEC, 0, FALSE) != 0) {
++            em_tx_power_sched_id = 0;
++            wifi_util_error_print(WIFI_EM, "%s:%d: no transmit power re-read timer\n", __func__, __LINE__);
+         }
+         break;
+ 
+@@ -3387,6 +3462,15 @@ int handle_em_hal_event(wifi_app_t *app, wifi_event_subtype_t sub_type, void *da
+         em_handle_wnm_action_frame(app, data);
+         break;
+ 
++    case wifi_event_hal_channel_change:
++        // the radio runs on a (new) channel: its interface reports its power now
++        if (is_monitor_done && data != NULL) {
++            if (!em_tx_power_read(((wifi_channel_change_event_t *)data)->radioIndex, "channel change")) {
++                em_tx_power_all_read = false;
++            }
++        }
++        break;
++
+     default:
+         wifi_util_dbg_print(WIFI_EM, "%s:%d app sub_event:%s not handled\r\n", __func__, __LINE__,
+             wifi_event_subtype_to_string(sub_type));
