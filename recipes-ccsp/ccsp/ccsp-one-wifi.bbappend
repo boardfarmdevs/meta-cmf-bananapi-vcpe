@@ -50,6 +50,7 @@ WIFI_BACKHAUL_ROOT_REVOCATION_PATCH := "${THISDIR}/${BPN}/0038-native-backhaul-r
 WIFI_BACKHAUL_RECOVERY_BUDGET_PATCH := "${THISDIR}/${BPN}/0039-preserve-backhaul-recovery-candidate-budget.patch"
 WIFI_NASTA_STATIONS_PATCH := "${THISDIR}/${BPN}/0040-nasta-sixty-four-stations-per-channel.patch"
 WIFI_BACKHAUL_RECONNECT_PATCH := "${THISDIR}/${BPN}/0041-backhaul-reconnect-one-attempt-per-scan.patch"
+WIFI_BAND_SUBDOC_PATCH := "${THISDIR}/${BPN}/0042-band-vap-subdoc-keeps-the-vaps-it-leaves-out.patch"
 SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no file://0037-native-backhaul-root-admission.patch;apply=no file://0038-native-backhaul-root-revocation.patch;apply=no"
 LAYER_ONEWIFI_PATCH_DIR := "${THISDIR}/${BPN}"
 
@@ -311,6 +312,8 @@ python do_patch_append() {
     with open(d.getVar('WIFI_NASTA_STATIONS_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
     with open(d.getVar('WIFI_BACKHAUL_RECONNECT_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
+    with open(d.getVar('WIFI_BAND_SUBDOC_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
 
     # GNU patch -N can return success after skipping later hunks when an older
@@ -587,3 +590,5 @@ do_patch[vardepsexclude] += "WIFI_NASTA_STATIONS_PATCH"
 do_patch[file-checksums] += "${WIFI_NASTA_STATIONS_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_BACKHAUL_RECONNECT_PATCH"
 do_patch[file-checksums] += "${WIFI_BACKHAUL_RECONNECT_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_BAND_SUBDOC_PATCH"
+do_patch[file-checksums] += "${WIFI_BAND_SUBDOC_PATCH}:True"

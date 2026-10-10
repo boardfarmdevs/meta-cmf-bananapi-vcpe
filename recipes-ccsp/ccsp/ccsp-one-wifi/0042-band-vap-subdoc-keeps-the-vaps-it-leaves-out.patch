@@ -1,0 +1,50 @@
+Subject: [PATCH] A band's VAP subdoc: the VAPs it leaves out keep their configuration
+
+A band's VAP subdoc (Vap_2.4G, Vap_5G, Vap_6G: the co-located EasyMesh agent's) is
+applied to every VAP of the radio, webconfig_hal_vap_apply_by_name over all of
+them, but only the VAPs the subdoc carries were decoded: one it left out decoded
+as zeros and was applied as a change. So the agent could not leave out a VAP it
+does not manage, and sent its own stale copy instead: after a OneWifi restart
+the agent's Vap_5G and Vap_2.4G could carry lnf_radius_5g/_2g (no EasyMesh row:
+libwebconfig 0014 keeps lnf out of EasyMesh) with OneWifi's defaults, hidden and
+WPA2-Enterprise, which OneWifi applied over an onboarding VAP configured in the
+meantime, cutting off the stations that use it.
+
+For a band's subdoc the decoded data now starts from the current configuration
+of every VAP of that radio, as the other VAP subdocs already do
+(update_subdoc_data): a VAP the subdoc leaves out decodes as it is and is not
+changed. libwebconfig 0015 then leaves such VAPs out of the agent's subdoc.
+
+Upstream-Status: Pending
+
+--- a/source/core/wifi_ctrl_queue_handlers.c
++++ b/source/core/wifi_ctrl_queue_handlers.c
+@@ -4881,6 +4881,28 @@
+             num_ssid += get_list_of_mesh_sta(&mgr->hal_cap.wifi_prop, MAX_NUM_RADIOS,
+                 &vap_names[num_ssid]);
+             break;
++        case webconfig_subdoc_type_vap_24G:
++        case webconfig_subdoc_type_vap_5G:
++        case webconfig_subdoc_type_vap_6G: {
++            /* A band's subdoc is applied to every VAP of the radio (webconfig_hal_vap_apply_by_name
++             * over all its VAPs): one it leaves out (the co-located EasyMesh agent's, for a VAP it
++             * does not manage) must decode as the VAP's current configuration, not as zeros. */
++            unsigned int radio_index = (subdoc_type == webconfig_subdoc_type_vap_24G) ? 0 :
++                (subdoc_type == webconfig_subdoc_type_vap_5G) ? 1 : 2;
++            if (radio_index < getNumberRadios()) {
++                rdk_wifi_vap_map_t *vaps = &mgr->radio_config[radio_index].vaps;
++                for (unsigned int index = 0; index < vaps->num_vaps &&
++                     num_ssid < (sizeof(vap_names) / sizeof(vap_names[0])); index++) {
++                    if (vaps->rdk_vap_array[index].vap_name[0] == '\0') {
++                        continue;
++                    }
++                    snprintf(vap_names[num_ssid], sizeof(vap_names[num_ssid]), "%s",
++                        vaps->rdk_vap_array[index].vap_name);
++                    num_ssid++;
++                }
++            }
++            break;
++        }
+ 
+         default:
+             break;

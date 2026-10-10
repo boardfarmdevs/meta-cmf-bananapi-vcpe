@@ -1,0 +1,109 @@
+Subject: [PATCH] easymesh translator: a band's subdoc leaves out the VAPs the agent does not manage
+
+A band's VAP subdoc (Vap_2.4G, Vap_5G, Vap_6G) from the co-located EasyMesh
+agent carried every VAP of the radio. One with no EasyMesh BSS row and no M2
+configuration (an lnf or hotspot VAP, kept out of EasyMesh by 0014) was not
+translated but still encoded, from the agent's own copy of it, however old:
+after a OneWifi restart that copy can be OneWifi's lnf defaults (hidden,
+WPA2-Enterprise), which OneWifi then applied over an onboarding VAP configured
+in the meantime, cutting off the stations that use it.
+
+Such a VAP is now left out of the encode explicitly: the translator records it
+in a per-thread exclusion set (webconfig_encode_exclude_vap), cleared before and
+after each EasyMesh encode, and encode_multivap_subdoc skips each excluded VAP,
+logging it ("left out of the subdoc: <name>"). Any other VAP the encoder cannot
+encode, a nameless one included, still fails the encode as before. No structure
+changes its layout. OneWifi 0042 applies a band's subdoc keeping the VAPs it
+leaves out as they are.
+
+Upstream-Status: Pending
+
+--- a/include/wifi_webconfig.h
++++ b/include/wifi_webconfig.h
+@@ -659,6 +659,12 @@ webconfig_error_t       init_multivap_subdoc(webconfig_subdoc_t *doc);
+ webconfig_error_t       access_check_multivap_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ webconfig_error_t       decode_multivap_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ webconfig_error_t       encode_multivap_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
++// The VAPs a band's VAP subdoc leaves out of the encode that follows on this thread (the
++// co-located EasyMesh agent's copy of a VAP it does not manage): encode_multivap_subdoc skips
++// each, logged; any other VAP it cannot encode, a nameless one included, still fails the encode.
++bool                    webconfig_encode_exclude_vap(unsigned int vap_index);
++bool                    webconfig_encode_vap_excluded(unsigned int vap_index);
++void                    webconfig_encode_clear_exclusions(void);
+ webconfig_error_t       translate_to_multivap_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ webconfig_error_t       translate_from_multivap_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ 
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -281,7 +281,11 @@ webconfig_error_t webconfig_easymesh_encode(webconfig_t *config,
+     webconfig_easymesh_data.descriptor = webconfig_data_descriptor_translate_from_easymesh;
+     // debug_external_protos(&webconfig_ovsdb_data, __func__, __LINE__);
+ 
+-    if (webconfig_encode(config, &webconfig_easymesh_data, type) != webconfig_error_none) {
++    // the VAPs the translation leaves out of this encode, none from an earlier one after it
++    webconfig_encode_clear_exclusions();
++    webconfig_error_t encoded = webconfig_encode(config, &webconfig_easymesh_data, type);
++    webconfig_encode_clear_exclusions();
++    if (encoded != webconfig_error_none) {
+         *str = NULL;
+         wifi_util_error_print(WIFI_WEBCONFIG,"%s:%d: Easymesh encode failed\n", __func__, __LINE__);
+         pthread_mutex_unlock(&webconfig_easymesh_lock);
+@@ -3232,6 +3236,14 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_sub
+                 "%s:%d: no EasyMesh BSS row for VAP %s (index %u)\n",
+                 __func__, __LINE__, vap->vap_name, vap->vap_index);
+             if (has_m2_config == false) {
++                /* Not the agent's VAP (an lnf or hotspot VAP, kept out of EasyMesh by 0014):
++                 * left out of the band's subdoc, which OneWifi applies keeping the VAPs it
++                 * leaves out as they are (OneWifi 0042), not as this copy of it. */
++                if (!webconfig_encode_exclude_vap(vap->vap_index)) {
++                    wifi_util_error_print(WIFI_WEBCONFIG,
++                        "%s:%d: VAP %s (index %u) cannot be left out of the subdoc\n",
++                        __func__, __LINE__, vap->vap_name, vap->vap_index);
++                }
+                 continue;
+             }
+         }
+--- a/source/webconfig/wifi_webconfig_multivap.c
++++ b/source/webconfig/wifi_webconfig_multivap.c
+@@ -26,6 +26,29 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++
++// The VAPs left out of the next encode on this thread (webconfig_encode_exclude_vap)
++static __thread bool webconfig_encode_excluded[MAX_NUM_RADIOS * MAX_NUM_VAP_PER_RADIO];
++
++bool webconfig_encode_exclude_vap(unsigned int vap_index)
++{
++    if (vap_index >= sizeof(webconfig_encode_excluded) / sizeof(webconfig_encode_excluded[0])) {
++        return false;
++    }
++    webconfig_encode_excluded[vap_index] = true;
++    return true;
++}
++
++bool webconfig_encode_vap_excluded(unsigned int vap_index)
++{
++    return vap_index < sizeof(webconfig_encode_excluded) / sizeof(webconfig_encode_excluded[0]) &&
++        webconfig_encode_excluded[vap_index];
++}
++
++void webconfig_encode_clear_exclusions(void)
++{
++    memset(webconfig_encode_excluded, 0, sizeof(webconfig_encode_excluded));
++}
+ #include <unistd.h>
+ 
+ extern webconfig_error_t encode_private_vap_object(const wifi_vap_info_t *vap_info,
+@@ -204,6 +227,11 @@ webconfig_error_t encode_multivap_subdoc(webconfig_t *config, webconfig_subdoc_d
+     for (unsigned int j = 0; j < map->num_vaps; j++) {
+         vap = &map->vap_array[j];
+         rdk_vap = &radio->vaps.rdk_vap_array[j];
++        if (webconfig_encode_vap_excluded(vap->vap_index)) {
++            wifi_util_info_print(WIFI_WEBCONFIG, "%s:%d: left out of the subdoc: %s\n", __func__,
++                __LINE__, vap->vap_name);
++            continue;
++        }
+         if (is_vap_private(&params->hal_cap.wifi_prop, vap->vap_index) &&
+             (strlen(vap->vap_name) != 0)) {
+             obj = cJSON_CreateObject();
