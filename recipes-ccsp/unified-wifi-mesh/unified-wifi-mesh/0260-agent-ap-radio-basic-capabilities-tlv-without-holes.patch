@@ -1,0 +1,35 @@
+Subject: [PATCH] agent: AP Radio Basic Capabilities TLV without holes
+
+create_ap_radio_basic_cap() advanced to the next op class entry for every op class of the
+radio, but wrote an entry only for those of the capability type: each other op class (the
+current one, a preference) left a 3-byte hole of stale buffer memory before the next entry,
+while the TLV's length counted only the entries written. A controller then read a hole as an
+entry (seen on another lab: op class 1 with 129 channels) and every entry after it shifted.
+The next entry now follows the last one written. The debug line printed cap->op_classes[i] by
+the data model's index, which is not the TLV's entry: it prints the entry written.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index c2c8e61..74c381c 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -1165,10 +1165,13 @@ short em_t::create_ap_radio_basic_cap(unsigned char *buff) {
+                 }
+                 em_util_dbg_print(EM_CONF, "Op Class %d: %d, max_tx_eirp: %d, channels.num: %d",
+ 					   i, op_class_info->op_class, op_class_info->max_tx_power, op_class_info->num_channels);
+-                em_util_dbg_print(EM_CONF, " cap->op_classes[%d].op_class: %d, cap->op_classes[%d].max_tx_eirp %d,	cap->op_classes[%d].channels.num %d",
+-					   i, cap->op_classes[i].op_class, i, cap->op_classes[i].max_tx_eirp, i, cap->op_classes[i].num);
++                em_util_dbg_print(EM_CONF, " TLV op class entry %d: op_class: %d, max_tx_eirp %d, channels.num %d",
++					   cap->op_class_num - 1, op_class->op_class, op_class->max_tx_eirp, op_class->num);
++                // the next entry follows this one only: an op class of another type (the current
++                // one, a preference) writes nothing, and advancing past it left a 3-byte hole
++                // that the TLV's length does not count and a controller reads as an entry
++                op_class = reinterpret_cast<em_op_class_t *>(reinterpret_cast<unsigned char *>(op_class) + sizeof(em_op_class_t) + all_channel_len);
+             }
+-            op_class = reinterpret_cast<em_op_class_t *>(reinterpret_cast<unsigned char *>(op_class) + sizeof(em_op_class_t) + all_channel_len);
+             all_channel_len = 0;
+         }
+     }

@@ -223,6 +223,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0257-cli-candidate-not-ready-submitted-again.patch \
     file://0258-ctrl-a-renew-request-from-the-cli-renews-the-radios-it-names.patch \
     file://0259-cli-a-renew-route.patch \
+    file://0260-agent-ap-radio-basic-capabilities-tlv-without-holes.patch \
+    file://0261-ctrl-bound-the-ap-radio-basic-capabilities-tlv-walk.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
