@@ -1,0 +1,152 @@
+Subject: [PATCH] webconfig: a radio's transmit power reading in dBm, beside the percentage
+
+A radio's TransmitPower (wifi_radio_operationParam_t.transmitPower, TR-181's
+Device.WiFi.Radio.{i}.TransmitPower) is a percentage of the radio's maximum. The
+EasyMesh translator reported it as the current operating class's transmit power,
+which EasyMesh gives in dBm, and OneWifi's EM app filled it with the HAL's
+reading (wifi_hal_getRadioTransmitPower, dBm) to make that report right, which
+made the percentage wrong (0044).
+
+The reading now has a place of its own, per radio index in each process
+(webconfig_set_radio_tx_power_dbm, webconfig_get_radio_tx_power_dbm). The radio
+subdoc carries it as TransmitPowerdBm, sent by the process that read the HAL and
+never echoed back by one that received it; a received reading never replaces one
+measured in this process. The EasyMesh translator reports the reading; without
+one, the operating class keeps the power it has. No structure changes its
+layout, so nothing built against these headers is affected.
+
+OneWifi's OVSDB translator carries TransmitPower both ways as before; not
+changed here.
+
+Upstream-Status: Pending
+
+--- a/include/wifi_webconfig.h
++++ b/include/wifi_webconfig.h
+@@ -710,6 +710,14 @@ webconfig_error_t       encode_link_report_subdoc(webconfig_t *config, webconfig
+ webconfig_error_t       translate_to_link_report_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ webconfig_error_t       translate_from_link_report_subdoc(webconfig_t *config, webconfig_subdoc_data_t *data);
+ 
++// A radio's transmit power as its HAL reads it, in dBm (0: no reading). The radio's
++// TransmitPower (wifi_radio_operationParam_t.transmitPower) is TR-181's percentage of the
++// maximum and stays one; the reading travels beside it, as the radio subdoc's
++// TransmitPowerdBm. The process that reads the HAL records it as measured; a reading
++// received in a subdoc never replaces one measured here.
++void                    webconfig_set_radio_tx_power_dbm(unsigned int radio_index, int dbm, bool measured);
++int                     webconfig_get_radio_tx_power_dbm(unsigned int radio_index, bool *measured);
++
+ #ifdef __cplusplus
+ }
+ #endif
+--- a/source/webconfig/wifi_decoder.c
++++ b/source/webconfig/wifi_decoder.c
+@@ -3256,6 +3256,11 @@ webconfig_error_t decode_radio_object(const cJSON *obj_radio, rdk_wifi_radio_t *
+         radio_info->transmitPower = 100;
+     }
+ 
++    // TransmitPowerdBm (optional): the sender's HAL reading; absent, no reading
++    param = cJSON_GetObjectItem(obj_radio, "TransmitPowerdBm");
++    webconfig_set_radio_tx_power_dbm(radio->vaps.radio_index,
++        (param != NULL && cJSON_IsNumber(param)) ? (int)param->valuedouble : 0, false);
++
+     // RtsThreshold
+     decode_param_integer(obj_radio, "RtsThreshold", param);
+     radio_info->rtsThreshold = param->valuedouble;
+--- a/source/webconfig/wifi_easymesh_translator.c
++++ b/source/webconfig/wifi_easymesh_translator.c
+@@ -640,7 +640,15 @@ webconfig_error_t translate_radio_object_to_easymesh_for_radio(webconfig_subdoc_
+         em_op_class_info->id.op_class = oper_param->operatingClass;
+         em_op_class_info->op_class = oper_param->operatingClass;
+         em_op_class_info->channel = oper_param->channel;
+-        em_op_class_info->tx_power = oper_param->transmitPower;
++        {
++            // the HAL's reading in dBm, not TR-181's percentage (oper_param->transmitPower);
++            // without a reading the operating class keeps the power it has
++            int tx_power_dbm = webconfig_get_radio_tx_power_dbm(radio_index, NULL);
++
++            if (tx_power_dbm != 0) {
++                em_op_class_info->tx_power = tx_power_dbm;
++            }
++        }
+         no_of_opclass++;
+         proto->set_num_op_class(proto->data_model,no_of_opclass);
+     }
+@@ -1420,7 +1428,15 @@ webconfig_error_t translate_radio_object_to_easymesh_for_dml(webconfig_subdoc_da
+         em_op_class_info->op_class = oper_param->operatingClass;
+         em_op_class_info->id.op_class = oper_param->operatingClass;
+         em_op_class_info->channel = oper_param->channel;
+-        em_op_class_info->tx_power = oper_param->transmitPower;
++        {
++            // the HAL's reading in dBm, not TR-181's percentage (oper_param->transmitPower);
++            // without a reading the operating class keeps the power it has
++            int tx_power_dbm = webconfig_get_radio_tx_power_dbm(radio_index, NULL);
++
++            if (tx_power_dbm != 0) {
++                em_op_class_info->tx_power = tx_power_dbm;
++            }
++        }
+ 
+         //Incrementing the number of operating classes by one, as the dml lacks an operating class for current.
+         proto->set_num_op_class(proto->data_model, (op_class_count+1));
+--- a/source/webconfig/wifi_encoder.c
++++ b/source/webconfig/wifi_encoder.c
+@@ -294,6 +294,17 @@ webconfig_error_t encode_radio_object(const rdk_wifi_radio_t *radio, cJSON *radi
+     cJSON_AddNumberToObject(radio_object, "TransmitPower",
+         radio_info->transmitPower != 0 ? radio_info->transmitPower : 100);
+ 
++    // TransmitPowerdBm: the HAL's reading beside TR-181's percentage, sent by the process
++    // that read it and never echoed back by one that received it
++    {
++        bool measured = false;
++        int dbm = webconfig_get_radio_tx_power_dbm(radio->vaps.radio_index, &measured);
++
++        if (measured && dbm != 0) {
++            cJSON_AddNumberToObject(radio_object, "TransmitPowerdBm", dbm);
++        }
++    }
++
+     // BeaconInterval
+     cJSON_AddNumberToObject(radio_object, "BeaconInterval", radio_info->beaconInterval);
+ 
+--- a/source/webconfig/wifi_webconfig.c
++++ b/source/webconfig/wifi_webconfig.c
+@@ -813,3 +813,40 @@ webconfig_error_t webconfig_init(webconfig_t *config)
+ 
+     return webconfig_error_none;
+ }
++
++// The radios' transmit power readings (wifi_webconfig.h): one per radio index, in this process
++static struct {
++    int dbm;
++    bool measured;
++} webconfig_radio_tx_power[MAX_NUM_RADIOS];
++static pthread_mutex_t webconfig_radio_tx_power_lock = PTHREAD_MUTEX_INITIALIZER;
++
++void webconfig_set_radio_tx_power_dbm(unsigned int radio_index, int dbm, bool measured)
++{
++    if (radio_index >= MAX_NUM_RADIOS) {
++        return;
++    }
++    pthread_mutex_lock(&webconfig_radio_tx_power_lock);
++    if (measured || !webconfig_radio_tx_power[radio_index].measured) {
++        webconfig_radio_tx_power[radio_index].dbm = dbm;
++        webconfig_radio_tx_power[radio_index].measured = measured;
++    }
++    pthread_mutex_unlock(&webconfig_radio_tx_power_lock);
++}
++
++int webconfig_get_radio_tx_power_dbm(unsigned int radio_index, bool *measured)
++{
++    int dbm = 0;
++    bool here = false;
++
++    if (radio_index < MAX_NUM_RADIOS) {
++        pthread_mutex_lock(&webconfig_radio_tx_power_lock);
++        dbm = webconfig_radio_tx_power[radio_index].dbm;
++        here = webconfig_radio_tx_power[radio_index].measured;
++        pthread_mutex_unlock(&webconfig_radio_tx_power_lock);
++    }
++    if (measured != NULL) {
++        *measured = here;
++    }
++    return dbm;
++}
