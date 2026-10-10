@@ -312,15 +312,25 @@ medium_round() {    # medium_round BEFORE AFTER: the medium in a round, from two
 # radio's frames waiting for the medium past hwsim's queue limit are dropped, the oldest first, and
 # counted in its d_tx_dropped. Which radios is what tells a slow medium on one channel from one
 # radio's backlog (rdk-1004, 9 October 20:10Z: 6,060 refusals in one round, channel 36).
-radio_drops_snapshot() {    # every lab radio's hwsim drops now: "DEVICE/phyN COUNT" lines
+# With the medium's transmit ring (hwsim 0012, pending_limit) a radio's queues stop instead: its
+# stops, the frames it dropped unanswered and the most frames it held come beside the drops.
+radio_drops_snapshot() {    # every lab radio's hwsim counts now: "DEVICE/phyN DROPPED STOPS EXPIRED PENDING_MAX"
     local name pid
     lxc list -c np --format csv </dev/null 2>/dev/null | while IFS=, read -r name pid; do
         [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
         timeout 5 nsenter -t "$pid" -n iw dev 2>/dev/null |
             awk '/^phy#/ {phy = substr($1, 5)} /Interface/ && phy != "" && !seen[phy]++ {print phy, $2}' |
             while read -r phy interface; do
+                # a module without the ring has no ring counters: "-" for each
                 timeout 5 nsenter -t "$pid" -n ethtool -S "$interface" 2>/dev/null |
-                    awk -v key="$name/phy$phy" '$1 == "d_tx_dropped:" {print key, $2}'
+                    awk -v key="$name/phy$phy" '{count[$1] = $2}
+                        END {
+                            if (!("d_tx_dropped:" in count)) exit
+                            print key, count["d_tx_dropped:"],
+                                ("d_tx_flow_stops:" in count ? count["d_tx_flow_stops:"] : "-"),
+                                ("d_tx_pending_expired:" in count ? count["d_tx_pending_expired:"] : "-"),
+                                ("d_tx_pending_max:" in count ? count["d_tx_pending_max:"] : "-")
+                        }'
             done
     done
     return 0    # a device gone or without hwsim radios is left out, not the audit's failure
@@ -334,6 +344,24 @@ radio_drops_round() {    # radio_drops_round BEFORE AFTER: the radios whose hwsi
         ($1 in before) && $2 > before[$1] {print $2 - before[$1], $1}' \
         <(printf '%s\n' "$1") <(printf '%s\n' "$2") |
         sort -k1,1nr | awk '{line = line sep $2 "=" $1; sep = " "} END {print line == "" ? "none" : line}'
+}
+radio_ring_round() {    # radio_ring_round BEFORE AFTER: the transmit rings' stops and expiries, the fullest
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "unavailable"
+        return 0
+    fi
+    awk 'NR == FNR {stops[$1] = $3; expired[$1] = $4; next}
+        ($1 in stops) && $3 != "-" && stops[$1] != "-" {
+            ring = 1
+            total_stops += $3 - stops[$1]
+            total_expired += $4 - expired[$1]
+            if ($5 + 0 > peak) {peak = $5 + 0; fullest = $1}
+        }
+        END {
+            if (!ring) {print "none"; exit}
+            printf "stops=%d expired=%d pending_max=%d%s\n", total_stops, total_expired, peak,
+                fullest == "" ? "" : " at " fullest
+        }' <(printf '%s\n' "$1") <(printf '%s\n' "$2")
 }
 traffic_round() {    # traffic_round ROUND: one parallel round; fails if any client exceeds the loss bar
     local client pid fail=0 completed=0
@@ -388,6 +416,7 @@ traffic_rounds() {    # up to ping_rounds rounds, a pause after each lossy one; 
             "medium_before $(medium_counts "$mark" "$start") medium_during $(medium_counts "$start" "$end")"
         echo "MEDIUM_ROUND round=$round $(medium_round "$before" "$after")"
         echo "RADIO_DROPS round=$round $(radio_drops_round "$drops_before" "$drops_after")"
+        echo "RADIO_RING round=$round $(radio_ring_round "$drops_before" "$drops_after")"
         mark=$end
         [ "$rc" = 1 ] || return 0
         [ "$round" -lt "$ping_rounds" ] || return 1

@@ -414,7 +414,11 @@ seconds, or `medium unavailable` without its telemetry. A refused TX status
 (cmd 3) is a frame hwsim had already dropped, its radio's queue to the medium
 full: `RADIO_DROPS` names the radios whose `d_tx_dropped` (hwsim's count, read
 with `ethtool -S` in each device's network namespace) rose in the round, most
-first, or `none`.
+first, or `none`. With the medium's transmit ring (hwsim 0012, `pending_limit`)
+a radio's queues stop instead of dropping: `RADIO_RING` gives the round's stops
+and the frames dropped unanswered over all radios, and the most frames one radio
+held (its `d_tx_pending_max`, since the module loaded) with that radio, or `none`
+without the ring.
 
 Useful overrides are `HEALTH_PING_COUNT`, `HEALTH_PING_INTERVAL`,
 `HEALTH_PING_MAX_LOSS`, `RESULTS_FILE` and `EASYMESH_REPO`. The default packet

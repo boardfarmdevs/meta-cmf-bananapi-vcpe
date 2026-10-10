@@ -138,7 +138,7 @@ def test_the_radios_drops_read_in_every_devices_network_namespace():
     snapshot = function("radio_drops_snapshot")
     assert "lxc list -c np --format csv" in snapshot
     assert 'nsenter -t "$pid" -n iw dev' in snapshot and 'nsenter -t "$pid" -n ethtool -S "$interface"' in snapshot
-    assert '$1 == "d_tx_dropped:"' in snapshot
+    assert 'count["d_tx_dropped:"]' in snapshot
     # one interface per radio: hwsim counts per radio, every interface of it repeats it
     assert "!seen[phy]++" in snapshot
     assert snapshot.rstrip().splitlines()[-2].strip().startswith("return 0")
@@ -161,6 +161,54 @@ def test_each_round_reports_the_medium_beside_its_times():
     assert rounds.index("drops_before=$(radio_drops_snapshot)") < rounds.index('traffic_round "$round"') \
         < rounds.index("drops_after=$(radio_drops_snapshot)")
     assert 'echo "RADIO_DROPS round=$round $(radio_drops_round "$drops_before" "$drops_after")"' in rounds
+    assert 'echo "RADIO_RING round=$round $(radio_ring_round "$drops_before" "$drops_after")"' in rounds
     section = AUDIT[AUDIT.index('status_section "End-to-end traffic"'):AUDIT.index('if [ -s "$results" ]')]
     assert "medium_snapshot() {" in section and "medium_round() {" in section
     assert "radio_drops_snapshot() {" in section and "radio_drops_round() {" in section
+    assert "radio_ring_round() {" in section
+
+
+def radio_ring(before, after):
+    script = "set -euo pipefail\n" + function("radio_ring_round") + \
+        f"radio_ring_round '{before}' '{after}'\n"
+    return subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_the_drops_read_the_same_with_the_rings_columns():
+    before = "bpibroadband/phy0 14443 0 0 12\nbpiap/phy2 10 - - -"
+    after = "bpibroadband/phy0 14500 3 1 65\nbpiap/phy2 2010 - - -"
+    assert radio_drops(before, after) == "bpiap/phy2=2000 bpibroadband/phy0=57"
+
+
+def test_the_transmit_rings_stops_and_expiries_and_the_fullest():
+    before = "bpibroadband/phy0 0 10 0 40\nbpiap/phy2 0 4 2 70\nwlan-client/phy4 3 - - -"
+    after = "bpibroadband/phy0 0 25 1 64\nbpiap/phy2 0 9 2 128\nwlan-client/phy4 3 - - -"
+    assert radio_ring(before, after) == "stops=20 expired=1 pending_max=128 at bpiap/phy2"
+    # a module without the ring (no counters): none, not zeros
+    assert radio_ring("wlan-client/phy4 3 - - -", "wlan-client/phy4 5 - - -") == "none"
+    assert radio_ring("", after) == "unavailable"
+
+
+def test_the_snapshot_reads_every_counter_of_one_interface_per_radio(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "lxc").write_text("#!/bin/sh\necho bpiap,1234\necho wlan-client,1240\necho stopped,\n")
+    (bin_dir / "timeout").write_text('#!/bin/sh\nshift\nexec "$@"\n')
+    ring = "     d_tx_dropped: 7\n     d_tx_pending: 3\n     d_tx_pending_max: 65\n" \
+           "     d_tx_flow_stops: 12\n     d_tx_pending_expired: 2\n"
+    stock = "     tx_pkts_nic: 100\n     d_tx_dropped: 101\n"
+    (bin_dir / "nsenter").write_text(f"""#!/bin/sh
+pid=$2; shift 3
+case "$1 $pid" in
+    "iw 1234") printf 'phy#2\\n\\tInterface wifi0\\n\\tInterface wifi1\\n' ;;
+    "iw 1240") printf 'phy#4\\n\\tInterface wlan0\\n' ;;
+    "ethtool 1234") printf '{ring}' ;;
+    "ethtool 1240") printf '{stock}' ;;
+esac
+""")
+    for name in ("lxc", "timeout", "nsenter"):
+        (bin_dir / name).chmod(0o755)
+    script = "set -euo pipefail\n" + function("radio_drops_snapshot") + "radio_drops_snapshot\n"
+    result = subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True,
+                            env={"PATH": f"{bin_dir}:/usr/bin:/bin"})
+    assert result.stdout.splitlines() == ["bpiap/phy2 7 12 2 65", "wlan-client/phy4 101 - - -"]
