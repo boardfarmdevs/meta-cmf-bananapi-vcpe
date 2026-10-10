@@ -225,6 +225,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0259-cli-a-renew-route.patch \
     file://0260-agent-ap-radio-basic-capabilities-tlv-without-holes.patch \
     file://0261-ctrl-bound-the-ap-radio-basic-capabilities-tlv-walk.patch \
+    file://0262-ctrl-a-topology-response-to-the-radio-waiting-for-it.patch \
     file://0263-cli-set-ssid-answers-with-the-controllers-status.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"

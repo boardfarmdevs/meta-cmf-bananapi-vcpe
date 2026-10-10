@@ -1,0 +1,43 @@
+Subject: [PATCH] ctrl: a Topology Response to the agent's radio waiting for it
+
+The controller gave an agent's Topology Response (like its AP Capability and Channel Preference
+Reports) to the em of the agent's first radio. Only an em in topology sync takes the response:
+after a radio other than the first was renewed alone, the agent answered every Topology Query
+but the first radio's em, already synchronized, ignored the answers, the renewed radio's
+em_config waited out its time limit (about 45 s) and the controller renewed every radio of the
+agent ("Topology sync did not complete within TTL"), once in a burst of renews. The response now
+goes to the agent's radio in topology sync, if one is, else to the first radio as before (steady
+state). The AP Capability and Channel Preference Reports are taken by any of the agent's ems
+and complete every radio waiting for them: unchanged.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 3c78af7..f108e56 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1366,6 +1366,22 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             }
+             if (em == NULL) {
+                 em_printfout("No EM found for agent AL MAC %s", util::mac_to_string(hdr->src).c_str());
++            } else if (msg_type == em_msg_type_topo_resp) {
++                // A Topology Response completes the topology sync of the agent's radio waiting
++                // for it (em_state_ctrl_topo_sync_pending), and only that em takes it: a radio
++                // renewed alone, not the agent's first, waited out its time limit and the
++                // controller renewed every radio of the agent. Without such a radio (steady
++                // state) the first radio takes it, as before. (The AP Capability and Channel
++                // Preference Reports are taken by any of the agent's ems and complete every
++                // radio waiting for them.)
++                for (i = 0; i < dm->get_num_radios(); i++) {
++                    dm_easy_mesh_t::macbytes_to_string(dm->get_radio_info(i)->id.ruid, mac_str1);
++                    em_t *waiting = static_cast<em_t *>(hash_map_get(m_em_map, mac_str1));
++                    if ((waiting != NULL) && (waiting->get_state() == em_state_ctrl_topo_sync_pending)) {
++                        em = waiting;
++                        break;
++                    }
++                }
+             }
+             break;
+ 
