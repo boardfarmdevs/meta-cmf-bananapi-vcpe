@@ -614,6 +614,7 @@ push_inputs() {
         [easymesh-evidence-retention.timer]=gen/vm/scripts/guest/easymesh-evidence-retention.timer
         [easymesh-hwsim-pool]=gen/vm/scripts/guest/easymesh-hwsim-pool
         [easymesh-hwsim-pool.service]=gen/vm/scripts/guest/easymesh-hwsim-pool.service
+        [easymesh-hwsim-options]=gen/vm/scripts/guest/easymesh-hwsim-options
         [lxd-easymesh-ordering.conf]=gen/vm/scripts/guest/lxd-easymesh-ordering.conf
         [easymesh-labctl]=gen/vm/scripts/guest/easymesh-labctl
         [easymesh-health-audit]=gen/vm/scripts/guest/easymesh-health-audit

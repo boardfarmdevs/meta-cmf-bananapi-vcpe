@@ -86,17 +86,25 @@ done < <(lxc list -c n --format csv \
 # to upgrade an older thin VM from its historical 24-radio pool.  Persist the
 # requested size and install the current naming helper before the reload so a
 # later VM reboot reconstructs the same pool.
-printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_pool_radios" \
+# The options line comes from easymesh-hwsim-options: the medium's transmit ring (hwsim 0012,
+# pending_limit) when the installed module has it.
+sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-hwsim-options" \
+    /usr/local/sbin/easymesh-hwsim-options
+/usr/local/sbin/easymesh-hwsim-options "$hwsim_pool_radios" \
     | sudo tee /etc/modprobe.d/easymesh-hwsim.conf >/dev/null
+hwsim_pending_limit=$(sed -n 's/.* pending_limit=\([0-9]*\).*/\1/p' /etc/modprobe.d/easymesh-hwsim.conf)
 sudo install -m 0755 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool" \
     /usr/local/sbin/easymesh-hwsim-pool
 sudo install -m 0644 "$repo/gen/vm/scripts/guest/easymesh-hwsim-pool.service" \
     /etc/systemd/system/easymesh-hwsim-pool.service
 if [ "$(cat /sys/module/mac80211_hwsim/parameters/radios)" != "$hwsim_pool_radios" ] \
     || [ "$(cat /sys/module/mac80211_hwsim/parameters/channels)" != 3 ] \
-    || [ "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" != 5 ]; then
+    || [ "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" != 5 ] \
+    || [ "$(cat /sys/module/mac80211_hwsim/parameters/pending_limit 2>/dev/null || echo 0)" \
+        != "${hwsim_pending_limit:-0}" ]; then
     sudo modprobe -r mac80211_hwsim
-    sudo modprobe mac80211_hwsim radios="$hwsim_pool_radios" channels=3 regtest=5
+    # the options from the file just written
+    sudo modprobe mac80211_hwsim
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable easymesh-hwsim-pool.service

@@ -40,6 +40,23 @@ fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
+
+# The pool's options line (easymesh-hwsim-options): the medium's transmit ring at 256 when the
+# module has it (a fake modinfo here), the stock line when it does not or when it is set to 0.
+printf '#!/bin/sh\nprintf "radios:r\\npending_limit:frames\\n"\n' > "$tmp/modinfo-ring"
+printf '#!/bin/sh\nprintf "radios:r\\n"\n' > "$tmp/modinfo-stock"
+chmod 0755 "$tmp/modinfo-ring" "$tmp/modinfo-stock"
+options=$root/gen/vm/scripts/guest/easymesh-hwsim-options
+export EASYMESH_LAB_DEFAULTS=$tmp/no-defaults
+test "$(EASYMESH_HWSIM_MODINFO=$tmp/modinfo-stock "$options" 128)" = \
+    "options mac80211_hwsim radios=128 channels=3 regtest=5"
+test "$(EASYMESH_HWSIM_MODINFO=$tmp/modinfo-ring EASYMESH_HWSIM_PENDING_LIMIT=0 "$options" 128)" = \
+    "options mac80211_hwsim radios=128 channels=3 regtest=5"
+test "$(EASYMESH_HWSIM_MODINFO=$tmp/modinfo-ring "$options" 128)" = \
+    "options mac80211_hwsim radios=128 channels=3 regtest=5 pending_limit=256 pending_timeout_ms=5000"
+if "$options" 0 2>/dev/null; then echo "a pool of 0 radios accepted" >&2; exit 1; fi
+export EASYMESH_PROFILE_HWSIM_OPTIONS=$options EASYMESH_HWSIM_MODINFO=$tmp/modinfo-ring
+
 mkdir "$tmp/test-release"
 printf '{}\n' > "$tmp/test-release/release.json"
 printf 'payload\n' > "$tmp/test-release/payload"
@@ -80,7 +97,7 @@ for clients in 100; do
         >/dev/null
     grep -Fx "EASYMESH_SCALE_PROFILE=$expected_profile" "$defaults" >/dev/null
     grep -Fx "HEALTH_EXPECT_CLIENTS=$clients" "$defaults" >/dev/null
-    grep -Fx "options mac80211_hwsim radios=$expected_radios channels=3 regtest=5" \
+    grep -Fx "options mac80211_hwsim radios=$expected_radios channels=3 regtest=5 pending_limit=256 pending_timeout_ms=5000" \
         "$modprobe_conf" >/dev/null
     grep -Fx "HEALTH_EXPECT_CLIENTS=$clients" \
         "$state/thin-profile.lock.env" >/dev/null

@@ -79,8 +79,8 @@ EOF
 chmod 0644 "$defaults_tmp"
 mv -f "$defaults_tmp" "$defaults"
 
-printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$radios" \
-    > "$modprobe_tmp"
+# the options line, with the medium's transmit ring when this module has it (hwsim 0012)
+"${EASYMESH_PROFILE_HWSIM_OPTIONS:-/usr/local/sbin/easymesh-hwsim-options}" "$radios" > "$modprobe_tmp"
 chmod 0644 "$modprobe_tmp"
 mv -f "$modprobe_tmp" "$modprobe_conf"
 

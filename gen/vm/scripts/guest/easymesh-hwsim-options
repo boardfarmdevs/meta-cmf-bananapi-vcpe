@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# The mac80211_hwsim options line of the lab's pool (/etc/modprobe.d/easymesh-hwsim.conf):
+#   easymesh-hwsim-options RADIOS
+# radios=RADIOS channels=3 regtest=5, and the medium's transmit ring (hwsim 0012: pending_limit,
+# pending_timeout_ms) when the installed module has it: a radio's mac80211 queues stop when that
+# many of its frames await the medium, instead of the stock queue dropping 101 at a time.
+# EASYMESH_HWSIM_PENDING_LIMIT (from /etc/default/easymesh-lab; default 256, 0: the stock queue)
+# and EASYMESH_HWSIM_PENDING_TIMEOUT_MS (default 5000) set it. A module without the ring gets no
+# ring options, so it never loads them as unknown parameters (ignored, unseen).
+# EASYMESH_HWSIM_KERNEL names the kernel whose module is asked (default the running one: the base
+# image is prepared before it boots its lab kernel); EASYMESH_HWSIM_MODINFO the modinfo (tests).
+set -euo pipefail
+radios=${1:?radios}
+case "$radios" in
+    ''|*[!0-9]*|0) echo "radios must be a positive integer" >&2; exit 2 ;;
+esac
+defaults=${EASYMESH_LAB_DEFAULTS:-/etc/default/easymesh-lab}
+if [ -z "${EASYMESH_HWSIM_PENDING_LIMIT+set}" ] && [ -r "$defaults" ]; then
+    # shellcheck source=/dev/null # the lab's settings
+    . "$defaults"
+fi
+limit=${EASYMESH_HWSIM_PENDING_LIMIT:-256}
+timeout_ms=${EASYMESH_HWSIM_PENDING_TIMEOUT_MS:-5000}
+case "$limit$timeout_ms" in
+    *[!0-9]*) echo "EASYMESH_HWSIM_PENDING_LIMIT and _TIMEOUT_MS must be integers" >&2; exit 2 ;;
+esac
+line="options mac80211_hwsim radios=$radios channels=3 regtest=5"
+modinfo=${EASYMESH_HWSIM_MODINFO:-modinfo}
+kernel=${EASYMESH_HWSIM_KERNEL:-$(uname -r)}
+if [ "$limit" -gt 0 ] && "$modinfo" -k "$kernel" -F parm mac80211_hwsim 2>/dev/null | grep -q '^pending_limit:'; then
+    line="$line pending_limit=$limit pending_timeout_ms=$timeout_ms"
+fi
+printf '%s\n' "$line"

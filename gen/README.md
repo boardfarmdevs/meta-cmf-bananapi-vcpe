@@ -36,8 +36,10 @@ tree unless an explicit runtime directory is documented.
 ## Hard invariants
 
 - The official runtime is Linux 7.0.0-30.
-- Load 32 patched hwsim radios with `channels=3 regtest=5` for the current
-  five-node/20-client profile.
+- Load the patched hwsim pool with `channels=3 regtest=5` (128 radios for the
+  100-client profile) and, when the module has it, the medium's transmit ring
+  (`pending_limit=256 pending_timeout_ms=5000`): `easymesh-hwsim-options` writes the
+  line, `EASYMESH_HWSIM_PENDING_LIMIT=0` in `/etc/default/easymesh-lab` keeps the stock queue.
 - Attach exactly one hwsim wiphy to each BPI container.
 - Use `bpi.sh -F` for a new logical identity; preserve `/nvram` only when
   restarting the same device.

@@ -113,8 +113,14 @@ resize_hwsim() {
     # runtime stop returns every wiphy and removes all dynamic VAPs before the
     # module is replaced. No node identity or LXD profile is regenerated.
     modprobe -r mac80211_hwsim || return
-    printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$radios" \
-        > /etc/modprobe.d/easymesh-hwsim.conf || return
+    # the options line with the medium's transmit ring, as the VM's own loader writes it; a VM
+    # from before that helper gets the stock line
+    if [ -x /usr/local/sbin/easymesh-hwsim-options ]; then
+        /usr/local/sbin/easymesh-hwsim-options "$radios" > /etc/modprobe.d/easymesh-hwsim.conf || return
+    else
+        printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$radios" \
+            > /etc/modprobe.d/easymesh-hwsim.conf || return
+    fi
     modprobe mac80211_hwsim || return
     systemctl reset-failed easymesh-hwsim-pool.service 2>/dev/null || true
     /usr/local/sbin/easymesh-hwsim-pool || return

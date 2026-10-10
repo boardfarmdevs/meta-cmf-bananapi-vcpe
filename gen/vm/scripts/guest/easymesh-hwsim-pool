@@ -20,11 +20,14 @@ configured_parameter() {
 expected_radios=$(configured_parameter radios 128)
 expected_channels=$(configured_parameter channels 3)
 expected_regtest=$(configured_parameter regtest 5)
+# the medium's transmit ring (hwsim 0012), when configured; 0 is the stock queue
+expected_pending_limit=$(configured_parameter pending_limit 0)
 
 test "$(cat /sys/module/cfg80211/version)" = lab-netns-owner-1
 test "$(cat /sys/module/mac80211_hwsim/parameters/radios)" = "$expected_radios"
 test "$(cat /sys/module/mac80211_hwsim/parameters/channels)" = "$expected_channels"
 test "$(cat /sys/module/mac80211_hwsim/parameters/regtest)" = "$expected_regtest"
+test "$(cat /sys/module/mac80211_hwsim/parameters/pending_limit 2>/dev/null || echo 0)" = "$expected_pending_limit"
 
 # A reboot recreates the configured pool as wlan0..wlanN. LXD profiles refer
 # to stable virt-wlanN parents, so establish those names before LXD starts

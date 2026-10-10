@@ -146,7 +146,9 @@ hwsim_radios=${HWSIM_RADIOS:-128}
 case "$hwsim_radios" in
     ''|*[!0-9]*|0) echo "HWSIM_RADIOS must be a positive integer" >&2; exit 2 ;;
 esac
-printf 'options mac80211_hwsim radios=%s channels=3 regtest=5\n' "$hwsim_radios" \
+# the options line, with the medium's transmit ring when this module has it (hwsim 0012)
+install -m 0755 "$assets/easymesh-hwsim-options" /usr/local/sbin/easymesh-hwsim-options
+EASYMESH_HWSIM_KERNEL="$expected_kernel" /usr/local/sbin/easymesh-hwsim-options "$hwsim_radios" \
     > /etc/modprobe.d/easymesh-hwsim.conf
 printf '%s\n' 'mac80211_hwsim' > /etc/modules-load.d/easymesh-hwsim.conf
 if [ ! -d /sys/module/mac80211_hwsim ]; then
