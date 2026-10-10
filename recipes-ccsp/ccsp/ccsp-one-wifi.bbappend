@@ -123,11 +123,15 @@ def restore_layer_patched_files(d, s):
         for leftover in leftovers:
             if os.path.isfile(os.path.join(s, leftover)):
                 os.remove(os.path.join(s, leftover))
+    # the counts are of the files restored: those the quilt series also changes were left alone
     bb.note('meta-cmf-bananapi-vcpe: %d files the layer patches touch restored to the fetched '
-            'revision' % len(files))
-    if previous - files:
+            'revision' % len(restore & files))
+    if restore - files:
         bb.note('meta-cmf-bananapi-vcpe: %d files only a dropped layer patch had changed restored too'
-                % len(previous - files))
+                % len(restore - files))
+    if (files | previous) & quilt:
+        bb.note('meta-cmf-bananapi-vcpe: %d files the quilt series also changes left as quilt applied them'
+                % len((files | previous) & quilt))
 
 python do_patch_append() {
     import os
