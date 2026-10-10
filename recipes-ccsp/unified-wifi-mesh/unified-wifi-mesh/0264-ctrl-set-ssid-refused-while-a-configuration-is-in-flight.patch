@@ -1,0 +1,72 @@
+Subject: [PATCH] ctrl: an SSID change refused while a configuration is in flight
+
+A set_ssid taken while the radios were still in the WSC of an earlier change (em_config) was
+taken into the controller's model but sent no renew: the radios already in their WSC counted as
+done for it and kept the SSID their M2 carried, so the agents and the controller disagreed until
+a restart, the mismatch only logged. A set_ssid is now refused with Error_Prev_Cmd_In_Progress
+while a set_ssid, an em_config or a cfg_renew is active, and the caller tries again.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+index 445671a..0dfeed9 100644
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -319,6 +319,15 @@ public:
+ 	 */
+ 	bool is_cmd_type_in_progress(em_bus_event_t *evt);
+ 
++	/**!
++	 * @brief Checks whether any command of a type is active (pending or executing).
++	 *
++	 * @param[in] type the command type.
++	 *
++	 * @returns True if a command of that type is active, false otherwise.
++	 */
++	bool is_cmd_type_active(em_cmd_type_t type);
++
+ 	/**!
+ 	 * @brief Checks if a command type is currently in progress.
+ 	 *
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index f108e56..c662da4 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -321,7 +321,14 @@ void em_ctrl_t::handle_set_ssid_list(em_bus_event_t *evt)
+     em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+     int num, ret;
+ 
+-    if (m_orch->is_cmd_type_in_progress(evt) == true) {
++    // Refused while an SSID change or a radio's configuration (em_config, cfg_renew) is in
++    // flight, the caller to try again: radios already in their WSC counted as done for a new
++    // set_ssid and kept the SSID their M2 carried, the change only in the controller's model
++    // (rdk-1010, 10 October: a restore taken 30 s after another change, no renew sent).
++    if ((m_orch->is_cmd_type_in_progress(evt) == true) ||
++            m_orch->is_cmd_type_active(em_cmd_type_em_config) ||
++            m_orch->is_cmd_type_active(em_cmd_type_cfg_renew)) {
++        em_printfout("SetSSID refused: an SSID change or a radio's configuration is in progress");
+         m_ctrl_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
+     } else if ((ret = m_data_model.analyze_set_ssid(evt, pcmd)) <= 0) {
+         if (ret == EM_PARSE_ERR_NO_CHANGE) {
+diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index 3f201e5..9311b02 100644
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -619,6 +619,15 @@ static bool unassoc_query_agent(em_bus_event_t *evt, mac_address_t al_mac)
+     return found;
+ }
+ 
++bool em_orch_t::is_cmd_type_active(em_cmd_type_t type)
++{
++    auto command_lock = lock_commands();
++    em_short_string_t key;
++
++    snprintf(key, sizeof(em_short_string_t), "%d", type);
++    return hash_map_get(m_cmd_map, key) != NULL;
++}
++
+ bool em_orch_t::is_cmd_type_in_progress(em_bus_event_t *evt)
+ {
+     auto command_lock = lock_commands();
