@@ -1,0 +1,56 @@
+Subject: [PATCH] cli: POST /api/v1/renew renews radios named by agent AL MAC and current class
+
+em_cli had no way to renew a radio: its server has no renew route, and the CLI's cfg_renew
+reached the controller as a radio MAC read from the subdoc's name (series 0258). A renew is
+how a lab proves what an agent does with a fresh M2 for one radio, without renewing every
+radio of the network as a network SSID change does.
+
+The route takes {"devices": [{"al_mac": ..., "classes": [...]}]}, checks it
+(renew_request.go), and sends the controller the wfa-dataelements:Renew subdoc through
+libemcli's cfg_renew with the caller's tree (submitRenewSubdoc). The controller checks the
+request as a whole; the route answers 202 with the radios requested, 400 for a request that
+is not well formed, 422 when the controller refuses it, 503 when it is not ready.
+
+Upstream-Status: Pending
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index aa656e3..b18022b 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3171,6 +3171,9 @@ func main() {
+ 	api.HandleFunc("/unassoc_sta_query", unassocStaQueryHandler).Methods("POST")
+ 	api.HandleFunc("/unassoc_sta_metrics", unassocStaMetricsHandler).Methods("GET")
+ 
++	// Renew radios by agent AL MAC and current operating class (renew_request.go)
++	api.HandleFunc("/renew", renewHandler).Methods("POST")
++
+ 	// Enable CORS
+ 	router.Use(corsMiddleware)
+ 
+@@ -4563,6 +4566,26 @@ func submitCandidateQuery(jsonBytes []byte) error {
+     return nil
+ }
+ 
++// submitRenewSubdoc sends a wfa-dataelements:Renew subdoc to the controller (cfg_renew with the
++// caller's tree, series 0258) and returns the controller's status.
++func submitRenewSubdoc(subdoc []byte) (string, error) {
++    cJsonStr := C.CString(string(subdoc))
++    defer C.free(unsafe.Pointer(cJsonStr))
++    node := C.get_network_tree(cJsonStr)
++    if node == nil {
++        return "", fmt.Errorf("failed to create the renew request tree")
++    }
++    defer C.free_network_tree(node)
++    cmd := C.CString("cfg_renew OneWifiMesh")
++    defer C.free(unsafe.Pointer(cmd))
++    result := execEMCommand(cmd, node)
++    if result == nil {
++        return "", fmt.Errorf("renew command execution failed")
++    }
++    defer C.free_network_tree(result)
++    return getTreeValue(result, "Status"), nil
++}
++
+ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     started := time.Now()
+     if r.Method != http.MethodPost {

@@ -1,0 +1,424 @@
+Subject: [PATCH] ctrl: a renew request from the CLI is decoded and renews the radios it names
+
+The CLI's cfg_renew sent its CfgRenew.json, a wfa-dataelements:Renew subdoc, with the bus event
+type of the controller's own raw renew (em_bus_event_type_cfg_renew_params_t: a radio, or the
+null MAC for every radio). The controller read the subdoc's name as that radio ("Radio:
+43:66:67:52:65:6e" is "CfgRen"): no radio matched, nothing was renewed, the CLI was never
+answered (its read timed out) and nothing said why.
+
+A renew request now has its own bus event type, em_bus_event_type_cfg_renew_subdoc. The CLI
+sends the caller's tree (as set_ssid and set_policy do) or else the CfgRenew.json file. The
+controller decodes the Renew object: each DeviceList entry names an agent by its AL MAC ("ID"),
+each of its RadioList entries one radio by its current operating class (CurrentOperatingClasses,
+one Class), and each radio gets its own cfg_renew command, as the raw renew of one radio. The
+whole request is checked first: one that is not such an object, an agent the controller does not
+know, a class that matches no current class of the agent's radios (or more than one), or more
+than EM_MAX_CMD radios refuses it, logged, and nothing is renewed. The CLI is answered: Success,
+Error_Invalid_Input for a refused request, or Error_Not_Ready.
+
+The raw renew is taken only at its own size: anything else is refused, logged, never read as a
+radio MAC. The orchestrator's renew of a radio whose configuration was cancelled now sets that
+size (it left data_len unset). The controller's own renews are unchanged: the null-MAC renew of
+every radio at start, the cancelled radio's renew, and set_ssid's and the onboarding SSID
+mismatch's renews.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/inc/dm_easy_mesh_ctrl.h b/inc/dm_easy_mesh_ctrl.h
+index 865e93d..edd0533 100644
+--- a/inc/dm_easy_mesh_ctrl.h
++++ b/inc/dm_easy_mesh_ctrl.h
+@@ -662,6 +662,21 @@ public:
+ 	 */
+ 	int analyze_config_renew(em_bus_event_t *evt, em_cmd_t *cmd[]);
+     
++	/**!
++	 * @brief Analyzes a renew request from the CLI: a wfa-dataelements:Renew subdoc.
++	 *
++	 * Each DeviceList entry names an agent by its AL MAC and, in its RadioList, radios by
++	 * their current operating class; each radio gets a cfg_renew command.
++	 *
++	 * @param[in] evt Pointer to the em_bus_event_type_cfg_renew_subdoc event.
++	 * @param[out] cmd Array of command structures, one per radio.
++	 *
++	 * @returns int
++	 * @retval the number of commands
++	 * @retval -1 when the request is refused (logged); nothing is renewed
++	 */
++	int analyze_config_renew_subdoc(em_bus_event_t *evt, em_cmd_t *cmd[]);
++
+ 	/**!
+ 	 * @brief Analyzes the device test based on the provided event and command.
+ 	 *
+diff --git a/inc/em_base.h b/inc/em_base.h
+index f54fdf2..b115969 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -3120,6 +3120,11 @@ typedef enum {
+     em_bus_event_type_unassoc_sta_result,
+     em_bus_event_type_failed_conn,
+     em_bus_event_type_ap_metrics_query,
++    // A renew request from the CLI: a wfa-dataelements:Renew subdoc naming each radio by its
++    // agent's AL MAC and current operating class. em_bus_event_type_cfg_renew stays the
++    // controller's own renew, raw em_bus_event_type_cfg_renew_params_t (a radio, or the null
++    // MAC for every radio).
++    em_bus_event_type_cfg_renew_subdoc,
+ 
+     em_bus_event_type_max
+ } em_bus_event_type_t;
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index 836ceaa..ec1dfaa 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -502,6 +502,14 @@ public:
+ 	 */
+ 	void handle_config_renew(em_bus_event_t *evt);
+     
++	/**!
++	 * @brief Handles a renew request from the CLI (a wfa-dataelements:Renew subdoc) and
++	 * answers the CLI with its status.
++	 *
++	 * @param[in] evt Pointer to the em_bus_event_type_cfg_renew_subdoc event.
++	 */
++	void handle_config_renew_subdoc(em_bus_event_t *evt);
++
+ 	/**!
+ 	 * @brief Handles the station association event.
+ 	 *
+diff --git a/src/cli/em_cmd_cli.cpp b/src/cli/em_cmd_cli.cpp
+index 4ae8f57..d76cb6a 100644
+--- a/src/cli/em_cmd_cli.cpp
++++ b/src/cli/em_cmd_cli.cpp
+@@ -206,15 +206,29 @@ int em_cmd_cli_t::execute(char *result)
+             break;
+ 
+         case em_cmd_type_cfg_renew:
+-            bevt->type = em_bus_event_type_cfg_renew;
++        {
++            // A renew request is a wfa-dataelements:Renew subdoc, the caller's tree or else the
++            // CfgRenew.json file, which the controller decodes into a renew per listed radio.
++            // em_bus_event_type_cfg_renew is the controller's own raw renew (one radio, or the
++            // null MAC for every radio): a subdoc sent with it was read as a radio MAC.
++            int len;
++
++            bevt->type = em_bus_event_type_cfg_renew_subdoc;
+             info = &bevt->u.subdoc;
+             snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
+-            if ((bevt->data_len = load_params_file(m_cmd.m_param.u.args.fixed_args, info->buff)) < 0) {
+-                printf("%s:%d: failed to open file at location:%s error:%d\n", __func__, __LINE__,
+-                    param->u.args.fixed_args, errno);
++            if ((node = m_cmd.m_param.net_node) != NULL) {
++                len = get_edited_node(node, "Renew", info->buff);
++            } else {
++                len = load_params_file(m_cmd.m_param.u.args.fixed_args, info->buff);
++            }
++            if (len <= 0) {
++                printf("%s:%d: no Renew request from %s, error:%d\n", __func__, __LINE__,
++                    (node != NULL) ? "the caller's tree" : param->u.args.fixed_args, errno);
+                 return -1;
+             }
++            bevt->data_len = (unsigned int)len;
+             break;
++        }
+ 
+         case em_cmd_type_ap_cap_query:
+             bevt->type = em_bus_event_type_ap_cap_query;
+diff --git a/src/cmd/em_cmd.cpp b/src/cmd/em_cmd.cpp
+index 2e66853..ac6d55a 100644
+--- a/src/cmd/em_cmd.cpp
++++ b/src/cmd/em_cmd.cpp
+@@ -533,6 +533,7 @@ const char *em_cmd_t::get_bus_event_type_str(em_bus_event_type_t type)
+ 	BUS_EVENT_TYPE_2S(em_bus_event_type_unassoc_sta_link_metrics_query)
+ 	BUS_EVENT_TYPE_2S(em_bus_event_type_unassoc_sta_result)
+ 	BUS_EVENT_TYPE_2S(em_bus_event_type_failed_conn)
++        BUS_EVENT_TYPE_2S(em_bus_event_type_cfg_renew_subdoc)
+        
+         default:
+            break;
+@@ -772,6 +773,7 @@ em_cmd_type_t em_cmd_t::bus_2_cmd_type(em_bus_event_type_t etype)
+             break;
+ 
+         case em_bus_event_type_cfg_renew:
++        case em_bus_event_type_cfg_renew_subdoc:
+             type = em_cmd_type_cfg_renew;
+             break;			
+ 
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index f96df62..6d014d9 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -2756,6 +2756,15 @@ int dm_easy_mesh_ctrl_t::analyze_config_renew(em_bus_event_t *evt, em_cmd_t *pcm
+         return -1;
+     }
+ 
++    // The controller's own renew is raw: a radio, or the null MAC for every radio. A renew
++    // request from the CLI is em_bus_event_type_cfg_renew_subdoc (analyze_config_renew_subdoc);
++    // anything else here is refused, never read as a radio MAC.
++    if (evt->data_len != sizeof(em_bus_event_type_cfg_renew_params_t)) {
++        em_printfout("Renew refused: %u bytes are not a radio renew (a renew request is a Renew subdoc)",
++            evt->data_len);
++        return -1;
++    }
++
+     params = reinterpret_cast<em_bus_event_type_cfg_renew_params_t *> (evt->u.raw_buff);
+     dm_easy_mesh_t::macbytes_to_string(params->radio, radio_str);
+     printf("%s:%d: Radio: %s\n", __func__, __LINE__, radio_str);
+@@ -2775,6 +2784,164 @@ int dm_easy_mesh_ctrl_t::analyze_config_renew(em_bus_event_t *evt, em_cmd_t *pcm
+     return num;
+ }
+ 
++// "aa:bb:cc:dd:ee:ff" exactly, and not the null MAC
++static bool renew_request_mac(const cJSON *item, mac_address_t mac)
++{
++    const char *str;
++    unsigned int b[6];
++    unsigned int i;
++    mac_address_t null_mac = {0};
++
++    if (!cJSON_IsString(item) || ((str = item->valuestring) == NULL) || (strlen(str) != 17)) {
++        return false;
++    }
++    for (i = 0; i < 17; i++) {
++        if ((i % 3) == 2 ? (str[i] != ':') : (isxdigit(static_cast<unsigned char>(str[i])) == 0)) {
++            return false;
++        }
++    }
++    if (sscanf(str, "%2x:%2x:%2x:%2x:%2x:%2x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6) {
++        return false;
++    }
++    for (i = 0; i < 6; i++) {
++        mac[i] = static_cast<unsigned char>(b[i]);
++    }
++    return memcmp(mac, null_mac, sizeof(mac_address_t)) != 0;
++}
++
++// A renew request from the CLI (em_bus_event_type_cfg_renew_subdoc): a wfa-dataelements:Renew
++// object (CfgRenew.json's form) whose DeviceList names agents by their AL MAC ("ID") and, in each
++// RadioList entry, one radio by its current operating class (CurrentOperatingClasses, one
++// Class). Each radio is renewed with its own cfg_renew command, as the controller's raw renew of
++// one radio. The whole request is checked first: one that is not such an object, an agent the
++// controller does not know, or a class that matches no current class of the agent's radios (or
++// more than one) refuses the request, logged, and renews nothing.
++int dm_easy_mesh_ctrl_t::analyze_config_renew_subdoc(em_bus_event_t *evt, em_cmd_t *pcmd[])
++{
++    cJSON *obj, *renew, *devices, *device, *radios, *radio, *classes, *cls;
++    mac_address_t al_mac, ruids[EM_MAX_CMD];
++    mac_addr_str_t al_str, radio_str;
++    unsigned int num_ruids = 0, i, j, matches;
++    em_op_class_info_t *op_class, *found;
++    dm_easy_mesh_t *agent_dm;
++    em_cmd_params_t params;
++    dm_easy_mesh_t dm;
++    bool refused = false;
++    int num = 0, class_num;
++
++    if (evt == NULL) {
++        return -1;
++    }
++    if ((evt->data_len == 0) || (evt->data_len > EM_MAX_EVENT_DATA_LEN - sizeof(em_subdoc_name_space_t))) {
++        em_printfout("Renew request refused: %u bytes", evt->data_len);
++        return -1;
++    }
++    if ((obj = cJSON_ParseWithLength(evt->u.subdoc.buff, evt->data_len)) == NULL) {
++        em_printfout("Renew request refused: not JSON");
++        return -1;
++    }
++    renew = cJSON_GetObjectItem(obj, "wfa-dataelements:Renew");
++    devices = cJSON_IsObject(renew) ? cJSON_GetObjectItem(renew, "DeviceList") : NULL;
++    if (!cJSON_IsArray(devices) || (cJSON_GetArraySize(devices) == 0)) {
++        em_printfout("Renew request refused: no wfa-dataelements:Renew with a DeviceList");
++        cJSON_Delete(obj);
++        return -1;
++    }
++
++    cJSON_ArrayForEach(device, devices) {
++        if (!renew_request_mac(cJSON_GetObjectItem(device, "ID"), al_mac)) {
++            em_printfout("Renew request refused: a DeviceList entry without an AL MAC ID");
++            refused = true;
++            break;
++        }
++        dm_easy_mesh_t::macbytes_to_string(al_mac, al_str);
++        for (agent_dm = get_first_dm(); agent_dm != NULL; agent_dm = get_next_dm(agent_dm)) {
++            if (memcmp(agent_dm->get_agent_al_interface_mac(), al_mac, sizeof(mac_address_t)) == 0) {
++                break;
++            }
++        }
++        if (agent_dm == NULL) {
++            em_printfout("Renew request refused: agent %s not known", al_str);
++            refused = true;
++            break;
++        }
++        radios = cJSON_GetObjectItem(device, "RadioList");
++        if (!cJSON_IsArray(radios) || (cJSON_GetArraySize(radios) == 0)) {
++            em_printfout("Renew request refused: agent %s without a RadioList", al_str);
++            refused = true;
++            break;
++        }
++        cJSON_ArrayForEach(radio, radios) {
++            classes = cJSON_GetObjectItem(radio, "CurrentOperatingClasses");
++            cls = (cJSON_IsArray(classes) && (cJSON_GetArraySize(classes) == 1)) ?
++                cJSON_GetObjectItem(cJSON_GetArrayItem(classes, 0), "Class") : NULL;
++            if (!cJSON_IsNumber(cls) || (cls->valuedouble != static_cast<double>(cls->valueint)) ||
++                    (cls->valueint < 1) || (cls->valueint > 255)) {
++                em_printfout("Renew request refused: agent %s, a radio without one current Class", al_str);
++                refused = true;
++                break;
++            }
++            class_num = cls->valueint;
++            // the agent's radio on that current operating class
++            found = NULL;
++            matches = 0;
++            for (i = 0; i < agent_dm->get_num_op_class(); i++) {
++                op_class = agent_dm->get_op_class_info(i);
++                if ((op_class->id.type != em_op_class_type_current) ||
++                        (op_class->op_class != static_cast<unsigned int>(class_num)) ||
++                        (agent_dm->get_radio(op_class->id.ruid) == NULL)) {
++                    continue;
++                }
++                if (found == NULL) {
++                    found = op_class;
++                    matches = 1;
++                } else if (memcmp(found->id.ruid, op_class->id.ruid, sizeof(mac_address_t)) != 0) {
++                    matches = 2;    // another radio on the same class: ambiguous
++                }
++            }
++            if (matches != 1) {
++                em_printfout("Renew request refused: agent %s has %s radio on current class %d",
++                    al_str, (matches == 0) ? "no" : "more than one", class_num);
++                refused = true;
++                break;
++            }
++            for (j = 0; j < num_ruids; j++) {
++                if (memcmp(ruids[j], found->id.ruid, sizeof(mac_address_t)) == 0) {
++                    break;
++                }
++            }
++            if (j < num_ruids) {
++                continue;
++            }
++            if (num_ruids == EM_MAX_CMD) {
++                em_printfout("Renew request refused: more than %d radios", EM_MAX_CMD);
++                refused = true;
++                break;
++            }
++            memcpy(ruids[num_ruids++], found->id.ruid, sizeof(mac_address_t));
++            dm_easy_mesh_t::macbytes_to_string(found->id.ruid, radio_str);
++            em_printfout("Renew request: agent %s radio %s (current class %d)", al_str, radio_str, class_num);
++        }
++        if (refused == true) {
++            break;
++        }
++    }
++    cJSON_Delete(obj);
++    if (refused == true) {
++        return -1;
++    }
++
++    for (i = 0; i < num_ruids; i++) {
++        memcpy(&params, &evt->params, sizeof(em_cmd_params_t));
++        params.u.args.num_args = 1;
++        dm_easy_mesh_t::macbytes_to_string(ruids[i], radio_str);
++        snprintf(params.u.args.args[0], sizeof(params.u.args.args[0]), "%s", radio_str);
++        pcmd[num++] = new em_cmd_cfg_renew_t(em_service_type_ctrl, params, dm);
++    }
++
++    return num;
++}
++
+ int dm_easy_mesh_ctrl_t::analyze_sta_assoc_event(em_bus_event_t *evt, em_cmd_t *pcmd[])
+ {
+     mac_addr_str_t  dev_mac_str, sta_mac_str, bss_mac_str, radio_mac_str;
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index f559bba..3c78af7 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -264,6 +264,22 @@ void em_ctrl_t::handle_config_renew(em_bus_event_t *evt)
+     }
+ }
+ 
++void em_ctrl_t::handle_config_renew_subdoc(em_bus_event_t *evt)
++{
++    em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
++    int num;
++
++    // No is_cmd_type_in_progress(): for a renew it reads the event as a raw radio. The
++    // orchestrator takes each radio's renew in turn.
++    if ((num = m_data_model.analyze_config_renew_subdoc(evt, pcmd)) <= 0) {
++        m_ctrl_cmd->send_result(status_for_noncmd(num));
++    } else if (m_orch->submit_commands(pcmd, static_cast<unsigned int> (num)) > 0) {
++        m_ctrl_cmd->send_result(em_cmd_out_status_success);
++    } else {
++        m_ctrl_cmd->send_result(em_cmd_out_status_not_ready);
++    }
++}
++
+ void em_ctrl_t::handle_m2_tx(em_bus_event_t *evt)
+ {
+     em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+@@ -990,6 +1006,10 @@ void em_ctrl_t::handle_bus_event(em_bus_event_t *evt)
+ 			handle_config_renew(evt);
+ 			break;
+ 
++        case em_bus_event_type_cfg_renew_subdoc:
++            handle_config_renew_subdoc(evt);
++            break;
++
+ 		case em_bus_event_type_sta_assoc:
+ 			handle_sta_assoc_event(evt);
+ 			break;
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index e7f6644..1e653c1 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -456,7 +456,10 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+ 			ev.type = em_event_type_bus;
+     		bev = &ev.u.bevt;
+     		bev->type = em_bus_event_type_cfg_renew;
++            // a raw renew of this radio: analyze_config_renew() takes only that size
++            bev->data_len = sizeof(em_bus_event_type_cfg_renew_params_t);
+             raw = reinterpret_cast<em_bus_event_type_cfg_renew_params_t *>(bev->u.raw_buff);
++            memset(raw, 0, sizeof(em_bus_event_type_cfg_renew_params_t));
+     		memcpy(raw->radio, em->get_radio_interface_mac(), sizeof(mac_address_t));
+             cmd_ctrl->send_cmd(em_service_type_ctrl, reinterpret_cast<unsigned char *>(&ev), sizeof(em_event_t));
+ 			break;
+diff --git a/src/rdkb-cli/em_cmd_cli.cpp b/src/rdkb-cli/em_cmd_cli.cpp
+index 6c67104..082db1d 100644
+--- a/src/rdkb-cli/em_cmd_cli.cpp
++++ b/src/rdkb-cli/em_cmd_cli.cpp
+@@ -209,15 +209,30 @@ int em_cmd_cli_t::execute(char *result)
+             break;
+ 
+         case em_cmd_type_cfg_renew:
+-            bevt->type = em_bus_event_type_cfg_renew;
++        {
++            // A renew request is a wfa-dataelements:Renew subdoc, the caller's tree (em_cli's
++            // renew route) or else the CfgRenew.json file, which the controller decodes into
++            // a renew per listed radio. em_bus_event_type_cfg_renew is the controller's own
++            // raw renew (one radio, or the null MAC for every radio): a subdoc sent with it
++            // was read as a radio MAC.
++            int len;
++
++            bevt->type = em_bus_event_type_cfg_renew_subdoc;
+             info = &bevt->u.subdoc;
+             snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
+-            if ((bevt->data_len = load_params_file(m_cmd.m_param.u.args.fixed_args, info->buff)) < 0) {
+-                printf("%s:%d: failed to open file at location:%s error:%d\n", __func__, __LINE__,
+-                    param->u.args.fixed_args, errno);
++            if ((node = m_cmd.m_param.net_node) != NULL) {
++                len = get_edited_node(node, "Renew", info->buff);
++            } else {
++                len = load_params_file(m_cmd.m_param.u.args.fixed_args, info->buff);
++            }
++            if (len <= 0) {
++                printf("%s:%d: no Renew request from %s, error:%d\n", __func__, __LINE__,
++                    (node != NULL) ? "the caller's tree" : param->u.args.fixed_args, errno);
+                 return -1;
+             }
++            bevt->data_len = (unsigned int)len;
+             break;
++        }
+ 
+         case em_cmd_type_ap_cap_query:
+             bevt->type = em_bus_event_type_ap_cap_query;
