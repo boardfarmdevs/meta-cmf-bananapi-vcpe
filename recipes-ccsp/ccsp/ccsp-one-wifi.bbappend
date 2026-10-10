@@ -94,7 +94,23 @@ def restore_layer_patched_files(d, s):
             previous = {line.strip() for line in stream if line.strip()}
     with open(record, 'w') as stream:
         stream.write(''.join(name + '\n' for name in sorted(files)))
-    restore = files | previous
+    # A file that a patch of the recipe's own quilt series (S/patches/series) also changes is
+    # left alone: quilt returned it to the fetched text at the start of do_patch (pop -a -f) and
+    # applied its patches again, which a restore here would erase (a layer importing this one
+    # whose own OneWifi patches change the same files).
+    quilt = set()
+    series = os.path.join(s, 'patches', 'series')
+    if os.path.isfile(series):
+        with open(series) as stream:
+            for entry in stream:
+                name = entry.split('#', 1)[0].split()
+                path = os.path.join(s, 'patches', name[0]) if name else ''
+                if path and os.path.isfile(path):
+                    with open(path, 'rb') as patch:
+                        for line in patch:
+                            if line.startswith(b'+++ b/'):
+                                quilt.add(line[6:].split(b'\t')[0].strip().decode())
+    restore = (files | previous) - quilt
     if not restore:
         return
     listed = subprocess.run(['git', '-C', s, 'ls-files', '-z', '--'] + sorted(restore),

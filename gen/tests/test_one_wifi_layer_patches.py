@@ -197,6 +197,29 @@ def test_a_dropped_patchs_files_are_restored_at_the_next_run(tmp_path):
 
 
 @needs_tools
+def test_a_file_the_quilt_series_changes_keeps_its_changes(tmp_path):
+    """A layer importing this one may have the recipe's quilt series (S/patches/series) change a
+    file this layer's patches change too: quilt resets and re-applies it at the start of
+    do_patch, so the restore leaves it alone, quilt's change kept under the layer's (the mv3's
+    OneWifi patches, 10 October)."""
+    git = checkout(tmp_path)
+    variables = layer(tmp_path)
+    (git / "patches").mkdir()
+    (git / "patches/series").write_text("# the recipe's own\n0002-quilt.patch -p1\n")
+    (git / "patches/0002-quilt.patch").write_text("""--- a/source/apps/em/wifi_em.c
++++ b/source/apps/em/wifi_em.c
+@@ -5 +5,2 @@
+ }
++/* quilt */
+""")
+    # quilt applied its series before do_patch_append, as OE's do_patch does
+    (git / "source/apps/em/wifi_em.c").write_text(ORIGINAL + "/* quilt */\n")
+    run(datastore(git, variables), variables)
+    em = (git / "source/apps/em/wifi_em.c").read_text()
+    assert "reconcile(A + B)" in em and em.endswith("/* quilt */\n")
+
+
+@needs_tools
 def test_another_layers_patch_restores_nothing(tmp_path):
     git = checkout(tmp_path)
     variables = layer(tmp_path)
