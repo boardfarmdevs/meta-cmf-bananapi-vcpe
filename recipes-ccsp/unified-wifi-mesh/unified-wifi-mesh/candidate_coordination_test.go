@@ -177,3 +177,54 @@ func TestConcurrentCandidatePollsWaitForOneRead(t *testing.T) {
 		t.Fatalf("four polls arriving together must make one read, made %d", loads)
 	}
 }
+
+func TestNotReadyIsResubmittedTwiceWithinTheDeadline(t *testing.T) {
+	notReady := fmt.Errorf("native candidate command not accepted: Error_Not_Ready")
+	var slept []time.Duration
+	sleep := func(d time.Duration) { slept = append(slept, d) }
+
+	// busy twice, then accepted: two retries, counted, the backoff 250 then 500 ms
+	calls := 0
+	timing := &candidateTiming{}
+	err := submitCandidate(timing, func() error {
+		calls++
+		if calls < 3 {
+			return notReady
+		}
+		return nil
+	}, time.Now().Add(8*time.Second), sleep)
+	if err != nil || calls != 3 || timing.NotReadyRetries != 2 || timing.NativeCalls != 3 ||
+		len(slept) != 2 || slept[0] != 250*time.Millisecond || slept[1] != 500*time.Millisecond {
+		t.Fatalf("err=%v calls=%d retries=%d native=%d slept=%v", err, calls, timing.NotReadyRetries,
+			timing.NativeCalls, slept)
+	}
+
+	// busy every time: the third refusal is returned, not retried again
+	calls, slept, timing = 0, nil, &candidateTiming{}
+	err = submitCandidate(timing, func() error { calls++; return notReady }, time.Now().Add(8*time.Second), sleep)
+	if err == nil || calls != 3 || timing.NotReadyRetries != 2 {
+		t.Fatalf("err=%v calls=%d retries=%d", err, calls, timing.NotReadyRetries)
+	}
+
+	// another refusal: returned at once
+	calls, slept, timing = 0, nil, &candidateTiming{}
+	other := fmt.Errorf("native candidate command not accepted: Error_Invalid_Input")
+	err = submitCandidate(timing, func() error { calls++; return other }, time.Now().Add(8*time.Second), sleep)
+	if err != other || calls != 1 || timing.NotReadyRetries != 0 || len(slept) != 0 {
+		t.Fatalf("err=%v calls=%d retries=%d slept=%v", err, calls, timing.NotReadyRetries, slept)
+	}
+
+	// no time left for the backoff: returned at once
+	calls, slept, timing = 0, nil, &candidateTiming{}
+	err = submitCandidate(timing, func() error { calls++; return notReady }, time.Now().Add(100*time.Millisecond), sleep)
+	if err == nil || calls != 1 || timing.NotReadyRetries != 0 {
+		t.Fatalf("err=%v calls=%d retries=%d", err, calls, timing.NotReadyRetries)
+	}
+
+	// accepted at once: no retry
+	calls, slept, timing = 0, nil, &candidateTiming{}
+	err = submitCandidate(timing, func() error { calls++; return nil }, time.Now().Add(8*time.Second), sleep)
+	if err != nil || calls != 1 || timing.NotReadyRetries != 0 || len(slept) != 0 {
+		t.Fatalf("err=%v calls=%d retries=%d", err, calls, timing.NotReadyRetries)
+	}
+}

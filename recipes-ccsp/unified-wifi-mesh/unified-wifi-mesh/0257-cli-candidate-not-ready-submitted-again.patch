@@ -1,0 +1,31 @@
+Subject: [PATCH] cli: a candidate query refused Error_Not_Ready is submitted again within its budget
+
+The controller refuses a candidate query at once with Error_Not_Ready while a radio of the
+agent is busy with another command (0207): a topology round, a capability query. On the K8's
+soak (rdk-1009, 10 October 02:32Z) one came during a topology round after client churn and
+failed the soak with HTTP 503 in 26 ms. That refusal is transient: submitCandidate
+(candidate_coordination.go) submits again after 250 ms, then 500 ms, while the request's 8 s
+allow, each counted in the coordination timings (not_ready_retries); any other refusal, or the
+third, is returned as before.
+
+Upstream-Status: Inappropriate [lab candidate coordination]
+
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index f0c41a9..aa656e3 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -4680,10 +4680,11 @@ func unassocStaQueryHandler(w http.ResponseWriter, r *http.Request) {
+     }
+ 
+     var submittedAt uint64
+-    timing.nativeStep(func() {
++    // Error_Not_Ready (a radio of the agent busy) submitted again within the request's budget
++    err = submitCandidate(timing, func() error {
+         submittedAt = uint64(time.Now().UnixMilli())
+-        err = submitCandidateQuery(jsonBytes)
+-    })
++        return submitCandidateQuery(jsonBytes)
++    }, started.Add(8*time.Second), time.Sleep)
+     if err != nil {
+         timing.ElapsedMilliseconds = float64(time.Since(started).Nanoseconds()) / 1e6
+         w.Header().Set("Content-Type", "application/json")

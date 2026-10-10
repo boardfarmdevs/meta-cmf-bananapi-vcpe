@@ -176,7 +176,29 @@ type candidateTiming struct {
 	QueueMilliseconds   float64 `json:"native_queue_ms"`
 	NativeMilliseconds  float64 `json:"native_service_ms"`
 	NativeCalls         int     `json:"native_calls"`
+	NotReadyRetries     int     `json:"not_ready_retries"`
 	ElapsedMilliseconds float64 `json:"elapsed_ms"`
+}
+
+// The controller refuses a candidate query at once with Error_Not_Ready while a radio of the
+// agent is busy with another command (a topology round, a capability query: series 0207). That
+// is transient: submitCandidate submits again after 250 ms, then 500 ms, while the deadline
+// allows, each counted (not_ready_retries). Any other refusal, or the third, is returned.
+var candidateNotReadyBackoff = []time.Duration{250 * time.Millisecond, 500 * time.Millisecond}
+
+func submitCandidate(timing *candidateTiming, submit func() error, deadline time.Time,
+	sleep func(time.Duration)) error {
+	for attempt := 0; ; attempt++ {
+		var err error
+		timing.nativeStep(func() { err = submit() })
+		if err == nil || !strings.Contains(err.Error(), "Error_Not_Ready") ||
+			attempt >= len(candidateNotReadyBackoff) ||
+			time.Now().Add(candidateNotReadyBackoff[attempt]).After(deadline) {
+			return err
+		}
+		timing.NotReadyRetries++
+		sleep(candidateNotReadyBackoff[attempt])
+	}
 }
 
 func (timing *candidateTiming) nativeStep(action func()) {

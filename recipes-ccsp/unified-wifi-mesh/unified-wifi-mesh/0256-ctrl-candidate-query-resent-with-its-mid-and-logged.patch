@@ -1,0 +1,193 @@
+Subject: [PATCH] ctrl: a candidate query lost in the medium is resent with its MID, each query logged
+
+An Unassociated STA Link Metrics Query whose CMDU (or its reply) is lost was answered by
+nothing: the controller keeps one outstanding MID per radio and only its 10 s command time limit
+ended it, after em_cli's 8 s candidate wait had already given up (HTTP 504). On the K8's lab
+(rdk-1009, 9 to 10 October) rf-actions/clear failed this way in 2 of 4 runs, the query lost in
+a burst of hwsim drops on the extenders the test loaded, where a reply normally comes in 55 ms.
+
+The query as sent is kept with its MID, and resent unchanged while unanswered 2 s and 4.5 s
+after the first send (twice at most, within em_cli's wait and the command's time limit), from
+the orchestration's 250 ms tick. A copy with the same MID is the same request: the agent's
+tracker accepts it again and measures (or answers the measurement in flight), and EMOSA's
+agents answer each copy; a reply is matched only to a radio still waiting with that MID, so a
+second reply after the first completed the query is ignored ("uncorrelated"), never matched
+to another query.
+
+Each candidate query now has an INFO line when it starts (MID, agent, radio), for each resend,
+and when it ends (answered, rejected or expired, with its resends and time): what was in
+flight when a later query is refused is in the log.
+
+Platform-independent; for the lab's candidate measurements, upstream once proven.
+
+Upstream-Status: Pending
+
+diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index 3cba5fa..4614968 100644
+--- a/inc/em_metrics.h
++++ b/inc/em_metrics.h
+@@ -23,6 +23,8 @@
+ #include "dm_easy_mesh.h"
+ #include "em_unassoc_query_tracker.h"
+ #include <chrono>
++#include <time.h>
++#include <vector>
+ 
+ class em_mgr_t;
+ 
+@@ -757,7 +759,27 @@ public:
+         * Resets the stored query message ID after the corresponding
+         * ACK has been received and processed.
+         */
+-        void clear_unassoc_sta_query_msg_id() { m_unassoc_sta_query_msg_id = 0; }	
++        void clear_unassoc_sta_query_msg_id()
++        {
++            m_unassoc_sta_query_msg_id = 0;
++            m_unassoc_sta_query_frame.clear();
++            m_unassoc_sta_query_resends = 0;
++        }
++
++        /* The outstanding query as sent (its MID in it), when it was first sent and how often
++         * it was sent again: one lost in the medium is resent with its own MID, which an agent
++         * answers as the same request (resend_unassoc_sta_query_if_due). */
++        std::vector<unsigned char> m_unassoc_sta_query_frame;
++        struct timespec m_unassoc_sta_query_sent = {0, 0};
++        unsigned int m_unassoc_sta_query_resends = 0;
++
++        /* Resends the outstanding query unanswered 2 s and 4.5 s after it was first sent, twice
++         * at most: within the CLI's 8 s and the command's 10 s. Each resend logged. */
++        void resend_unassoc_sta_query_if_due();
++
++        /* One INFO line for the outstanding query's end (answered, rejected, expired): its MID,
++         * agent, radio, resends and time since it was first sent. */
++        void log_unassoc_sta_query_end(const char *how);
+ 
+ public:
+ 
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index a0a067c..2711e78 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -596,6 +596,7 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsig
+     dm->m_unassoc_sta_metrics_msg_id = response_msg_id;
+     memcpy(dm->m_unassoc_sta_metrics_ruid, matched_em->get_radio_interface_mac(),
+         sizeof(mac_address_t));
++    matched_em->log_unassoc_sta_query_end("answered");
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
+     if (!orch->complete_command(em_cmd_type_unassoc_sta_query, matched_em)) {
+@@ -2550,6 +2551,7 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+         return 0;
+     }
+ 
++    matched_em->log_unassoc_sta_query_end("rejected");
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
+     if (!orch->complete_command(em_cmd_type_unassoc_sta_query, matched_em)) {
+@@ -2993,6 +2995,9 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+         return -1;
+     }
+ 
++    /* the query as sent, kept for a resend with its MID (resend_unassoc_sta_query_if_due) */
++    std::vector<unsigned char> frame(buff, buff + len);
++
+    if (send_frame(buff, len) < 0) {
+         em_printfout("%s:%d: Unassoc Query send failed errno=%d",__func__, __LINE__, errno);
+         return -1;
+@@ -3004,10 +3009,73 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+     em_util_dbg_print(EM_CONF, "Stored query msg_id=%u", em->m_unassoc_sta_query_msg_id);
+ 
+     m_unassoc_sta_query_msg_id  =  ntohs(cmdu->id);
+-    
++    m_unassoc_sta_query_frame = std::move(frame);
++    m_unassoc_sta_query_resends = 0;
++    clock_gettime(CLOCK_MONOTONIC, &m_unassoc_sta_query_sent);
++    em_printfout("Candidate query start MID %u agent %s radio %s", m_unassoc_sta_query_msg_id,
++        util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
++        util::mac_to_string(em->get_radio_interface_mac()).c_str());
++
+     return static_cast<int>(len);
+ }
+ 
++static long unassoc_query_elapsed_ms(const struct timespec &since)
++{
++    struct timespec now;
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    return static_cast<long>(now.tv_sec - since.tv_sec) * 1000L +
++        static_cast<long>(now.tv_nsec - since.tv_nsec) / 1000000L;
++}
++
++/* The resends of an unanswered query, after its first send: a lost query is answered within the
++ * CLI's 8 s candidate wait, before the command's 10 s time limit. */
++static bool unassoc_query_resend_due(long elapsed_ms, unsigned int resends)
++{
++    static const long due_ms[] = {2000, 4500};
++    return resends < sizeof(due_ms) / sizeof(due_ms[0]) && elapsed_ms >= due_ms[resends];
++}
++
++void em_metrics_t::resend_unassoc_sta_query_if_due()
++{
++    em_t *em = static_cast<em_t *>(this);
++
++    if (m_unassoc_sta_query_msg_id == 0 || m_unassoc_sta_query_frame.empty() ||
++        em->get_state() != em_state_ctrl_unassoc_sta_link_metrics_pending) {
++        return;
++    }
++    const long elapsed = unassoc_query_elapsed_ms(m_unassoc_sta_query_sent);
++    if (!unassoc_query_resend_due(elapsed, m_unassoc_sta_query_resends)) {
++        return;
++    }
++    dm_easy_mesh_t *dm = get_data_model();
++    /* send_frame copies the payload: the kept frame stays as sent */
++    std::vector<unsigned char> frame(m_unassoc_sta_query_frame);
++    if (send_frame(frame.data(), static_cast<unsigned int>(frame.size())) < 0) {
++        em_printfout("Candidate query resend failed MID %u errno=%d", m_unassoc_sta_query_msg_id, errno);
++        return;
++    }
++    m_unassoc_sta_query_resends++;
++    em_printfout("Candidate query resend %u MID %u agent %s radio %s after %ld ms",
++        m_unassoc_sta_query_resends, m_unassoc_sta_query_msg_id,
++        dm == NULL ? "?" : util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
++        util::mac_to_string(em->get_radio_interface_mac()).c_str(), elapsed);
++}
++
++void em_metrics_t::log_unassoc_sta_query_end(const char *how)
++{
++    em_t *em = static_cast<em_t *>(this);
++    dm_easy_mesh_t *dm = get_data_model();
++
++    if (m_unassoc_sta_query_msg_id == 0) {
++        return;
++    }
++    em_printfout("Candidate query %s MID %u agent %s radio %s resends %u after %ld ms", how,
++        m_unassoc_sta_query_msg_id,
++        dm == NULL ? "?" : util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(),
++        util::mac_to_string(em->get_radio_interface_mac()).c_str(), m_unassoc_sta_query_resends,
++        unassoc_query_elapsed_ms(m_unassoc_sta_query_sent));
++}
++
+ //Unassociated STA Link Metrics Response Part
+ /*
+  * create_unassoc_sta_link_metrics_tlv()
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 3eda713..e7f6644 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -175,6 +175,9 @@ void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+             if ((now.tv_sec - pcmd->m_start_time.tv_sec) > EM_MAX_CMD_GEN_TTL) {
+                 em_printfout("Canceling cmd: %s because time limit exceeded", pcmd->get_cmd_name());
+                 cancel_command(pcmd);
++            } else {
++                /* a query lost in the medium: sent again with its MID while unanswered */
++                em->resend_unassoc_sta_query_if_due();
+             }
+             break;
+         }
+@@ -511,6 +514,7 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+         case em_cmd_type_unassoc_sta_query:
+             if (em->get_unassoc_sta_query_msg_id() != 0) {
+                 em_printfout("Candidate metrics query timed out after transmit; clearing outstanding MID");
++                em->log_unassoc_sta_query_end("expired");
+                 em->clear_unassoc_sta_query_msg_id();
+                 em->set_state(em_state_ctrl_configured);
+             } else {
