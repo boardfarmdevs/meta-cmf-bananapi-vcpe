@@ -75,9 +75,14 @@ def checkout(tmp_path):
 
 
 def datastore(git, patches):
+    work = git.parent / "work"
+    work.mkdir(exist_ok=True)
+
     class D:
         def getVar(self, name):
-            return str(git / "src") if name == "S" else str(patches[name])
+            if name == "S":
+                return str(git / "src")
+            return str(work) if name == "WORKDIR" else str(patches[name])
     return D()
 
 
@@ -98,6 +103,32 @@ def test_a_second_run_on_a_patched_tree_ends_with_the_same_file(tmp_path):
     assert not (git / "platform/banana-pi/platform.c.rej").exists()
     assert not (git / "platform/banana-pi/platform.c.orig").exists()
     assert notes == ["meta-cmf-bananapi-vcpe: first"] * 2
+
+
+@needs_tools
+def test_a_dropped_platform_patchs_file_is_restored_at_the_next_run(tmp_path):
+    """A build with one more platform patch, then one without it on the same tree: the file only
+    that patch touched is back as fetched."""
+    git = checkout(tmp_path)
+    (git / "platform/banana-pi/survey.c").write_text("survey\n")
+    subprocess.run(["git", "-C", str(git), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(git), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s"],
+                   check=True)
+    (tmp_path / "first.patch").write_text(FIRST)
+    (tmp_path / "dropped.patch").write_text("""--- a/platform/banana-pi/survey.c
++++ b/platform/banana-pi/survey.c
+@@ -1 +1 @@
+-survey
++survey with noise floor
+""")
+    apply, notes = helper()
+    patches = {"FIRST": tmp_path / "first.patch", "DROPPED": tmp_path / "dropped.patch"}
+    apply(datastore(git, patches), [("FIRST", None), ("DROPPED", None)])
+    assert (git / "platform/banana-pi/survey.c").read_text() == "survey with noise floor\n"
+    apply(datastore(git, patches), [("FIRST", None)])
+    assert (git / "platform/banana-pi/survey.c").read_text() == "survey\n"
+    assert "A | B" in (git / "platform/banana-pi/platform.c").read_text()
+    assert notes == ["meta-cmf-bananapi-vcpe: 1 files only a dropped platform patch had changed restored too"]
 
 
 @needs_tools

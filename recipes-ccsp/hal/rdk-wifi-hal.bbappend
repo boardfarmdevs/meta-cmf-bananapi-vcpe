@@ -145,6 +145,21 @@ def bananapi_platform_patches(d, patches):
     if outside:
         bb.fatal("meta-cmf-bananapi-vcpe: a platform patch changes %s, outside platform/: "
                  "give it to the series in S instead" % ", ".join(outside))
+    # The files the platform patches touched when do_patch last ran on this tree, recorded in
+    # WORKDIR: a patch dropped since (a branch with fewer patches built here after one with more)
+    # left its changes in a file no listed patch touches; it is restored too. A tree patched
+    # before the record existed is not covered: clean the recipe once.
+    record = os.path.join(d.getVar('WORKDIR'), 'meta-cmf-bananapi-vcpe.platform-patched-files')
+    previous = set()
+    if os.path.isfile(record):
+        with open(record) as stream:
+            previous = {line.strip() for line in stream if line.strip().startswith('platform/')}
+    with open(record, 'w') as stream:
+        stream.write(''.join(name + '\n' for name in sorted(files)))
+    if previous - files:
+        bb.note("meta-cmf-bananapi-vcpe: %d files only a dropped platform patch had changed "
+                "restored too" % len(previous - files))
+    files |= previous
     if os.path.isdir(os.path.join(git_dir, '.git')):
         subprocess.run(['git', '-C', git_dir, 'checkout', '--'] + sorted(files), check=True)
     for name in files:
