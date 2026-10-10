@@ -221,6 +221,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0255-ctrl-an-agent-with-no-radio-ready-does-not-hold-every-policy.patch \
     file://0256-ctrl-candidate-query-resent-with-its-mid-and-logged.patch \
     file://0257-cli-candidate-not-ready-submitted-again.patch \
+    file://0258-ctrl-a-renew-request-from-the-cli-renews-the-radios-it-names.patch \
+    file://0259-cli-a-renew-route.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
@@ -228,11 +230,12 @@ SRC_URI += "file://native_steering.go file://native_steering_test.go"
 SRC_URI += "file://native_http.go file://native_http_test.go"
 SRC_URI += "file://bss_inventory.go file://bss_inventory_test.go"
 SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go"
+SRC_URI += "file://renew_request.go file://renew_request_test.go"
 
 python do_patch_append() {
     import os
     import shutil
-    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go"):
+    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go", "renew_request.go", "renew_request_test.go"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli", name))
 }
