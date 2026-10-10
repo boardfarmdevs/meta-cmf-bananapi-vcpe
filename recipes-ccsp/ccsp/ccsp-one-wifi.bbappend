@@ -80,20 +80,36 @@ def restore_layer_patched_files(d, s):
             for line in stream:
                 if line.startswith(b'+++ b/'):
                     files.add(line[6:].split(b'\t')[0].strip().decode())
-    if not files:
+    # The files the layer's patches touched when do_patch last ran on this tree, recorded in
+    # WORKDIR: a patch dropped since (a branch with fewer patches built here after one with more)
+    # left its changes in files no listed patch touches; they are restored too. Only this layer's
+    # own files: another layer's changes to the tree stay. A tree patched before the record
+    # existed is not covered: clean the recipe once.
+    record = os.path.join(d.getVar('WORKDIR'), 'meta-cmf-bananapi-vcpe.patched-files')
+    previous = set()
+    if os.path.isfile(record):
+        with open(record) as stream:
+            previous = {line.strip() for line in stream if line.strip()}
+    with open(record, 'w') as stream:
+        stream.write(''.join(name + '\n' for name in sorted(files)))
+    restore = files | previous
+    if not restore:
         return
-    listed = subprocess.run(['git', '-C', s, 'ls-files', '-z', '--'] + sorted(files),
+    listed = subprocess.run(['git', '-C', s, 'ls-files', '-z', '--'] + sorted(restore),
                             stdout=subprocess.PIPE, check=True).stdout
     tracked = {name for name in listed.decode().split('\0') if name}
     if tracked:
         subprocess.run(['git', '-C', s, 'checkout', '--'] + sorted(tracked), check=True)
-    for name in sorted(files):
+    for name in sorted(restore):
         leftovers = [name + '.orig', name + '.rej'] + ([] if name in tracked else [name])
         for leftover in leftovers:
             if os.path.isfile(os.path.join(s, leftover)):
                 os.remove(os.path.join(s, leftover))
     bb.note('meta-cmf-bananapi-vcpe: %d files the layer patches touch restored to the fetched '
             'revision' % len(files))
+    if previous - files:
+        bb.note('meta-cmf-bananapi-vcpe: %d files only a dropped layer patch had changed restored too'
+                % len(previous - files))
 
 python do_patch_append() {
     import os

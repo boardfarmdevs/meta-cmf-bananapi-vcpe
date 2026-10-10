@@ -47,6 +47,18 @@ CREATES = """--- /dev/null
 @@ -0,0 +1 @@
 +#define THRESHOLD 1
 """
+# a patch that alone touches its files, dropped from the layer later (0043's webconfig files,
+# 10 October: image 26, without it, built on image 25's tree, kept its changes)
+DROPPED = """--- a/source/webconfig/wifi_decoder.c
++++ b/source/webconfig/wifi_decoder.c
+@@ -1 +1,2 @@
+ decode
++decode TransmitPowerdBm
+--- /dev/null
++++ b/include/wifi_dropped.h
+@@ -0,0 +1 @@
++#define DROPPED 1
+"""
 FOREIGN = """--- a/source/core/wifi_ctrl.c
 +++ b/source/core/wifi_ctrl.c
 @@ -1 +1 @@
@@ -66,6 +78,8 @@ def checkout(tmp_path):
     (git / "include").mkdir()
     (git / "source/apps/em/wifi_em.c").write_text(ORIGINAL)
     (git / "source/core/wifi_ctrl.c").write_text("x\n")
+    (git / "source/webconfig").mkdir(parents=True)
+    (git / "source/webconfig/wifi_decoder.c").write_text("decode\n")
     for command in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "f"]):
         subprocess.run(["git", "-C", str(git), *command], check=True)
     return git
@@ -84,6 +98,8 @@ def layer(tmp_path):
     variables = {name: str(here / f"{name.lower()}.patch") for name in patches}
     variables["OTHER_LAYER_PATCH"] = str(other / "foreign.patch")
     variables["LAYER_ONEWIFI_PATCH_DIR"] = str(here)
+    (tmp_path / "work").mkdir(exist_ok=True)
+    variables["WORKDIR"] = str(tmp_path / "work")
     return variables
 
 
@@ -155,6 +171,29 @@ def test_without_the_restore_the_second_run_stops(tmp_path):
     run(d, variables, restore=False)
     with pytest.raises(Fatal, match="neither cleanly applicable nor already applied"):
         run(d, variables, restore=False)
+
+
+@needs_tools
+def test_a_dropped_patchs_files_are_restored_at_the_next_run(tmp_path):
+    """A build with one more patch, then one without it on the same tree: the files only that
+    patch touched are back as fetched, the file it created gone; the others as patched."""
+    git = checkout(tmp_path)
+    variables = layer(tmp_path)
+    dropped = Path(variables["LAYER_ONEWIFI_PATCH_DIR"]) / "dropped_patch.patch"
+    dropped.write_text(DROPPED)
+    with_it = dict(variables, DROPPED_PATCH=str(dropped))
+    apply, _ = do_patch_head(datastore(git, with_it))
+    for name in ("FIRST_PATCH", "SECOND_PATCH", "CREATES_PATCH", "DROPPED_PATCH"):
+        with open(with_it[name], "rb") as stream:
+            apply(stream)
+    assert "TransmitPowerdBm" in (git / "source/webconfig/wifi_decoder.c").read_text()
+    assert (git / "include/wifi_dropped.h").exists()
+    dropped.unlink()    # the next branch's layer has no such patch
+    notes = run(datastore(git, variables), variables)
+    assert (git / "source/webconfig/wifi_decoder.c").read_text() == "decode\n"
+    assert not (git / "include/wifi_dropped.h").exists()
+    assert "reconcile(A + B)" in (git / "source/apps/em/wifi_em.c").read_text()
+    assert notes[-1] == "meta-cmf-bananapi-vcpe: 2 files only a dropped layer patch had changed restored too"
 
 
 @needs_tools
