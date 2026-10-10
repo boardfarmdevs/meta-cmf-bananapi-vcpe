@@ -55,6 +55,8 @@ WIFI_BAND_SUBDOC_PATCH := "${THISDIR}/${BPN}/0042-band-vap-subdoc-keeps-the-vaps
 # transmit power reading in dBm beside the radio's TransmitPower, TR-181's percentage
 WIFI_TX_POWER_DBM_PATCH := "${THISDIR}/${BPN}/0043-webconfig-radio-transmit-power-reading-in-dbm.patch"
 WIFI_EM_TX_POWER_PERCENT_PATCH := "${THISDIR}/${BPN}/0044-em-app-keeps-the-radio-transmit-power-percentage.patch"
+# the EM app reads a radio's transmit power again until it has a reading, and when it changes
+WIFI_EM_TX_POWER_REREAD_PATCH := "${THISDIR}/${BPN}/0045-em-app-reads-the-radio-transmit-power-again-until-it-has-one.patch"
 SRC_URI_append = " file://0030-nasta-native-query-metadata.patch;apply=no file://0031-nasta-native-query-sampling.patch;apply=no file://0032-ap-report-unknown-age-is-not-fresh.patch;apply=no file://0033-ap-query-without-reporting-policy.patch;apply=no file://0037-native-backhaul-root-admission.patch;apply=no file://0038-native-backhaul-root-revocation.patch;apply=no"
 LAYER_ONEWIFI_PATCH_DIR := "${THISDIR}/${BPN}"
 
@@ -322,6 +324,8 @@ python do_patch_append() {
     with open(d.getVar('WIFI_TX_POWER_DBM_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
     with open(d.getVar('WIFI_EM_TX_POWER_PERCENT_PATCH'), 'rb') as stream:
+        apply_layer_patch(stream)
+    with open(d.getVar('WIFI_EM_TX_POWER_REREAD_PATCH'), 'rb') as stream:
         apply_layer_patch(stream)
 
     # GNU patch -N can return success after skipping later hunks when an older
@@ -604,3 +608,5 @@ do_patch[vardepsexclude] += "WIFI_TX_POWER_DBM_PATCH"
 do_patch[file-checksums] += "${WIFI_TX_POWER_DBM_PATCH}:True"
 do_patch[vardepsexclude] += "WIFI_EM_TX_POWER_PERCENT_PATCH"
 do_patch[file-checksums] += "${WIFI_EM_TX_POWER_PERCENT_PATCH}:True"
+do_patch[vardepsexclude] += "WIFI_EM_TX_POWER_REREAD_PATCH"
+do_patch[file-checksums] += "${WIFI_EM_TX_POWER_REREAD_PATCH}:True"
