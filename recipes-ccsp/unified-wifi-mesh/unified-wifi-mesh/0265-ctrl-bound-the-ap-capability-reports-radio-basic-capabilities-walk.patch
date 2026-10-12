@@ -1,0 +1,59 @@
+Subject: [PATCH] ctrl: bound the AP Capability Report's AP Radio Basic Capabilities walk
+
+0261 bounded handle_ap_radio_basic_cap() on the WSC M1 path (em_configuration.cpp). The AP
+Capability Report carries the same TLV, and em_capability_t::handle_ap_radio_basic_cap() walks it
+with the same code: op class entries by their own channel counts, unchecked against the TLV's length
+or the 64-channel list it copies them into. A malformed entry (an agent's op class 1 with 129
+channels, the hole 0260 removes on the agent) would overrun op_class_info on the stack here as it did
+on the M1 path, from any device answering an AP Capability Query. The same three bounds as 0261: the
+TLV must hold its fixed part, an entry must lie within the TLV with at most EM_MAX_CHANNELS_IN_LIST
+channels, and a new op class must fit the data model's list (EM_MAX_OPCLASS); the rest of a
+malformed TLV is ignored, logged.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/capability/em_capability.cpp b/src/em/capability/em_capability.cpp
+index 4e1c807..ad64ff3 100644
+--- a/src/em/capability/em_capability.cpp
++++ b/src/em/capability/em_capability.cpp
+@@ -1188,6 +1188,10 @@ int em_capability_t::handle_ap_radio_basic_cap(unsigned char *buff, unsigned int
+ 
+ 	dm_easy_mesh_t *dm = get_data_model();
+ 
++	if (len < sizeof(em_ap_radio_basic_cap_t)) {
++		em_printfout("AP Radio Basic Capabilities TLV too short: %u bytes", len);
++		return -1;
++	}
+ 	memcpy(ruid, radio_basic_cap->ruid, sizeof(mac_address_t));
+ 	dm_easy_mesh_t::macbytes_to_string(ruid, mac_str);
+ 	for (i = 0; i < dm->get_num_radios(); i++) {
+@@ -1217,6 +1221,16 @@ int em_capability_t::handle_ap_radio_basic_cap(unsigned char *buff, unsigned int
+ 	basic_cap_op_class = radio_basic_cap->op_classes;
+ 	if (basic_cap_op_class != NULL) {
+ 		for (i = 0; i < radio_basic_cap->op_class_num; i++) {
++			// an entry and its channels lie within the TLV, and the channels fit the list, as 0261 makes the WSC M1's walk
++			// (em_configuration.cpp): the AP Capability Report carries the same TLV and its walk would overrun op_class_info alike
++			unsigned char *entry = reinterpret_cast<unsigned char *> (basic_cap_op_class);
++			if ((entry + sizeof(em_op_class_t) > buff + len) ||
++			    (entry + sizeof(em_op_class_t) + basic_cap_op_class->num > buff + len) ||
++			    (basic_cap_op_class->num > EM_MAX_CHANNELS_IN_LIST)) {
++				em_printfout("Radio %s: op class entry %u of %u malformed (TLV %u bytes): ignoring the rest",
++					mac_str, i, radio_basic_cap->op_class_num, len);
++				break;
++			}
+ 			memset(&op_class_info, 0, sizeof(em_op_class_info_t));
+ 			memcpy(op_class_info.id.ruid, ruid, sizeof(mac_address_t));
+ 			op_class_info.id.type = em_op_class_type_capability;
+@@ -1242,6 +1256,10 @@ int em_capability_t::handle_ap_radio_basic_cap(unsigned char *buff, unsigned int
+ 			if (op_class_exists == true) {
+ 				op_class_exists = false;
+ 			} else {
++				if (dm->get_num_op_class() >= EM_MAX_OPCLASS) {
++					em_printfout("Radio %s: op class list full (%u): ignoring the rest", mac_str, dm->get_num_op_class());
++					break;
++				}
+ 				op_class_obj = &dm->m_op_class[dm->get_num_op_class()];
+ 				dm->set_num_op_class(dm->get_num_op_class() + 1);
+ 			}
