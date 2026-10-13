@@ -25,6 +25,8 @@
 # -i NNN gives the client an instance suffix so several can run side by side, each
 # with its own container, profile, MAC and radio (e.g. -i 1 -> wlan-client-001).
 source "$(dirname "$0")/gen-util.sh"
+# shellcheck source=cpe-init.sh
+source "$(dirname "$0")/cpe-init.sh"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE_IMG="${WLAN_CLIENT_IMAGE:-wlan-client-base}"   # the self-contained client image
@@ -340,7 +342,8 @@ up)
     # When this is a standalone WLAN test with no controller, skip the gate.
     if [ "${WAIT_EASYMESH_EXPORT:-1}" = 1 ] \
        && lxc info bpibroadband >/dev/null 2>&1 \
-       && [ "$(lxc exec bpibroadband -- systemctl is-active em_ctrl 2>/dev/null || true)" = active ]; then
+       && { [ "$(lxc exec bpibroadband -- systemctl is-active em_ctrl 2>/dev/null || true)" = active ] \
+            || { cpe_busybox bpibroadband && cpe_active bpibroadband em_ctrl; }; }; then
         sta=$(lxc exec "$CT" -- iw dev wlan0 info | awk '/addr/{print $2; exit}')
         exported=0
         # A newly started controller/agent can need more than ten seconds to

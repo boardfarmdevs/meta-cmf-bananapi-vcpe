@@ -16,11 +16,27 @@ wan_bridge=""
 lan_bridge=""
 instance_index=""
 fresh=""
+cpe_init="systemd"
+wan_ifname="eth0"
 _args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         -b)
             wan_bridge="$2"
+            shift 2
+            ;;
+        -t)
+            # The image's init: systemd (RDK's Banana Pi images) or busybox, a CPE in
+            # the gateway's place that starts the same EasyMesh and OneWifi programs
+            # from its init scripts (gen/cpe-init.sh). Given, not deduced from the
+            # image's name: a busybox image is the gateway whatever its name.
+            cpe_init="$2"
+            shift 2
+            ;;
+        -w)
+            # The WAN NIC's name in the container (the -b bridge's leg): eth0, or the
+            # name a CPE image gives its WAN port.
+            wan_ifname="$2"
             shift 2
             ;;
         -l)
@@ -52,7 +68,12 @@ set -- "${_args[@]}"
 usage() {
     local script_name=$(basename "$0")
     cat << EOF
-Usage: ${script_name} [-b wan-bridge] [-l lan-bridge] [-i instance] [-F|--fresh] <url/path/pattern to bpi rootfs image>
+Usage: ${script_name} [-b wan-bridge] [-l lan-bridge] [-i instance] [-F|--fresh] [-t systemd|busybox] [-w wan-ifname] <url/path/pattern to bpi rootfs image>
+
+   -t busybox  the gateway from a busybox-init CPE image (any name): the same
+               programs started by its init scripts, recorded on the container
+               (user.easymesh.cpe-init) for the lab's gates and repairs.
+   -w <name>   the WAN NIC's name in the container (default eth0).
 
    -F, --fresh  wipe the container's persistent nvram volume so it gets a fresh
                identity (new AL-MAC + RUID set). Use it for a clean baseline or a
@@ -161,7 +182,18 @@ fi
 #   .../build-qemux86bpiap/...X86EMLTRBPIAP_rdk-next_<stamp>...        -> bpiap
 #   .../build-qemux86bpibroadband/...X86EMLTRBPIBB_rdk-next_<stamp>... -> bpibroadband
 # Match bpiap first: "bpibroadband" and "bpiap" both contain "bpi".
-if [[ "$1" =~ (bpiap|bpi-ap|BPIAP) ]]; then
+# A busybox-init CPE (-t busybox) is the gateway, whatever its image's name.
+if ! [[ "$cpe_init" =~ ^(systemd|busybox)$ ]] || ! [[ "$wan_ifname" =~ ^[a-z][a-z0-9_.-]{0,14}$ ]]; then
+    echo "Error: -t must be systemd or busybox, -w an interface name" >&2
+    exit 1
+fi
+if [ "$cpe_init" = busybox ]; then
+    mv="bpibroadband"
+    rel="r25"
+    rootsize=1024MiB
+    memorylimit=1024MiB
+    cpulimit="2"
+elif [[ "$1" =~ (bpiap|bpi-ap|BPIAP) ]]; then
     mv="bpiap"
     rel="r25"
     rootsize=1024MiB
@@ -427,6 +459,21 @@ fi
 
 lab_pool=$(ensure_lxd_lab_pool) || exit 1
 
+# A busybox CPE image can keep /nvram as a link into its data partition. LXD mounts a
+# disk onto a directory, not onto a link: mount onto the link's target, read from the
+# image (its listing, once per deploy).
+nvram_path=/nvram
+if [ "$cpe_init" = busybox ]; then
+    nvram_link=$(tar -tvjf "$M_ROOT/tmp/${mvrootfstarball}" --occurrence=1 ./rootfs/nvram 2>/dev/null \
+        | sed -n 's/^l.* -> //p' || true)
+    case "$nvram_link" in
+        "") ;;
+        /*) nvram_path=$nvram_link ;;
+        *) nvram_path=/$nvram_link ;;
+    esac
+    echo "${containername}: busybox init, WAN ${wan_ifname}, nvram at ${nvram_path}"
+fi
+
 echo "Configuring ${containername}"
 
 # BPI NVRAM is a host directory bind-mounted into the privileged container.
@@ -568,7 +615,7 @@ if [[ "$mv" == bpi* ]]; then
     # plain L2 loop. An EasyMesh extender wants neither leg -- see
     # docs/concepts/architecture.md.
     if [ -n "$wan_bridge" ]; then
-        lxc profile device add ${profilename} eth0 nic nictype=bridged parent=${wan_bridge} hwaddr=${eth0_mac} name=eth0 1>/dev/null
+        lxc profile device add ${profilename} eth0 nic nictype=bridged parent=${wan_bridge} hwaddr=${eth0_mac} name=${wan_ifname} 1>/dev/null
     fi
 
     if [ -n "$lan_bridge" ]; then
@@ -590,7 +637,7 @@ if [[ "$mv" == bpi* ]]; then
     # RDK-B keeps persistent identity and configuration at /nvram. Bind the
     # selected host directory directly; LXD does not need to create, delete, or
     # clone a storage-pool object for these small files.
-    lxc profile device add "${profilename}" nvram disk source="${nvram_source}" path=/nvram 1>/dev/null
+    lxc profile device add "${profilename}" nvram disk source="${nvram_source}" path="${nvram_path}" 1>/dev/null
 
     # Candidate-link measurements come from a protocol-enforced read-only
     # wmediumd endpoint.  Mount it outside /run: systemd overlays /run with a
@@ -705,6 +752,21 @@ lxc start "${containername}" || exit 1
 # "what is running?" without the name having to churn.
 lxc config set ${containername} user.build "${buildstamp}" 2>/dev/null
 lxc config set ${containername} user.image "${url}" 2>/dev/null
+
+# A busybox CPE's record for gen/cpe-init.sh: its init, its WAN NIC's name (for a
+# redeploy) and the init script that starts the controller, the one a restart of the
+# EasyMesh units runs. Exactly one script may start it.
+if [ "$cpe_init" = busybox ]; then
+    cpe_service=$(lxc exec "${containername}" -- sh -c \
+        'grep -l "^[^#]*/usr/bin/onewifi_em_ctrl" /etc/init.d/* 2>/dev/null')
+    if [ "$(printf '%s\n' "$cpe_service" | grep -c .)" != 1 ]; then
+        echo "Error: ${containername}: not one init script starts onewifi_em_ctrl: ${cpe_service:-none}" >&2
+        exit 1
+    fi
+    lxc config set "${containername}" user.easymesh.cpe-init busybox || exit 1
+    lxc config set "${containername}" user.easymesh.cpe-wan "${wan_ifname}" || exit 1
+    lxc config set "${containername}" user.easymesh.cpe-service "${cpe_service}" || exit 1
+fi
 
 # The new generation is live and deleting the old container has unmounted its
 # /nvram/rdkssa eCryptfs mount. Clear only a path resolved beneath this

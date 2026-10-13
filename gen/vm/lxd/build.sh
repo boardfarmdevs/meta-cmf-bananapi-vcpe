@@ -39,6 +39,10 @@ http_ready_timeout=${EASYMESH_LXD_HTTP_READY_TIMEOUT:-240}
 boardfarm_commit=${EASYMESH_BOARDFARM_COMMIT:-ddb5a2b9e1707562595afc7e4000a3b8efa3cd81}
 boardfarm_source=${EASYMESH_BOARDFARM_SOURCE:-git@github.com:robvogelaar/boardfarm-lab-staging.git}
 controller_image=${EASYMESH_CONTROLLER_IMAGE:-}
+# the controller image's init and WAN NIC: RDK's Banana Pi gateway (systemd, eth0), or a
+# busybox-init CPE in its place (gen/bpi.sh -t, -w; gen/cpe-init.sh)
+controller_init=${EASYMESH_CONTROLLER_INIT:-systemd}
+controller_wan=${EASYMESH_CONTROLLER_WAN:-eth0}
 extender_image=${EASYMESH_EXTENDER_IMAGE:-}
 export_dir=${EASYMESH_LXD_EXPORT_DIR:-$root/gen/vm/lxd/artifacts}
 runtime_branch=${EASYMESH_RUNTIME_BRANCH:-$(git -C "$root" symbolic-ref --short HEAD)}
@@ -65,6 +69,8 @@ lab_clients=${dev_clients:-$profile_clients}
 [[ "$emosa" =~ ^[01]$ ]] || { echo 'EASYMESH_EMOSA must be 0 or 1' >&2; exit 2; }
 [[ "$emosa_agent" =~ ^(python|c)$ ]] || { echo 'EASYMESH_EMOSA_AGENT must be python or c' >&2; exit 2; }
 [[ "$emosa_in" =~ ^(container|gateway)$ ]] || { echo 'EASYMESH_EMOSA_IN must be container or gateway' >&2; exit 2; }
+[[ "$controller_init" =~ ^(systemd|busybox)$ ]] || { echo 'EASYMESH_CONTROLLER_INIT must be systemd or busybox' >&2; exit 2; }
+[[ "$controller_wan" =~ ^[a-z][a-z0-9_.-]{0,14}$ ]] || { echo 'EASYMESH_CONTROLLER_WAN must be an interface name' >&2; exit 2; }
 [ "$emosa_in" = container ] || [ "$emosa_agent" = c ] || {
     echo 'EASYMESH_EMOSA_IN=gateway runs the image'"'"'s adapter, in C: EASYMESH_EMOSA_AGENT=c' >&2
     exit 2
@@ -108,6 +114,10 @@ Commands:
 Build inputs:
   EASYMESH_CONTROLLER_IMAGE=/path/to/controller.rootfs.lxc.tar.bz2
   EASYMESH_EXTENDER_IMAGE=/path/to/extender.rootfs.lxc.tar.bz2
+  EASYMESH_CONTROLLER_INIT=$controller_init (systemd: RDK's Banana Pi gateway; busybox: a
+    busybox-init CPE in the gateway's place, any image name, the same programs started by
+    its init scripts; its LAN set to the lab's 10.0.0.1/24)
+  EASYMESH_CONTROLLER_WAN=$controller_wan (the controller's WAN NIC name in its container)
 
 Common overrides:
   EASYMESH_LAB_PROFILE=$profile_clients (fixed capacity: 100 clients)
@@ -739,6 +749,7 @@ build_vm() {
         ipv4.address="$appliance_ipv4"
     lxc config set "$name" boot.autostart false
     lxc config set "$name" user.easymesh.applied-commit "$meta_commit"
+    lxc config set "$name" user.easymesh.controller-init "$controller_init"
     # A lab from a base image shares the base's machine-id with every other one:
     # its address is pinned in the guest (pin_guest_address), as a copy's is.
     ! "$from_base" || lxc config set "$name" user.easymesh.pin-address true
@@ -789,6 +800,7 @@ build_vm() {
     phase mesh
     run_root env HOME=/home/easymesh \
         CONTROLLER_IMAGE="/home/easymesh/easymesh-assets/$controller_name" \
+        CONTROLLER_INIT="$controller_init" CONTROLLER_WAN="$controller_wan" \
         EXTENDER_IMAGE="/home/easymesh/easymesh-assets/$extender_name" \
         EXPECTED_REPO_HEAD="$meta_commit" \
         EXPECTED_WMEDIUMD_SHA256="$wmediumd_sha" \

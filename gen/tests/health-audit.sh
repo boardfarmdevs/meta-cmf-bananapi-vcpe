@@ -5,6 +5,17 @@ exec </dev/null
 repo=${EASYMESH_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
 # shellcheck source=lib/observer-status.sh
 source "$repo/gen/tests/lib/observer-status.sh"
+# shellcheck source=../cpe-init.sh
+source "$repo/gen/cpe-init.sh"
+# A busybox CPE gateway has no restart counter: its programs' PIDs from the lab runtime's
+# controller-ready point (this boot), or from this audit's start (gen/cpe-init.sh)
+cpe_pids_file=/run/easymesh-lab-cpe-pids
+cpe_pids_tmp=""
+if cpe_busybox bpibroadband && [ ! -f "$cpe_pids_file" ]; then
+    cpe_pids_tmp=$(mktemp)
+    cpe_pids_file=$cpe_pids_tmp
+    cpe_pid_snapshot bpibroadband "$cpe_pids_file" onewifi em_agent em_ctrl em_cli
+fi
 results=${RESULTS_FILE:-$repo/tmp/test-results/steering-scale.csv}
 ping_count=${HEALTH_PING_COUNT:-10}
 ping_interval=${HEALTH_PING_INTERVAL:-1}
@@ -146,7 +157,7 @@ status_section "Client ownership"
 status_action "Comparing each physical association with controller/WebUI ownership."
 echo ASSOCIATION_OWNERSHIP
 clients_json=$(mktemp)
-trap 'rm -f "$clients_json" "$topology_json"' EXIT
+trap 'rm -f "$clients_json" "$topology_json" ${cpe_pids_tmp:+"$cpe_pids_tmp"}' EXIT
 curl -fsS http://127.0.0.1:8888/api/v1/clients >"$clients_json"
 ownership_fail=0
 while read -r client; do
@@ -196,6 +207,7 @@ status_action "Checking EasyMesh and OneWifi restart counters."
 echo RESTARTS
 restart_fail=0
 for container in $mesh_containers; do
+    [ "$container" = bpibroadband ] && cpe_busybox bpibroadband && continue
     for unit in onewifi em_agent; do
         restarts=$(lxc exec "$container" -- systemctl show "$unit" \
             -p NRestarts --value)
@@ -203,12 +215,20 @@ for container in $mesh_containers; do
         [ "$restarts" = 0 ] || restart_fail=1
     done
 done
-for unit in em_ctrl em_cli; do
-    restarts=$(lxc exec bpibroadband -- systemctl show "$unit" \
-        -p NRestarts --value)
-    echo "bpibroadband $unit=$restarts"
-    [ "$restarts" = 0 ] || restart_fail=1
-done
+if cpe_busybox bpibroadband; then
+    # 0: the same PID as at the snapshot; 1: a new one (a restart); down: not running
+    while read -r line; do
+        echo "bpibroadband $line"
+        [ "${line#*=}" = 0 ] || restart_fail=1
+    done < <(cpe_pid_changes bpibroadband "$cpe_pids_file")
+else
+    for unit in em_ctrl em_cli; do
+        restarts=$(lxc exec bpibroadband -- systemctl show "$unit" \
+            -p NRestarts --value)
+        echo "bpibroadband $unit=$restarts"
+        [ "$restarts" = 0 ] || restart_fail=1
+    done
+fi
 
 status_section "End-to-end traffic"
 status_wait "Sending $ping_count packets from every client in parallel; maximum allowed loss is ${ping_max_loss}%."

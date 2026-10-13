@@ -14,8 +14,15 @@ nvram_root=${EASYMESH_NVRAM_ROOT:-/var/lib/easymesh-lab/nvram}
 boardfarm_status=${BOARDFARM_STATUS:-/var/lib/easymesh-lab/boardfarm.status}
 controller_image=${CONTROLLER_IMAGE:-"$assets/X86EMLTRBPIBB_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
 extender_image=${EXTENDER_IMAGE:-"$assets/X86EMLTRBPIAP_rdk-next_20260830064504.rootfs.lxc.tar.bz2"}
+# The controller image's init and WAN NIC (bpi.sh -t, -w): RDK's Banana Pi gateway, or a
+# busybox-init CPE in its place (EASYMESH_CONTROLLER_INIT, EASYMESH_CONTROLLER_WAN)
+controller_init=${CONTROLLER_INIT:-systemd}
+controller_wan=${CONTROLLER_WAN:-eth0}
 expected_repo_head=${EXPECTED_REPO_HEAD:-$(git -C "$repo" rev-parse HEAD)}
 expected_wmediumd_sha256=${EXPECTED_WMEDIUMD_SHA256:-$(sha256sum "$gen/medium/wmediumd/build/wmediumd" | awk '{print $1}')}
+
+# shellcheck source=../../cpe-init.sh
+source "$gen/cpe-init.sh"
 
 mkdir -p "$state" "$nvram_root"
 export BPI_NVRAM_ROOT="$nvram_root"
@@ -35,6 +42,10 @@ model_counts() {
 services_active() {
     local container=$1
     shift
+    if cpe_busybox "$container"; then
+        cpe_active "$container" "$@"
+        return
+    fi
     local service
     for service in "$@"; do
         test "$(lxc exec "$container" -- systemctl is-active "$service" 2>/dev/null)" = active \
@@ -123,20 +134,26 @@ while read -r container; do
 done < <(lxc list -c n --format csv \
     | grep -E '^(bpibroadband|bpiap(-[0-9]{3})?)$' | sort -Vr)
 
-./bpi.sh -F -b br-wan101 "$controller_image"
+./bpi.sh -F -b br-wan101 -t "$controller_init" -w "$controller_wan" "$controller_image"
 
-# The stock em_cli unit is enabled, but on a container reboot it can be absent
-# from the boot transaction even though em_agent starts successfully. Make the
-# dependency explicit in the direction that matters: starting em_agent pulls
-# in em_cli, whose own unit already orders itself after em_agent. This persists
-# in the controller rootfs and removes the reboot-only manual start.
-lxc exec bpibroadband -- mkdir -p /etc/systemd/system/em_agent.service.d
-printf '%s\n' '[Unit]' 'Wants=em_cli.service' \
-    | lxc exec bpibroadband -- tee \
-        /etc/systemd/system/em_agent.service.d/em-cli.conf >/dev/null
-lxc exec bpibroadband -- systemctl daemon-reload
-lxc exec bpibroadband -- systemctl enable em_cli.service
-lxc exec bpibroadband -- systemctl start em_cli.service
+if [ "$controller_init" = busybox ]; then
+    # A busybox CPE: its init script starts em_cli with the controller; its LAN is
+    # set to the lab's (gen/cpe-init.sh)
+    cpe_lan bpibroadband
+else
+    # The stock em_cli unit is enabled, but on a container reboot it can be absent
+    # from the boot transaction even though em_agent starts successfully. Make the
+    # dependency explicit in the direction that matters: starting em_agent pulls
+    # in em_cli, whose own unit already orders itself after em_agent. This persists
+    # in the controller rootfs and removes the reboot-only manual start.
+    lxc exec bpibroadband -- mkdir -p /etc/systemd/system/em_agent.service.d
+    printf '%s\n' '[Unit]' 'Wants=em_cli.service' \
+        | lxc exec bpibroadband -- tee \
+            /etc/systemd/system/em_agent.service.d/em-cli.conf >/dev/null
+    lxc exec bpibroadband -- systemctl daemon-reload
+    lxc exec bpibroadband -- systemctl enable em_cli.service
+    lxc exec bpibroadband -- systemctl start em_cli.service
+fi
 wait_for_controller
 
 ./bpi.sh -F "$extender_image"

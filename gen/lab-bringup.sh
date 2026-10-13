@@ -20,6 +20,12 @@ set -euo pipefail
 # service then starts and must settle.
 #
 # Never while a room suite runs: it restarts services the suite measures.
+#
+# A busybox CPE gateway (gen/cpe-init.sh) restarts its controller and co-located agent
+# together, its init script's restart: one restart where the units take two.
+
+# shellcheck source=cpe-init.sh
+source "$(dirname "$0")/cpe-init.sh"
 
 usage() {
     sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -42,6 +48,14 @@ extenders() { lxc list -c n -f csv | grep -E '^bpiap(-[0-9]{3})?$' || true; }
 wired() { [ "$(lxc config get "$1" user.easymesh.backhaul)" = wired ]; }
 ssids() { cx "$1" "iw dev | grep -c ssid || true" 2>/dev/null || echo 0; }
 station() { cx "$1" "iw dev wifi1.3 link 2>/dev/null | head -1" 2>/dev/null || true; }
+
+unit_state() {    # unit_state CT UNIT: systemd's state, or a busybox CPE's program running
+    if cpe_busybox "$1"; then
+        if cpe_active "$1" "$2"; then echo active; else echo inactive; fi
+    else
+        cx "$1" "systemctl is-active $2" 2>/dev/null || true
+    fi
+}
 
 active() {    # wait (up to 10 min) for a unit in a container
     local container=$1 unit=$2 i
@@ -100,7 +114,11 @@ wait_topology() {
 
 restart_agents() {
     local container
-    cx bpibroadband "systemctl restart em_agent"
+    if cpe_busybox bpibroadband; then
+        cpe_restart bpibroadband em_agent
+    else
+        cx bpibroadband "systemctl restart em_agent"
+    fi
     sleep 20
     for container in $(extenders); do cx "$container" "systemctl restart em_agent --no-block"; done
 }
@@ -121,8 +139,10 @@ up() {
     for container in $recovered; do active "$container" onewifi; done
     [ -z "$recovered" ] || sleep 20
     log "restarting em_ctrl, the gateway's agent, then the extenders' agents"
-    cx bpibroadband "systemctl restart em_ctrl"
-    sleep 20
+    if ! cpe_busybox bpibroadband; then    # a busybox CPE's agent restart restarts em_ctrl too
+        cx bpibroadband "systemctl restart em_ctrl"
+        sleep 20
+    fi
     restart_agents
     for attempt in 1 2 3; do
         wait_topology "$expected" && break
@@ -188,12 +208,12 @@ status() {
         [ "$container" = bpibroadband ] && kind=gateway
         wired "$container" && kind=wired
         printf '%-13s %-7s onewifi=%-8s em_agent=%-8s ssids=%-2s backhaul=%s\n' "$container" "$kind" \
-            "$(cx "$container" "systemctl is-active onewifi" 2>/dev/null || true)" \
-            "$(cx "$container" "systemctl is-active em_agent" 2>/dev/null || true)" \
+            "$(unit_state "$container" onewifi)" \
+            "$(unit_state "$container" em_agent)" \
             "$(ssids "$container")" \
             "$( [ "$kind" = wifi ] && station "$container" || echo -)"
     done
-    printf 'em_ctrl=%s topology: ' "$(cx bpibroadband "systemctl is-active em_ctrl" 2>/dev/null || true)"
+    printf 'em_ctrl=%s topology: ' "$(unit_state bpibroadband em_ctrl)"
     curl -fsS --max-time 5 "$TOPOLOGY" 2>/dev/null | python3 -c '
 import json, sys
 nodes = json.load(sys.stdin).get("nodes", [])
@@ -203,8 +223,13 @@ print(" ".join("%s:%d" % (n.get("name"), bss(n)) for n in nodes if n.get("kind")
         'select (select count(*) from DeviceList),(select count(*) from RadioList),(select count(*) from BSSList),(select count(*) from STAList where Associated=1)' 2>/dev/null" | tr '\t' ' ')"
     gateway_memory
     # a radio the controller keeps renewing is never configured: none in a settled lab
-    printf 'controller renews in the last 5 min: %s\n' \
-        "$(cx bpibroadband "journalctl -u em_ctrl --since -5min --no-pager -o cat | grep -c 'AutoConfig Renew' || true" 2>/dev/null || echo unavailable)"
+    if cpe_busybox bpibroadband; then    # no journal: its capped log, no time window
+        printf 'controller renews in its log: %s\n' \
+            "$(cpe_log bpibroadband em_ctrl | grep -c 'AutoConfig Renew' || true)"
+    else
+        printf 'controller renews in the last 5 min: %s\n' \
+            "$(cx bpibroadband "journalctl -u em_ctrl --since -5min --no-pager -o cat | grep -c 'AutoConfig Renew' || true" 2>/dev/null || echo unavailable)"
+    fi
     printf 'room: %s %s\n' "$(systemctl is-active "$ROOM_UNIT" || true)" "$(room_settled || true)"
 }
 

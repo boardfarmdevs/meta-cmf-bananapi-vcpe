@@ -7,6 +7,11 @@ lab_user=${EASYMESH_LAB_USER:-easymesh}
 lab_group=${EASYMESH_LAB_GROUP:-$(id -gn "$lab_user")}
 lab_home=${EASYMESH_LAB_HOME:-$(getent passwd "$lab_user" | cut -d: -f6)}
 gen=${EASYMESH_GEN:-$lab_home/git/meta-cmf-bananapi-vcpe/gen}
+# shellcheck source=../../../cpe-init.sh
+source "$gen/cpe-init.sh"
+# A busybox CPE gateway has no restart counter: its programs' PIDs once the controller
+# is ready, for this boot (gen/cpe-init.sh)
+cpe_pids_file=/run/easymesh-lab-cpe-pids
 mesh='bpibroadband bpiap bpiap-001 bpiap-002 bpiap-003'
 extenders='bpiap bpiap-001 bpiap-002 bpiap-003'
 clients=$(lxc list -c n --format csv 2>/dev/null \
@@ -381,7 +386,12 @@ wait_wan_provider() {
 
 al_mac_for() {
     local container=$1 base prefix octet value
-    if [ "$container" = bpibroadband ]; then
+    if [ "$container" = bpibroadband ] && cpe_busybox bpibroadband; then
+        # A busybox CPE's co-located agent: its IEEE 1905 interface's own MAC, the
+        # agent's AL MAC (the units' interface, eth1_virt_peer)
+        lxc exec bpibroadband -- cat /sys/class/net/eth1_virt_peer/address 2>/dev/null
+        return
+    elif [ "$container" = bpibroadband ]; then
         # The colocated agent derives its interface MAC from the controller's
         # deterministic WAN MAC and does not create em_al_base_mac.
         base=$(lxc profile get bpibroadband environment.STORED_MAC1 \
@@ -404,6 +414,17 @@ model_bss_for() {
         2>/dev/null || true
 }
 
+controller_units_active() {
+    if cpe_busybox bpibroadband; then
+        cpe_active bpibroadband \
+            onewifi ieee1905_em_ctrl em_ctrl ieee1905_em_agent em_agent em_cli
+    else
+        lxc exec bpibroadband -- systemctl is-active --quiet \
+            onewifi ieee1905_em_ctrl em_ctrl ieee1905_em_agent em_agent em_cli \
+            2>/dev/null
+    fi
+}
+
 wait_controller() {
     local attempt private_count iot_count bss_count
     for attempt in $(seq 1 48); do
@@ -412,15 +433,16 @@ wait_controller() {
         iot_count=$(lxc exec bpibroadband -- iw dev 2>/dev/null \
             | grep -c 'ssid iot_ssid' || true)
         bss_count=$(model_bss_for bpibroadband)
-        if lxc exec bpibroadband -- systemctl is-active --quiet \
-                onewifi ieee1905_em_ctrl em_ctrl ieee1905_em_agent em_agent em_cli \
-                2>/dev/null \
+        if controller_units_active \
             && lxc exec bpibroadband -- sh -c \
                 "ip -4 -o address show erouter0 | grep -q 'inet '" \
             && [ "$private_count" -eq 3 ] \
             && [ "$iot_count" -eq 3 ] \
             && [ "${bss_count:-0}" -eq 10 ] \
             && curl -fsS http://127.0.0.1:8888/api/v1/topology >/dev/null; then
+            if cpe_busybox bpibroadband; then
+                cpe_pid_snapshot bpibroadband "$cpe_pids_file" onewifi em_agent em_ctrl em_cli
+            fi
             return 0
         fi
         sleep 5
@@ -689,6 +711,15 @@ restart_report() {
     for container in $mesh $wired_extenders; do
         units='onewifi em_agent'
         [ "$container" = bpibroadband ] && units="$units em_ctrl em_cli"
+        if [ "$container" = bpibroadband ] && cpe_busybox bpibroadband; then
+            # 0: the PID it had when the controller became ready; 1: a new one
+            if [ -f "$cpe_pids_file" ]; then
+                cpe_pid_changes bpibroadband "$cpe_pids_file" | sed 's/^/bpibroadband /'
+            else
+                printf 'bpibroadband %s=unknown\n' $units
+            fi
+            continue
+        fi
         # One namespace crossing per container is materially faster than one
         # lxc exec per unit, especially while the VM is under Docker I/O load.
         lxc exec "$container" -- sh -c '
