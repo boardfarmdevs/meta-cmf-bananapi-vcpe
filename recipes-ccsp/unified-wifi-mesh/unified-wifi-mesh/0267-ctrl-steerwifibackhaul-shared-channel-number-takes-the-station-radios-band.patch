@@ -1,0 +1,104 @@
+Subject: [PATCH] ctrl: SteerWiFiBackhaul() on a shared channel number takes the band of the station's radio
+
+0249 sends a modelled target's own operating class and derives an unmodelled target's from
+Channel when that number belongs to one band only. 2.4 GHz 1, 5, 9, 13 and 5 GHz 149-177 are 6 GHz
+channel numbers too, so a target outside the model on one of them was refused. On a gateway with
+two-radio pods (12 October) that refused every steer of a pod back to the gateway's pod-backhaul
+BSS on 149: that
+BSS is outside EasyMesh by design (its agent keeps the pod-backhaul SSID out), so it is never
+modelled, and the Data Elements method takes TargetBSS, Channel and TimeOut, no class (from the
+implementation; no OperatingClass input in the Data Elements definition as far as known).
+
+The station that moves decides now: the device's backhaul-STA row the method already uses names
+its radio, and the classes that radio's AP Radio Basic Capabilities advertised (the model's
+capability rows for its RUID) give the bands it can operate. A shared number takes the 20 MHz class
+of the one such band that has it (Annex E, as 0249). A radio advertising none of them, or more than
+one (a 5 and 6 GHz radio on 149), or no capability at all, is still refused rather than guessed. A
+modelled target and an unshared number are unchanged. gen/tests/
+controller-steer-backhaul-station-band-test.py reproduces the refusal with --expect-refused on a
+source without this patch.
+
+Platform-independent (the method's native path is the lab's own); not for upstream on its own.
+
+Upstream-Status: Inappropriate [completes the lab's native SteerWiFiBackhaul() path]
+
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 6d014d9f..a773e072 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -711,6 +711,45 @@ static unsigned char backhaul_op_class_of_channel(int channel)
+     return 131;
+ }
+ 
++/* The 20 MHz operating class of a channel number in the one band the moving radio can operate that
++ * has this number. The radio's bands are those of the classes its AP Radio Basic
++ * Capabilities advertised (the model's capability rows for its RUID): 2.4 GHz 81-84, 5 GHz 115-130,
++ * 6 GHz 131-137. For a number several bands use (2.4 GHz 1, 5, 9, 13 and 5 GHz 149-177 are 6 GHz
++ * numbers too) the backhaul STA's own radio decides; 0 when it advertises none of the bands with
++ * this number, or more than one, or no class at all. */
++static unsigned char backhaul_op_class_for_radio(dm_easy_mesh_t *model, const mac_address_t ruid, int channel)
++{
++    bool has_24 = false, has_5 = false, has_6 = false;
++    {
++        std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++        for (unsigned int o = 0; o < model->m_num_opclass && o < EM_MAX_OPCLASS; o++) {
++            const em_op_class_info_t *op = model->get_op_class_info(o);
++            if (op->id.type != em_op_class_type_capability ||
++                    memcmp(op->id.ruid, ruid, sizeof(mac_address_t)) != 0) {
++                continue;
++            }
++            has_24 = has_24 || (op->op_class >= 81 && op->op_class <= 84);
++            has_5 = has_5 || (op->op_class >= 115 && op->op_class <= 130);
++            has_6 = has_6 || (op->op_class >= 131 && op->op_class <= 137);
++        }
++    }
++    const bool band_24 = has_24 && channel >= 1 && channel <= 14;
++    const bool band_5 = has_5 && ((channel >= 36 && channel <= 64 && channel % 4 == 0) ||
++        (channel >= 100 && channel <= 144 && channel % 4 == 0) ||
++        (channel >= 149 && channel <= 177 && channel % 4 == 1));
++    const bool band_6 = has_6 && channel >= 1 && channel <= 233 && channel % 4 == 1;
++    if (static_cast<int>(band_24) + static_cast<int>(band_5) + static_cast<int>(band_6) != 1) {
++        return 0;
++    }
++    if (band_24) {
++        return channel == 14 ? 82 : 81;
++    }
++    if (band_5) {
++        return channel <= 48 ? 115 : channel <= 64 ? 118 : channel <= 144 ? 121 : 125;
++    }
++    return 131;
++}
++
+ bus_error_t em_ctrl_t::cmd_steerwifibh(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
+     (void)async_handle;
+@@ -950,9 +989,10 @@ invalid:
+         requested.request.target.assign(reinterpret_cast<const char *>(target_mac), sizeof(mac_address_t));
+         /* The request carries the operating class and channel on which the target beacons
+          * (EasyMesh 17.2.32): the model's for a target it holds, and a Channel given with it
+-         * must be that one; else derived from Channel, when that number names one band. An
+-         * unknown target without a Channel, or on a number several bands use, is refused
+-         * rather than guessed. */
++         * must be that one; else derived from Channel, when that number names one band, or
++         * one band of those the moving station's own radio advertised (a gateway's
++         * pod-backhaul BSS, outside the model, on 149). An unknown target without a Channel,
++         * or on a number its radio's bands share, is refused rather than guessed. */
+         unsigned char op_class = 0, op_channel = 0;
+         if (backhaul_target_operation(dm_ctrl, target_mac, &op_class, &op_channel)) {
+             if (channel > 0 && channel != op_channel) {
+@@ -965,10 +1005,13 @@ invalid:
+             }
+         } else {
+             op_class = backhaul_op_class_of_channel(channel);
++            if (op_class == 0) {
++                op_class = backhaul_op_class_for_radio(dm, bsta->ruid.mac, channel);
++            }
+             op_channel = static_cast<unsigned char>(op_class != 0 ? channel : 0);
+             if (op_class == 0) {
+-                em_printfout("SteerWiFiBackhaul(): TargetBSS %s is not modelled and Channel %d names no single band",
+-                    target, channel);
++                em_printfout("SteerWiFiBackhaul(): TargetBSS %s is not modelled and Channel %d names no single band "
++                    "its backhaul STA's radio operates", target, channel);
+                 if (output_params) {
+                     *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+                 }

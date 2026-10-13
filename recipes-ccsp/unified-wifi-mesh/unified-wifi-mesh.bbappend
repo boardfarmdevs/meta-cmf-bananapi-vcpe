@@ -229,6 +229,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0263-cli-set-ssid-answers-with-the-controllers-status.patch \
     file://0264-ctrl-set-ssid-refused-while-a-configuration-is-in-flight.patch \
     file://0265-ctrl-bound-the-ap-capability-reports-radio-basic-capabilities-walk.patch \
+    file://0266-ctrl-bsta-cap-for-a-radio-in-its-em-config-waits-for-the-next-topology.patch \
+    file://0267-ctrl-steerwifibackhaul-shared-channel-number-takes-the-station-radios-band.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
