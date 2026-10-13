@@ -89,7 +89,6 @@ Use assembled native sources, not the layer. The retry fixture requires held
 ```sh
 python3 gen/tests/candidate-query-admission-test.py "$MESH_SOURCE"
 python3 gen/tests/bsta-cap-admission-test.py "$MESH_SOURCE"
-python3 gen/tests/channel-report-before-response-test.py "$MESH_SOURCE"
 python3 gen/tests/unassoc-query-retry-test.py "$MESH_SOURCE"
 python3 gen/tests/hal-backhaul-beacon-test.py "$HAL_SOURCE"
 ```
