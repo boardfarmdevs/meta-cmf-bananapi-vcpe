@@ -1,0 +1,56 @@
+Subject: [PATCH] ctrl: an Operating Channel Report handled before its Channel Selection Response completes the radio
+
+Each radio's em sends its own Channel Selection Request (its own radio's preferences), and
+em_ctrl_t::find_em_for_msg_type hands each received message to the em of the first radio it names,
+each em on its own thread. handle_channel_sel_rsp moves a radio from channel_select_pending to
+channel_selected, and handle_op_channel_report from channel_selected to configured. An agent that
+reports every radio in its Operating Channel Report, the fronthaul first (EasyMesh fixes no order),
+has a second radio's response handled on that radio's em and its report on the fronthaul's. When
+the report came first, it found the radio still pending and changed nothing; the response then left
+the radio in channel_selected with no report to come, until em_config's time limit cancelled it,
+marked the radio misconfigured and renewed the agent. Seen three rounds running after a two-radio
+pod's boot (13 October); the fourth won the race.
+
+A report while the request is pending now completes the step: the radio's operating channel is what
+the step waits for, and the response's code is not used (any code selects). The response checks and
+sets the radio's state under the lock the report already holds, so the two cannot interleave.
+gen/tests/channel-report-before-response-test.py reproduces the stuck radio with --expect-stuck on a
+source without this patch, and runs the two handlers on two threads at once under ThreadSanitizer.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/channel/em_channel.cpp b/src/em/channel/em_channel.cpp
+index c8b2ba63..00512c31 100644
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1687,6 +1687,18 @@ int em_channel_t::handle_op_channel_report(unsigned char *buff, unsigned int len
+         if(radio_em->get_state() == em_state_ctrl_channel_selected){
+             radio_em->set_state(em_state_ctrl_configured);
+             em_util_dbg_print(EM_CONF, "Set em_state_ctrl_configured for radio %s", ruid_str);
++        } else if (radio_em->get_state() == em_state_ctrl_channel_select_pending) {
++            /* The agent sends this report after its Channel Selection Response, but each message
++             * goes to the em of its first radio, each em on its own thread: a report whose first
++             * radio is another one can be handled before this radio's response. The response
++             * then left the radio in channel_selected with no report to come, until em_config's
++             * time limit renewed the agent. A report while the request is pending completes the
++             * step: the radio's operating channel is what it waits for (the response's code is
++             * not used). handle_channel_sel_rsp checks and sets under the same lock. */
++            radio_em->set_state(em_state_ctrl_configured);
++            radio_em->m_chan_req_msg_id = 0;
++            em_printfout("Operating Channel Report for radio %s before its Channel Selection Response: configured",
++                ruid_str);
+         }
+     } else {
+         em_printfout("No EM instance found for radio %s", ruid_str);
+@@ -2026,6 +2038,9 @@ int em_channel_t::handle_channel_sel_rsp(unsigned char *buff, unsigned int len)
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str);
+             em_t *radio_em = reinterpret_cast<em_t *>(hash_map_get(get_mgr()->m_em_map, mac_str));
+             if (radio_em) {
++                /* the radio's report, handled on another em's thread, may complete it first
++                 * (handle_op_channel_report, under this lock) */
++                std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+                 if((radio_em->get_state() == em_state_ctrl_channel_select_pending) && (response_msg_id == radio_em->m_chan_req_msg_id)) {
+                     radio_em->set_state(em_state_ctrl_channel_selected);
+                     radio_em->m_chan_req_msg_id = 0;
