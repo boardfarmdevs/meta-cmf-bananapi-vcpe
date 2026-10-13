@@ -74,7 +74,8 @@ cpe_restart() {    # cpe_restart CT UNIT
         *)
             service=$(lxc config get "$ct" user.easymesh.cpe-service 2>/dev/null)
             [ -n "$service" ] || { echo "$ct: no init script recorded (user.easymesh.cpe-service)" >&2; return 1; }
-            lxc exec "$ct" -- "$service" restart < /dev/null
+            # its daemons start in the background: their output stays in the container
+            lxc exec "$ct" -- sh -c '"$1" restart > /dev/null 2>&1' sh "$service" < /dev/null
             ;;
     esac
 }
