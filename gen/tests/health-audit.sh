@@ -145,6 +145,50 @@ for container in $wired; do
     fi
 done
 
+# Every access point BSS the controller's model holds for the lab's own devices is on the air:
+# an AP interface in one of the lab's containers with that BSSID, its SSID and a channel. The
+# model and TR-181 can say a BSS is up while the driver has no SSID or channel for it (rdk-1010,
+# 10 October: wifi2, wifi2.1 and wifi2.2 after a Radio.3 Enable toggle, the audit passing).
+# A link row (the BSSID its device's backhaul, DeviceList.BackhaulMACAddress) is its parent's
+# BSS, not its own; EMOSA's pods and the foreign devices are left out.
+status_section "Beaconing"
+status_action "Checking each model BSS of the lab's devices against the containers' interfaces."
+echo BEACONING
+beacon_fail=0
+on_air=$(mktemp)
+for container in $mesh_containers; do
+    lxc exec "$container" -- iw dev 2>/dev/null | awk '
+        function emit() { if (ap && addr != "") printf "%s\t%s\t%s\n", addr, ssid, channel }
+        /^[ \t]*Interface / { emit(); addr = ""; ssid = ""; channel = ""; ap = 0; next }
+        /^[ \t]*addr / { addr = tolower($2) }
+        /^[ \t]*ssid / { sub(/^[ \t]*ssid /, ""); ssid = $0 }
+        /^[ \t]*type AP/ { ap = 1 }
+        /^[ \t]*channel / { channel = $2 }
+        END { emit() }' >>"$on_air" || true
+done
+bss_al="substring_index(substring_index(b.ID,'@',2),'@',-1)"
+foreign_bss=''
+[ -z "$foreign" ] || foreign_bss=" and $bss_al not in ($foreign_sql)"
+model_bss=$(lxc exec bpibroadband -- mysql -N -ubpi -proot OneWifiMesh -e \
+    "select $bss_al, lower(b.BSSID), b.SSID from BSSList b
+    join DeviceList d on substring_index(substring_index(d.ID,'@',2),'@',-1) = $bss_al
+    where d.Manufacturer <> $emosa and b.BSSID <> coalesce(d.BackhaulMACAddress, '')$foreign_bss" 2>/dev/null || true)
+beacons=0 silent=0
+while IFS=$'\t' read -r device bssid ssid; do
+    [ -n "$bssid" ] || continue
+    if awk -F'\t' -v b="$bssid" -v s="$ssid" '$1 == b && $2 == s && $3 != "" { found = 1 } END { exit !found }' \
+        "$on_air"; then
+        beacons=$((beacons + 1))
+    else
+        echo "$device $bssid '$ssid' NOT ON THE AIR: $(awk -F'\t' -v b="$bssid" '$1 == b { printf "ssid=%s channel=%s", $2, $3; f = 1 }
+            END { if (!f) printf "no AP interface" }' "$on_air")"
+        silent=$((silent + 1))
+    fi
+done <<<"$model_bss"
+rm -f "$on_air"
+echo "beaconing=$beacons not_on_air=$silent"
+[ "$silent" = 0 ] && [ "$beacons" -gt 0 ] || beacon_fail=1
+
 status_section "Identity persistence"
 status_action "Checking every mesh node's preserved NVRAM binding."
 echo NVRAM_BINDINGS
@@ -458,6 +502,10 @@ free -h | sed -n '1,2p'
 }
 [ "$ownership_fail" = 0 ] || {
     echo "FAIL: physical and controller serving-BSSID ownership differ" >&2
+    exit 1
+}
+[ "$beacon_fail" = 0 ] || {
+    echo "FAIL: a BSS of the controller's model is not on the air (BEACONING)" >&2
     exit 1
 }
 [ "$ipv4_fail" = 0 ] || {
