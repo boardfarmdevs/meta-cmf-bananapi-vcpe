@@ -30,6 +30,7 @@
   },
   "health": {
     "interval_seconds": 10,
+    "link_settle_seconds": 30,
     "expected_mesh_devices": 5,
     "expected_clients": 20,
     "expected_private_clients": 10,
