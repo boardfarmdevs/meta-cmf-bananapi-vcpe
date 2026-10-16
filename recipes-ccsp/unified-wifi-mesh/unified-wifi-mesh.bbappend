@@ -232,6 +232,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0266-ctrl-bsta-cap-for-a-radio-in-its-em-config-waits-for-the-next-topology.patch \
     file://0267-ctrl-steerwifibackhaul-shared-channel-number-takes-the-station-radios-band.patch \
     file://0268-ctrl-an-operating-channel-report-before-its-response-completes-the-radio.patch \
+    file://0269-ctrl-a-plain-1905-topology-response-leaves-the-backhaul-station-rows.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

@@ -1,0 +1,77 @@
+Subject: [PATCH] ctrl: a plain IEEE 1905 Topology Response leaves the backhaul station rows
+
+0047 answers a neighbor-only Topology Notification with a Topology Query to each agent (the
+liveness probe). An agent's IEEE 1905 layer answers it with a plain Topology Response: Device
+Information and its neighbors, no EasyMesh TLV. handle_topology_response rejects such a response
+("topology response msg validation failed, ignoring message"), but only after its Device
+Information slice (0216, 0248, 0254) has run, and that slice takes any response without RDK's
+vendor operational BSS snapshot for an adapter's: a backhaul station row whose station the
+response does not list connected is counted, and removed at the second such response. A plain
+response lists no station connected, so every RDK agent's link row (its station's row on its
+radio, from the vendor snapshot: its parent's BSSID, or zero when wired) went at the second probe
+answer and came back with the agent's next EasyMesh response.
+Seen on rdk-1010 (16 October, steady state, no room running): one probe burst's plain answers
+at 17:22:42Z removed four link rows from the database within a second (the gateway's and the
+wired extender's zero-BSSID rows, two extenders' rows to their parents; BSSList 72, 70, then 68
+rows), and the agents' next EasyMesh responses wrote them back ten seconds later. Such bursts
+came every 7 to 14 minutes. An RDK agent's EasyMesh response does not end a row's count, so a
+count one burst left removed the row at the next burst's first answer. In rooms rounds, where
+neighbors change more often, the model was short of link rows about ten times a round, link
+rows only (14 and 16 October).
+
+The slice now runs only for a response with the AP Operational BSS TLV, the response the handler
+goes on to accept: a plain response learns, moves and removes no station row, nor counts toward a
+removal. An adapter's EasyMesh responses (EMOSA always sends the TLV) keep 0254's rule as it was.
+gen/tests/controller-learned-station-rows-test.py: --expect-dropped reproduces the dropped link
+rows, connected and wired, on 0001-0268; on 0001-0269 they stay, plain responses neither learn,
+move, remove nor count a pod's learned row, and two EasyMesh responses with no station connected
+still remove it.
+
+Platform-independent.
+
+Upstream-Status: Pending
+
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2921,6 +2921,12 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+      * models no radio for it) and removed when the interface is no longer
+      * reported. */
+     bool vendor_bss_snapshot = false;
++    /* A response without the AP Operational BSS TLV is a plain IEEE 1905 one:
++     * an agent's 1905 layer answering the controller's liveness query (0047).
++     * It reports no EasyMesh BSS, lists no backhaul station connected, and is
++     * rejected below; its Device Information learns, moves and removes no
++     * backhaul station's row either, nor counts toward a row's removal. */
++    bool operational_bss = false;
+     {
+         unsigned char *scan = device_cursor;
+         unsigned int scan_remaining = device_remaining;
+@@ -2932,7 +2938,8 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+             }
+             if (scan_tlv->type == em_tlv_type_vendor_operational_bss) {
+                 vendor_bss_snapshot = true;
+-                break;
++            } else if (scan_tlv->type == em_tlv_type_operational_bss) {
++                operational_bss = true;
+             }
+             scan += scan_total;
+             scan_remaining -= scan_total;
+@@ -2941,7 +2948,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+     /* the station interfaces this response reports, each with its network membership */
+     mac_address_t reported_bsta[EM_MAX_BSSS];
+     unsigned int num_reported_bsta = 0;
+-    while (device_remaining >= sizeof(em_tlv_t)) {
++    while (operational_bss && device_remaining >= sizeof(em_tlv_t)) {
+         em_tlv_t *device_tlv = reinterpret_cast<em_tlv_t *>(device_cursor);
+         unsigned int value_len = ntohs(device_tlv->len);
+         unsigned int total_len = sizeof(em_tlv_t) + value_len;
+@@ -3164,7 +3171,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+         device_cursor += total_len;
+         device_remaining -= total_len;
+     }
+-    if (!vendor_bss_snapshot) {
++    if (operational_bss && !vendor_bss_snapshot) {
+         for (int index = static_cast<int>(dm->get_num_bss()) - 1; index >= 0; index--) {
+             em_bss_info_t *row = dm->get_bss_info(static_cast<unsigned int>(index));
+             /* Such a station's row: a backhaul row in station mode, or one

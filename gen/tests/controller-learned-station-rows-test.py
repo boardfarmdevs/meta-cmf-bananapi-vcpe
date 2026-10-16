@@ -15,7 +15,13 @@ identifier:
   one response, and its row moves to the new parent; another station connected replaces it
   at once);
 - the agent's own AP BSSes are never touched, nor anything of an agent with the vendor TLV;
-- every prefix of a response is read only as far as it goes.
+- every prefix of a response is read only as far as it goes;
+- a plain IEEE 1905 response, without the AP Operational BSS TLV (an agent's 1905 layer
+  answering the controller's liveness query), learns, moves and removes no station row and
+  counts toward no removal (0269): an RDK agent's link row (its station on a radio, its
+  parent's BSSID or zero when wired) went at every second such answer, then came back with
+  the agent's next EasyMesh response. --expect-dropped reproduces that on a source without
+  0269.
 """
 import argparse
 from pathlib import Path
@@ -25,6 +31,7 @@ import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("source_root", type=Path)
+parser.add_argument("--expect-dropped", action="store_true")
 args = parser.parse_args()
 root = args.source_root
 configuration = (root / "src/em/config/em_configuration.cpp").read_text()
@@ -42,10 +49,15 @@ import re
 base = (root / "inc/em_base.h").read_text()
 grace = re.search(r"#define EM_BSTA_UNREPORTED_RESPONSES (\d+)", base)
 grace = int(grace.group(1)) if grace else 1
+# 0269: the slice runs only for a response with the AP Operational BSS TLV
+plain_ignored = "while (operational_bss && device_remaining" in stations
+assert plain_ignored != args.expect_dropped, \
+    "this source has 0269" if args.expect_dropped else "this source lacks 0269"
 
 program = r'''
 #include <arpa/inet.h>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -118,7 +130,7 @@ struct dm_easy_mesh_t {
 };
 
 static int stations(dm_easy_mesh_t *dm, unsigned char *device_cursor, unsigned int device_remaining,
-    bool vendor_bss_snapshot)
+    bool vendor_bss_snapshot, bool operational_bss)
 {
     int ret = 0;
 @SLICE@
@@ -133,6 +145,7 @@ static const mac_address_t OWN_BH = {0x72, 0, 0, 0, 0x6c, 0};
 static const mac_address_t OWN_FH = {0x82, 0, 0, 0, 0x6c, 0};
 static const mac_address_t ETH = {0x02, 0xc2, 0xb8, 0x31, 0x3a, 0xf8};
 static const mac_address_t EXT_5 = {0x02, 0, 0, 0x3d, 0x8b, 0x6d};    /* another parent on 5 GHz */
+static const mac_address_t RADIO_5 = {0x02, 0, 0, 0x41, 0x40, 0x85};  /* an RDK agent's 5 GHz radio */
 static const unsigned char *const NONE = ZERO_MAC_ADDR;                /* a station not connected */
 
 struct entry { const unsigned char *mac; const unsigned char *parent; unsigned char band; };
@@ -157,12 +170,13 @@ static std::vector<unsigned char> response(std::vector<entry> entries)
     frame.push_back(em_tlv_type_eom); frame.push_back(0); frame.push_back(0);
     return frame;
 }
-static int run(dm_easy_mesh_t &dm, const std::vector<unsigned char> &frame, unsigned int len, bool vendor)
+static int run(dm_easy_mesh_t &dm, const std::vector<unsigned char> &frame, unsigned int len, bool vendor,
+    bool operational = true)
 {
     /* exactly len bytes on the heap: AddressSanitizer catches any read past them */
     unsigned char *buff = new unsigned char[len ? len : 1];
     memcpy(buff, frame.data(), len < frame.size() ? len : frame.size());
-    int rc = stations(&dm, buff, len, vendor);
+    int rc = stations(&dm, buff, len, vendor, operational);
     delete[] buff;
     return rc;
 }
@@ -170,6 +184,12 @@ static int play(dm_easy_mesh_t &dm, std::vector<entry> entries, bool vendor = fa
 {
     auto frame = response(entries);
     return run(dm, frame, static_cast<unsigned int>(frame.size()), vendor);
+}
+/* a plain IEEE 1905 Topology Response: Device Information, no EasyMesh TLV (0269) */
+static int plain(dm_easy_mesh_t &dm, std::vector<entry> entries)
+{
+    auto frame = response(entries);
+    return run(dm, frame, static_cast<unsigned int>(frame.size()), false, false);
 }
 static void ap(dm_easy_mesh_t &dm, const unsigned char *bssid, em_haul_type_t role)
 {
@@ -301,11 +321,63 @@ int main()
         run(t, frame, len, false);
         assert(own_aps(t));
     }
+
+    /* 0269: plain IEEE 1905 responses (an agent's 1905 layer answering the liveness query,
+     * no station listed) to an RDK agent whose vendor snapshot has its station on its 5 GHz
+     * radio, a link row to its parent's BSS or zero when wired (the snapshot leaves its station
+     * MAC zero): the row stays */
+    for (const unsigned char *parent : {GATEWAY_5, NONE}) {
+        dm_easy_mesh_t rdk = pod();
+        dm_radio_t radio{};
+        memcpy(radio.m_radio_info.mac, RADIO_5, 6);
+        radio.m_radio_info.band = em_freq_band_5;
+        rdk.radios.push_back(radio);
+        em_bss_info_t &l = rdk.m_bss[rdk.m_num_bss++].m_bss_info;
+        memset(&l, 0, sizeof(l));
+        memcpy(l.ruid.mac, RADIO_5, 6); memcpy(l.id.ruid, RADIO_5, 6);
+        memcpy(l.bssid.mac, parent, 6); memcpy(l.id.bssid, parent, 6);
+        l.id.haul_type = em_haul_type_backhaul; l.vap_mode = em_vap_mode_sta; l.enabled = true;
+        const unsigned int rows = rdk.m_num_bss;
+        for (unsigned int n = 0; n <= EM_BSTA_UNREPORTED_RESPONSES; n++) {
+            plain(rdk, {{ETH, nullptr, 0}});
+        }
+        if (@EXPECT_DROPPED@) {
+            assert(rdk.m_num_bss == rows - 1 && !rdk.removed.empty() && own_aps(rdk));
+            continue;
+        }
+        assert(rdk.m_num_bss == rows && rdk.removed.empty() && rdk.unreported.empty() && rdk.updates == 0);
+        assert(memcmp(rdk.m_bss[rows - 1].m_bss_info.bssid.mac, parent, 6) == 0 && own_aps(rdk));
+    }
+    if (@EXPECT_DROPPED@) {
+        std::puts("REPRODUCED: plain 1905 responses removed an RDK agent's link row, connected and wired");
+        return 0;
+    }
+    /* a pod's learned station: a plain response learns, moves and removes nothing, nor counts */
+    {
+        dm_easy_mesh_t p = pod();
+        play(p, {{ETH, nullptr, 0}, {STA_5, GATEWAY_5, 0x03}});
+        const unsigned int rows = p.m_num_bss;
+        for (unsigned int n = 0; n <= EM_BSTA_UNREPORTED_RESPONSES; n++) {
+            plain(p, {{ETH, nullptr, 0}});
+        }
+        plain(p, {{ETH, nullptr, 0}, {STA_5, EXT_5, 0x03}});
+        plain(p, {{ETH, nullptr, 0}, {RADIO_24, POD1_BH, 0x01}});
+        assert(p.m_num_bss == rows && station(p, STA_5) && memcmp(station(p, STA_5)->bssid.mac, GATEWAY_5, 6) == 0);
+        assert(!station(p, RADIO_24) && p.unreported.empty() && own_aps(p));
+        /* EasyMesh responses with no station connected still remove it, counted from their first */
+        for (unsigned int n = 1; n < EM_BSTA_UNREPORTED_RESPONSES; n++) {
+            play(p, {{ETH, nullptr, 0}});
+            assert(station(p, STA_5));
+        }
+        play(p, {{ETH, nullptr, 0}});
+        assert(!station(p, STA_5) && station_rows(p) == 0 && own_aps(p));
+    }
     return 0;
 }
 '''.replace("@SLICE@", stations).replace(
     "@RECORDS@", "true" if "remember_removed_bss" in stations else "false").replace(
-    "@GRACE@", str(grace))
+    "@GRACE@", str(grace)).replace(
+    "@EXPECT_DROPPED@", "true" if args.expect_dropped else "false")
 
 with tempfile.TemporaryDirectory() as tmp:
     src, exe = Path(tmp) / "stations.cpp", Path(tmp) / "stations"
@@ -314,4 +386,5 @@ with tempfile.TemporaryDirectory() as tmp:
                     "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-o", str(exe), str(src)],
                    check=True)
     subprocess.run([str(exe)], check=True)
-print("controller learned backhaul station rows: ok")
+if not args.expect_dropped:
+    print("controller learned backhaul station rows: ok")
