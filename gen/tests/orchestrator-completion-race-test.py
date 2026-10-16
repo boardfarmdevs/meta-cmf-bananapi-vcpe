@@ -137,11 +137,12 @@ if "bool em_orch_t::complete_command(em_cmd_type_t type, em_t *owner)" in source
     # a completion for one radio's command only (owner); without one, as before
     harness = harness.replace("bool complete_command(em_cmd_type_t);",
                               "bool complete_command(em_cmd_type_t, em_t * = nullptr);")
-if "em_cmd_type_unassoc_sta_query" in method(source, "bool em_orch_t::submit_command("):
-    # another command type than the harness's (76): admitted as before
-    harness = harness.replace("using em_cmd_type_t = int;",
-                              "using em_cmd_type_t = int;\n"
-                              "constexpr em_cmd_type_t em_cmd_type_unassoc_sta_query = 77;")
+for value, name in enumerate(("em_cmd_type_unassoc_sta_query", "em_cmd_type_bsta_cap"), 77):
+    if name in method(source, "bool em_orch_t::submit_command("):
+        # other command types than the harness's (76), refused when not ready (0207, 0266):
+        # the harness's commands admitted as before
+        harness = harness.replace("using em_cmd_type_t = int;",
+                                  f"using em_cmd_type_t = int;\nconstexpr em_cmd_type_t {name} = {value};")
 ready_dispatch = "void em_orch_t::advance_commands(" in source
 if ready_dispatch:
     harness = harness.replace("bool orchestrate(em_cmd_t *, em_t *);",
