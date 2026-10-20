@@ -137,7 +137,8 @@ up() {
 # The suite's starting point: the default room healthy, paused at time zero, all twenty
 # clients online, measured and converged.
 # The room's rule (gen/room-settled.py): healthy, every client online, the optimizer converged;
-# a client on a pod with no link metric (the pods publish no telemetry) is said, not waited for.
+# a client on a pod with no link metric (the pods' broker not set up yet after a gateway
+# redeploy) is said, not waited for.
 room_settled() {
     curl -fsS --max-time 5 "$ROOM/api/demo/current" 2>/dev/null |
         python3 "$(dirname "$(readlink -f "$0")")/room-settled.py" 2>/dev/null
