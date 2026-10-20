@@ -136,14 +136,11 @@ up() {
 
 # The suite's starting point: the default room healthy, paused at time zero, all twenty
 # clients online, measured and converged.
+# The room's rule (gen/room-settled.py): healthy, every client online, the optimizer converged;
+# a client on a pod with no link metric (the pods publish no telemetry) is said, not waited for.
 room_settled() {
-    curl -fsS --max-time 5 "$ROOM/api/demo/current" 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); h = d.get("health", {}); f = (d.get("optimizer") or {}).get("fleet") or {}
-ok = (h.get("healthy") and h.get("api_total") == 20 and h.get("expected_online_clients") == 20
-      and f.get("converged") and f.get("measurement_complete") and f.get("clients_checked") == 20)
-print("settled" if ok else "waiting", d.get("scenario"), h.get("api_total"), f.get("clients_checked"), f.get("converged"))
-sys.exit(0 if ok else 1)' 2>/dev/null
+    curl -fsS --max-time 5 "$ROOM/api/demo/current" 2>/dev/null |
+        python3 "$(dirname "$(readlink -f "$0")")/room-settled.py" 2>/dev/null
 }
 
 # The interactive room's baseline is the whole client pool online: it pauses the clients a world

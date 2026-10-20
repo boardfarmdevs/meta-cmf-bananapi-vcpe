@@ -94,7 +94,10 @@ against its limit with the controller's share and the out-of-memory kills, how
 often the controller renewed a radio in the last five minutes (none in a settled
 lab) and whether the room is settled. `up` restarts the controller and the agents
 in order and waits for the room: it restores a lab whose controller was restarted
-or whose model is incomplete.
+or whose model is incomplete. The room's rule is `gen/room-settled.py`: a client on
+an OpenSync pod whose link metric is missing (the lab's pods publish no telemetry)
+is named as the pods' known metric gap and not waited for; the same on the gateway
+or an extender, or any other client not checked, still waits.
 
 ## Recovery and safe testing
 
