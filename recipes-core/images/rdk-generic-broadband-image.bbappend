@@ -155,6 +155,24 @@ EOF
     fi
 }
 
+# The pods' broker (EMOSA_BROKER): the lab's EMOSA option (emosa-lab's gateway.sh) keeps its
+# mosquitto configuration beside the broker's PKI in /nvram/emosa/mqtt, which a gateway deployed
+# anew keeps, and the broker starts from it when it is there; else from the image's own. So the
+# pods publish from the gateway's start: a redeployed gateway had the image's broker (loopback
+# only) until the option ran again, after the lab's bring-up, which then waited for the pods'
+# clients' link metrics (rdk-1010, 16 and 20 October).
+emosa_broker_conf() {
+    if [ -f ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service ]; then
+        mkdir -p ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service.d
+        cat > ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service.d/00-emosa.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/bin/sh -c 'c=/nvram/emosa/mqtt/mosquitto.conf; [ -f "$c" ] || c=/etc/mosquitto/mosquitto.conf; exec /usr/sbin/mosquitto -c "$c"'
+EOF
+    fi
+}
+ROOTFS_POSTPROCESS_COMMAND_append = "${@' emosa_broker_conf;' if d.getVar('EMOSA_ADAPTER') == '1' and d.getVar('EMOSA_BROKER') == '1' else ''}"
+
 require recipes-core/images/vcpe-arp-hardening.inc
 
 

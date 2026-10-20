@@ -99,7 +99,12 @@ an OpenSync pod whose link metric is missing is named as the pods' known metric 
 and not waited for (after a gateway redeploy the pods' broker is the image's until
 the EMOSA option sets it up again, so their statistics go nowhere during the
 bring-up); the same on the gateway or an extender, or any other client not checked,
-still waits.
+still waits. Before the room, `up` waits up to two minutes for EMOSA's pod agents in
+the gateway to have the pods' statistics (each agent over MQTT with a report
+accepted). A gateway image with EMOSA's broker starts mosquitto from the EMOSA
+option's configuration in `/nvram/emosa/mqtt`, which a redeploy keeps, so the pods
+publish from the gateway's start; with that configuration there and no report, the
+bring-up stops (the broker), without it (the option not run yet) it only says so.
 
 ## Recovery and safe testing
 
