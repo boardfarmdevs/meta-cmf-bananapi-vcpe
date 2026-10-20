@@ -10,9 +10,11 @@ exit 1.
 
 One known gap is settled too, said by its own name: a client associated to an OpenSync pod
 whose current link metric is missing (the optimizer's reason `current_metric_missing`). The
-lab's pods publish no telemetry, so the controller has no associated link metric for their
-clients (AP metrics are a documented limit); such a client is never checked, and the room
-otherwise converged would wait for it forever (rdk-1010, 16 and 20 October). It is settled
+pods publish their statistics to the gateway's broker, which the EMOSA option sets up
+(`build.sh emosa`); a gateway deployed anew has the image's broker until then, so during a
+redeploy's bring-up the pods' statistics go nowhere and the controller has no associated link
+metric for a pod's client. Such a client is never checked, and the room otherwise converged
+would wait for it until the bring-up gives up (rdk-1010, 16 and 20 October). It is settled
 only when every client not checked is one of those and nothing else holds the optimizer: the
 roster complete, no client outside the policy margin, no load measurement missing for another
 client. The same reason for a client on the gateway or an extender, or any other reason, still
