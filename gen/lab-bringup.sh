@@ -136,6 +136,46 @@ up() {
 
 # The suite's starting point: the default room healthy, paused at time zero, all twenty
 # clients online, measured and converged.
+# EMOSA's pod agents in the gateway that take their pods' statistics over MQTT, and how many of
+# them have accepted none yet ("N M"): without them the controller has no link metric for a pod's
+# client, which the room waits for. The pods publish to the gateway's broker, which a gateway
+# deployed anew starts from EMOSA's configuration in /nvram (emosa_broker_conf).
+pods_publishing() {
+    cx bpibroadband 'python3 - /run/emosa/*/status.json 2>/dev/null <<"PYEOF"
+import json, sys
+mqtt = silent = 0
+for path in sys.argv[1:]:
+    try:
+        telemetry = json.load(open(path)).get("telemetry") or {}
+    except (OSError, ValueError):
+        continue
+    if telemetry.get("mode") == "mqtt":
+        mqtt += 1
+        silent += not telemetry.get("reports_accepted")
+print(mqtt, silent)
+PYEOF' 2>/dev/null || echo "0 0"
+}
+
+# before the room: the pods publish (two minutes at most). Not one report with EMOSA's broker
+# configuration in /nvram is a fault; without it (the first deployment with EMOSA's option) a
+# warning, the room's rule naming the gap.
+pods_published() {
+    local i counts=
+    for i in $(seq 24); do
+        counts=$(pods_publishing)
+        [ "${counts#* }" = 0 ] && break
+        sleep 5
+    done
+    [ "${counts%% *}" = 0 ] && return 0
+    if [ "${counts#* }" = 0 ]; then
+        log "the pods publish: ${counts%% *} agents with their statistics"
+    elif cx bpibroadband "test -f /nvram/emosa/mqtt/mosquitto.conf"; then
+        die "${counts#* } of ${counts%% *} pod agents have no statistics after two minutes (the gateway's broker: systemctl status mosquitto)"
+    else
+        log "${counts#* } of ${counts%% *} pod agents have no statistics: no EMOSA broker configuration in /nvram yet (the EMOSA option writes it)"
+    fi
+}
+
 # The room's rule (gen/room-settled.py): healthy, every client online, the optimizer converged;
 # a client on a pod with no link metric (the pods' broker not set up yet after a gateway
 # redeploy) is said, not waited for.
@@ -176,6 +216,7 @@ room() {
         systemctl start easymesh-lab.service ||
             die "the lab's runtime did not start (journalctl -u easymesh-lab.service)"
     fi
+    pods_published
     systemctl start "$ROOM_UNIT"
     for i in $(seq 120); do
         state=$(room_settled) && { log "room $state"; return 0; }
