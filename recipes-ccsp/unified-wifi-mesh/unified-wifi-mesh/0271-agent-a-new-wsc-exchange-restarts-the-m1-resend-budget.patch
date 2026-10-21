@@ -1,0 +1,271 @@
+Subject: [PATCH] agent: a new WSC exchange or a handled M2 restarts the M1 re-send budget; a spent round is followed by a new one
+
+0021 re-sends a radio's M1 while it waits in wsc_m2_pending, every third tick, at most eight
+times, to solicit an M2 the controller sent once and that was lost. The count was reset only in
+handle_autoconfig_resp, so the eight re-sends were one budget for the radio's whole life: every
+Renew's exchange whose M2 came late used some of it. On rdk-1010 (21 October) a 3-radio
+extender's 6 GHz radio spent six of the eight in one rejoin (seven M1s, the last answered). Once
+the budget is gone, the next lost M2 leaves the radio in wsc_m2_pending for good: the agent then
+answers no Topology Query (it waits for every radio) and drops that band's Renews, so the
+controller retires it as silent and cannot bring it back; only an agent restart did.
+
+reset_wsc_m2_recovery() restarts the counts whenever a new WSC exchange starts, for the
+Autoconfig Response's M1 (as before) and now a Renew's M1 (handle_state_autoconfig_renew), and
+when the M2 is handled (the radio leaves for owconfig_pending; a later re-arm by
+rearm_onewifi_wsc_radio starts afresh).
+
+When a round of eight is spent the radio no longer stops: it waits 30 ticks, doubling to 120
+(about 2 minutes; while it waits the agent answers no Topology Query and the controller retires a
+silent agent after 180 s), then starts a new round whose first M1 goes on that tick, each M1 a new
+exchange with a fresh nonce and keys as the existing re-send already does. A restarted or
+recovered controller answers the next M1 with an M2. The radio stays in wsc_m2_pending
+throughout; the other radios are untouched (a dev_init would redo every radio).
+
+The round arithmetic is a static helper, wsc_m2_recovery_tick(), with unit tests
+(test_l1_em_provisioning.cpp: the 30/60/120/120 waits, the first M1 on a round's tick, an unsent
+M1 not spending the budget, the reset).
+---
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index 72f9b536..882a9aa2 100644
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1639,11 +1639,25 @@ private:
+     // WSC near-simultaneously; the controller sends M2 only once, so the radio is
+     // stranded. These count 1s ticks spent waiting in wsc_m2_pending and bound the
+     // number of M1 re-sends used to solicit a fresh M2. Reset each time a fresh M1 is
+-    // sent (handle_autoconfig_resp).
++    // sent (handle_autoconfig_resp, and a Renew's M1 in handle_state_autoconfig_renew).
++    // Once a round of re-sends is spent the radio waits m_wsc_m2_rescue_wait ticks (30,
++    // doubling to 120) and starts a new round: a lost M2 never strands it for good.
+     unsigned int m_wsc_m2_wait_ticks = 0;
+     unsigned int m_wsc_m1_resends = 0;
++    unsigned int m_wsc_m2_rescue_ticks = 0;
++    unsigned int m_wsc_m2_rescue_wait = 0;
++    unsigned int m_wsc_m2_rescue_rounds = 0;
+ 
+ public:
++    /* a new WSC exchange (an M1 sent for an Autoconfig Response or a Renew) or an M2 handled:
++     * the M2-loss recovery's counts and wait start again */
++    void reset_wsc_m2_recovery();
++    /* One tick of a radio in wsc_m2_pending, on its recovery counts: true when an M1 is to be
++     * re-sent on this tick (the caller counts it in resends once sent); *waited is the wait in
++     * ticks when this tick starts a new round (rescue_rounds counts them), else 0. */
++    static bool wsc_m2_recovery_tick(unsigned int &wait_ticks, unsigned int &resends,
++        unsigned int &rescue_ticks, unsigned int &rescue_wait, unsigned int &rescue_rounds, unsigned int *waited);
++
+ 	/**
+ 	 * Return true only when a station row is safe to advertise as associated.
+ 	 * A disassociation tombstone for the same STA/BSSID/RUID is authoritative
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 67963090..74dd34b6 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -5601,6 +5601,8 @@ int em_configuration_t::handle_encrypted_settings(unsigned int wsc_tlv_count)
+         radioconfig.freq[i] = get_band();
+     }
+     get_mgr()->io_process(em_bus_event_type_m2ctrl_configuration, reinterpret_cast<unsigned char *> (&radioconfig), sizeof(radioconfig));
++    // the M2 landed: a later re-arm (em_agent_t::rearm_onewifi_wsc_radio) starts afresh
++    reset_wsc_m2_recovery();
+     set_state(em_state_agent_owconfig_pending);
+     return ret;
+ }
+@@ -6271,6 +6273,7 @@ int em_configuration_t::handle_bss_config_rsp_msg(uint8_t *buff, unsigned int le
+         em_printfout("Committing radio configuration to node '" MACSTRFMT "' on band %d with %d BSS configurations", 
+                      MAC2STR(em->get_radio_interface_mac()), band_radioconfig->freq[0], band_radioconfig->noofbssconfig);
+         em->get_mgr()->io_process(em_bus_event_type_m2ctrl_configuration, reinterpret_cast<unsigned char *> (band_radioconfig), sizeof(m2ctrl_radioconfig));
++        em->reset_wsc_m2_recovery();
+         em->set_state(em_state_agent_owconfig_pending);
+ 
+         em = static_cast<em_t *>(hash_map_get_next(em_map, reinterpret_cast<void *>(em)));
+@@ -6896,8 +6899,7 @@ int em_configuration_t::handle_autoconfig_resp(unsigned char *buff, unsigned int
+     em_printfout("autoconfig wsc m1 send success, len:%d", sz);
+     set_state(em_state_agent_wsc_m2_pending);
+     // Fresh M1 sent -- re-arm the M2-loss recovery window for this radio.
+-    m_wsc_m2_wait_ticks = 0;
+-    m_wsc_m1_resends = 0;
++    reset_wsc_m2_recovery();
+ 
+     return 0;
+ }
+@@ -7311,6 +7313,10 @@ void em_configuration_t::handle_state_autoconfig_renew()
+     }
+     em_printfout("autoconfig wsc m1 send success");
+     set_state(em_state_agent_wsc_m2_pending);
++    // A Renew's M1 starts a new WSC exchange: its own M2-loss recovery budget, as the
++    // Autoconfig Response's M1 has (handle_autoconfig_resp). Without this the 8 re-sends
++    // were one budget for the radio's life.
++    reset_wsc_m2_recovery();
+ 
+     return ;
+ }
+@@ -7331,6 +7337,49 @@ void em_configuration_t::handle_state_wsc_m1_pending()
+ // re-sends and MAX_RESENDS bounds them within the orch's time-to-live.
+ #define EM_AGENT_M2_RESEND_TICKS 3
+ #define EM_AGENT_M2_MAX_RESENDS  8
++// A spent round of re-sends is followed by a wait, then a new round: 30 ticks, doubling to
++// 120. While a radio waits in wsc_m2_pending its agent answers no Topology Query, so the
++// wait is kept short: the controller retires a silent agent after 180 s.
++#define EM_AGENT_M2_RESCUE_FIRST_TICKS 30
++#define EM_AGENT_M2_RESCUE_MAX_TICKS   120
++
++void em_configuration_t::reset_wsc_m2_recovery()
++{
++    m_wsc_m2_wait_ticks = 0;
++    m_wsc_m1_resends = 0;
++    m_wsc_m2_rescue_ticks = 0;
++    m_wsc_m2_rescue_wait = 0;
++    m_wsc_m2_rescue_rounds = 0;
++}
++
++bool em_configuration_t::wsc_m2_recovery_tick(unsigned int &wait_ticks, unsigned int &resends,
++    unsigned int &rescue_ticks, unsigned int &rescue_wait, unsigned int &rescue_rounds, unsigned int *waited)
++{
++    *waited = 0;
++    if (resends >= EM_AGENT_M2_MAX_RESENDS) {
++        // A round spent with no M2 (the controller restarted, or busy): after a wait, a new
++        // round. Each M1 is a new WSC exchange (fresh nonce and keys, the caller's), which a
++        // controller answers with an M2 whatever it held before.
++        if (rescue_wait == 0) {
++            rescue_wait = EM_AGENT_M2_RESCUE_FIRST_TICKS;
++        }
++        if (++rescue_ticks < rescue_wait) {
++            return false;
++        }
++        rescue_ticks = 0;
++        rescue_rounds++;
++        *waited = rescue_wait;
++        rescue_wait = (rescue_wait * 2 > EM_AGENT_M2_RESCUE_MAX_TICKS) ? EM_AGENT_M2_RESCUE_MAX_TICKS : rescue_wait * 2;
++        resends = 0;
++        // the round's first M1 on this tick
++        wait_ticks = EM_AGENT_M2_RESEND_TICKS - 1;
++    }
++    if (++wait_ticks < EM_AGENT_M2_RESEND_TICKS) {
++        return false;
++    }
++    wait_ticks = 0;
++    return true;
++}
+ 
+ void em_configuration_t::handle_state_wsc_m2_pending()
+ {
+@@ -7343,12 +7392,15 @@ void em_configuration_t::handle_state_wsc_m2_pending()
+     // times to solicit a fresh M2; the controller re-issues M2 on a duplicate M1
+     // ("Removing previous em_config command for radio ..."). Self-clearing: once the
+     // M2 is handled the radio leaves wsc_m2_pending and this stops firing.
+-    if (++m_wsc_m2_wait_ticks < EM_AGENT_M2_RESEND_TICKS) {
++    unsigned int waited = 0;
++    if (wsc_m2_recovery_tick(m_wsc_m2_wait_ticks, m_wsc_m1_resends, m_wsc_m2_rescue_ticks,
++            m_wsc_m2_rescue_wait, m_wsc_m2_rescue_rounds, &waited) == false) {
+         return;
+     }
+-    m_wsc_m2_wait_ticks = 0;
+-    if (m_wsc_m1_resends >= EM_AGENT_M2_MAX_RESENDS) {
+-        return;
++    if (waited != 0) {
++        em_printfout("radio %s: no M2 after %d M1s, a new round of M1s (round %u after %u ticks)",
++            util::mac_to_string(get_radio_interface_mac()).c_str(), EM_AGENT_M2_MAX_RESENDS,
++            m_wsc_m2_rescue_rounds, waited);
+     }
+ 
+     // A retry starts a new WSC transaction.  Refresh the enrollee nonce and
+diff --git a/tests/test_l1_em_provisioning.cpp b/tests/test_l1_em_provisioning.cpp
+index 715463e1..1e59828f 100644
+--- a/tests/test_l1_em_provisioning.cpp
++++ b/tests/test_l1_em_provisioning.cpp
+@@ -1536,3 +1536,96 @@ TEST_F(EmProvisioningTest, send_prox_encap_dpp_msg_zero_chirp_len)
+ 
+     std::cout << "Exiting send_prox_encap_dpp_msg_zero_chirp_len test" << std::endl;
+ }
++
++// 0271: the agent's M2-loss recovery. A radio in wsc_m2_pending re-sends its M1 every
++// third tick, 8 times; then, instead of stopping for good, it waits 30 ticks, doubling to 120,
++// and starts a new round, whose first M1 goes on the tick that starts it.
++#include <vector>
++#include "em_configuration.h"
++
++namespace {
++struct m2_recovery_run_t {
++    std::vector<unsigned int> sends;
++    std::vector<unsigned int> round_starts;
++    std::vector<unsigned int> waits;
++};
++
++/* ticks 1..last; sent(tick) says whether an M1 due on that tick was sent (counted in resends) */
++m2_recovery_run_t run_m2_recovery(unsigned int last, bool (*sent)(unsigned int))
++{
++    unsigned int wait_ticks = 0, resends = 0, rescue_ticks = 0, rescue_wait = 0, rounds = 0;
++    m2_recovery_run_t run;
++    for (unsigned int tick = 1; tick <= last; tick++) {
++        unsigned int waited = 0;
++        bool due = em_configuration_t::wsc_m2_recovery_tick(wait_ticks, resends, rescue_ticks, rescue_wait,
++            rounds, &waited);
++        if (waited != 0) {
++            run.round_starts.push_back(tick);
++            run.waits.push_back(waited);
++            EXPECT_EQ(rounds, run.round_starts.size());
++        }
++        if (due && sent(tick)) {
++            run.sends.push_back(tick);
++            resends++;
++        }
++    }
++    return run;
++}
++
++bool always_sent(unsigned int) { return true; }
++bool fails_before_ten(unsigned int tick) { return tick >= 10; }
++}
++
++TEST(em_configuration_t_wsc_m2_recovery, RoundsOfEightThenWaitsDoublingToTwoMinutes)
++{
++    m2_recovery_run_t run = run_m2_recovery(1000, always_sent);
++    // the first round: 8 re-sends, every third tick
++    ASSERT_GE(run.sends.size(), 8u);
++    for (unsigned int i = 0; i < 8; i++) {
++        EXPECT_EQ(run.sends[i], 3u * (i + 1));
++    }
++    // then rounds after 30, 60, 120 and 120 ticks: never stopped for good
++    ASSERT_GE(run.waits.size(), 4u);
++    EXPECT_EQ(run.waits[0], 30u);
++    EXPECT_EQ(run.waits[1], 60u);
++    EXPECT_EQ(run.waits[2], 120u);
++    EXPECT_EQ(run.waits[3], 120u);
++    // round 1 starts 30 ticks after the 8th re-send, its first M1 on that tick
++    EXPECT_EQ(run.round_starts[0], 24u + 30u);
++    EXPECT_EQ(run.sends[8], run.round_starts[0]);
++    // each round re-sends 8 M1s: 8 per round started, plus the first round's
++    unsigned int before_last_round = 0;
++    for (unsigned int s : run.sends) {
++        before_last_round += (s < run.round_starts.back()) ? 1 : 0;
++    }
++    EXPECT_EQ(before_last_round, 8u * run.round_starts.size());
++}
++
++TEST(em_configuration_t_wsc_m2_recovery, UnsentM1DoesNotSpendTheBudget)
++{
++    // an M1 that could not be sent (crypto or send failure) is not counted: the next attempt
++    // comes on the next due tick, and the round still holds 8 sent M1s
++    m2_recovery_run_t run = run_m2_recovery(200, fails_before_ten);
++    ASSERT_GE(run.sends.size(), 8u);
++    EXPECT_EQ(run.sends[0], 12u);
++    EXPECT_EQ(run.sends[7], 33u);
++    ASSERT_FALSE(run.round_starts.empty());
++    EXPECT_EQ(run.round_starts[0], 33u + 30u);
++}
++
++TEST(em_configuration_t_wsc_m2_recovery, ResetCountsStartAfresh)
++{
++    // after two spent rounds (the wait at 120), the counts reset by a new exchange or a handled
++    // M2 (reset_wsc_m2_recovery zeroes all five): the first re-send three ticks on, no wait
++    unsigned int wait_ticks = 1, resends = 8, rescue_ticks = 17, rescue_wait = 120, rounds = 2;
++    wait_ticks = resends = rescue_ticks = rescue_wait = rounds = 0;
++    unsigned int waited = 0, first = 0;
++    for (unsigned int tick = 1; tick <= 10 && first == 0; tick++) {
++        if (em_configuration_t::wsc_m2_recovery_tick(wait_ticks, resends, rescue_ticks, rescue_wait, rounds,
++                &waited)) {
++            first = tick;
++        }
++        EXPECT_EQ(waited, 0u);
++    }
++    EXPECT_EQ(first, 3u);
++}

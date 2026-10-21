@@ -234,6 +234,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0268-ctrl-an-operating-channel-report-before-its-response-completes-the-radio.patch \
     file://0269-ctrl-a-plain-1905-topology-response-leaves-the-backhaul-station-rows.patch \
     file://0270-ctrl-retire-an-agent-silent-past-the-topology-ageing.patch \
+    file://0271-agent-a-new-wsc-exchange-restarts-the-m1-resend-budget.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
