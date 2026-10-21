@@ -1,0 +1,111 @@
+Subject: [PATCH] dm: a BSS row's update sets its columns in order and matches its ID
+
+update_row sets the table's columns after the first in order and matches the row by the first
+(ID), passed last. dm_bss_list_t::update_db passed the RUID first and the BSSID last, so every
+column was set one place off and WHERE ID compared the BSSID: no row ever matched, and a BSS's row
+kept what it was inserted with. The BSSID now goes first and the row's key last.
+
+Unit test: test_l1_dm_bss.cpp, on a scratch table: an insert, an update of its SSID and Enabled,
+the one row changed and its BSSID and RUID in their columns.
+---
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index 35f00925..63cb8fc2 100644
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -374,12 +374,14 @@ int dm_bss_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
+ 			break;
+ 
+ 		case dm_orch_type_db_update:
+-			ret = update_row(db_client, key, dm_easy_mesh_t::macbytes_to_string(info->ruid.mac, radio_mac_str), info->ssid, info->enabled,
++			/* update_row sets the columns after the first in order (BSSID, RUID, ...) and takes
++			 * the row's ID last; the BSSID went last and the ID nowhere, so no row matched */
++			ret = update_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->bssid.mac, bss_mac_str),
++						dm_easy_mesh_t::macbytes_to_string(info->ruid.mac, radio_mac_str), info->ssid, info->enabled,
+                         info->est_svc_params_be, info->est_svc_params_bk, info->est_svc_params_vi, info->est_svc_params_vo,
+                         front_akms, back_akms, info->profile_1b_sta_allowed, info->profile_2b_sta_allowed, info->assoc_allowed_status,
+-                        info->backhaul_use, info->fronthaul_use, info->r1_disallowed, info->r2_disallowed, 
+-                        info->multi_bssid, info->transmitted_bssid, info->vlan_id,
+-						dm_easy_mesh_t::macbytes_to_string(info->bssid.mac, bss_mac_str));
++                        info->backhaul_use, info->fronthaul_use, info->r1_disallowed, info->r2_disallowed,
++                        info->multi_bssid, info->transmitted_bssid, info->vlan_id, key);
+ 			break;
+ 
+ 		case dm_orch_type_db_delete:
+diff --git a/tests/test_l1_dm_bss.cpp b/tests/test_l1_dm_bss.cpp
+index b71adf0f..74171177 100644
+--- a/tests/test_l1_dm_bss.cpp
++++ b/tests/test_l1_dm_bss.cpp
+@@ -2734,3 +2734,73 @@ TEST(dm_bss_t_Test, DefaultDestructor) {
+     });
+     std::cout << "Exiting DefaultDestructor test" << std::endl;
+ }
++
++// A BSS row's update (dm_bss_list_t::update_db) sets its columns in order and matches
++// the row by its ID. It passed the BSSID last and the ID nowhere, so no row matched. On a scratch
++// table in the controller's database; run with em_ctrl stopped.
++#include "dm_bss_list.h"
++#include "db_client.h"
++
++namespace {
++class ut_bss_list_t : public dm_bss_list_t {
++public:
++    void init_table() override { snprintf(m_table_name, sizeof(m_table_name), "%s", "UtBSSList"); }
++    dm_bss_t *get_first_bss() override { return NULL; }
++    dm_bss_t *get_next_bss(dm_bss_t *) override { return NULL; }
++    dm_bss_t *get_bss(const char *) override { return NULL; }
++    void remove_bss(const char *) override {}
++    void put_bss(const char *, const dm_bss_t *) override {}
++    bus_error_t bus_get_cb_fwd(char *, raw_data_t *, bus_get_handler_t) override { return bus_error_success; }
++    bus_error_t network_get(char *, raw_data_t *) override { return bus_error_success; }
++    bus_error_t device_get(char *, raw_data_t *) override { return bus_error_success; }
++};
++
++void bss_drain(db_client_t &client, const char *sql)
++{
++    void *ctx = client.execute(sql);
++    while (client.next_result(ctx) == true);
++}
++}
++
++TEST(dm_bss_list_t_update, UpdateChangesTheRowWithItsId)
++{
++    db_client_t client;
++    client.init("bpi@root");
++    bss_drain(client, "drop table if exists UtBSSList");
++    ut_bss_list_t list;
++    list.init_table();
++    list.init_columns();
++    list.create_table(client);
++
++    em_bss_info_t info = {};
++    unsigned char dev[6] = {0x02, 0x00, 0x00, 0x00, 0x09, 0x20}, ruid[6] = {0x02, 0x00, 0x00, 0x53, 0xa4, 0x44};
++    unsigned char bssid[6] = {0x02, 0x00, 0x00, 0x3c, 0x33, 0xbb};
++    strncpy(info.id.net_id, "OneWifiMesh", sizeof(info.id.net_id) - 1);
++    memcpy(info.id.dev_mac, dev, 6);
++    memcpy(info.ruid.mac, ruid, 6);
++    memcpy(info.bssid.mac, bssid, 6);
++    strncpy(info.ssid, "before", sizeof(info.ssid) - 1);
++    info.enabled = true;
++    list.update_db(client, dm_orch_type_db_insert, &info);
++    strncpy(info.ssid, "after", sizeof(info.ssid) - 1);
++    info.enabled = false;
++    list.update_db(client, dm_orch_type_db_update, &info);
++
++    char ssid[64] = {0};
++    int rows = 0, enabled = -1;
++    void *ctx = client.execute("select SSID, Enabled, BSSID, RUID from UtBSSList");
++    while (client.next_result(ctx) == true) {
++        rows++;
++        client.get_string(ctx, ssid, 1);
++        enabled = client.get_number(ctx, 2);
++        char col[64] = {0};
++        client.get_string(ctx, col, 3);
++        EXPECT_STREQ(col, "02:00:00:3c:33:bb");
++        client.get_string(ctx, col, 4);
++        EXPECT_STREQ(col, "02:00:00:53:a4:44");
++    }
++    EXPECT_EQ(rows, 1);
++    EXPECT_STREQ(ssid, "after");
++    EXPECT_EQ(enabled, 0);
++    bss_drain(client, "drop table if exists UtBSSList");
++}
