@@ -1,0 +1,88 @@
+Subject: [PATCH] agent: a Topology Query is answered while a radio is in WSC once another radio is configured; a first onboarding waits as before
+
+The agent answers a 1905 Topology Query only when every radio em of the queried AL MAC has
+reached onewifi_bssconfig_ind (0003 skips the disabled ones). One radio redoing WSC, for every
+Renew's window or a lost M2, therefore silenced the whole agent: no Topology Response, so the
+controller saw it silent, and after 180 s retired an agent whose other radios were up.
+
+With at least one radio configured, the response now goes out with the configured radios. A radio
+still in WSC is not waited for and not marked topo_synchronized after the send (as 0003 does for a
+disabled one); it is logged once per state, not once per query. The AP Operational BSS TLV still
+lists it as it stands, so the controller's rule that retires a radio left out of three responses
+in a row does not fire. On a first onboarding, no radio configured yet, the agent waits as before.
+---
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index 882a9aa2..29ad2d11 100644
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -1722,7 +1722,19 @@ public:
+ 	 * @note Ensure that the agent is initialized before calling this function.
+ 	 */
+ 	void process_agent_state();
+-    
++
++	/* A Topology Query answered while this radio is in WSC: true when its state differs from the
++	 * one last logged for it, so the line comes once per state, not once per query. */
++	bool note_topo_query_wait(em_state_t state)
++	{
++		if (m_topo_query_wait_logged == static_cast<int>(state)) {
++			return false;
++		}
++		m_topo_query_wait_logged = static_cast<int>(state);
++		return true;
++	}
++	int m_topo_query_wait_logged = -1;
++
+ 	/**!
+ 	 * @brief Processes the control state.
+ 	 *
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 74dd34b6..586572ca 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -7109,7 +7109,8 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+         case em_msg_type_topo_query:
+             {
+                 int len = 0;
+-                std::vector<em_t*> em_radios;
++                std::vector<em_t*> em_radios, in_wsc;
++                bool configured = false;
+                 get_mgr()->get_all_em_for_al_mac(hdr->dst, em_radios);
+                 for (auto &em : em_radios) {
+                     if (em->get_service_type() != em_service_type_agent) {
+@@ -7121,12 +7122,32 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+                         continue;
+                     }
+                     if (em->get_state() < em_state_agent_onewifi_bssconfig_ind) {
++                        in_wsc.push_back(em);
++                    } else {
++                        configured = true;
++                    }
++                }
++                // A radio still in its WSC exchange (first onboarding, a Renew, a lost M2) kept the
++                // whole agent from answering, so one radio stuck in it silenced the agent until the
++                // controller retired it. With another radio configured the response goes out: the
++                // radio in WSC is listed in it as it is (its BSSs as they stand, none on a first
++                // onboarding), and is not marked synchronized below. On a first onboarding, no
++                // radio configured yet, the agent waits for them as before.
++                if (!in_wsc.empty() && !configured) {
++                    for (auto &em : in_wsc) {
+                         em_printfout("radio %s is not configured, ignoring", util::mac_to_string(em->get_radio_interface_mac()).c_str());
+-                        em_radios.clear();
+-                        return;
++                    }
++                    em_radios.clear();
++                    return;
++                }
++                for (auto &em : in_wsc) {
++                    if (em->note_topo_query_wait(em->get_state())) {
++                        em_printfout("radio %s is in WSC (%s): the topology response goes with the configured radios",
++                            util::mac_to_string(em->get_radio_interface_mac()).c_str(), em_t::state_2_str(em->get_state()));
+                     }
+                 }
+-                em_printfout("All radios are configured for al_mac:%s, sending topology response", util::mac_to_string(hdr->dst).c_str());
++                em_printfout("%s radios are configured for al_mac:%s, sending topology response",
++                    in_wsc.empty() ? "All" : "Not all", util::mac_to_string(hdr->dst).c_str());
+                 len = send_topology_response_msg(data, ntohs(cmdu->id));
+                 if(len) {
+                     auto command_lock = get_mgr()->get_orch()->lock_commands();
