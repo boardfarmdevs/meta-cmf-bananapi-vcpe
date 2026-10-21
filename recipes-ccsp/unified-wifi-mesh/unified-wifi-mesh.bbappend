@@ -238,6 +238,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0272-agent-answer-a-topology-query-while-a-radio-is-in-wsc.patch \
     file://0273-dm-a-device-copy-keeps-its-whole-id.patch \
     file://0274-dm-a-bss-row-update-matches-its-id.patch \
+    file://0275-db-a-unique-row-key-and-replace-into.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

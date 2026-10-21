@@ -1,0 +1,521 @@
+Subject: [PATCH] db: a UNIQUE row key on DeviceList, RadioList, BSSList and STAList, rows written with REPLACE INTO, duplicate rows removed and the key added at load; a statement that would be cut is not run
+
+The tables have no key and every write is a plain INSERT, UPDATE or DELETE; an insert is chosen
+without asking the database whenever the entry is not in memory. A write repeated for one row
+added a second (DeviceList, rdk-1010, 21 October), and STAList's update matched a station's MAC
+and BSSID only while it set the RUID.
+
+A table names the columns that identify a row (set_row_key in its init_columns: ID for DeviceList,
+RadioList and BSSList; MACAddress, BSSID, RUID for STAList). create_table adds a UNIQUE key on them;
+at load, before the rows are read, a table made without it has its duplicate rows reduced to one
+(their values escaped in the WHERE) and the key added, confirmed with SHOW INDEX since the client
+cannot tell a failed statement from one without results; a board that has duplicates heals at its
+next start. With a key, insert_row writes REPLACE INTO: one statement, one row per key. STAList's
+update writes its whole row the same way, so a station's write lands even when the update was
+chosen because another row of its MAC existed; its row builder also matches the RUID.
+
+vsnprintf cut a statement silently at the 2048-byte buffer: its length is checked, a statement
+that would be cut is logged with its table and not run, and the longest statement per table is
+logged as it grows past a quarter of the buffer.
+
+Unit tests: test_l1_db_client.cpp, on scratch tables: planted duplicates removed and the key added
+(a value with a quote), REPLACE INTO keeping one row, a cut statement not run, an STA update by its
+whole key leaving the station's other rows and writing a missing one.
+---
+diff --git a/inc/db_easy_mesh.h b/inc/db_easy_mesh.h
+index 5909dd60..753f4543 100644
+--- a/inc/db_easy_mesh.h
++++ b/inc/db_easy_mesh.h
+@@ -29,7 +29,19 @@ class db_easy_mesh_t {
+ public: 
+     db_table_name_t m_table_name;
+     unsigned int    m_num_cols;
+-    db_column_t     m_columns[EM_MAX_COLS];  
++    db_column_t     m_columns[EM_MAX_COLS];
++    /* The columns that identify one row (e.g. "ID"), set by the table's init_columns: a
++     * UNIQUE key on them (created with the table, or added at load once duplicate rows are
++     * removed), and rows written with REPLACE INTO, so a row is never written twice. Empty:
++     * no key, plain INSERT. */
++    char            m_row_key[128] = {0};
++    /* the longest statement built for this table so far (db_query_t holds 2048 bytes) */
++    int             m_longest_query = 0;
++
++    void set_row_key(const char *columns);
++    int heal_row_key(db_client_t& db_client);
++    bool has_row_key(db_client_t& db_client);
++    bool query_fits(int len, const char *what);
+ 
+ public:
+     
+diff --git a/src/db/db_easy_mesh.cpp b/src/db/db_easy_mesh.cpp
+index f26a54e5..40af82f4 100644
+--- a/src/db/db_easy_mesh.cpp
++++ b/src/db/db_easy_mesh.cpp
+@@ -23,7 +23,10 @@
+ #include <errno.h>
+ #include <assert.h>
+ #include <signal.h>
++#include <string>
++#include <vector>
+ #include "db_easy_mesh.h"
++#include "util.h"
+ 
+ char *db_easy_mesh_t::get_column_format(db_fmt_t fmt, unsigned int pos)
+ {
+@@ -106,6 +109,132 @@ int db_easy_mesh_t::get_strings_by_token(char *parent, int token, unsigned int a
+     return static_cast<int> (num);
+ }
+ 
++void db_easy_mesh_t::set_row_key(const char *columns)
++{
++    snprintf(m_row_key, sizeof(m_row_key), "%s", columns);
++}
++
++bool db_easy_mesh_t::query_fits(int len, const char *what)
++{
++    /* vsnprintf cuts a statement silently at the buffer's end: a cut statement is not run */
++    if (len < 0 || static_cast<size_t>(len) >= sizeof(db_query_t)) {
++        em_printfout("%s statement for %s needs %d bytes, more than %zu: not executed", what, m_table_name,
++            len, sizeof(db_query_t) - 1);
++        return false;
++    }
++    if (len > m_longest_query) {
++        m_longest_query = len;
++        if (static_cast<size_t>(len) > sizeof(db_query_t) / 4) {
++            em_printfout("Longest %s statement for %s so far: %d of %zu bytes", what, m_table_name, len,
++                sizeof(db_query_t));
++        }
++    }
++    return true;
++}
++
++bool db_easy_mesh_t::has_row_key(db_client_t& db_client)
++{
++    db_query_t query;
++    bool present = false;
++    void *ctx;
++
++    snprintf(query, sizeof(db_query_t), "show index from %s where Key_name = 'uk_row'", m_table_name);
++    ctx = db_client.execute(query);
++    while (db_client.next_result(ctx) == true) {
++        present = true;
++    }
++    return present;
++}
++
++int db_easy_mesh_t::heal_row_key(db_client_t& db_client)
++{
++    /* A table made before its key: rows written twice (a device's row, 0270's rejoin after a
++     * retirement whose delete missed) are reduced to one, then the key is added, so a board
++     * that has them heals at its next start. In the ID tables such rows are identical, so which
++     * one stays does not matter. In STAList rows with the same key can differ in their other
++     * columns: one of them stays (the first the server finds), and the station's next live
++     * write replaces it with what the agent reports. */
++    if (m_row_key[0] == 0 || has_row_key(db_client) == true) {
++        return 0;
++    }
++
++    std::vector<std::string> cols;
++    std::string spec(m_row_key);
++    size_t start = 0;
++    while (start <= spec.size()) {
++        size_t end = spec.find(',', start);
++        std::string col = spec.substr(start, (end == std::string::npos) ? std::string::npos : end - start);
++        col.erase(0, col.find_first_not_of(' '));
++        col.erase(col.find_last_not_of(' ') + 1);
++        if (col.empty() == false) {
++            cols.push_back(col);
++        }
++        if (end == std::string::npos) {
++            break;
++        }
++        start = end + 1;
++    }
++
++    db_query_t query;
++    db_result_t value;
++    void *ctx;
++    struct duplicate_t {
++        std::string where{};
++        int count = 0;
++    };
++    std::vector<duplicate_t> duplicates;
++
++    /* a value from the database inside quotes: its ' and \ escaped (net_id is configurable) */
++    auto quoted = [](const char *v) {
++        std::string s("'");
++        for (const char *c = v; *c != 0; c++) {
++            if (*c == '\'' || *c == '\\') {
++                s += '\\';
++            }
++            s += *c;
++        }
++        return s + "'";
++    };
++
++    snprintf(query, sizeof(db_query_t), "select %s, count(*) from %s group by %s having count(*) > 1",
++        m_row_key, m_table_name, m_row_key);
++    ctx = db_client.execute(query);
++    while (db_client.next_result(ctx) == true) {
++        duplicate_t d;
++        for (unsigned int i = 0; i < cols.size(); i++) {
++            memset(value, 0, sizeof(value));
++            d.where += (i == 0) ? "" : " and ";
++            if (db_client.get_string(ctx, value, i + 1) == NULL) {
++                d.where += cols[i] + " is null";
++            } else {
++                d.where += cols[i] + " = " + quoted(value);
++            }
++        }
++        d.count = db_client.get_number(ctx, static_cast<unsigned int>(cols.size()) + 1);
++        duplicates.push_back(d);
++    }
++    for (auto &d : duplicates) {
++        if (d.count < 2) {
++            continue;
++        }
++        snprintf(query, sizeof(db_query_t), "delete from %s where %s limit %d", m_table_name, d.where.c_str(),
++            d.count - 1);
++        ctx = db_client.execute(query);
++        while (db_client.next_result(ctx) == true);
++        em_printfout("%s: %d identical rows where %s, %d removed", m_table_name, d.count, d.where.c_str(),
++            d.count - 1);
++    }
++
++    snprintf(query, sizeof(db_query_t), "alter table %s add unique key uk_row (%s)", m_table_name, m_row_key);
++    ctx = db_client.execute(query);
++    while (db_client.next_result(ctx) == true);
++    /* the client cannot tell a failed statement from one without results: read the key back */
++    bool added = has_row_key(db_client);
++    em_printfout("%s: UNIQUE key on (%s) %s", m_table_name, m_row_key,
++        added ? "added" : "not added, its rows written as before");
++    return added ? 0 : -1;
++}
++
+ int db_easy_mesh_t::insert_row(db_client_t& db_client, ...)
+ {
+     unsigned int i;
+@@ -113,8 +242,10 @@ int db_easy_mesh_t::insert_row(db_client_t& db_client, ...)
+     db_query_t format, query;
+     db_fmt_t	col_fmt;
+     void *ctx;
++    int len;
+ 
+-    snprintf(format, sizeof(db_query_t), "insert into %s (", m_table_name);
++    /* with the row's key, a row written again replaces the one there instead of adding one */
++    snprintf(format, sizeof(db_query_t), "%s into %s (", (m_row_key[0] != 0) ? "replace" : "insert", m_table_name);
+     for (i = 0; i < m_num_cols; i++) {
+         snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", m_columns[i].m_name);
+         snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", ", ");
+@@ -132,8 +263,11 @@ int db_easy_mesh_t::insert_row(db_client_t& db_client, ...)
+ 
+ 
+     va_start(list, db_client);
+-    (void) vsnprintf(query, sizeof(db_query_t), format, list);
++    len = vsnprintf(query, sizeof(db_query_t), format, list);
+     va_end(list);
++    if (query_fits(len, "insert") == false) {
++        return -1;
++    }
+ 
+     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
+ 
+@@ -168,8 +302,11 @@ int db_easy_mesh_t::update_row(db_client_t& db_client, ...)
+     format[strlen(format) - 2] = 0;
+ 
+     va_start(list, db_client);
+-    (void) vsnprintf(query, sizeof(db_query_t), format, list);
++    int len = vsnprintf(query, sizeof(db_query_t), format, list);
+     va_end(list);
++    if (query_fits(len, "update") == false) {
++        return -1;
++    }
+ 
+     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
+ 
+@@ -223,10 +360,13 @@ int db_easy_mesh_t::delete_row(db_client_t& db_client, ...)
+ 
+     snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", get_column_format(col_fmt, 0));
+     format[strlen(format) - 2] = 0;
+-    
++
+     va_start(list, db_client);
+-    (void) vsnprintf(query, sizeof(db_query_t), format, list);
++    int len = vsnprintf(query, sizeof(db_query_t), format, list);
+     va_end(list);
++    if (query_fits(len, "delete") == false) {
++        return -1;
++    }
+ 
+     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
+ 
+@@ -345,6 +485,9 @@ int db_easy_mesh_t::create_table(db_client_t& db_client)
+         snprintf(query + strlen(query), sizeof(query) - strlen(query), "%s", type_str);
+         snprintf(query + strlen(query), sizeof(query) - strlen(query), "%s", ", ");
+     }
++    if (m_row_key[0] != 0) {
++        snprintf(query + strlen(query), sizeof(query) - strlen(query), "unique key uk_row (%s), ", m_row_key);
++    }
+ 
+     query[strlen(query) - 2] = ')';
+     query[strlen(query) - 1] = 0;
+@@ -376,6 +519,8 @@ int db_easy_mesh_t::load_table(db_client_t& db_client)
+     //printf("%s:%d: Table: %s %s\n", __func__, __LINE__, m_table_name, (present == true) ? "present":"not present");
+ 
+     if (present == true) {
++        /* before the rows are read: a duplicate row would be loaded twice */
++        heal_row_key(db_client);
+         sync_table(db_client);
+     } else {
+         create_table(db_client);
+diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index 63cb8fc2..3bb16164 100644
+--- a/src/dm/dm_bss_list.cpp
++++ b/src/dm/dm_bss_list.cpp
+@@ -478,6 +478,7 @@ void dm_bss_list_t::init_table()
+ void dm_bss_list_t::init_columns()
+ {
+     m_num_cols = 0;
++    set_row_key("ID");
+ 
+     m_columns[m_num_cols++] = db_column_t("ID", db_data_type_char, 128);
+ 	m_columns[m_num_cols++] = db_column_t("BSSID", db_data_type_char, 17);
+diff --git a/src/dm/dm_device_list.cpp b/src/dm/dm_device_list.cpp
+index 0f89fbdd..20db5157 100644
+--- a/src/dm/dm_device_list.cpp
++++ b/src/dm/dm_device_list.cpp
+@@ -391,6 +391,7 @@ void dm_device_list_t::init_table()
+ void dm_device_list_t::init_columns()
+ {
+     m_num_cols = 0;
++    set_row_key("ID");
+ 
+     m_columns[m_num_cols++] = db_column_t("ID", db_data_type_char, 128);
+     m_columns[m_num_cols++] = db_column_t("DeviceID", db_data_type_char, 17);
+diff --git a/src/dm/dm_radio_list.cpp b/src/dm/dm_radio_list.cpp
+index ef0b4d6e..3a0c4a3f 100644
+--- a/src/dm/dm_radio_list.cpp
++++ b/src/dm/dm_radio_list.cpp
+@@ -298,6 +298,7 @@ void dm_radio_list_t::init_table()
+ void dm_radio_list_t::init_columns()
+ {
+     m_num_cols = 0;
++    set_row_key("ID");
+ 
+     m_columns[m_num_cols++] = db_column_t("ID", db_data_type_char, 128);
+     m_columns[m_num_cols++] = db_column_t("RadioID", db_data_type_char, 17);
+diff --git a/src/dm/dm_sta_list.cpp b/src/dm/dm_sta_list.cpp
+index 81970aa4..c36b6af4 100644
+--- a/src/dm/dm_sta_list.cpp
++++ b/src/dm/dm_sta_list.cpp
+@@ -316,6 +316,12 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
+         snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", tmp);
+         snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", get_column_format(col_fmt, 1));
+         format[strlen(format) - 2] = 0;
++        /* and the RUID: the row's whole key (MACAddress, BSSID, RUID), so an update of one of a
++         * station's rows on a BSS (an MLD station has several) is not applied to its others */
++        snprintf(tmp, sizeof(db_query_t), " and %s = ", m_columns[2].m_name);
++        snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", tmp);
++        snprintf(format + strlen(format), sizeof(format) - strlen(format), "%s", get_column_format(col_fmt, 2));
++        format[strlen(format) - 2] = 0;
+     }
+     else
+     {
+@@ -323,8 +329,11 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
+     }
+ 
+     va_start(list, db_client);
+-    (void) vsnprintf(query, sizeof(db_query_t), format, list);
++    int len = vsnprintf(query, sizeof(db_query_t), format, list);
+     va_end(list);
++    if (query_fits(len, "update") == false) {
++        return -1;
++    }
+ 
+     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
+ 
+@@ -395,16 +404,18 @@ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
+ 			break;
+ 
+ 		case dm_orch_type_db_update:
++			/* the whole row written by its key (REPLACE INTO, insert_row): get_dm_orch_type picks an
++			 * update when any row of the station's MAC exists, which may not be this (MAC, BSSID,
++			 * RUID) row; an UPDATE then matched no row and the station was left without it */
+ 			dm_easy_mesh_t::hex(info->frame_body_len, info->frame_body, sizeof(frame_body), frame_body);
+-			ret = update_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->bssid, bssid_mac_str), 
++			ret = insert_row(db_client, dm_easy_mesh_t::macbytes_to_string(info->id, sta_mac_str),
++						dm_easy_mesh_t::macbytes_to_string(info->bssid, bssid_mac_str),
+ 						dm_easy_mesh_t::macbytes_to_string(info->radiomac, radio_mac_str),
+ 						info->associated, info->last_ul_rate, info->last_dl_rate,
+ 						info->est_ul_rate, info->est_dl_rate, info->last_conn_time, info->retrans_count,
+ 						info->signal_strength, info->rcpi, info->util_tx, info->util_rx, info->pkts_tx, info->pkts_rx,
+ 						info->bytes_tx, info->bytes_rx, info->errors_tx, info->errors_rx,
+-						info->frame_body_len, frame_body,
+-						dm_easy_mesh_t::macbytes_to_string(info->id, sta_mac_str),
+-						dm_easy_mesh_t::macbytes_to_string(info->bssid, bssid_mac_str));
++						info->frame_body_len, frame_body);
+ 			break;
+ 
+ 		case dm_orch_type_db_delete:
+@@ -546,6 +557,9 @@ void dm_sta_list_t::init_table()
+ void dm_sta_list_t::init_columns()
+ {
+     m_num_cols = 0;
++    /* no ID column: a station's row is its MAC on a BSS of a radio (an MLD station has
++     * several) */
++    set_row_key("MACAddress, BSSID, RUID");
+ 
+     m_columns[m_num_cols++] = db_column_t("MACAddress", db_data_type_char, 17);
+     m_columns[m_num_cols++] = db_column_t("BSSID", db_data_type_char, 17);
+diff --git a/tests/test_l1_db_client.cpp b/tests/test_l1_db_client.cpp
+index dc4594ed..c5dbb6dc 100644
+--- a/tests/test_l1_db_client.cpp
++++ b/tests/test_l1_db_client.cpp
+@@ -780,3 +780,147 @@ TEST(db_client_tTest, DestructorReleasesDatabaseResourcesCorrectly) {
+     });
+     std::cout << "Exiting Destructor releases database resources correctly test" << std::endl;
+ }
++
++// A table's row key. A UNIQUE key on the columns that identify a row (created with the
++// table, or added at load once duplicate rows are removed), rows written with REPLACE INTO, and
++// a statement that would be cut at the 2048-byte buffer not run. On scratch tables in the
++// controller's database; run with em_ctrl stopped.
++#include <string>
++#include "db_easy_mesh.h"
++#include "dm_sta_list.h"
++
++namespace {
++void drain(db_client_t &client, const char *sql)
++{
++    void *ctx = client.execute(sql);
++    while (client.next_result(ctx) == true);
++}
++
++int number(db_client_t &client, const char *sql)
++{
++    int n = -1;
++    void *ctx = client.execute(sql);
++    while (client.next_result(ctx) == true) {
++        n = client.get_number(ctx, 1);
++    }
++    return n;
++}
++
++class ut_key_table_t : public db_easy_mesh_t {
++public:
++    void init_table() override { snprintf(m_table_name, sizeof(m_table_name), "%s", "UtKeyList"); }
++    void init_columns() override
++    {
++        m_num_cols = 0;
++        set_row_key("ID");
++        m_columns[m_num_cols++] = db_column_t("ID", db_data_type_char, 64);
++        m_columns[m_num_cols++] = db_column_t("Val", db_data_type_char, 32);
++    }
++    int sync_db(db_client_t&, void *) override { return 0; }
++    int update_db(db_client_t&, dm_orch_type_t, void *) override { return 0; }
++    bool search_db(db_client_t&, void *, void *) override { return false; }
++    bool operator == (const db_easy_mesh_t&) override { return false; }
++    int set_config(db_client_t&, const cJSON *, void *) override { return 0; }
++    int get_config(cJSON *, void *, bool) override { return 0; }
++};
++
++class ut_sta_list_t : public dm_sta_list_t {
++public:
++    void init_table() override { snprintf(m_table_name, sizeof(m_table_name), "%s", "UtSTAList"); }
++    dm_sta_t *get_first_sta() override { return NULL; }
++    dm_sta_t *get_next_sta(dm_sta_t *) override { return NULL; }
++    dm_sta_t *get_sta(const char *) override { return NULL; }
++    void remove_sta(const char *) override {}
++    void put_sta(const char *, const dm_sta_t *) override {}
++    bus_error_t bus_get_cb_fwd(char *, raw_data_t *, bus_get_handler_t) override { return bus_error_success; }
++    bus_error_t network_get(char *, raw_data_t *) override { return bus_error_success; }
++    bus_error_t device_get(char *, raw_data_t *) override { return bus_error_success; }
++};
++}
++
++class db_row_key_Test : public ::testing::Test {
++protected:
++    db_client_t client;
++    ut_key_table_t table;
++    void SetUp() override
++    {
++        client.init("bpi@root");
++        drain(client, "drop table if exists UtKeyList");
++        drain(client, "drop table if exists UtSTAList");
++        table.init_table();
++        table.init_columns();
++    }
++    void TearDown() override
++    {
++        drain(client, "drop table if exists UtKeyList");
++        drain(client, "drop table if exists UtSTAList");
++    }
++};
++
++TEST_F(db_row_key_Test, DuplicatesRemovedAndTheKeyAddedOnATableMadeWithoutIt)
++{
++    drain(client, "create table UtKeyList (ID char(64), Val char(32))");
++    drain(client, "insert into UtKeyList values ('a','1'),('a','1'),('a','1'),('b','2'),('b','2'),('c','3'),"
++        "('d''q','4'),('d''q','4')");
++    EXPECT_FALSE(table.has_row_key(client));
++    EXPECT_EQ(table.heal_row_key(client), 0);
++    EXPECT_TRUE(table.has_row_key(client));
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList"), 4);
++    // a value with a quote, escaped in the delete's WHERE
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList where ID = 'd''q'"), 1);
++    // healed once: a second pass finds the key and does nothing
++    EXPECT_EQ(table.heal_row_key(client), 0);
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList"), 4);
++}
++
++TEST_F(db_row_key_Test, ReplaceIntoKeepsOneRowPerKey)
++{
++    table.create_table(client);
++    EXPECT_TRUE(table.has_row_key(client));
++    table.insert_row(client, "a", "1");
++    table.insert_row(client, "a", "2");
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList where ID = 'a'"), 1);
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList where ID = 'a' and Val = '2'"), 1);
++}
++
++TEST_F(db_row_key_Test, AStatementThatWouldBeCutIsNotRun)
++{
++    table.create_table(client);
++    std::string big(3000, 'x');
++    EXPECT_EQ(table.insert_row(client, big.c_str(), "1"), -1);
++    EXPECT_EQ(number(client, "select count(*) from UtKeyList"), 0);
++    EXPECT_FALSE(table.query_fits(2048, "insert"));
++    EXPECT_FALSE(table.query_fits(-1, "insert"));
++    EXPECT_TRUE(table.query_fits(2047, "insert"));
++}
++
++TEST_F(db_row_key_Test, StaRowUpdatedByItsWholeKeyLeavesTheStationsOtherRows)
++{
++    // one station on one BSS seen on two radios: two rows; an update of one leaves the other
++    ut_sta_list_t stas;
++    stas.init_table();
++    stas.init_columns();
++    stas.create_table(client);
++    EXPECT_TRUE(stas.has_row_key(client));
++    em_sta_info_t one = {}, two = {};
++    unsigned char sta[6] = {0x02, 0x00, 0x00, 0x00, 0x31, 0x00}, bss[6] = {0x02, 0x00, 0x00, 0x90, 0x39, 0x8d};
++    unsigned char r1[6] = {0x02, 0x00, 0x00, 0x00, 0x6c, 0x00}, r2[6] = {0x02, 0x00, 0x00, 0x00, 0x6d, 0x00};
++    memcpy(one.id, sta, 6); memcpy(one.bssid, bss, 6); memcpy(one.radiomac, r1, 6);
++    memcpy(two.id, sta, 6); memcpy(two.bssid, bss, 6); memcpy(two.radiomac, r2, 6);
++    one.associated = true;
++    two.associated = true;
++    stas.update_db(client, dm_orch_type_db_insert, &one);
++    stas.update_db(client, dm_orch_type_db_insert, &two);
++    EXPECT_EQ(number(client, "select count(*) from UtSTAList"), 2);
++    one.associated = false;
++    stas.update_db(client, dm_orch_type_db_update, &one);
++    EXPECT_EQ(number(client, "select count(*) from UtSTAList"), 2);
++    EXPECT_EQ(number(client, "select Associated from UtSTAList where RUID = '02:00:00:00:6c:00'"), 0);
++    EXPECT_EQ(number(client, "select Associated from UtSTAList where RUID = '02:00:00:00:6d:00'"), 1);
++    // an update whose row is not there (another row of the MAC was) writes it
++    em_sta_info_t three = two;
++    unsigned char r3[6] = {0x02, 0x00, 0x00, 0x00, 0x6e, 0x00};
++    memcpy(three.radiomac, r3, 6);
++    stas.update_db(client, dm_orch_type_db_update, &three);
++    EXPECT_EQ(number(client, "select count(*) from UtSTAList"), 3);
++}
