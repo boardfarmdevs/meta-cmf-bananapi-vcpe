@@ -19,17 +19,28 @@ command, em or row meets a half-removed agent:
   class rows deleted, its BSSs removed from the model and their rows deleted at the BSS list
   update;
 - once the model has no radio and nothing left to write, its stations' rows and its device's row
-  are deleted, its node is taken out of the network topology and the model is deleted from the
-  list (deinitialised, as delete_data_model does), the last two under the topology lock. The
-  topology holds the model's address and every topology update walks all its nodes: a node left
-  in is read after the model is freed (the lab, 20 Oct: the controller crashed at the first
-  update after a retirement). The DataElements are built from the models, so the agent leaves
-  them too. No pointer into a model is kept across a retirement or a model made again: the
-  co-located agent's AL MAC and the controller's interface MAC are copied first, the controller's
-  from its own model. The network the model list hands out is the one held in its first model,
-  and that can be the retired agent's model (the lab, 21 Oct: the controller crashed at the next
-  model's check after retiring an agent whose model had been made again at its rejoin and come
-  first).
+  are deleted, and its node is taken out of the network topology and the model out of the list,
+  both under the topology lock. The topology holds the model's address and every topology update
+  walks all its nodes: a node left in is read after the model is freed (the lab, 20 Oct: the
+  controller crashed at the first update after a retirement). The DataElements are built from
+  the models, so the agent leaves them too. The models to retire are collected in the pass's walk
+  of the list and taken out after it.
+The model is not freed then. Not every reader of the list takes the topology lock: the bus's
+method handlers (SteerWiFiBackhaul among them) run on the bus's thread, the ems' handlers walk
+every model on their own threads (the stations of a Topology Response, the metrics' station
+owner), and the nodes listener reads the sender's model; each holds a model for one handler.
+A model taken out stays allocated and is freed on the manager thread 900 s later at the
+earliest, once no em and no command's em points at it; an em still on it (one whose radio never
+reached the model, one made while it was being retired) is retired as its radios were, chosen
+by the model's address, both when the model is taken out and before it is freed, so a rejoin's
+M1 makes a new em on the new model. A rejoin makes a new model: the one taken out is never put
+back. The list's iteration is one cursor shared by its walkers: it is moved past the model before
+the model's element is removed, so a walker whose last model it was ends its walk early. No
+pointer into a model is kept across a retirement or a model made again: the co-located agent's
+AL MAC and the controller's interface MAC are copied first, the controller's from its own
+model. The network the model list hands out is the one held in its first model, the newest,
+and that can be the retired agent's (the lab, 21 Oct: the controller crashed at the next model's
+check after retiring an agent whose model had been made again at its rejoin).
 The co-located agent and the controller's own model are never retired. For 600 s after the
 controller's start nothing is retired, and an agent known only from the database (not yet heard
 in this run) starts its clock at the first pass after that, so agents that reboot with the
@@ -73,24 +84,48 @@ index d433226..d0c3790 100644
  	 * @brief Removes a radio the agent no longer has: its BSS rows (recorded for the database,
  	 * as 0251 does), its operating classes and capabilities, the radio, and its count.
 diff --git a/inc/dm_easy_mesh_ctrl.h b/inc/dm_easy_mesh_ctrl.h
-index edd0533..50056fc 100644
+index edd0533..a902676 100644
 --- a/inc/dm_easy_mesh_ctrl.h
 +++ b/inc/dm_easy_mesh_ctrl.h
-@@ -1858,6 +1858,14 @@ public:
+@@ -1858,6 +1858,17 @@ public:
  	 * rows leave the database at the next BSS list update (0251).
  	 */
  	void retire_radio(dm_easy_mesh_t *dm, const unsigned char *ruid);
 +
 +	/**
 +	 * @brief Retires an agent gone silent once its radios are retired (retire_radio,
-+	 * their BSS rows written out): its stations' rows, its device's row, then its model, so the
-+	 * DeviceList, the BSSList, STAList and the DataElements (built from the models) forget it.
-+	 * @return the number of station rows removed, or -1 when the agent still has radios
++	 * their BSS rows written out): its stations' rows, its device's row, then its model out of
++	 * the network topology and the list, so the DeviceList, the BSSList, STAList and the
++	 * DataElements (built from the models) forget it. The model is not freed: the caller frees
++	 * it once no other thread can still hold it.
++	 * @return the number of station rows removed, or -1 when the agent still has radios or its
++	 * model is not the list's (then nothing is taken out of the list)
 +	 */
 +	int retire_agent(dm_easy_mesh_t *dm);
      
  	/**!
  	 * @brief Deletes a data model associated with the given network ID and AL MAC address.
+diff --git a/inc/dm_easy_mesh_list.h b/inc/dm_easy_mesh_list.h
+index b375d96..d99ae5b 100644
+--- a/inc/dm_easy_mesh_list.h
++++ b/inc/dm_easy_mesh_list.h
+@@ -80,7 +80,15 @@ public:
+ 	 * @note Ensure that the network ID and AL MAC address are valid and correspond to an existing data model.
+ 	 */
+ 	void delete_data_model(const char *net_id, const unsigned char *al_mac);
+-    
++
++	/**
++	 * @brief Takes the data model of the given network ID and AL MAC address out of the list
++	 * without freeing it, and starts the list's iteration again from its head.
++	 *
++	 * @return the model taken out, or NULL when the list has none at that key
++	 */
++	dm_easy_mesh_t *unlink_data_model(const char *net_id, const unsigned char *al_mac);
++
+ 	/**!
+ 	 * @brief Deletes all data models from the system.
+ 	 *
 diff --git a/inc/em.h b/inc/em.h
 index 03c4439..0b126f3 100644
 --- a/inc/em.h
@@ -106,10 +141,10 @@ index 03c4439..0b126f3 100644
  	/**!
  	 * @brief Initializes the system or component.
 diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
-index ec1dfaa..f6db206 100644
+index ec1dfaa..1c53a0e 100644
 --- a/inc/em_ctrl.h
 +++ b/inc/em_ctrl.h
-@@ -59,6 +59,36 @@ class em_ctrl_t : public em_mgr_t {
+@@ -59,6 +59,50 @@ class em_ctrl_t : public em_mgr_t {
      std::mutex m_autoconfig_mutex;
      std::map<std::string, agent_liveness_t> m_agent_liveness;
  
@@ -138,6 +173,20 @@ index ec1dfaa..f6db206 100644
 +    /* a controller-side stall (the co-located agent, or every agent, unheard): nothing retired
 +     * until this, a while after it ends, so frames queued during it are handled first */
 +    std::chrono::steady_clock::time_point m_retire_settle_until;
++    /* A retired agent's model, out of the list and the network topology but not freed yet: the
++     * list's readers on other threads (the bus's method handlers, the ems, the nodes listener)
++     * take no lock and may still hold it. Freed on the manager thread once it is old enough and
++     * no em, nor any command's em, points at it (free_retired_models); an em still pointing at
++     * it is retired, chosen by that address (an agent rejoined meanwhile has its own AL MAC's ems
++     * on its new model). */
++    struct retired_model_t {
++        dm_easy_mesh_t *dm;
++        std::string al;
++        std::chrono::steady_clock::time_point unlinked;
++    };
++    std::vector<retired_model_t> m_retired_models;    /* the manager thread only */
++    unsigned int retire_ems_of_model(const dm_easy_mesh_t *dm, const std::string &al);
++    void free_retired_models();
 +    void retire_silent_agents();
 +    void rejoin_retired_agents();
 +    void note_retired_agent_heard(mac_address_t al_mac, bool discovery_only);
@@ -146,11 +195,28 @@ index ec1dfaa..f6db206 100644
      struct backhaul_query_t {
          bool associated = false;
          em_backhaul::access_point ap;
+diff --git a/inc/em_orch.h b/inc/em_orch.h
+index 0dfeed9..77fdc58 100644
+--- a/inc/em_orch.h
++++ b/inc/em_orch.h
+@@ -254,6 +254,12 @@ public:
+ 	 */
+ 	void remove_em_from_commands(const unsigned char *radio_mac);
+ 
++	/**!
++	 * @brief Whether a pending or an active command still has an em whose data model is dm.
++	 * @param[in] dm A retired agent's model, out of the list.
++	 */
++	bool is_model_in_commands(const dm_easy_mesh_t *dm);
++
+ 	/**!
+ 	 * @brief Resets the command time for a specific command type.
+ 	 *
 diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
-index 10533de..835f108 100644
+index 10533de..882560b 100644
 --- a/src/ctrl/dm_easy_mesh_ctrl.cpp
 +++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
-@@ -4988,6 +4988,43 @@ void dm_easy_mesh_ctrl_t::retire_radio(dm_easy_mesh_t *dm, const unsigned char *
+@@ -4988,6 +4988,45 @@ void dm_easy_mesh_ctrl_t::retire_radio(dm_easy_mesh_t *dm, const unsigned char *
      dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
  }
  
@@ -175,18 +241,20 @@ index 10533de..835f108 100644
 +    em_device_info_t info = *dm->get_device()->get_device_info();
 +    dm_device_list_t::update_db(m_db_client, dm_orch_type_db_delete, &info);
 +
-+    /* its node in the network topology, then the model: the topology holds the model's address
-+     * and every update walks all its nodes, so a node left behind is read after the model is
-+     * freed. Both under the topology lock, which the model list's readers take. */
++    /* its node in the network topology, then the model out of the list, both under the topology
++     * lock: the topology holds the model's address and every update walks all its nodes. The
++     * model is not freed here: not every reader of the list takes that lock (the bus's method
++     * handlers, the ems' handlers, the nodes listener), so the caller frees it later. */
 +    mac_address_t al;
 +    memcpy(al, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
 +    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
 +    if (g_network_topology != NULL) {
 +        g_network_topology->remove(dm);
 +    }
-+    if (m_data_model_list.get_data_model(info.id.net_id, al) == dm) {
-+        m_data_model_list.delete_data_model(info.id.net_id, al);
++    if (m_data_model_list.get_data_model(info.id.net_id, al) != dm) {
++        return -1;
 +    }
++    m_data_model_list.unlink_data_model(info.id.net_id, al);
 +
 +    return stations;
 +}
@@ -195,16 +263,17 @@ index 10533de..835f108 100644
  {
      //dm_orch_type_t type = dm_orch_type_none;
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index c662da4..fe84599 100644
+index c662da4..4e21316 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -724,10 +724,362 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
+@@ -724,10 +724,443 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
  
  void em_ctrl_t::handle_dirty_dm()
  {
 +	rejoin_retired_agents();
 +	retire_silent_agents();
  	retire_stale_radios();
++	free_retired_models();
  	m_data_model.handle_dirty_dm();
  }
  
@@ -230,6 +299,9 @@ index c662da4..fe84599 100644
 + * answers at once): nothing is retired, nor for as long again after it ends, while the frames
 + * queued in it are handled and the queries answered. */
 +constexpr std::chrono::seconds EM_AGENT_STALL(60);
++/* A retired agent's model is out of the list at once but freed this long after at the earliest:
++ * the list's readers on other threads hold a model for one handler, milliseconds to seconds. */
++constexpr std::chrono::seconds EM_AGENT_MODEL_KEPT(900);
 +}
 +
 +void em_ctrl_t::note_retired_agent_heard(mac_address_t al_mac, bool discovery_only)
@@ -470,9 +542,16 @@ index c662da4..fe84599 100644
 +		}
 +	}
 +	bool retired = false;
++	struct to_retire_t {
++		dm_easy_mesh_t *dm;
++		std::string key;
++		long secs;
++	};
++	/* collected in the walk, taken out of the list after it: the walk never meets a model it has
++	 * taken out */
++	std::vector<to_retire_t> to_retire;
 +	dm_easy_mesh_t *dm = m_data_model.get_first_dm();
 +	while (dm != NULL) {
-+		/* the next model first: this one may be removed below */
 +		dm_easy_mesh_t *next = m_data_model.get_next_dm(dm);
 +		unsigned char *al = dm->get_agent_al_interface_mac();
 +		if (dm->is_controller() || memcmp(al, no_mac, sizeof(mac_address_t)) == 0 ||
@@ -539,17 +618,38 @@ index c662da4..fe84599 100644
 +			continue;
 +		}
 +
-+		const int stations = m_data_model.retire_agent(dm);
++		to_retire.push_back({dm, key, secs});
++		dm = next;
++	}
++
++	for (const auto &c : to_retire) {
 +		{
 +			std::lock_guard<std::mutex> lock(m_liveness_mutex);
-+			m_agent_liveness.erase(key);
-+			m_retired_agents[key].removed = true;
++			auto r = m_retired_agents.find(c.key);
++			if (r == m_retired_agents.end() || r->second.heard) {
++				/* heard since the walk: its rejoin goes on with this model */
++				continue;
++			}
 +		}
++		const int stations = m_data_model.retire_agent(c.dm);
++		if (stations < 0) {
++			continue;
++		}
++		{
++			std::lock_guard<std::mutex> lock(m_liveness_mutex);
++			m_agent_liveness.erase(c.key);
++			m_retired_agents[c.key].removed = true;
++		}
++		/* an em still on the model (one whose radio never reached it, or one made while it was
++		 * being retired) goes now, so a rejoin's M1 makes a new em on the new model */
++		const unsigned int ems = retire_ems_of_model(c.dm, c.key);
++		m_retired_models.push_back({c.dm, c.key, now});
 +		em_printfout("Agent %s retired after %ld s silent: its radios, BSSs, %d station rows, device and model "
-+			"removed (DeviceList, BSSList, STAList, the DataElements); its identity kept for its rejoin",
-+			key.c_str(), secs, stations);
++			"removed (DeviceList, BSSList, STAList, the DataElements); its identity kept for its rejoin; its model "
++			"%p out of the list, %u ems still on it retired, freed in %ld s at the earliest",
++			c.key.c_str(), c.secs, stations, static_cast<void *>(c.dm), ems,
++			static_cast<long>(EM_AGENT_MODEL_KEPT.count()));
 +		retired = true;
-+		dm = next;
 +	}
 +
 +	if (retired) {
@@ -558,10 +658,59 @@ index c662da4..fe84599 100644
 +	}
 +}
 +
++unsigned int em_ctrl_t::retire_ems_of_model(const dm_easy_mesh_t *dm, const std::string &al)
++{
++	/* chosen by the model's address, not the AL MAC: an agent rejoined since has ems of its own
++	 * AL MAC on its new model */
++	std::vector<em_t *> ems;
++	pthread_mutex_lock(&m_mutex);
++	for (em_t *em = static_cast<em_t *>(hash_map_get_first(m_em_map)); em != NULL;
++			em = static_cast<em_t *>(hash_map_get_next(m_em_map, em))) {
++		if (em->get_data_model() == dm) {
++			ems.push_back(em);
++		}
++	}
++	pthread_mutex_unlock(&m_mutex);
++	for (em_t *em : ems) {
++		/* as retire_stale_radios retires a radio's em (the em map holds one em per key) */
++		mac_address_t ruid;
++		memcpy(ruid, em->get_radio_interface_mac(), sizeof(mac_address_t));
++		m_orch->remove_em_from_commands(ruid);
++		retire_node(ruid);
++		em_printfout("Agent %s's retired model %p: em %s still on it retired", al.c_str(),
++			static_cast<const void *>(dm), util::mac_to_string(ruid).c_str());
++	}
++	return static_cast<unsigned int>(ems.size());
++}
++
++void em_ctrl_t::free_retired_models()
++{
++	const auto now = std::chrono::steady_clock::now();
++	for (auto it = m_retired_models.begin(); it != m_retired_models.end(); ) {
++		if (now - it->unlinked < EM_AGENT_MODEL_KEPT) {
++			++it;
++			continue;
++		}
++		/* an em made on it since, or one a command still holds (a cancelled em finishes its
++		 * command first, and an em's thread handles what was queued to it before it stopped):
++		 * at a later pass */
++		if (retire_ems_of_model(it->dm, it->al) != 0 || m_orch->is_model_in_commands(it->dm)) {
++			++it;
++			continue;
++		}
++		em_printfout("Agent %s's retired model %p freed, %ld s after its retirement", it->al.c_str(),
++			static_cast<void *>(it->dm),
++			static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(now - it->unlinked).count()));
++		it->dm->deinit();
++		delete it->dm;
++		it = m_retired_models.erase(it);
++	}
++}
++
  void em_ctrl_t::retire_stale_radios()
  {
  	for (dm_easy_mesh_t *dm = m_data_model.get_first_dm(); dm != NULL; dm = m_data_model.get_next_dm(dm)) {
-@@ -1632,6 +1984,9 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+@@ -1632,6 +2065,9 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
              break;
      }
  
@@ -603,3 +752,65 @@ index f625f65..5114346 100644
  void dm_easy_mesh_t::retire_radio(const unsigned char *ruid)
  {
      for (int i = static_cast<int>(m_num_bss) - 1; i >= 0; i--) {
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index c42d621..e8a7ebf 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -1622,6 +1622,27 @@ void dm_easy_mesh_list_t::delete_data_model(const char *net_id, const unsigned c
+     delete dm;
+ }
+ 
++dm_easy_mesh_t *dm_easy_mesh_list_t::unlink_data_model(const char *net_id, const unsigned char *al_mac)
++{
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    mac_addr_str_t mac_str;
++    em_long_string_t	key;
++
++    dm_easy_mesh_t::macbytes_to_string(const_cast<unsigned char *> (al_mac), mac_str);
++    snprintf(key, sizeof(em_short_string_t), "%s@%s", net_id, mac_str);
++
++    dm_easy_mesh_t *dm = static_cast<dm_easy_mesh_t *> (hash_map_get(m_list, key));
++    if (dm == NULL) {
++        return NULL;
++    }
++    /* the hash map keeps one cursor for every walker of the list: moved past this model first,
++     * so the element hash_map_remove frees is not the cursor (a walker whose last model was this
++     * one then finds it gone and ends its walk) */
++    hash_map_get_next(m_list, dm);
++    hash_map_remove(m_list, key);
++    return dm;
++}
++
+ dm_easy_mesh_t *dm_easy_mesh_list_t::create_data_model(const char *net_id, const em_interface_t *al_intf, em_profile_type_t profile, bool controller)
+ {
+     std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index d75fcb7..0546bf8 100644
+--- a/src/orch/em_orch.cpp
++++ b/src/orch/em_orch.cpp
+@@ -321,6 +321,25 @@ void em_orch_t::remove_em_from_commands(const unsigned char *radio_mac)
+     }
+ }
+ 
++bool em_orch_t::is_model_in_commands(const dm_easy_mesh_t *dm)
++{
++    auto command_lock = lock_commands();
++    queue_t *queues[] = {m_pending, m_active};
++
++    for (queue_t *q : queues) {
++        for (unsigned int i = 0; i < queue_count(q); i++) {
++            em_cmd_t *pcmd = static_cast<em_cmd_t *>(queue_peek(q, i));
++            for (unsigned int j = 0; j < queue_count(pcmd->m_em_candidates); j++) {
++                em_t *em = static_cast<em_t *>(queue_peek(pcmd->m_em_candidates, j));
++                if (em->get_data_model() == dm) {
++                    return true;
++                }
++            }
++        }
++    }
++    return false;
++}
++
+ void em_orch_t::remove_em_config_cmd_for_em(unsigned char *radio_mac)
+ {
+     auto command_lock = lock_commands();
