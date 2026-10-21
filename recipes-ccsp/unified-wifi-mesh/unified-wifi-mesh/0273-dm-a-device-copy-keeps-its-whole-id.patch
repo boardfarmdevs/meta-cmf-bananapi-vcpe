@@ -1,0 +1,150 @@
+Subject: [PATCH] dm: a device copy keeps its whole id, backhaul media, profile and secondary device type; a retired agent's DeviceList row keyed by its AL MAC; deleting a model already gone does not crash
+
+dm_device_t::operator= copied id.net_id but not id.dev_mac or id.media, which with net_id key the
+device's DeviceList row (net_id@dev_mac@media). A model loaded from the database or made by a
+commit, and every command's model, therefore held dev_mac 00:00:00:00:00:00 until its first
+device-list pass. 0270's retire_agent deleted the row by that key: "OneWifiMesh@00:00:00:00:00:00@0"
+matched nothing, the agent's row stayed, and the rejoin's commit then inserted a second one
+(rdk-1010, 21 October: two identical rows for each of two extenders). RemoveDevice's db_delete
+missed its row the same way, and its dm_delete asked for the zero MAC's model, got NULL back from
+hash_map_remove and dereferenced it.
+
+The copy now takes the whole id, the profile, intf.media, backhaul_mac.media, backhaul_phyrate and
+secondary_device_type. It wrote secondary_device_type's 16 bytes over backhaul_media_type (4),
+backhaul_phyrate and the start of backhaul_alid's name. retire_agent builds its delete key from
+the agent's AL MAC as update_tables does, a second guard. delete_data_model returns when the model
+is already gone.
+
+Unit tests: test_l1_dm_device.cpp (the copy keeps those fields; the existing
+AssigningValidDeviceInformation now passes), test_l1_dm_easy_mesh_list.cpp (an absent model's
+delete).
+---
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 882560bc..54c1a020 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -5007,6 +5007,9 @@ int dm_easy_mesh_ctrl_t::retire_agent(dm_easy_mesh_t *dm)
+ 
+     /* the device's row */
+     em_device_info_t info = *dm->get_device()->get_device_info();
++    /* the row's key from the agent's AL MAC, as update_tables builds it: a model that has not
++     * had a device-list pass since it was loaded or made again may hold no id.dev_mac */
++    memcpy(info.id.dev_mac, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
+     dm_device_list_t::update_db(m_db_client, dm_orch_type_db_delete, &info);
+ 
+     /* its node in the network topology, then the model out of the list, both under the topology
+diff --git a/src/dm/dm_device.cpp b/src/dm/dm_device.cpp
+index e64edc99..6d13cbd8 100644
+--- a/src/dm/dm_device.cpp
++++ b/src/dm/dm_device.cpp
+@@ -281,7 +281,12 @@ void dm_device_t::operator = (const dm_device_t& obj) {
+     if (this == &obj) { return; }
+     memcpy(&this->m_device_info.intf.mac ,&obj.m_device_info.intf.mac,sizeof(mac_address_t));
+     memcpy(&this->m_device_info.intf.name,&obj.m_device_info.intf.name,sizeof(em_interface_name_t));
+-    memcpy(&this->m_device_info.id.net_id,&obj.m_device_info.id.net_id,sizeof(em_long_string_t));
++    this->m_device_info.intf.media = obj.m_device_info.intf.media;
++    /* the whole id: its dev_mac and media key the device's DeviceList row (net_id@dev_mac@media),
++     * so a copy without them (a model loaded from the database or made by a commit, every
++     * command's model) deleted and looked up "net_id@00:00:00:00:00:00@0" */
++    memcpy(&this->m_device_info.id, &obj.m_device_info.id, sizeof(em_device_id_t));
++    this->m_device_info.profile = obj.m_device_info.profile;
+     memcpy(&this->m_device_info.multi_ap_cap,&obj.m_device_info.multi_ap_cap,sizeof(em_long_string_t));
+     this->m_device_info.coll_interval = obj.m_device_info.coll_interval;
+     this->m_device_info.report_unsuccess_assocs = obj.m_device_info.report_unsuccess_assocs;
+@@ -302,8 +307,9 @@ void dm_device_t::operator = (const dm_device_t& obj) {
+     this->m_device_info.coord_cac_allowed = obj.m_device_info.coord_cac_allowed;
+     memcpy(&this->m_device_info.backhaul_mac.mac ,&obj.m_device_info.backhaul_mac.mac,sizeof(mac_address_t));
+     memcpy(&this->m_device_info.backhaul_mac.name,&obj.m_device_info.backhaul_mac.name,sizeof(em_interface_name_t));
+-    memcpy(&this->m_device_info.backhaul_media_type,&obj.m_device_info.backhaul_media_type,sizeof(wifi_ieee80211Variant_t));
++    this->m_device_info.backhaul_mac.media = obj.m_device_info.backhaul_mac.media;
+     this->m_device_info.backhaul_media_type = obj.m_device_info.backhaul_media_type;
++    this->m_device_info.backhaul_phyrate = obj.m_device_info.backhaul_phyrate;
+     memcpy(&this->m_device_info.backhaul_alid.mac ,&obj.m_device_info.backhaul_alid.mac,sizeof(mac_address_t));
+     memcpy(&this->m_device_info.backhaul_alid.name,&obj.m_device_info.backhaul_alid.name,sizeof(em_interface_name_t));
+     this->m_device_info.traffic_sep_cap = obj.m_device_info.traffic_sep_cap;
+@@ -311,7 +317,9 @@ void dm_device_t::operator = (const dm_device_t& obj) {
+     this->m_device_info.test_cap = obj.m_device_info.test_cap;
+     this->m_device_info.boot_time_epoch = obj.m_device_info.boot_time_epoch;
+     memcpy(&this->m_device_info.primary_device_type,&obj.m_device_info.primary_device_type,sizeof(em_small_string_t));
+-    memcpy(&this->m_device_info.backhaul_media_type,&obj.m_device_info.secondary_device_type,sizeof(em_small_string_t));
++    /* was copied onto backhaul_media_type: 16 bytes over it, backhaul_phyrate and the start of
++     * backhaul_alid's name */
++    memcpy(&this->m_device_info.secondary_device_type,&obj.m_device_info.secondary_device_type,sizeof(em_small_string_t));
+ }
+ 
+ bool dm_device_t::operator == (const dm_device_t& obj)
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index e8a7ebf4..77cadabc 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -1616,6 +1616,11 @@ void dm_easy_mesh_list_t::delete_data_model(const char *net_id, const unsigned c
+     //printf("%s:%d: Putting data model at key: %s\n", __func__, __LINE__, key);
+ 
+     dm = static_cast<dm_easy_mesh_t *> (hash_map_remove(m_list, key));
++    if (dm == NULL) {
++        /* already gone (a RemoveDevice for a device retired meanwhile) */
++        em_printfout("No data model at key: %s to delete", key);
++        return;
++    }
+ 
+     //printf("%s:%d: deleteing data model at key: %s, dm:%p, colocated:%d\n", __func__, __LINE__, key, dm, dm->get_colocated());
+     dm->deinit();
+diff --git a/tests/test_l1_dm_device.cpp b/tests/test_l1_dm_device.cpp
+index 3a014d99..e43c6646 100644
+--- a/tests/test_l1_dm_device.cpp
++++ b/tests/test_l1_dm_device.cpp
+@@ -3382,4 +3382,35 @@ TEST(dm_device_t_Test, Destructor_called_on_heap_allocated_object) {
+     });
+     std::cout << "Destructor invoked successfully on heap allocated object." << std::endl;
+     std::cout << "Exiting Destructor_called_on_heap_allocated_object test" << std::endl;
+-}
+\ No newline at end of file
++}
++// A device copy (operator=) keeps the whole id (its dev_mac and media key the device's
++// DeviceList row), the profile, the backhaul MAC's media and the secondary device type; the
++// secondary device type no longer lands on backhaul_media_type, backhaul_phyrate and the start
++// of backhaul_alid's name.
++TEST(dm_device_t_Test, CopyKeepsIdProfileBackhaulMediaAndSecondaryType) {
++    dm_device_t src{}, dst{};
++    memset(&src.m_device_info, 0, sizeof(src.m_device_info));
++    memset(&dst.m_device_info, 0, sizeof(dst.m_device_info));
++    unsigned char al[6] = {0x02, 0x00, 0x00, 0x00, 0x09, 0x20};
++    strncpy(src.m_device_info.id.net_id, "OneWifiMesh", sizeof(src.m_device_info.id.net_id) - 1);
++    memcpy(src.m_device_info.id.dev_mac, al, sizeof(al));
++    src.m_device_info.id.media = em_media_type_ieee80211ac_5;
++    src.m_device_info.profile = em_profile_type_3;
++    src.m_device_info.backhaul_mac.media = em_media_type_ieee80211ac_5;
++    src.m_device_info.backhaul_media_type = static_cast<wifi_ieee80211Variant_t>(0x20);
++    src.m_device_info.backhaul_phyrate = 1234;
++    strncpy(src.m_device_info.backhaul_alid.name, "backhaul-alid", sizeof(src.m_device_info.backhaul_alid.name) - 1);
++    strncpy(src.m_device_info.secondary_device_type, "secondary", sizeof(src.m_device_info.secondary_device_type) - 1);
++
++    dst = src;
++
++    EXPECT_STREQ(dst.m_device_info.id.net_id, "OneWifiMesh");
++    EXPECT_EQ(memcmp(dst.m_device_info.id.dev_mac, al, sizeof(al)), 0);
++    EXPECT_EQ(dst.m_device_info.id.media, em_media_type_ieee80211ac_5);
++    EXPECT_EQ(dst.m_device_info.profile, em_profile_type_3);
++    EXPECT_EQ(dst.m_device_info.backhaul_mac.media, em_media_type_ieee80211ac_5);
++    EXPECT_EQ(dst.m_device_info.backhaul_media_type, static_cast<wifi_ieee80211Variant_t>(0x20));
++    EXPECT_EQ(dst.m_device_info.backhaul_phyrate, 1234u);
++    EXPECT_STREQ(dst.m_device_info.backhaul_alid.name, "backhaul-alid");
++    EXPECT_STREQ(dst.m_device_info.secondary_device_type, "secondary");
++}
+diff --git a/tests/test_l1_dm_easy_mesh_list.cpp b/tests/test_l1_dm_easy_mesh_list.cpp
+index 35d56d16..8e753f45 100644
+--- a/tests/test_l1_dm_easy_mesh_list.cpp
++++ b/tests/test_l1_dm_easy_mesh_list.cpp
+@@ -5099,3 +5099,12 @@ TEST_F(dm_easy_mesh_list_tTEST, update_device_null_device) {
+     std::cout << "update_device invoked with key: " << key << " and NULL device pointer" << std::endl;
+     std::cout << "Exiting update_device_null_device test" << std::endl;
+ }
++
++// Deleting a model that is already gone (a RemoveDevice for a device retired meanwhile)
++// returns instead of dereferencing the NULL hash_map_remove gives back.
++TEST_F(dm_easy_mesh_list_tTEST, delete_data_model_absent_model_returns) {
++    unsigned char absent[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x99};
++    list.delete_data_model("Network1", absent);
++    list.delete_data_model("NoSuchNetwork", mac1);
++    EXPECT_NE(list.get_data_model("Network1", mac1), nullptr);
++}
