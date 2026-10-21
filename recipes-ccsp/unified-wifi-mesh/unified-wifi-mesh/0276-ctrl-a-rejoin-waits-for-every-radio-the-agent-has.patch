@@ -1,0 +1,761 @@
+Subject: [PATCH] ctrl: a retired agent's rejoin waits for every radio it has: one Renew first, then the other missing bands, per band with a back-off, then a slow retry; a neighbor-only Topology Notification is not the agent's own activity; a rejoined model takes back its DataElements instance
+
+0270 declared a retired agent rejoined at the first pass where its model had a radio and stopped
+renewing: a 3-radio agent counted as rejoined after its first M1 (rdk-1010 and a hardware bench, 21
+October: "rejoined ... 1 radios rebuilt"), and a band whose Renew or M1 was lost got no more.
+
+The rejoin now waits for every radio the agent has: those of its retirement and those its last
+Topology Response lists in its AP Operational BSS TLV; a radio of its retirement is left out only
+when a response no longer lists it at all, so a radio listed with no BSS (redoing WSC) is still
+waited for. A radio is back when its RUID is in the model and its em, on this model, is past M2
+and not misconfigured: an AP Capability Report puts a radio in the model by RUID without an M1.
+
+The Renews: a Renew names one band; an RDK agent sends that band's radio's M1 only (one Renew, one
+M1), a Multi-AP agent may send every radio's. So one Renew first, and 5 s later the other missing
+bands' at once; then per band up to three with the back-off; then, a live agent never given up on,
+a Renew per missing band every 10 min, logged the first and every sixth time (a partly rejoined
+agent, or one heard but sending no M1: its own side stuck). A Renew can go unanswered for a while:
+a vendor extender ignored the one that came in the same second as its own Search and answered the
+next. An agent heard and then unheard for 180 s starts over at its next frame. The models'
+radios and listed radios are read under the topology lock, taken before the liveness lock (the
+order update_network_topology takes them in), the em map's lock innermost.
+
+A neighbor-only Topology Notification (no BSS) names the agent whose neighbors changed; the
+controller's own 1905 neighbor ageing raises one for a departed agent some 60 s after its last
+frame. Counted as that agent's activity it reset its silence (its retirement came about 240 s after
+its last frame, not 180 s); it no longer counts, and starts no rejoin. The liveness query it
+triggers still finds an agent that is there.
+
+A rejoined agent's model made again took a new DataElements instance (Device.{i}, the model's
+creation counter), leaving gaps a reader walking Device.1..N misses: it takes back the one it had,
+unless another model holds it now.
+
+The missing-radio set and the renew plan are static helpers (rejoin_missing_radios,
+rejoin_plan_renew, counts_as_agent_activity) with unit tests in test_l1_em_ctrl.cpp.
+---
+diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
+index d0c37904..2f31a698 100644
+--- a/inc/dm_easy_mesh.h
++++ b/inc/dm_easy_mesh.h
+@@ -74,7 +74,13 @@ public:
+     struct { mac_address_t ruid; unsigned int responses; } m_unreported_radio[EM_MAX_BANDS];
+     unsigned int    m_num_stale_radio;
+     mac_address_t   m_stale_radio[EM_MAX_BANDS];
+-    unsigned int    m_num_bss;    
++    /* every radio the agent's last Topology Response listed in its AP Operational BSS TLV (with
++     * or without a BSS up), once one has come: with a retired agent's radios at its retirement,
++     * its rejoin's expected radio set (em_ctrl_t::rejoin_retired_agents) */
++    bool            m_listed_radio_known;
++    unsigned int    m_num_listed_radio;
++    mac_address_t   m_listed_radio[EM_MAX_BANDS];
++    unsigned int    m_num_bss;
+     dm_bss_t    m_bss[EM_MAX_BSSS];
+     /* BSS rows the model removed whose database rows go at the next BSS list update:
+      * a learned backhaul station's row is its radio's only one, which the update's
+@@ -126,6 +132,8 @@ public:
+ 	bool get_topo_state() { return m_topo_changed; }
+ 	void set_topo_state(bool state) { m_topo_changed = state; }
+ 	void set_id() { m_instance_num = ++s_counter; }
++	/* a given instance: a rejoined agent's model takes back the one it had (em_ctrl_t's rejoin) */
++	void set_id(int instance) { m_instance_num = instance; }
+ 	int get_id() const { return m_instance_num; }
+ 	void set_ssid_mismatch_check_time(unsigned int time) { ssid_mismatch_check_time = time; }
+ 	unsigned int get_ssid_mismatch_check_time() const { return ssid_mismatch_check_time; }
+@@ -1945,6 +1953,11 @@ public:
+ 	 */
+ 	unsigned int note_reported_radios(const mac_address_t *reported, unsigned int num_reported);
+ 
++	/* the radios a Topology Response listed, kept for a rejoin's expected set; the getter returns
++	 * false until a response has listed them */
++	void note_listed_radios(const mac_address_t *listed, unsigned int num_listed);
++	bool get_listed_radios(mac_address_t *listed, unsigned int max, unsigned int *num) const;
++
+ 	/**
+ 	 * @brief Takes one stale radio, for the controller's manager to retire.
+ 	 */
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index 1c53a0e9..a2634f77 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -20,9 +20,11 @@
+ #define EMCTRL_H
+ 
+ #include <chrono>
++#include <functional>
+ #include <map>
+ #include <mutex>
+ #include <string>
++#include <vector>
+ #include "em.h"
+ #include "em_mgr.h"
+ #include "dm_easy_mesh_ctrl.h"
+@@ -64,6 +66,7 @@ class em_ctrl_t : public em_mgr_t {
+      * identity is kept: heard again (any 1905 frame from its AL MAC, a Topology Discovery too) it
+      * is rejoined without having to reboot: its model again if it was removed, then a targeted
+      * AP-Autoconfiguration Renew per band of its radios, so its M1s rebuild them. */
++public:
+     struct retired_agent_t {
+         std::chrono::steady_clock::time_point since;    /* its radios queued */
+         bool removed = false;                           /* its model, device and rows gone */
+@@ -78,7 +81,37 @@ class em_ctrl_t : public em_mgr_t {
+         /* after renews that brought no M1, a Topology Discovery alone (an agent whose own side is
+          * down still sends it) starts no rejoin until then; any other frame does */
+         std::chrono::steady_clock::time_point quiet_until;
++        /* its radios at its retirement (RUID, band): with those its Topology Responses list
++         * after, what its rejoin waits for (rejoin_retired_agents) */
++        std::vector<std::pair<std::string, unsigned int>> radios;
++        std::chrono::steady_clock::time_point last_frame;   /* any frame from it, while retired */
++        std::map<unsigned int, unsigned int> renewed;       /* renews sent per band */
++        unsigned int first_band = 0;        /* the first renew's band: one Renew, then the rest */
++        bool adaptive = false;              /* that first Renew sent, its result not checked yet */
++        unsigned int back_logged = 0;       /* radios rebuilt at the last partial-rejoin line */
++        unsigned int slow_retries = 0;      /* 10 min retries after the renews */
++        /* its model's DataElements instance (Device.{i}) at its retirement: its model made again
++         * takes it back, if no other model holds it, so a reader walking Device.1..N finds it */
++        int instance = 0;
+     };
++    /* radios as (RUID, band) */
++    typedef std::vector<std::pair<std::string, unsigned int>> radio_set_t;
++    /* Whether a received frame of this type is its sender's own activity (liveness, a retired
++     * agent heard): every frame but a neighbor-only Topology Notification */
++    static bool counts_as_agent_activity(unsigned short msg_type, bool neighbor_only);
++    /* The rejoin's missing radios: of its radios at its retirement (snapshot) and those its last
++     * Topology Response lists (listed, once listed_known), those not back. A snapshot radio is
++     * left out only when a response no longer lists it at all. Back: in the model (model, its
++     * RUIDs and bands) and wsc_done(RUID), its WSC done with this controller. */
++    static radio_set_t rejoin_missing_radios(const radio_set_t &snapshot, bool listed_known,
++        const std::vector<std::string> &listed, const radio_set_t &model,
++        const std::function<bool(const std::string &)> &wsc_done);
++    /* The rejoin's renew for this pass, given the missing radios' bands (missing_bands, 0 when
++     * none is known): the bands to renew now (0: the default bands), r's attempts and next_renew
++     * updated. *slow_log true when this pass is a slow retry to be logged. */
++    static unsigned int rejoin_plan_renew(retired_agent_t &r, unsigned int missing_bands,
++        std::chrono::steady_clock::time_point now, bool *slow_log);
++private:
+     const std::chrono::steady_clock::time_point m_ctrl_start = std::chrono::steady_clock::now();
+     std::map<std::string, retired_agent_t> m_retired_agents;    /* under m_liveness_mutex */
+     /* a controller-side stall (the co-located agent, or every agent, unheard): nothing retired
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index 4e213166..d3240e06 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -741,13 +741,17 @@ constexpr std::chrono::seconds EM_AGENT_RETIRE_AFTER(180);
+ /* After the controller's start the agents loaded from the database get time to come back (on
+  * the bench, 20 Oct, operator pods were back 274-392 s after the gateway booted). */
+ constexpr std::chrono::seconds EM_AGENT_RETIRE_GRACE(600);
+-/* A retired agent heard again gets an AP-Autoconfiguration Renew per band of its radios, at most
+- * this many times, 60 s, 120 s and 240 s apart, until its M1s have rebuilt a radio. */
++/* A retired agent heard again gets an AP-Autoconfiguration Renew for its missing radios' bands:
++ * one first, the rest EM_AGENT_REJOIN_SETTLE later, then per band at most EM_AGENT_REJOIN_RENEWS
++ * times with a back-off from 60 s, until its M1s have rebuilt every radio it has. */
+ constexpr unsigned int EM_AGENT_REJOIN_RENEWS = 3;
+ constexpr std::chrono::seconds EM_AGENT_REJOIN_BACKOFF(60);
+-/* No M1 after them (an agent whose own side is down, e.g. an EMOSA agent whose pod is away, still
+- * multicasts its Topology Discovery): retired again, and its discoveries alone ignored this long. */
+-constexpr std::chrono::seconds EM_AGENT_REJOIN_QUIET(1800);
++constexpr std::chrono::seconds EM_AGENT_REJOIN_SETTLE(5);
++/* Still missing a radio after them, or no M1 at all (an agent whose own side does not onboard, e.g.
++ * an EMOSA agent whose pod is away still multicasts its Topology Discovery): never given up on
++ * while it is heard, a Renew per missing band this often, logged the first and every sixth time. */
++constexpr std::chrono::seconds EM_AGENT_REJOIN_SLOW(600);
++constexpr unsigned int EM_AGENT_REJOIN_SLOW_LOG_EVERY = 6;
+ /* A pass on which the co-located agent, or every agent, has been unheard this long is a stall on
+  * the controller's side, not agents gone (the bench, 20 Oct: a 58 s pause in every agent's
+  * answers at once): nothing is retired, nor for as long again after it ends, while the frames
+@@ -764,8 +768,11 @@ void em_ctrl_t::note_retired_agent_heard(mac_address_t al_mac, bool discovery_on
+ 	const auto now = std::chrono::steady_clock::now();
+ 	std::lock_guard<std::mutex> lock(m_liveness_mutex);
+ 	auto retired = m_retired_agents.find(key);
+-	if (retired == m_retired_agents.end() || retired->second.heard ||
+-			(discovery_only && now < retired->second.quiet_until)) {
++	if (retired == m_retired_agents.end()) {
++		return;
++	}
++	retired->second.last_frame = now;
++	if (retired->second.heard || (discovery_only && now < retired->second.quiet_until)) {
+ 		return;
+ 	}
+ 	retired->second.heard = true;
+@@ -840,16 +847,153 @@ int em_ctrl_t::send_rejoin_renew(const unsigned char *agent_al, const unsigned c
+ 	return al_node->send_raw_1905_frame(buff, len);
+ }
+ 
++bool em_ctrl_t::counts_as_agent_activity(unsigned short msg_type, bool neighbor_only)
++{
++	/* A neighbor-only Topology Notification (no BSS: a 1905 neighbor gone or come) names the
++	 * agent whose neighbors changed; the controller's own 1905 neighbor ageing raises one for a
++	 * departed agent some 60 s after its last frame (a hardware bench, 21 October: one for each
++	 * extender, and one for an extender whose frames ebtables dropped). It is not a frame of
++	 * that agent's own: counted, it reset the departed agent's silence and its retirement came
++	 * some 240 s after its last frame, not 180 s. handle_topology_change answers it with a
++	 * Topology Query, whose response, if the agent is there, is its activity. */
++	return !(msg_type == em_msg_type_topo_notif && neighbor_only);
++}
++
++em_ctrl_t::radio_set_t em_ctrl_t::rejoin_missing_radios(const radio_set_t &snapshot, bool listed_known,
++	const std::vector<std::string> &listed, const radio_set_t &model,
++	const std::function<bool(const std::string &)> &wsc_done)
++{
++	/* expected: the radios at its retirement and those it lists now. One of the former is left
++	 * out only when the last response no longer lists it at all: a radio listed with no BSS
++	 * (redoing WSC, its configuration failed) is still waited for, and the slow retry bounds the
++	 * wait for one really gone. */
++	radio_set_t expected;
++	auto is_listed = [&](const std::string &ruid) {
++		for (auto &l : listed) {
++			if (l == ruid) {
++				return true;
++			}
++		}
++		return false;
++	};
++	for (auto &snap : snapshot) {
++		if (!listed_known || is_listed(snap.first)) {
++			expected.push_back(snap);
++		}
++	}
++	for (auto &ruid : listed) {
++		bool in = false;
++		for (auto &e : expected) {
++			in = in || e.first == ruid;
++		}
++		if (in) {
++			continue;
++		}
++		/* a radio it did not have at its retirement: its band from the model if it has it (else
++		 * unknown: the default bands are renewed for it) */
++		unsigned int band = em_freq_band_unknown;
++		for (auto &m : model) {
++			if (m.first == ruid) {
++				band = m.second;
++			}
++		}
++		expected.emplace_back(ruid, band);
++	}
++	/* missing: expected and not back, by RUID */
++	radio_set_t missing;
++	for (auto &e : expected) {
++		bool have = false;
++		for (auto &m : model) {
++			have = have || m.first == e.first;
++		}
++		if (!have || !wsc_done(e.first)) {
++			missing.push_back(e);
++		}
++	}
++	return missing;
++}
++
++unsigned int em_ctrl_t::rejoin_plan_renew(retired_agent_t &r, unsigned int missing_bands,
++	std::chrono::steady_clock::time_point now, bool *slow_log)
++{
++	/* The bands to renew now. A Renew names one band (its SupportedFreqBand TLV): an RDK agent
++	 * sends that band's radio's M1 only, a Multi-AP 7.1 agent every radio's. So one Renew first,
++	 * and EM_AGENT_REJOIN_SETTLE later: every radio back, done (the caller); that band's alone,
++	 * the other missing bands' Renews at once; none, every missing band's. Then per band up to
++	 * EM_AGENT_REJOIN_RENEWS, with the back-off; then, a live agent never given up on, a Renew per
++	 * missing band every EM_AGENT_REJOIN_SLOW, logged the first and every sixth time. The caller
++	 * counts the renews sent (r.renewed, r.renews). A Renew can also go unanswered for a while: a
++	 * vendor extender (a hardware bench, 21 October, 3 radios) ignored the one that came in the same
++	 * second as its own AP-Autoconfiguration Search and answered the next, 60 s later; the per
++	 * band attempts and their back-off carry it. */
++	unsigned int mask = 0;
++	*slow_log = false;
++	if (r.renews == 0) {
++		unsigned int first = em_freq_band_24;
++		while (first < em_freq_band_unknown && missing_bands != 0 && (missing_bands & (1u << first)) == 0) {
++			first++;
++		}
++		r.first_band = first;
++		mask = (missing_bands != 0) ? (1u << first) : 0;
++		r.adaptive = true;
++		r.next_renew = now + EM_AGENT_REJOIN_SETTLE;
++		return mask;
++	}
++	if (r.adaptive) {
++		r.adaptive = false;
++		r.next_renew = now + EM_AGENT_REJOIN_BACKOFF;
++		return missing_bands;
++	}
++	unsigned int most = 0;
++	for (unsigned int b = em_freq_band_24; b < em_freq_band_unknown; b++) {
++		if ((missing_bands & (1u << b)) != 0 && r.renewed[b] < EM_AGENT_REJOIN_RENEWS) {
++			mask |= 1u << b;
++		}
++		most = (r.renewed[b] > most) ? r.renewed[b] : most;
++	}
++	if (mask == 0 && missing_bands == 0 && r.renewed[em_freq_band_24] < EM_AGENT_REJOIN_RENEWS) {
++		/* no radio known for it (it had none at its retirement): the default bands */
++		r.next_renew = now + EM_AGENT_REJOIN_BACKOFF * (1u << (most < 4 ? most : 4));
++		return 0;
++	}
++	if (mask == 0) {
++		r.slow_retries++;
++		*slow_log = r.slow_retries == 1 || r.slow_retries % EM_AGENT_REJOIN_SLOW_LOG_EVERY == 0;
++		r.next_renew = now + EM_AGENT_REJOIN_SLOW;
++		return missing_bands;
++	}
++	r.next_renew = now + EM_AGENT_REJOIN_BACKOFF * (1u << (most < 4 ? most : 4));
++	return mask;
++}
++
+ void em_ctrl_t::rejoin_retired_agents()
+ {
+ 	const auto now = std::chrono::steady_clock::now();
+ 	struct renew_t {
+ 		mac_address_t al;
+ 		unsigned int bands;
+-		unsigned int attempt;
++		unsigned int counts[em_freq_band_unknown];
+ 	};
+ 	std::vector<renew_t> renews;
+ 	std::vector<em_commit_info_t> commits;
++	auto bands_of = [](const radio_set_t &set) {
++		unsigned int mask = 0;
++		for (auto &radio : set) {
++			if (radio.second < em_freq_band_unknown) {
++				mask |= 1u << radio.second;
++			}
++		}
++		return mask;
++	};
++	auto bands_str = [](unsigned int mask) {
++		std::string s;
++		for (unsigned int b = em_freq_band_24; b < em_freq_band_unknown; b++) {
++			if ((mask & (1u << b)) != 0) {
++				s += (s.empty() ? "" : ", ") + std::to_string(b);
++			}
++		}
++		return s.empty() ? std::string("none") : s;
++	};
+ 
+ 	/* the controller's interface MAC, copied from its own model: the list's first model may be an
+ 	 * agent's, and models are made again below */
+@@ -863,6 +1007,11 @@ void em_ctrl_t::rejoin_retired_agents()
+ 		}
+ 	}
+ 	{
++		/* the models' radios and listed radios are written on the ems' threads under the topology
++		 * lock (an M1, a Topology Response, an AP Capability Report): read them under it. Taken
++		 * before the liveness lock, the order update_network_topology takes them in; the em map's
++		 * lock innermost. */
++		std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+ 		std::lock_guard<std::mutex> lock(m_liveness_mutex);
+ 		for (auto it = m_retired_agents.begin(); it != m_retired_agents.end(); ) {
+ 			retired_agent_t &r = it->second;
+@@ -870,19 +1019,98 @@ void em_ctrl_t::rejoin_retired_agents()
+ 			dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(it->first.c_str()), al);
+ 			dm_easy_mesh_t *dm = m_data_model.get_data_model(GLOBAL_NET_ID, al);
+ 
++			/* The radios its rejoin waits for: those it had at its retirement and those it lists
++			 * now (its last Topology Response's AP Operational BSS TLV). One of the former is left
++			 * out only when that response no longer lists it at all: a radio listed with no BSS
++			 * (redoing WSC, its configuration failed) is still waited for, and the slow retry
++			 * bounds the wait for one really gone. Missing: expected, its RUID not in the model. */
++			radio_set_t missing = r.radios;
++			if (dm != NULL) {
++				mac_address_t listed_macs[EM_MAX_BANDS];
++				unsigned int num_listed = 0;
++				const bool known = dm->get_listed_radios(listed_macs, EM_MAX_BANDS, &num_listed);
++				std::vector<std::string> listed;
++				for (unsigned int u = 0; u < num_listed; u++) {
++					listed.push_back(util::mac_to_string(listed_macs[u]));
++				}
++				radio_set_t model;
++				for (unsigned int i = 0; i < dm->get_num_radios(); i++) {
++					model.emplace_back(util::mac_to_string(dm->get_radio_by_ref(i).m_radio_info.intf.mac),
++						static_cast<unsigned int>(dm->get_radio_by_ref(i).m_radio_info.band));
++				}
++				/* back: the radio in the model and its WSC done with this controller. Being in the
++				 * model proves nothing alone: an AP Capability Report adds a radio by its RUID
++				 * without an M1. The mark is the radio's em, on this model, past M2, and not one
++				 * the controller marked misconfigured (em.cpp on a renew, em_orch_ctrl.cpp), the
++				 * only failure state after it. */
++				auto wsc_done = [&](const std::string &ruid) {
++					pthread_mutex_lock(&m_mutex);
++					em_t *em = static_cast<em_t *>(hash_map_get(m_em_map, ruid.c_str()));
++					bool done = em != NULL && em->get_data_model() == dm && em->get_state() >= em_state_ctrl_wsc_m2_sent &&
++						em->get_state() != em_state_ctrl_misconfigured;
++					pthread_mutex_unlock(&m_mutex);
++					return done;
++				};
++				missing = rejoin_missing_radios(r.radios, known, listed, model, wsc_done);
++			}
++
++			if (dm != NULL && r.instance != 0 && dm->get_id() != r.instance) {
++				/* its model made again (by the rejoin's commit or its own Search) took a new
++				 * instance: the one it had back, unless another model holds it now */
++				bool held = false;
++				for (dm_easy_mesh_t *other = m_data_model.get_first_dm(); other != NULL && !held;
++						other = m_data_model.get_next_dm(other)) {
++					held = other != dm && other->get_id() == r.instance;
++				}
++				if (!held) {
++					em_printfout("Agent %s's model takes back its DataElements instance %d (made again as %d)",
++						it->first.c_str(), r.instance, dm->get_id());
++					dm->set_id(r.instance);
++				} else {
++					em_printfout("Agent %s's model keeps instance %d: its instance %d is another model's now",
++						it->first.c_str(), dm->get_id(), r.instance);
++					r.instance = 0;
++				}
++			}
+ 			if (r.heard && dm != NULL && dm->get_num_radios() > 0) {
+-				/* its M1s rebuilt it: rejoined */
+-				em_printfout("Agent %s rejoined %ld s after it was heard again: %u radios rebuilt from its M1s, "
+-					"%u renews sent", it->first.c_str(),
+-					static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(now - r.heard_at).count()),
+-					dm->get_num_radios(), r.renews);
+-				it = m_retired_agents.erase(it);
+-				continue;
++				unsigned int back = 0;
++				for (unsigned int i = 0; i < dm->get_num_radios(); i++) {
++					em_freq_band_t band = dm->get_radio_by_ref(i).m_radio_info.band;
++					back |= (band < em_freq_band_unknown) ? (1u << band) : 0;
++				}
++				if (missing.empty()) {
++					/* its M1s rebuilt every radio it has: rejoined */
++					em_printfout("Agent %s rejoined %ld s after it was heard again: all %u radios rebuilt from its "
++						"M1s (bands %s), %u BSSs, %u renews sent", it->first.c_str(),
++						static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(now - r.heard_at).count()),
++						dm->get_num_radios(), bands_str(back).c_str(), dm->get_num_bss(), r.renews);
++					it = m_retired_agents.erase(it);
++					continue;
++				}
++				if (dm->get_num_radios() != r.back_logged) {
++					r.back_logged = dm->get_num_radios();
++					em_printfout("Agent %s partly rejoined: %u of %zu radios rebuilt (bands %s), band(s) %s still "
++						"missing", it->first.c_str(), dm->get_num_radios(), dm->get_num_radios() + missing.size(),
++						bands_str(back).c_str(), bands_str(bands_of(missing)).c_str());
++				}
+ 			}
+ 			if (!r.heard || now < r.next_renew) {
+ 				++it;
+ 				continue;
+ 			}
++			if (now - r.last_frame > EM_AGENT_RETIRE_AFTER) {
++				/* heard, then silent again: its rejoin starts over at its next frame */
++				em_printfout("Agent %s unheard again for %ld s during its rejoin: it starts over at its next frame",
++					it->first.c_str(),
++					static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(now - r.last_frame).count()));
++				r.heard = false;
++				r.renews = 0;
++				r.renewed.clear();
++				r.adaptive = false;
++				r.slow_retries = 0;
++				++it;
++				continue;
++			}
+ 			if (dm == NULL) {
+ 				if (r.remade) {
+ 					/* made once already and still missing: left to the agent's own search */
+@@ -902,26 +1130,31 @@ void em_ctrl_t::rejoin_retired_agents()
+ 				++it;
+ 				continue;
+ 			}
+-			if (r.renews >= EM_AGENT_REJOIN_RENEWS) {
+-				/* the last renew's back-off passed with no M1: retired again (a model made again for it
+-				 * goes as a retiring agent's would), its discoveries alone ignored for a while */
+-				em_printfout("Agent %s heard again after its retirement but sent no M1 after %u renews: retired "
+-					"again, its Topology Discovery alone ignored for %ld s", it->first.c_str(), r.renews,
+-					static_cast<long>(EM_AGENT_REJOIN_QUIET.count()));
+-				r.heard = false;
+-				r.renews = 0;
+-				r.remade = false;
+-				r.removed = (dm == NULL);
+-				r.quiet_until = now + EM_AGENT_REJOIN_QUIET;
+-				++it;
+-				continue;
++
++			unsigned int missing_bands = bands_of(missing);
++			bool slow_log = false;
++			unsigned int mask = rejoin_plan_renew(r, missing_bands, now, &slow_log);
++			if (slow_log) {
++				if (dm->get_num_radios() > 0) {
++					em_printfout("Agent %s still without band(s) %s after %u renews each: a Renew for them "
++						"every %ld s (retry %u)", it->first.c_str(), bands_str(missing_bands).c_str(),
++						EM_AGENT_REJOIN_RENEWS, static_cast<long>(EM_AGENT_REJOIN_SLOW.count()), r.slow_retries);
++				} else {
++					em_printfout("Agent %s heard (frames from it) but sent no M1 after %u renews: its own side "
++						"does not onboard; a Renew per band every %ld s (retry %u)", it->first.c_str(), r.renews,
++						static_cast<long>(EM_AGENT_REJOIN_SLOW.count()), r.slow_retries);
++				}
+ 			}
+-			r.renews++;
+-			r.next_renew = now + EM_AGENT_REJOIN_BACKOFF * (1u << (r.renews - 1));
+ 			renew_t renew = {};
+ 			memcpy(renew.al, al, sizeof(mac_address_t));
+-			renew.bands = r.bands;
+-			renew.attempt = r.renews;
++			renew.bands = mask;
++			unsigned int sent_bands = (mask != 0) ? mask : ((1u << em_freq_band_24) | (1u << em_freq_band_5));
++			for (unsigned int b = em_freq_band_24; b < em_freq_band_unknown; b++) {
++				if ((sent_bands & (1u << b)) != 0) {
++					renew.counts[b] = ++r.renewed[b];
++				}
++			}
++			r.renews++;
+ 			renews.push_back(renew);
+ 			++it;
+ 		}
+@@ -942,9 +1175,9 @@ void em_ctrl_t::rejoin_retired_agents()
+ 				continue;
+ 			}
+ 			int rc = send_rejoin_renew(renew.al, ctrl_mac, static_cast<em_freq_band_t>(b));
+-			em_printfout("Agent %s heard again after its retirement: AP-Autoconfiguration Renew %u of %u, band %u, "
+-				"rc %d (its radios to be rebuilt from its M1s)", util::mac_to_string(renew.al).c_str(), renew.attempt,
+-				EM_AGENT_REJOIN_RENEWS, b, rc);
++			em_printfout("Agent %s heard again after its retirement: AP-Autoconfiguration Renew for band %u (%u of %u "
++				"for it), rc %d (its radios to be rebuilt from its M1s)", util::mac_to_string(renew.al).c_str(), b,
++				renew.counts[b], EM_AGENT_REJOIN_RENEWS, rc);
+ 		}
+ 	}
+ }
+@@ -1048,10 +1281,13 @@ void em_ctrl_t::retire_silent_agents()
+ 			r.since = now;
+ 			r.profile = dm->get_device()->m_device_info.profile;
+ 			r.is_emplus = dm->get_device()->m_device_info.is_emplus_agent;
++			r.instance = dm->get_id();
+ 			for (unsigned int i = 0; i < dm->get_num_radios(); i++) {
+ 				em_freq_band_t band = dm->get_radio_by_ref(i).m_radio_info.band;
+ 				if (band < em_freq_band_unknown) {
+ 					r.bands |= 1u << band;
++					r.radios.emplace_back(util::mac_to_string(dm->get_radio_by_ref(i).m_radio_info.intf.mac),
++						static_cast<unsigned int>(band));
+ 				}
+ 			}
+ 			const unsigned int radios = dm->get_num_radios();
+@@ -1663,6 +1899,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+     em_supported_service_t svc = {};
+     uint8_t is_emplus;
+     unsigned short msg_type;
++    bool neighbor_only = false;
+ 
+     assert(len > ((sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))));
+     if (len < ((sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)))) {
+@@ -1828,6 +2065,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+         case em_msg_type_topo_notif:
+             if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)),
+                     len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_bss_id(&bssid) == false) {
++                neighbor_only = true;
+                 em_t *candidate = static_cast<em_t *> (hash_map_get_first(m_em_map));
+                 while (candidate != NULL) {
+                     if (!candidate->is_al_interface_em() &&
+@@ -2066,10 +2304,14 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+     }
+ 
+     /* Any 1905 frame from a retiring or retired agent, a Topology Discovery too (which
+-     * maps to no em), starts its rejoin */
+-    note_retired_agent_heard(hdr->src, msg_type == em_msg_type_topo_disc);
+-    if (em != NULL) {
+-        note_agent_activity(hdr->src);
++     * maps to no em), starts its rejoin, and any frame from it mapped to an em is its activity;
++     * not a neighbor-only Topology Notification, which is about it, not from it (see
++     * counts_as_agent_activity) */
++    if (counts_as_agent_activity(msg_type, neighbor_only)) {
++        note_retired_agent_heard(hdr->src, msg_type == em_msg_type_topo_disc);
++        if (em != NULL) {
++            note_agent_activity(hdr->src);
++        }
+     }
+ 
+     return em;
+diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
+index 51143461..6e3fadb6 100644
+--- a/src/dm/dm_easy_mesh.cpp
++++ b/src/dm/dm_easy_mesh.cpp
+@@ -2283,6 +2283,20 @@ unsigned int dm_easy_mesh_t::note_reported_radios(const mac_address_t *reported,
+     return stale;
+ }
+ 
++void dm_easy_mesh_t::note_listed_radios(const mac_address_t *listed, unsigned int num_listed)
++{
++    m_num_listed_radio = (num_listed < EM_MAX_BANDS) ? num_listed : EM_MAX_BANDS;
++    memcpy(m_listed_radio, listed, m_num_listed_radio * sizeof(mac_address_t));
++    m_listed_radio_known = true;
++}
++
++bool dm_easy_mesh_t::get_listed_radios(mac_address_t *listed, unsigned int max, unsigned int *num) const
++{
++    *num = (m_num_listed_radio < max) ? m_num_listed_radio : max;
++    memcpy(listed, m_listed_radio, *num * sizeof(mac_address_t));
++    return m_listed_radio_known;
++}
++
+ bool dm_easy_mesh_t::take_stale_radio(mac_address_t ruid)
+ {
+     if (m_num_stale_radio == 0) {
+@@ -3908,6 +3922,8 @@ void dm_easy_mesh_t::reset()
+     m_num_radios = 0;
+     m_num_unreported_radio = 0;
+     m_num_stale_radio = 0;
++    m_listed_radio_known = false;
++    m_num_listed_radio = 0;
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
+@@ -3950,6 +3966,8 @@ dm_easy_mesh_t::dm_easy_mesh_t()
+     m_num_radios = 0;
+     m_num_unreported_radio = 0;
+     m_num_stale_radio = 0;
++    m_listed_radio_known = false;
++    m_num_listed_radio = 0;
+     m_num_opclass = 0;
+     m_num_policy = 0;
+     m_num_bss = 0;
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 586572ca..ec68da0b 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -2243,6 +2243,7 @@ int em_configuration_t::handle_ap_operational_bss(unsigned char *buff, unsigned
+                     reinterpret_cast<const em_ap_operational_bss_t *> (p)->ssid_len;
+             }
+         }
++        dm->note_listed_radios(listed, num_listed);
+         if (dm->note_reported_radios(listed, num_listed) > 0) {
+             em_printfout("Operational BSS TLV: a radio of agent %s left out of %d responses in a row, to be retired",
+                 util::mac_to_string(dm->get_agent_al_interface_mac()).c_str(), EM_RADIO_UNREPORTED_RESPONSES);
+diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
+index 0a1235ee..b188735f 100644
+--- a/tests/test_l1_em_ctrl.cpp
++++ b/tests/test_l1_em_ctrl.cpp
+@@ -3930,3 +3930,139 @@ TEST_F(em_ctrl_t_Test, io_process_invalid_event_type)
+     free(evt);
+     std::cout << "Exiting io_process_invalid_event_type test" << std::endl;
+ }
++
++// 0270's rejoin: the radios a retired agent's rejoin waits for, and its renews.
++namespace {
++const std::string R1 = "02:00:00:00:00:01", R2 = "02:00:00:00:00:02", R3 = "02:00:00:00:00:03";
++const std::string R5A = "02:00:00:00:05:0a", R5B = "02:00:00:00:05:0b", R4 = "02:00:00:00:00:04";
++bool all_done(const std::string &) { return true; }
++
++/* the caller's part of a pass: the bands sent counted (the default bands when the mask is 0) */
++unsigned int plan_pass(em_ctrl_t::retired_agent_t &r, unsigned int missing_bands,
++    std::chrono::steady_clock::time_point now, bool *slow_log)
++{
++    unsigned int mask = em_ctrl_t::rejoin_plan_renew(r, missing_bands, now, slow_log);
++    unsigned int sent = (mask != 0) ? mask : ((1u << em_freq_band_24) | (1u << em_freq_band_5));
++    for (unsigned int b = em_freq_band_24; b < em_freq_band_unknown; b++) {
++        if ((sent & (1u << b)) != 0) {
++            r.renewed[b]++;
++        }
++    }
++    r.renews++;
++    return mask;
++}
++}
++
++TEST(em_ctrl_t_rejoin, MissingBeforeAnyListIsTheSnapshotLessTheRadiosBack) {
++    em_ctrl_t::radio_set_t snapshot = {{R1, em_freq_band_24}, {R2, em_freq_band_5}, {R3, em_freq_band_6}};
++    em_ctrl_t::radio_set_t model = {{R1, em_freq_band_24}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, false, {}, model, all_done);
++    ASSERT_EQ(missing.size(), 2u);
++    EXPECT_EQ(missing[0].first, R2);
++    EXPECT_EQ(missing[1].first, R3);
++    EXPECT_EQ(missing[1].second, static_cast<unsigned int>(em_freq_band_6));
++}
++
++TEST(em_ctrl_t_rejoin, RadioInTheModelWithoutItsWscIsStillMissing) {
++    // an AP Capability Report puts every radio in the model by its RUID, without an M1
++    em_ctrl_t::radio_set_t snapshot = {{R1, em_freq_band_24}, {R2, em_freq_band_5}, {R3, em_freq_band_6}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, false, {}, snapshot,
++        [](const std::string &ruid) { return ruid == R1; });
++    ASSERT_EQ(missing.size(), 2u);
++    EXPECT_EQ(missing[0].first, R2);
++    EXPECT_EQ(missing[1].first, R3);
++}
++
++TEST(em_ctrl_t_rejoin, RadioListedWithoutBssIsStillWaitedFor) {
++    // listed (with or without a BSS up): still expected, so missing while not back
++    em_ctrl_t::radio_set_t snapshot = {{R1, em_freq_band_24}, {R2, em_freq_band_5}, {R3, em_freq_band_6}};
++    em_ctrl_t::radio_set_t model = {{R1, em_freq_band_24}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, true, {R1, R2, R3}, model, all_done);
++    ASSERT_EQ(missing.size(), 2u);
++}
++
++TEST(em_ctrl_t_rejoin, SnapshotRadioNoLongerListedIsLeftOut) {
++    em_ctrl_t::radio_set_t snapshot = {{R1, em_freq_band_24}, {R2, em_freq_band_5}, {R3, em_freq_band_6}};
++    em_ctrl_t::radio_set_t model = {{R1, em_freq_band_24}, {R2, em_freq_band_5}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, true, {R1, R2}, model, all_done);
++    EXPECT_TRUE(missing.empty());
++}
++
++TEST(em_ctrl_t_rejoin, NewListedRadioIsExpectedWithItsModelBand) {
++    em_ctrl_t::radio_set_t snapshot = {{R1, em_freq_band_24}};
++    em_ctrl_t::radio_set_t model = {{R1, em_freq_band_24}, {R4, em_freq_band_5}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, true, {R1, R4}, model,
++        [](const std::string &ruid) { return ruid == R1; });
++    ASSERT_EQ(missing.size(), 1u);
++    EXPECT_EQ(missing[0].first, R4);
++    EXPECT_EQ(missing[0].second, static_cast<unsigned int>(em_freq_band_5));
++}
++
++TEST(em_ctrl_t_rejoin, TwoRadiosOnOneBandAreMatchedByRuid) {
++    // a tri-band unit's low and high 5 GHz radios: one back does not satisfy both
++    em_ctrl_t::radio_set_t snapshot = {{R5A, em_freq_band_5}, {R5B, em_freq_band_5}};
++    em_ctrl_t::radio_set_t model = {{R5A, em_freq_band_5}};
++    auto missing = em_ctrl_t::rejoin_missing_radios(snapshot, false, {}, model, all_done);
++    ASSERT_EQ(missing.size(), 1u);
++    EXPECT_EQ(missing[0].first, R5B);
++}
++
++TEST(em_ctrl_t_rejoin, OneRenewFirstThenTheOtherMissingBandsAtOnce) {
++    em_ctrl_t::retired_agent_t r;
++    auto now = std::chrono::steady_clock::now();
++    bool slow = false;
++    unsigned int all = (1u << em_freq_band_24) | (1u << em_freq_band_5) | (1u << em_freq_band_6);
++    EXPECT_EQ(plan_pass(r, all, now, &slow), 1u << em_freq_band_24);
++    EXPECT_TRUE(r.adaptive);
++    EXPECT_EQ(r.next_renew, now + std::chrono::seconds(5));
++    // the settle: band 0's radio back alone, so bands 1 and 3 at once
++    unsigned int rest = (1u << em_freq_band_5) | (1u << em_freq_band_6);
++    EXPECT_EQ(plan_pass(r, rest, now, &slow), rest);
++    EXPECT_FALSE(r.adaptive);
++    EXPECT_EQ(r.next_renew, now + std::chrono::seconds(60));
++    EXPECT_FALSE(slow);
++}
++
++TEST(em_ctrl_t_rejoin, PerBandRenewsThenASlowRetryLoggedFirstAndEverySixth) {
++    em_ctrl_t::retired_agent_t r;
++    auto now = std::chrono::steady_clock::now();
++    bool slow = false;
++    unsigned int band5 = 1u << em_freq_band_5;
++    plan_pass(r, band5, now, &slow);    // the first Renew
++    plan_pass(r, band5, now, &slow);    // after the settle
++    plan_pass(r, band5, now, &slow);    // the third for band 1
++    EXPECT_EQ(r.renewed[em_freq_band_5], 3u);
++    std::vector<unsigned int> logged;
++    for (unsigned int i = 1; i <= 12; i++) {
++        EXPECT_EQ(plan_pass(r, band5, now, &slow), band5);
++        EXPECT_EQ(r.next_renew, now + std::chrono::seconds(600));
++        if (slow) {
++            logged.push_back(r.slow_retries);
++        }
++    }
++    ASSERT_EQ(logged.size(), 3u);
++    EXPECT_EQ(logged[0], 1u);
++    EXPECT_EQ(logged[1], 6u);
++    EXPECT_EQ(logged[2], 12u);
++}
++
++TEST(em_ctrl_t_rejoin, NoKnownRadioRenewsTheDefaultBands) {
++    em_ctrl_t::retired_agent_t r;
++    auto now = std::chrono::steady_clock::now();
++    bool slow = false;
++    EXPECT_EQ(plan_pass(r, 0, now, &slow), 0u);
++    EXPECT_EQ(plan_pass(r, 0, now, &slow), 0u);
++    EXPECT_EQ(plan_pass(r, 0, now, &slow), 0u);
++    EXPECT_EQ(r.renewed[em_freq_band_24], 3u);
++    EXPECT_EQ(plan_pass(r, 0, now, &slow), 0u);
++    EXPECT_TRUE(slow);
++}
++
++TEST(em_ctrl_t_rejoin, NeighborOnlyTopologyNotificationIsNotItsSendersActivity) {
++    // about an agent (its 1905 neighbors changed), not from it: no liveness, no rejoin start
++    EXPECT_FALSE(em_ctrl_t::counts_as_agent_activity(em_msg_type_topo_notif, true));
++    // a notification with a BSS (a client's association) and every other frame count
++    EXPECT_TRUE(em_ctrl_t::counts_as_agent_activity(em_msg_type_topo_notif, false));
++    EXPECT_TRUE(em_ctrl_t::counts_as_agent_activity(em_msg_type_topo_resp, false));
++    EXPECT_TRUE(em_ctrl_t::counts_as_agent_activity(em_msg_type_topo_disc, false));
++}
