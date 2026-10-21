@@ -24,7 +24,12 @@ command, em or row meets a half-removed agent:
   topology holds the model's address and every topology update walks all its nodes: a node left
   in is read after the model is freed (the lab, 20 Oct: the controller crashed at the first
   update after a retirement). The DataElements are built from the models, so the agent leaves
-  them too.
+  them too. No pointer into a model is kept across a retirement or a model made again: the
+  co-located agent's AL MAC and the controller's interface MAC are copied first, the controller's
+  from its own model. The network the model list hands out is the one held in its first model,
+  and that can be the retired agent's model (the lab, 21 Oct: the controller crashed at the next
+  model's check after retiring an agent whose model had been made again at its rejoin and come
+  first).
 The co-located agent and the controller's own model are never retired. For 600 s after the
 controller's start nothing is retired, and an agent known only from the database (not yet heard
 in this run) starts its clock at the first pass after that, so agents that reboot with the
@@ -190,10 +195,10 @@ index 10533de..835f108 100644
  {
      //dm_orch_type_t type = dm_orch_type_none;
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index c662da4..e395e11 100644
+index c662da4..fe84599 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -724,10 +724,342 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
+@@ -724,10 +724,362 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
  
  void em_ctrl_t::handle_dirty_dm()
  {
@@ -320,7 +325,17 @@ index c662da4..e395e11 100644
 +	std::vector<renew_t> renews;
 +	std::vector<em_commit_info_t> commits;
 +
-+	dm_easy_mesh_t *ctrl_dm = m_data_model.get_first_dm();
++	/* the controller's interface MAC, copied from its own model: the list's first model may be an
++	 * agent's, and models are made again below */
++	mac_address_t ctrl_mac = {0};
++	bool have_ctrl = false;
++	for (dm_easy_mesh_t *model = m_data_model.get_first_dm(); model != NULL; model = m_data_model.get_next_dm(model)) {
++		if (model->is_controller()) {
++			memcpy(ctrl_mac, model->get_controller_interface_mac(), sizeof(mac_address_t));
++			have_ctrl = true;
++			break;
++		}
++	}
 +	{
 +		std::lock_guard<std::mutex> lock(m_liveness_mutex);
 +		for (auto it = m_retired_agents.begin(); it != m_retired_agents.end(); ) {
@@ -392,7 +407,7 @@ index c662da4..e395e11 100644
 +		io_process(em_bus_event_type_dm_commit, reinterpret_cast<unsigned char *>(&commit), sizeof(em_commit_info_t));
 +	}
 +	for (auto &renew : renews) {
-+		if (ctrl_dm == NULL) {
++		if (!have_ctrl) {
 +			break;
 +		}
 +		unsigned int bands = renew.bands != 0 ? renew.bands : (1u << em_freq_band_24) | (1u << em_freq_band_5);
@@ -400,7 +415,7 @@ index c662da4..e395e11 100644
 +			if ((bands & (1u << b)) == 0) {
 +				continue;
 +			}
-+			int rc = send_rejoin_renew(renew.al, ctrl_dm->get_controller_interface_mac(), static_cast<em_freq_band_t>(b));
++			int rc = send_rejoin_renew(renew.al, ctrl_mac, static_cast<em_freq_band_t>(b));
 +			em_printfout("Agent %s heard again after its retirement: AP-Autoconfiguration Renew %u of %u, band %u, "
 +				"rc %d (its radios to be rebuilt from its M1s)", util::mac_to_string(renew.al).c_str(), renew.attempt,
 +				EM_AGENT_REJOIN_RENEWS, b, rc);
@@ -416,7 +431,18 @@ index c662da4..e395e11 100644
 +	}
 +
 +	static const mac_address_t no_mac = {0};
-+	dm_network_t *network = m_data_model.get_first_network();
++	/* the co-located agent's AL MAC, copied: the network is the one held in the list's first model,
++	 * which may be the model retired below (the lab, 21 Oct: the next model's check read it from the
++	 * deleted model) */
++	mac_address_t colocated_al = {0};
++	bool have_network = false;
++	{
++		dm_network_t *network = m_data_model.get_first_network();
++		if (network != NULL) {
++			memcpy(colocated_al, network->get_colocated_agent_interface_mac(), sizeof(mac_address_t));
++			have_network = true;
++		}
++	}
 +	{
 +		std::lock_guard<std::mutex> lock(m_liveness_mutex);
 +		std::chrono::steady_clock::time_point newest{};
@@ -426,8 +452,8 @@ index c662da4..e395e11 100644
 +			}
 +		}
 +		bool colocated_heard = false;
-+		if (network != NULL) {
-+			auto colocated = m_agent_liveness.find(util::mac_to_string(network->get_colocated_agent_interface_mac()));
++		if (have_network) {
++			auto colocated = m_agent_liveness.find(util::mac_to_string(colocated_al));
 +			colocated_heard = colocated != m_agent_liveness.end() && now - colocated->second.last_seen <= EM_AGENT_STALL;
 +		}
 +		if (!colocated_heard || now - newest > EM_AGENT_STALL) {
@@ -450,8 +476,7 @@ index c662da4..e395e11 100644
 +		dm_easy_mesh_t *next = m_data_model.get_next_dm(dm);
 +		unsigned char *al = dm->get_agent_al_interface_mac();
 +		if (dm->is_controller() || memcmp(al, no_mac, sizeof(mac_address_t)) == 0 ||
-+				(network != NULL && memcmp(al, network->get_colocated_agent_interface_mac(),
-+					sizeof(mac_address_t)) == 0)) {
++				(have_network && memcmp(al, colocated_al, sizeof(mac_address_t)) == 0)) {
 +			dm = next;
 +			continue;
 +		}
@@ -536,7 +561,7 @@ index c662da4..e395e11 100644
  void em_ctrl_t::retire_stale_radios()
  {
  	for (dm_easy_mesh_t *dm = m_data_model.get_first_dm(); dm != NULL; dm = m_data_model.get_next_dm(dm)) {
-@@ -1632,6 +1964,9 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+@@ -1632,6 +1984,9 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
              break;
      }
  
