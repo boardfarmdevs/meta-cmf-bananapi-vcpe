@@ -19,8 +19,12 @@ command, em or row meets a half-removed agent:
   class rows deleted, its BSSs removed from the model and their rows deleted at the BSS list
   update;
 - once the model has no radio and nothing left to write, its stations' rows and its device's row
-  are deleted and the model is removed from the list. The DataElements are built from the models,
-  so the agent leaves them too.
+  are deleted, its node is taken out of the network topology and the model is deleted from the
+  list (deinitialised, as delete_data_model does), the last two under the topology lock. The
+  topology holds the model's address and every topology update walks all its nodes: a node left
+  in is read after the model is freed (the lab, 20 Oct: the controller crashed at the first
+  update after a retirement). The DataElements are built from the models, so the agent leaves
+  them too.
 The co-located agent and the controller's own model are never retired. For 600 s after the
 controller's start nothing is retired, and an agent known only from the database (not yet heard
 in this run) starts its clock at the first pass after that, so agents that reboot with the
@@ -46,7 +50,7 @@ rejoin at once, and an agent that boots again searches and onboards as any agent
 Upstream-Status: Pending
 ---
 diff --git a/inc/dm_easy_mesh.h b/inc/dm_easy_mesh.h
-index d4332260..d0c37904 100644
+index d433226..d0c3790 100644
 --- a/inc/dm_easy_mesh.h
 +++ b/inc/dm_easy_mesh.h
 @@ -1950,6 +1950,13 @@ public:
@@ -64,7 +68,7 @@ index d4332260..d0c37904 100644
  	 * @brief Removes a radio the agent no longer has: its BSS rows (recorded for the database,
  	 * as 0251 does), its operating classes and capabilities, the radio, and its count.
 diff --git a/inc/dm_easy_mesh_ctrl.h b/inc/dm_easy_mesh_ctrl.h
-index edd05334..50056fce 100644
+index edd0533..50056fc 100644
 --- a/inc/dm_easy_mesh_ctrl.h
 +++ b/inc/dm_easy_mesh_ctrl.h
 @@ -1858,6 +1858,14 @@ public:
@@ -83,7 +87,7 @@ index edd05334..50056fce 100644
  	/**!
  	 * @brief Deletes a data model associated with the given network ID and AL MAC address.
 diff --git a/inc/em.h b/inc/em.h
-index 03c44390..0b126f39 100644
+index 03c4439..0b126f3 100644
 --- a/inc/em.h
 +++ b/inc/em.h
 @@ -218,6 +218,9 @@ class em_t :
@@ -97,7 +101,7 @@ index 03c44390..0b126f39 100644
  	/**!
  	 * @brief Initializes the system or component.
 diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
-index ec1dfaab..f6db2066 100644
+index ec1dfaa..f6db206 100644
 --- a/inc/em_ctrl.h
 +++ b/inc/em_ctrl.h
 @@ -59,6 +59,36 @@ class em_ctrl_t : public em_mgr_t {
@@ -138,10 +142,10 @@ index ec1dfaab..f6db2066 100644
          bool associated = false;
          em_backhaul::access_point ap;
 diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
-index 8183e481..7f50c27f 100644
+index 10533de..835f108 100644
 --- a/src/ctrl/dm_easy_mesh_ctrl.cpp
 +++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
-@@ -4988,6 +4988,36 @@ void dm_easy_mesh_ctrl_t::retire_radio(dm_easy_mesh_t *dm, const unsigned char *
+@@ -4988,6 +4988,43 @@ void dm_easy_mesh_ctrl_t::retire_radio(dm_easy_mesh_t *dm, const unsigned char *
      dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
  }
  
@@ -162,15 +166,22 @@ index 8183e481..7f50c27f 100644
 +        }
 +    }
 +
-+    /* the device's row, then the model by its list key (the network and the AL MAC) */
++    /* the device's row */
 +    em_device_info_t info = *dm->get_device()->get_device_info();
 +    dm_device_list_t::update_db(m_db_client, dm_orch_type_db_delete, &info);
 +
-+    mac_addr_str_t al_str;
-+    em_2xlong_string_t key;
-+    dm_easy_mesh_t::macbytes_to_string(dm->get_agent_al_interface_mac(), al_str);
-+    snprintf(key, sizeof(key), "%s@%s", info.id.net_id, al_str);
-+    m_data_model_list.remove_device(key);
++    /* its node in the network topology, then the model: the topology holds the model's address
++     * and every update walks all its nodes, so a node left behind is read after the model is
++     * freed. Both under the topology lock, which the model list's readers take. */
++    mac_address_t al;
++    memcpy(al, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    if (g_network_topology != NULL) {
++        g_network_topology->remove(dm);
++    }
++    if (m_data_model_list.get_data_model(info.id.net_id, al) == dm) {
++        m_data_model_list.delete_data_model(info.id.net_id, al);
++    }
 +
 +    return stations;
 +}
@@ -179,7 +190,7 @@ index 8183e481..7f50c27f 100644
  {
      //dm_orch_type_t type = dm_orch_type_none;
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index c20974d4..260eacbc 100644
+index c662da4..e395e11 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
 @@ -724,10 +724,342 @@ void em_ctrl_t::handle_failed_conn_msg(unsigned char *data, unsigned int len)
@@ -536,10 +547,10 @@ index c20974d4..260eacbc 100644
          note_agent_activity(hdr->src);
      }
 diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
-index c4c2bf42..36e3ebb6 100644
+index f625f65..5114346 100644
 --- a/src/dm/dm_easy_mesh.cpp
 +++ b/src/dm/dm_easy_mesh.cpp
-@@ -2293,6 +2293,27 @@ bool dm_easy_mesh_t::take_stale_radio(mac_address_t ruid)
+@@ -2292,6 +2292,27 @@ bool dm_easy_mesh_t::take_stale_radio(mac_address_t ruid)
      return true;
  }
  
