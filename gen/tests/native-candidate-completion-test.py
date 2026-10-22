@@ -143,6 +143,7 @@ struct em_t : em_metrics_t {
     void set_state(int value) { state = value; }
     unsigned short get_unassoc_sta_query_msg_id() { return mid; }
     void clear_unassoc_sta_query_msg_id() { mid = 0; }
+    void log_unassoc_sta_query_end(const char *) {}
     dm_easy_mesh_t *get_data_model() { return &model; }
     unsigned char *get_radio_interface_mac() { return radio; }
 };

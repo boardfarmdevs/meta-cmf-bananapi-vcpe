@@ -70,6 +70,9 @@ struct dm_easy_mesh_t {
     unsigned int m_num_removed_bss = 0;    /* 0251: the BSS rows removed, for the database */
     unsigned int m_num_unreported_bsta = 0;    /* 0254: learned stations between parents */
     unsigned int m_num_unreported_radio = 0, m_num_stale_radio = 0;    /* 0253: radios to retire */
+    bool m_listed_radio_known;    /* 0276: the radios its last Topology Response listed */
+    unsigned int m_num_listed_radio;
+    int m_instance_num;    /* 0277: -1 until set */
     em_db_cfg_param_t m_db_cfg_param;
     bool m_colocated, m_is_ctlr;
     dm_device_t m_device;
