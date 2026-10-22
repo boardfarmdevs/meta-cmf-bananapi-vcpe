@@ -243,6 +243,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0277-ctrl-a-dataelements-getter-reads-only-the-rows-its-table-lists.patch \
     file://0278-dm-a-bss-removed-by-its-key-is-the-row-the-key-names.patch \
     file://0279-tests-a-default-run-reaches-its-end.patch \
+    file://0280-em-a-deleted-node-is-freed-after-its-thread-ended.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
