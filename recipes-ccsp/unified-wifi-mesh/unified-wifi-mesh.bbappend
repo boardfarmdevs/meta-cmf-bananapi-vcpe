@@ -240,6 +240,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0274-dm-a-bss-row-update-matches-its-id.patch \
     file://0275-db-a-unique-row-key-and-replace-into.patch \
     file://0276-ctrl-a-rejoin-waits-for-every-radio-the-agent-has.patch \
+    file://0277-ctrl-a-dataelements-getter-reads-only-the-rows-its-table-lists.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
