@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The unified-wifi-mesh unit suites on the patched tree, as checks.yml's unit job runs them:
-# OneWifi at the image's ccsp-one-wifi SRCREV (gen/tests/onewifi-upstream.srcrev, from
-# meta-cmf-broadband's ccsp-one-wifi.bbappend), fetched by its hash, with its setup and its he_bus
-# and webconfig libraries, which is all of OneWifi the unit builds link; the patched tree (patched-tree.sh); the
-# controller's and the agent's test binaries through upstream's native makefiles read with
-# uwm-unit.mk; each binary run through uwm-unit-run.py, its whole output kept in WORKDIR/logs.
+# the patched tree (patched-tree.sh); OneWifi at the image's ccsp-one-wifi SRCREV
+# (gen/tests/onewifi-upstream.srcrev, from meta-cmf-broadband's ccsp-one-wifi.bbappend), fetched
+# by its hash, with its setup and its he_bus and webconfig libraries, which is all of OneWifi the
+# unit builds link (webconfig includes the patched tree's headers, from ../unified-wifi-mesh as
+# OneWifi's makefile names it, so the tree is made first); the controller's and the agent's test
+# binaries through upstream's native makefiles read with uwm-unit.mk; each binary run through
+# uwm-unit-run.py, its whole output kept in WORKDIR/logs.
 # OneWifi is upstream's at that commit: this repository's OneWifi patches are made on top of
 # meta-cmf-broadband's, which CI does not have, and the headers they change (wifi_base.h,
 # wifi_events.h) are none the unit builds include.
@@ -17,6 +19,9 @@ step() { echo "== $(date -u +%H:%M:%SZ) $*"; }
 mkdir -p "$work/logs" || exit 1
 work=$(cd "$work" && pwd)
 srcrev=$(tr -d '[:space:]' < "$here/onewifi-upstream.srcrev")
+
+step "the patched tree"
+bash "$here/patched-tree.sh" "$work/unified-wifi-mesh" || exit 1
 
 step "OneWifi $srcrev"
 mkdir -p "$work/OneWifi" || exit 1
@@ -35,9 +40,6 @@ for lib in libhebus libwebconfig; do
     make -j"$(nproc)" -C "$work/OneWifi" -f build/linux/bpi/makefile "$work/OneWifi/install/lib/$lib.a" \
         > "$work/logs/onewifi-$lib.log" 2>&1 || { echo "FAIL: OneWifi's $lib (logs/onewifi-$lib.log)"; exit 1; }
 done
-
-step "the patched tree"
-bash "$here/patched-tree.sh" "$work/unified-wifi-mesh" || exit 1
 
 rc=0
 for part in ctrl agent; do

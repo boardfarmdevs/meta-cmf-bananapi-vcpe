@@ -72,9 +72,10 @@ jobs:
       - name: The build packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential cmake git wget libev-dev libjansson-dev \
-            zlib1g-dev libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libavro-dev uuid-dev \
-            libmysqlcppconn-dev libreadline-dev libmariadb-dev libssl-dev libgtest-dev golang
+          sudo apt-get install -y -qq --no-install-recommends build-essential cmake git wget \
+            libev-dev libjansson-dev zlib1g-dev libnl-3-dev libnl-genl-3-dev libnl-route-3-dev \
+            libavro-dev uuid-dev libmysqlcppconn-dev libreadline-dev libmariadb-dev libssl-dev \
+            libgtest-dev libgmock-dev
       - name: cJSON 1.7.18
         run: |
           cd "$RUNNER_TEMP"
