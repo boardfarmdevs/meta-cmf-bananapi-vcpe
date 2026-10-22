@@ -161,13 +161,25 @@ EOF
 # pods publish from the gateway's start: a redeployed gateway had the image's broker (loopback
 # only) until the option ran again, after the lab's bring-up, which then waited for the pods'
 # clients' link metrics (rdk-1010, 16 and 20 October).
+# That configuration's listener is on the LAN bridge's address, which can come after the broker's
+# start: it failed to bind 14 times in 4 s, hit the start limit and stayed failed (rdk-1010, 22
+# October). So the broker waits up to 60 s for each listener address to be on the gateway, and
+# restarts every 2 s whatever ended it, with no start limit: an address that comes later, or
+# changes, recovers too. The script has no dollar brace, backslash or percent sign: systemd reads
+# them in an Exec line, and BitBake the dollar brace.
 emosa_broker_conf() {
     if [ -f ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service ]; then
         mkdir -p ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service.d
         cat > ${IMAGE_ROOTFS}${systemd_unitdir}/system/mosquitto.service.d/00-emosa.conf <<'EOF'
+[Unit]
+StartLimitIntervalSec=0
+
 [Service]
+ExecStartPre=/bin/sh -c 'c=/nvram/emosa/mqtt/mosquitto.conf; [ -f "$c" ] || c=/etc/mosquitto/mosquitto.conf; for a in $(sed -n "s/^listener [0-9][0-9]* //p" "$c"); do case $a in *[!0-9a-fA-F.:]*) continue ;; esac; n=0; until ip -o addr show | grep -qF " $a/"; do n=$((n + 1)); [ $n -le 60 ] || { echo "the listener address $a is not on the gateway after 60 s"; exit 1; }; sleep 1; done; done'
 ExecStart=
 ExecStart=/bin/sh -c 'c=/nvram/emosa/mqtt/mosquitto.conf; [ -f "$c" ] || c=/etc/mosquitto/mosquitto.conf; exec /usr/sbin/mosquitto -c "$c"'
+Restart=always
+RestartSec=2s
 EOF
     fi
 }

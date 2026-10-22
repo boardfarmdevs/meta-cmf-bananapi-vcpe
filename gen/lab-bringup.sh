@@ -156,6 +156,25 @@ print(mqtt, silent)
 PYEOF' 2>/dev/null || echo "0 0"
 }
 
+# before the pods' statistics: EMOSA's broker, where its configuration is in /nvram, active and
+# listening on 8883 (a minute at most: the unit restarts itself). A broker that is not is said as
+# itself; it showed as two minutes of pods without statistics (rdk-1010, 22 October: it had
+# started before the LAN bridge's address and stayed failed).
+broker_up() {
+    local i state='' listening=0
+    cx bpibroadband "test -f /nvram/emosa/mqtt/mosquitto.conf" 2>/dev/null || return 0
+    for i in $(seq 30); do
+        state=$(cx bpibroadband "systemctl is-active mosquitto" 2>/dev/null || true)
+        listening=$(cx bpibroadband "netstat -ltn 2>/dev/null | grep -c ':8883 ' || true" 2>/dev/null || echo 0)
+        [ "$state" = active ] && [ "${listening:-0}" -gt 0 ] && return 0
+        sleep 2
+    done
+    if [ "${listening:-0}" -gt 0 ]; then
+        die "the gateway's broker is ${state:-unknown}, listening on 8883 (systemctl status mosquitto)"
+    fi
+    die "the gateway's broker is ${state:-unknown}, not listening on 8883 (systemctl status mosquitto)"
+}
+
 # before the room: the pods publish (two minutes at most). Not one report with EMOSA's broker
 # configuration in /nvram is a fault; without it (the first deployment with EMOSA's option) a
 # warning, the room's rule naming the gap.
@@ -216,6 +235,7 @@ room() {
         systemctl start easymesh-lab.service ||
             die "the lab's runtime did not start (journalctl -u easymesh-lab.service)"
     fi
+    broker_up
     pods_published
     systemctl start "$ROOM_UNIT"
     for i in $(seq 120); do
