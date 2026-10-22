@@ -51,6 +51,13 @@ for part in ctrl agent; do
         rc=1
         continue
     fi
+    # the command transport it was built with is the unix socket (0281, em_cmd_exec.h), as the
+    # image's build checks for the daemons and libemcli
+    if ! grep -q -a -F "em_cmd transport: unix socket" "$work/unified-wifi-mesh/install/bin/onewifi_em_${part}_test"; then
+        echo "FAIL: the $part test binary does not carry the unix command transport (0281)"
+        rc=1
+        continue
+    fi
     step "$part: the run"
     ASAN_OPTIONS=detect_leaks=0 python3 -I "$here/uwm-unit-run.py" --log "$work/logs/$part-run.log" \
         "$work/unified-wifi-mesh/install/bin/onewifi_em_${part}_test" || rc=1

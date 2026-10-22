@@ -776,14 +776,34 @@ do_install_append() {
 INSANE_SKIP_${PN}_append_qemux86bpibroadband = " already-stripped ldflags textrel arch"
 SRC_URI_append_qemux86bpibroadband = " file://em-cli.tar.gz file://em_cli_pre_start_rdkb.sh file://em_cli-nvram.conf file://steer_drv.c file://steer.sh file://topology-ui file://configurator/worlds/viewer"
 
+# 0281: the command sockets are unix sockets (em_cmd_exec.h's LOCAL_CLI). em_ctrl, em_agent
+# and libemcli each build em_cmd_exec.cpp, and one built otherwise would listen or connect on
+# TCP and never meet the others: the build stops on any of them that does not carry the
+# transport's marker (EM_CMD_TRANSPORT, which its socket errors name).
+do_install_append() {
+    marker="em_cmd transport: unix socket"
+    n=0
+    for f in ${D}${bindir}/onewifi_em_ctrl ${D}${bindir}/onewifi_em_agent ${D}${libdir}/libemcli.so.*; do
+        if [ ! -f "$f" ] || [ -L "$f" ]; then
+            continue
+        fi
+        grep -q -a -F "$marker" "$f" || \
+            bbfatal "$f does not carry the unix command transport (0281): it would not meet em_ctrl, em_agent and libemcli"
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || bbfatal "no command transport binary to check (onewifi_em_ctrl, onewifi_em_agent, libemcli) in ${D}"
+    bbnote "meta-cmf-bananapi-vcpe: $n command transport binaries carry the unix socket (0281)"
+}
+
 # steer_drv: shell-side driver for commanded EasyMesh client steering. onewifi_em_cli
 # (the web UI) exposes no steer route, and the interactive TUI is not installed, so a
 # tiny C driver linking libemcli.so is the only way to submit a ClientSteer payload
-# from a script: set_remote_addr(127.0.0.1,49153) -> get_network_tree_by_file(json) ->
-# exec("steer_sta OneWifiMesh", node). Built from source here (not prebuilt) so it
-# tracks the patched libemcli ABI automatically. Controller-only: libemcli.so is
-# packaged only in the broadband config. Usage: gen/steer.sh and
-# docs/reference/commanded-steering.md.
+# from a script: set_remote_addr(127.0.0.1,49153) (an address libemcli ignores since
+# 0281: it reaches em_ctrl on the controller's unix command socket) ->
+# get_network_tree_by_file(json) -> exec("steer_sta OneWifiMesh", node). Built from
+# source here (not prebuilt) so it tracks the patched libemcli ABI automatically.
+# Controller-only: libemcli.so is packaged only in the broadband config. Usage:
+# gen/steer.sh and docs/reference/commanded-steering.md.
 # The pre-start helper normally belongs to the redundant stock CLI package, so
 # install it here as part of the BPI-owned CLI package split.
 do_install_append_qemux86bpibroadband() {
@@ -795,6 +815,10 @@ do_install_append_qemux86bpibroadband() {
     cmp ${WORKDIR}/em-cli-sources.sha256 ${WORKDIR}/em-cli-sources.expected || \
         bbfatal "EM CLI helper is stale: run gen/rebuild-em-cli-artifact.sh against this compiled workdir, commit em-cli.tar.gz and rebuild"
     install -D -m 0755 ${WORKDIR}/onewifi_em_cli ${D}${bindir}/onewifi_em_cli
+    # 0281: the prebuilt UI reaches em_ctrl only through libemcli's command transport, which
+    # the check below finds is the unix socket: it must link libemcli.so.0, not carry its own
+    ${OBJDUMP} -p ${D}${bindir}/onewifi_em_cli | grep -q -E 'NEEDED +libemcli\.so\.0$' || \
+        bbfatal "onewifi_em_cli does not link libemcli.so.0: it would not use libemcli's unix command socket (0281)"
     install -D -m 0755 ${WORKDIR}/em_cli_pre_start_rdkb.sh ${D}/usr/ccsp/EasyMesh/em_cli_pre_start_rdkb.sh
     install -d ${D}/usr/ccsp/EasyMesh/static
     # The helper archive supplies the cross-built Go binary and its canned data
