@@ -48,10 +48,10 @@ index 87ef77f..31df633 100644
  
  #endif
 diff --git a/inc/em_configuration.h b/inc/em_configuration.h
-index 83b8145..23b9290 100644
+index 10f9081..67f0cd0 100644
 --- a/inc/em_configuration.h
 +++ b/inc/em_configuration.h
-@@ -1608,6 +1608,15 @@ private:
+@@ -1633,6 +1633,15 @@ private:
      unsigned int m_wsc_m1_resends = 0;
  
  public:
@@ -65,8 +65,8 @@ index 83b8145..23b9290 100644
 +		const em_sta_info_t& sta_info);
 +
  
- 	bool send_autoconf_search_ext_chirp(em_dpp_chirp_value_t *chirp, size_t hash_len);
- 
+ 	/* Parse a received AKM Suite Capabilities TLV and store the
+ 	 * advertised fronthaul/backhaul AKMs into every BSS of the data model. Wire format:
 diff --git a/inc/em_orch.h b/inc/em_orch.h
 index ef6ab02..2b6d07f 100644
 --- a/inc/em_orch.h
@@ -81,7 +81,7 @@ index ef6ab02..2b6d07f 100644
  	 * @brief Builds candidates based on the provided command.
  	 *
 diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
-index d966752..283380c 100644
+index 1449417..b10baeb 100644
 --- a/src/agent/dm_easy_mesh_agent.cpp
 +++ b/src/agent/dm_easy_mesh_agent.cpp
 @@ -167,6 +167,17 @@ int dm_easy_mesh_agent_t::analyze_sta_list(em_bus_event_t *evt, em_cmd_t *pcmd[]
@@ -146,10 +146,10 @@ index f6a4c6c..fd8f097 100644
 +    return out;
 +}
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
-index 99e3516..14da5fb 100644
+index e65dd41..be85766 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -2235,8 +2235,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+@@ -2255,8 +2255,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
                  if (updated_any) {
                      dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
                  } else {
@@ -159,8 +159,8 @@ index 99e3516..14da5fb 100644
                  }
              } else {
                  dm_sta_t *pending = static_cast<dm_sta_t *>(
-@@ -2284,6 +2283,53 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
- 	return 0;
+@@ -2323,6 +2322,53 @@ em_profile_type_t em_configuration_t::get_peer_profile_from_al_em()
+     return (al_profile == em_profile_type_reserved) ? fallback : al_profile;
  }
  
 +bool em_configuration_t::remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
@@ -307,6 +307,3 @@ index 96644c2..2c08198 100644
 +    EXPECT_TRUE(dm.db_cfg_type_is_set(db_cfg_type_sta_list_delete));
 +    dm.deinit();
 +}
--- 
-2.53.0
-

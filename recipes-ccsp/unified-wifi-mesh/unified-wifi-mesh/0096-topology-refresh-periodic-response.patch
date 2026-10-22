@@ -20,10 +20,10 @@ Upstream-Status: Pending
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
-index 3333333..5555555 100644
+index 3c5561a..17f981d 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -2598,6 +2598,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
+@@ -2640,6 +2640,7 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
                              util::mac_to_string(upstream_bssid).c_str());
                          memcpy(matched_bsta->bssid.mac, upstream_bssid,
                              sizeof(mac_address_t));
@@ -31,7 +31,7 @@ index 3333333..5555555 100644
                          dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
                      }
                  }
-@@ -6362,7 +6363,7 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+@@ -6515,7 +6516,7 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
  
          case em_msg_type_topo_resp:
              if ((get_service_type() == em_service_type_ctrl) && (get_state() == em_state_ctrl_topo_sync_pending)){
@@ -40,7 +40,7 @@ index 3333333..5555555 100644
                      set_state(em_state_ctrl_topo_synchronized);
                      static_cast<em_t*>(this)->set_ssid_mismatch(false);
                      std::vector<em_t *> em_radios;
-@@ -6386,5 +6387,9 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
+@@ -6543,6 +6544,10 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
                  handle_topology_response_clients(data, len);
              } else if ((get_service_type() == em_service_type_ctrl) &&
                         (get_state() >= em_state_ctrl_topo_synchronized)) {
@@ -51,5 +51,3 @@ index 3333333..5555555 100644
                  // Periodic Topology Responses repair a missed multicast notification.
                  handle_topology_response_clients(data, len);
              }
--- 
-2.43.0

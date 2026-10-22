@@ -25,9 +25,11 @@ Upstream-Status: Pending
  src/em/config/em_configuration.cpp | 204 +++++++++++++++++++++++++++++++++++-
  3 files changed, 233 insertions(+), 3 deletions(-)
 
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index c828d9d..10f9081 100644
 --- a/inc/em_configuration.h
 +++ b/inc/em_configuration.h
-@@ -458,6 +458,7 @@
+@@ -458,6 +458,7 @@ class em_configuration_t {
  	 * @note Ensure that the destination address is valid before calling this function.
  	 */
  	int send_topology_response_msg(unsigned char *dst, unsigned short msg_id);
@@ -35,7 +37,7 @@ Upstream-Status: Pending
      
  	/**!
  	 * @brief Sends a topology notification by client.
-@@ -825,6 +826,7 @@
+@@ -825,6 +826,7 @@ class em_configuration_t {
  	 * @note Ensure the buffer is properly allocated and the length is correct before calling this function.
  	 */
  	int handle_topology_response(unsigned char *buff, unsigned int len);
@@ -43,10 +45,12 @@ Upstream-Status: Pending
      
  	/**!
  	 * @brief Handles topology notifications.
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index bbae35d..6288c93 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -37,6 +37,8 @@
- #include <sys/time.h>
+@@ -38,6 +38,8 @@
+ #include <time.h>
  #include <unistd.h>
  #include <pthread.h>
 +#include <algorithm>
@@ -54,7 +58,7 @@ Upstream-Status: Pending
  #include <cjson/cJSON.h>
  #include "em.h"
  #include "em_msg.h"
-@@ -506,7 +508,33 @@
+@@ -638,7 +640,33 @@ void em_ctrl_t::handle_dirty_dm()
  
  void em_ctrl_t::handle_5s_tick()
  {
@@ -89,9 +93,11 @@ Upstream-Status: Pending
  }
  
  void em_ctrl_t::handle_2s_tick()
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 1253371..f19a414 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -1549,6 +1549,15 @@
+@@ -1569,6 +1569,15 @@ int em_configuration_t::send_topology_response_msg(unsigned char *dst, unsigned
  	tmp += (sizeof(em_tlv_t) + tlv_len);
  	len += static_cast<unsigned int> (sizeof(em_tlv_t) + tlv_len);
  
@@ -107,7 +113,7 @@ Upstream-Status: Pending
      // End of message
      tlv = reinterpret_cast<em_tlv_t *> (tmp);
      tlv->type = em_tlv_type_eom;
-@@ -1574,6 +1583,93 @@
+@@ -1594,6 +1603,93 @@ int em_configuration_t::send_topology_response_msg(unsigned char *dst, unsigned
      return static_cast<int> (len);
  }
  
@@ -201,8 +207,8 @@ Upstream-Status: Pending
  int em_configuration_t::send_ap_mld_config_req_msg()
  {
      unsigned char buff[MAX_EM_BUFF_SZ];
-@@ -2189,6 +2285,107 @@
- 	return 0;
+@@ -2228,6 +2324,107 @@ em_profile_type_t em_configuration_t::get_peer_profile_from_al_em()
+     return (al_profile == em_profile_type_reserved) ? fallback : al_profile;
  }
  
 +int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
@@ -309,7 +315,7 @@ Upstream-Status: Pending
  int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
  {
      em_tlv_t *tlv;
-@@ -5958,6 +6155,11 @@
+@@ -6124,6 +6321,11 @@ void em_configuration_t::process_msg(unsigned char *data, unsigned int len)
                  } else {
                      printf("%s:%d em_msg_type_topo_resp handle failed \n", __func__, __LINE__);
                  }
@@ -321,12 +327,9 @@ Upstream-Status: Pending
              }
              break;
  
-@@ -6302,5 +6504,3 @@
+@@ -6475,5 +6677,3 @@ em_configuration_t::~em_configuration_t()
  {
  
  }
 -
 -
-
--- 
-2.43.0

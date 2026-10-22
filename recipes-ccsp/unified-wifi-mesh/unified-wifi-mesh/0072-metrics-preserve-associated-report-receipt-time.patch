@@ -20,9 +20,10 @@ Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
  2 files changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index adb9998..c27d242 100644
 --- a/src/em/metrics/em_metrics.cpp
 +++ b/src/em/metrics/em_metrics.cpp
-@@ -38,6 +38,7 @@
+@@ -37,6 +37,7 @@
  #include <unistd.h>
  #include <pthread.h>
  #include <vector>
@@ -30,7 +31,7 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
  #include <openssl/rand.h>
  #include "em_metrics.h"
  #include "em_msg.h"
-@@ -72,6 +73,16 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+@@ -74,6 +75,16 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
          return -1;
      }
  
@@ -47,9 +48,9 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
      for (i = 0; i < sta_metrics->num_bssids; i++) {
          metrics = &sta_metrics->assoc_link_metrics[i];
          sta = dm->find_sta(sta_metrics->sta_mac, metrics->bssid);
-@@ -83,6 +94,10 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
-         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
-         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+@@ -84,6 +95,10 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
+         sta->m_sta_info.est_dl_rate = ntohl(metrics->est_mac_data_rate_dl);
+         sta->m_sta_info.est_ul_rate = ntohl(metrics->est_mac_data_rate_ul);
          sta->m_sta_info.rcpi = metrics->rcpi;
 +        if (received_at[0] != '\0') {
 +            snprintf(sta->m_sta_info.timestamp, sizeof(sta->m_sta_info.timestamp),
@@ -59,9 +60,10 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
  
      return 0;
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index 27af20d..c11cf5a 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -3434,10 +3434,16 @@ func loadDetailedLiveClients() ([]Client, error) {
+@@ -3454,10 +3454,16 @@ func loadDetailedLiveClients() ([]Client, error) {
  
  					metrics := ClientMetrics{}
  					rcpi := getKeyIntValue(sta, "RCPI")
@@ -79,5 +81,3 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
  					}
  					metrics.AssociationUptime = int64(getKeyIntValue(sta, "LastConnectTime"))
  
--- 
-2.43.0

@@ -29,7 +29,7 @@ Upstream-Status: Pending
  2 files changed, 52 insertions(+), 4 deletions(-)
 
 diff --git a/inc/em_agent.h b/inc/em_agent.h
-index f9e66b3..4a2bb1b 100644
+index ad80d6b..e8d2843 100644
 --- a/inc/em_agent.h
 +++ b/inc/em_agent.h
 @@ -30,6 +30,7 @@
@@ -39,7 +39,7 @@ index f9e66b3..4a2bb1b 100644
 +#include <unordered_map>
  
  #ifdef AL_SAP
- #include "al_service_access_point.h"
+ #define DATA_SOCKET_PATH "/tmp/al_data_socket"
 @@ -51,10 +52,13 @@ class em_agent_t : public em_mgr_t {
      std::string m_onewifi_wsc_ruid;
      unsigned int m_onewifi_wsc_wait_ticks = 0;
@@ -55,10 +55,10 @@ index f9e66b3..4a2bb1b 100644
  	
  	/**!
 diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
-index 6b71f04..6422d21 100644
+index c21738e..7baefbb 100644
 --- a/src/agent/em_agent.cpp
 +++ b/src/agent/em_agent.cpp
-@@ -358,6 +358,47 @@ void em_agent_t::release_next_onewifi_wsc_radio(const char *reason)
+@@ -292,6 +292,47 @@ void em_agent_t::release_next_onewifi_wsc_radio(const char *reason)
      }
  }
  
@@ -106,7 +106,7 @@ index 6b71f04..6422d21 100644
  void em_agent_t::handle_onewifi_private_cb(em_bus_event_t *evt)
  {
      em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
-@@ -1548,15 +1589,18 @@ void em_agent_t::handle_2s_tick()
+@@ -1514,16 +1555,19 @@ void em_agent_t::handle_2s_tick()
  
  void em_agent_t::handle_1s_tick()
  {
@@ -134,5 +134,3 @@ index 6b71f04..6422d21 100644
  }
  
  void em_agent_t::handle_250ms_tick()
--- 
-2.43.0

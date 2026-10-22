@@ -21,11 +21,10 @@ Upstream-Status: Pending
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
-index 1111111..2222222 100644
+index 046cf96..e41a273 100644
 --- a/src/ctrl/em_network_topo.cpp
 +++ b/src/ctrl/em_network_topo.cpp
-@@ -170,13 +170,17 @@ em_network_topo_t *em_network_topo_t::find_topology_by_bss_mac(mac_address_t bss
- 	em_network_topo_t *topo;
+@@ -172,12 +172,16 @@ em_network_topo_t *em_network_topo_t::find_topology_by_bss_mac(mac_address_t bss
  
  	std::string bss_mac_str = util::mac_to_string(bss_mac);
  	em_bss_info_t* bss_info = m_data_model->get_bss_info_with_mac(bss_mac);
@@ -43,5 +42,3 @@ index 1111111..2222222 100644
  
  	// If not found in the current topology check recursively other child topologies.
  	em_printfout("Could not find bss mac: %s, continuing with child topologies", bss_mac_str.c_str());
--- 
-2.43.0

@@ -30,7 +30,7 @@ index 3b916fc..2052916 100644
  
  typedef enum {
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index 8be7ddf..88b67b9 100644
+index 6288c93..84c931b 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
 @@ -81,6 +81,7 @@ void em_ctrl_t::handle_dm_commit(em_bus_event_t *evt)
@@ -52,7 +52,7 @@ index 8be7ddf..88b67b9 100644
          dm->set_db_cfg_param(db_cfg_type_device_list_update, "");
      }
  }
-@@ -1164,6 +1169,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+@@ -1162,6 +1167,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
                  memcpy(dm_commit.mac, intf.mac, sizeof(mac_addr_t));
                  strncpy(dm_commit.net_id, GLOBAL_NET_ID, sizeof(dm_commit.net_id));
                  dm_commit.is_emplus_agent = is_emplus;
@@ -72,7 +72,7 @@ index 217c537..8aa8af6 100644
  	em_device_id_t	id;
  
  	dm_device_t::parse_device_id_from_key(key, &id);
-@@ -224,15 +225,23 @@ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
+@@ -224,16 +225,24 @@ void dm_easy_mesh_list_t::put_device(const char *key, const dm_device_t *dev)
  
      if ((pdev = get_device(key)) == NULL) {
          em_printfout("device at key: %s not found\n", key);
@@ -97,5 +97,4 @@ index 217c537..8aa8af6 100644
 +        }
  	}
  }
--- 
-2.43.0
+ 

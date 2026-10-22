@@ -16,9 +16,89 @@ Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
 which builds the page the controller image serves.
 ---
 
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 3e90346..6b79753 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -3983,8 +3983,10 @@ int dm_easy_mesh_ctrl_t::reset_config()
+ int dm_easy_mesh_ctrl_t::get_bss_config(cJSON *parent, char *key)
+ {
+     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
++    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
+     int i, j;
+     char *tmp;
++    em_long_string_t op_key;
+ 
+     net_obj = cJSON_AddObjectToObject(parent, "Network");
+     dm_network_list_t::get_config(net_obj, key, true);
+@@ -4000,6 +4002,15 @@ int dm_easy_mesh_ctrl_t::get_bss_config(cJSON *parent, char *key)
+         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
+             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
+             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
++            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
++            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
++            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
++            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
++            channel_obj = current_op_class_obj == NULL ? NULL :
++                cJSON_GetObjectItem(current_op_class_obj, "Channel");
++            if (cJSON_IsNumber(channel_obj)) {
++                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
++            }
+             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
+             dm_bss_list_t::get_config(bss_list_obj, tmp);
+         }
+@@ -4109,8 +4120,10 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+ {
+     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
+     cJSON *bss_obj, *sta_list_obj, *link_report_obj;
++    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
+     int i, j, k;
+     char *tmp;
++    em_long_string_t op_key;
+     dm_device_t *pdev;
+     mac_addr_str_t bss_str, mac_str, ruid_str;
+     mac_address_t device_mac;
+@@ -4200,6 +4213,15 @@ int dm_easy_mesh_ctrl_t::get_sta_config(cJSON *parent, char *key, em_get_sta_lis
+         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
+             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
+             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
++            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
++            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
++            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
++            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
++            channel_obj = current_op_class_obj == NULL ? NULL :
++                cJSON_GetObjectItem(current_op_class_obj, "Channel");
++            if (cJSON_IsNumber(channel_obj)) {
++                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
++            }
+             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
+             dm_bss_list_t::get_config(bss_list_obj, tmp, true);
+ 
+diff --git a/src/em/channel/em_channel.cpp b/src/em/channel/em_channel.cpp
+index a10d622..24d2de7 100644
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1664,6 +1664,10 @@ int em_channel_t::handle_op_channel_report(unsigned char *buff, unsigned int len
+         dm->set_num_op_class(dm->get_num_op_class() + 1);
+         dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
+         dm->set_db_cfg_param(db_cfg_type_radio_list_update, "");
++    } else {
++        // Existing current-operating-class rows changed in memory as well.
++        // Persist those updates so channel data survives Controller restart.
++        dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
+     }
+ 
+     // Find the per-radio EM instance by RUID and set its state
+@@ -2532,4 +2536,3 @@ em_channel_t::em_channel_t()
+ em_channel_t::~em_channel_t()
+ {
+ }
+-
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index a9a188d..88dddb1 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -97,6 +97,7 @@
+@@ -97,6 +97,7 @@ import (
  	"net"
  	"net/http"
  	"os"
@@ -26,7 +106,7 @@ which builds the page the controller image serves.
  	"regexp"
  	"reflect"
  	"sort"
-@@ -112,8 +113,15 @@
+@@ -112,8 +113,15 @@ import (
  
  const remoteCtrl_Addr_path = "/nvram/remoteCtrl.json"
  var nonHex = regexp.MustCompile(`[^a-fA-F0-9]`)
@@ -42,7 +122,7 @@ which builds the page the controller image serves.
  // ===== SIMPLIFIED DATA MODELS =====
  
  type RemoteIPConfig struct {
-@@ -4764,6 +4772,7 @@
+@@ -4732,6 +4740,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
          http.Error(w, "Controller radio inventory unavailable", http.StatusServiceUnavailable)
          return
      }
@@ -50,7 +130,7 @@ which builds the page the controller image serves.
  
      // Helper to create STA list with circular layout
      createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
-@@ -4876,6 +4885,8 @@
+@@ -4844,6 +4853,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
              // parse the band with extender connected
              childRadios := radioInventory[strings.ToLower(childID)]
              band, channel = getBandAndChannelFromRadios(childRadios)
@@ -59,7 +139,7 @@ which builds the page the controller image serves.
  
             edges = append(edges, map[string]interface{}{
                  "from":     deviceID,
-@@ -5133,6 +5144,60 @@
+@@ -5101,6 +5112,60 @@ func getBandAndChannelFromRadios(radios []Radio) (int, int) {
      return -1, 0
  }
  
@@ -120,77 +200,3 @@ which builds the page the controller image serves.
  /* func: getBandAndChannelFromRadioTree()
   * Description:
   * this function Parse the RadioList node and get the band info
---- a/src/ctrl/dm_easy_mesh_ctrl.cpp
-+++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
-@@ -3525,8 +3525,10 @@
- int dm_easy_mesh_ctrl_t::get_bss_config(cJSON *parent, char *key)
- {
-     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
-+    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
-     int i, j;
-     char *tmp;
-+    em_long_string_t op_key;
- 
-     net_obj = cJSON_AddObjectToObject(parent, "Network");
-     dm_network_list_t::get_config(net_obj, key, true);
-@@ -3542,6 +3544,15 @@
-         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
-             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
-             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
-+            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
-+            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
-+            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
-+            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
-+            channel_obj = current_op_class_obj == NULL ? NULL :
-+                cJSON_GetObjectItem(current_op_class_obj, "Channel");
-+            if (cJSON_IsNumber(channel_obj)) {
-+                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
-+            }
-             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
-             dm_bss_list_t::get_config(bss_list_obj, tmp);
-         }
-@@ -3651,8 +3662,10 @@
- {
-     cJSON *net_obj, *dev_list_obj, *dev_obj, *radio_list_obj, *radio_obj, *bss_list_obj;
-     cJSON *bss_obj, *sta_list_obj, *link_report_obj;
-+    cJSON *op_class_list_obj, *current_op_class_obj, *channel_obj;
-     int i, j, k;
-     char *tmp;
-+    em_long_string_t op_key;
-     dm_device_t *pdev;
-     mac_addr_str_t bss_str, mac_str, ruid_str;
-     mac_address_t device_mac;
-@@ -3742,6 +3755,15 @@
-         for (j = 0; j < cJSON_GetArraySize(radio_list_obj); j++) {
-             radio_obj = cJSON_GetArrayItem(radio_list_obj, j);
-             tmp = cJSON_GetStringValue(cJSON_GetObjectItem(radio_obj, "ID"));
-+            op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
-+            snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
-+            dm_op_class_list_t::get_config(op_class_list_obj, op_key);
-+            current_op_class_obj = cJSON_GetArrayItem(op_class_list_obj, 0);
-+            channel_obj = current_op_class_obj == NULL ? NULL :
-+                cJSON_GetObjectItem(current_op_class_obj, "Channel");
-+            if (cJSON_IsNumber(channel_obj)) {
-+                cJSON_AddNumberToObject(radio_obj, "Channel", channel_obj->valueint);
-+            }
-             bss_list_obj = cJSON_AddArrayToObject(radio_obj, "BSSList");
-             dm_bss_list_t::get_config(bss_list_obj, tmp, true);
- 
---- a/src/em/channel/em_channel.cpp
-+++ b/src/em/channel/em_channel.cpp
-@@ -1630,6 +1630,10 @@
-         dm->set_num_op_class(dm->get_num_op_class() + 1);
-         dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
-         dm->set_db_cfg_param(db_cfg_type_radio_list_update, "");
-+    } else {
-+        // Existing current-operating-class rows changed in memory as well.
-+        // Persist those updates so channel data survives Controller restart.
-+        dm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
-     }
- 
-     // Find the per-radio EM instance by RUID and set its state
-@@ -2441,4 +2445,3 @@
- {
- 
- }
--

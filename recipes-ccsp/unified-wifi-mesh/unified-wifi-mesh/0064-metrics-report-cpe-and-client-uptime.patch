@@ -23,10 +23,10 @@ Its page hunks (src/rdkb-cli/static) moved to easymesh-medium's topology-ui,
 which builds the page the controller image serves.
 
 diff --git a/inc/em_base.h b/inc/em_base.h
-index 3bf615d..7d74580 100644
+index 2052916..94f05a6 100644
 --- a/inc/em_base.h
 +++ b/inc/em_base.h
-@@ -1209,10 +1209,15 @@ typedef struct {
+@@ -1241,10 +1241,15 @@ typedef struct {
      mac_address_t sta_mac;
      bssid_t bssid;
      em_string_t sta_client_type;
@@ -42,7 +42,7 @@ index 3bf615d..7d74580 100644
  typedef struct {
      unsigned char num_bssids;
      unsigned char bssid[6];
-@@ -2245,6 +2250,7 @@ typedef enum {
+@@ -2277,6 +2282,7 @@ typedef enum {
      vendor_ext_attr_id_policy_alarm,    // data of type em_link_stats_alarm_cfg_t
      vendor_ext_attr_id_policy_cfg_client_filter,    // data of type em_client_filters_cfg_t
      vendor_ext_attr_id_link_report,     // data of type em_link_report_t
@@ -50,7 +50,7 @@ index 3bf615d..7d74580 100644
  
      vendor_ext_attr_id_max
  } vendor_ext_attr_id_t;
-@@ -2487,6 +2493,10 @@ typedef struct {
+@@ -2519,6 +2525,10 @@ typedef struct {
      unsigned char bstamld_maxlinks;
      em_string_t   environment;
  
@@ -61,7 +61,7 @@ index 3bf615d..7d74580 100644
      em_small_string_t    primary_device_type;
      em_small_string_t    secondary_device_type;
      ieee_1905_security_t    sec_1905;
-@@ -2603,6 +2613,9 @@ typedef struct {
+@@ -2637,6 +2647,9 @@ typedef struct {
      unsigned char   beacon_report_elem[EM_MAX_BEACON_MEASUREMENT_LEN];
      unsigned int    delta_ms;
  
@@ -72,7 +72,7 @@ index 3bf615d..7d74580 100644
      em_long_string_t    ht_cap;
      em_long_string_t    vht_cap;
 diff --git a/inc/em_metrics.h b/inc/em_metrics.h
-index d70d0d8..fb2c3dc 100644
+index 135456d..ada1eca 100644
 --- a/inc/em_metrics.h
 +++ b/inc/em_metrics.h
 @@ -244,6 +244,8 @@ class em_metrics_t {
@@ -84,7 +84,7 @@ index d70d0d8..fb2c3dc 100644
      
  	/**!
  	 * @brief Handles the beacon metrics query.
-@@ -379,6 +381,7 @@ class em_metrics_t {
+@@ -401,6 +403,7 @@ class em_metrics_t {
  	 * @note Ensure that the buffer is large enough to hold the TLV structure.
  	 */
  	short create_assoc_vendor_sta_link_metrics_tlv(unsigned char *buff, mac_address_t sta_mac, const dm_sta_t *const sta);
@@ -93,7 +93,7 @@ index d70d0d8..fb2c3dc 100644
  	/**!
  	 * @brief Creates a beacon metrics query TLV.
 diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
-index 6c73b9b..67fad6b 100644
+index b70da5d..e3d08b3 100644
 --- a/src/agent/dm_easy_mesh_agent.cpp
 +++ b/src/agent/dm_easy_mesh_agent.cpp
 @@ -54,6 +54,7 @@
@@ -181,7 +181,7 @@ index 5fc06dc..706b525 100644
      ret += (memcmp(&this->m_device_info.secondary_device_type,&obj.m_device_info.secondary_device_type,sizeof(em_small_string_t)) != 0);
  
 diff --git a/src/dm/dm_device_list.cpp b/src/dm/dm_device_list.cpp
-index 8082be8..ac8cfcc 100644
+index 3a27043..95532cb 100644
 --- a/src/dm/dm_device_list.cpp
 +++ b/src/dm/dm_device_list.cpp
 @@ -193,6 +193,7 @@ bool dm_device_list_t::operator == (const db_easy_mesh_t& obj)
@@ -236,8 +236,8 @@ index 8082be8..ac8cfcc 100644
 +        info.boot_time_epoch = strtoull(str, NULL, 10);
  
          if (memcmp(static_cast<const void*>(&sta.m_device_info), static_cast<const void*>(&info), sizeof(em_device_info_t)) == 0) {
-             while (db_client.next_result(ctx)) {}
-@@ -410,6 +417,7 @@ void dm_device_list_t::init_columns()
+             // drain remaining rows; next_result() frees the context
+@@ -412,6 +419,7 @@ void dm_device_list_t::init_columns()
      m_columns[m_num_cols++] = db_column_t("TrafficSeparationCapability", db_data_type_tinyint, 0);
      m_columns[m_num_cols++] = db_column_t("EasyConnectCapability", db_data_type_tinyint, 0);
      m_columns[m_num_cols++] = db_column_t("TestCapabilities", db_data_type_tinyint, 0);
@@ -246,7 +246,7 @@ index 8082be8..ac8cfcc 100644
  
  int dm_device_list_t::init()
 diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
-index 67330cf..9f732d2 100644
+index 91460c3..a50bd0d 100644
 --- a/src/em/metrics/em_metrics.cpp
 +++ b/src/em/metrics/em_metrics.cpp
 @@ -137,17 +137,79 @@ int em_metrics_t::handle_assoc_sta_vendor_link_metrics_tlv(unsigned char *buff,
@@ -339,7 +339,7 @@ index 67330cf..9f732d2 100644
          }
  
          tmp_len -= (sizeof(em_tlv_t) + static_cast<size_t> (htons(tlv->len)));
-@@ -708,8 +770,8 @@ int em_metrics_t::handle_ap_metrics_response(unsigned char *buff, unsigned int l
+@@ -752,8 +814,8 @@ int em_metrics_t::handle_ap_metrics_response(unsigned char *buff, unsigned int l
                  /* future implementation */
                  break;
              case em_tlv_type_vendor_specific:
@@ -350,7 +350,7 @@ index 67330cf..9f732d2 100644
                  }
                  break;
              default:
-@@ -1198,7 +1260,8 @@ int em_metrics_t::send_ap_metrics_response()
+@@ -1243,7 +1305,8 @@ int em_metrics_t::send_ap_metrics_response()
      const size_t num_radio_tlvs = (get_profile_type() > em_profile_type_1) ?
          static_cast<size_t>(get_current_cmd()->get_param()->u.ap_metrics_params.num_radios) : 0U;
      const size_t max_tlv_value_size = MAX_EM_BUFF_SZ;
@@ -360,7 +360,7 @@ index 67330cf..9f732d2 100644
      const size_t buff_capacity = sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) +
          ((max_tlv_count + 1U) * (sizeof(em_tlv_t) + max_tlv_value_size));
      std::vector<unsigned char> buff(buff_capacity, 0);
-@@ -1357,6 +1420,15 @@ int em_metrics_t::send_ap_metrics_response()
+@@ -1408,6 +1471,15 @@ int em_metrics_t::send_ap_metrics_response()
          }
      }
  
@@ -376,7 +376,7 @@ index 67330cf..9f732d2 100644
      // End of message
      tlv = reinterpret_cast<em_tlv_t *> (tmp);
      tlv->type = em_tlv_type_eom;
-@@ -1509,11 +1581,96 @@ short em_metrics_t::create_assoc_vendor_sta_link_metrics_tlv(unsigned char *buff
+@@ -1560,11 +1632,96 @@ short em_metrics_t::create_assoc_vendor_sta_link_metrics_tlv(unsigned char *buff
  
              strncpy(assoc_sta_metrics->sta_client_type, sta->m_sta_info.sta_client_type, sizeof(assoc_sta_metrics->sta_client_type));
              len += sizeof(assoc_sta_metrics->sta_client_type);
@@ -474,7 +474,7 @@ index 67330cf..9f732d2 100644
  {
      size_t len = 0;
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
-index 32a9d31..11f7dde 100644
+index 55bea95..1a47201 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
 @@ -23,9 +23,66 @@ package main
@@ -544,7 +544,7 @@ index 32a9d31..11f7dde 100644
  */
  import "C"
  
-@@ -148,6 +205,8 @@ type Device struct {
+@@ -147,6 +204,8 @@ type Device struct {
  	Status          string         `json:"status"`
  	LastSeen        time.Time      `json:"last_seen"`
  	Uptime          string         `json:"uptime"`
@@ -553,7 +553,7 @@ index 32a9d31..11f7dde 100644
  	Capabilities    Capability     `json:"capabilities"`
  	Metrics         DeviceMetrics  `json:"metrics"`
  	SecurityProfile SecurityProfile `json:"security_profile"`
-@@ -211,6 +270,7 @@ type ClientMetrics struct {
+@@ -210,6 +269,7 @@ type ClientMetrics struct {
          PacketLoss  float64   `json:"packet_loss_percent"`
          Retries     int       `json:"retries"`
          LinkQuality int       `json:"link_quality_percent"`
@@ -561,7 +561,7 @@ index 32a9d31..11f7dde 100644
  }
  
  // ===== PERFORMANCE TRACKING STRUCTURES =====
-@@ -3145,6 +3205,7 @@ func buildLiveInventory() ([]Device, []Client, error) {
+@@ -3165,6 +3225,7 @@ func buildLiveInventory() ([]Device, []Client, error) {
  	var inventoryClients []Client
  	agentCount, extenderCount := 1, 1
  	observedAt := time.Now()
@@ -569,7 +569,7 @@ index 32a9d31..11f7dde 100644
  	seenClients := make(map[string]struct{})
  
  	var traverse func(*C.em_network_node_t, int)
-@@ -3158,11 +3219,11 @@ func buildLiveInventory() ([]Device, []Client, error) {
+@@ -3178,11 +3239,11 @@ func buildLiveInventory() ([]Device, []Client, error) {
  			return
  		}
  		radios := parseRadioList(deviceNode.child[2])
@@ -582,7 +582,7 @@ index 32a9d31..11f7dde 100644
  			if backhaulMAC == "00:00:00:00:00:00" || backhaulMedia == "Ethernet" {
  				role = fmt.Sprintf("Agent-%d", agentCount)
  				agentCount++
-@@ -3190,10 +3251,20 @@ func buildLiveInventory() ([]Device, []Client, error) {
+@@ -3210,10 +3271,20 @@ func buildLiveInventory() ([]Device, []Client, error) {
  			}
  		}
  
@@ -604,7 +604,7 @@ index 32a9d31..11f7dde 100644
  		})
  
  		for _, radio := range radios {
-@@ -3236,6 +3307,30 @@ func buildLiveInventory() ([]Device, []Client, error) {
+@@ -3256,6 +3327,30 @@ func buildLiveInventory() ([]Device, []Client, error) {
  	return inventoryDevices, inventoryClients, nil
  }
  
@@ -635,7 +635,7 @@ index 32a9d31..11f7dde 100644
  // loadLiveClientMetrics uses the detailed STA command because the topology
  // form returned by get_network intentionally omits periodic metric fields.
  func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
-@@ -3276,15 +3377,23 @@ func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
+@@ -3296,15 +3391,23 @@ func loadLiveClientMetrics() (map[string]ClientMetrics, error) {
  		}
  		macNode := directChild(node, "MACAddress")
  		rcpiNode := directChild(node, "RCPI")
@@ -657,16 +657,16 @@ index 32a9d31..11f7dde 100644
 +						metrics.RSSI = rcpi/2 - 110
 +						metrics.LastUpdated = observedAt
 +					}
- 				}
++				}
 +				uptimeNode := directChild(node, "LastConnectTime")
 +				if uptimeNode != nil && C.get_node_type(uptimeNode) == C.em_network_node_data_type_number {
 +					metrics.AssociationUptime = int64(uptimeNode.value_int)
-+				}
+ 				}
 +				metricsByMAC[mac] = metrics
  			}
  		}
  		for i := 0; i < int(node.num_children); i++ {
-@@ -3307,6 +3416,9 @@ func getLiveClientsWithMetrics() ([]Client, error) {
+@@ -3327,6 +3430,9 @@ func getLiveClientsWithMetrics() ([]Client, error) {
  	for i := range clientList {
  		if metrics, found := metricsByMAC[strings.ToLower(clientList[i].MAC)]; found {
  			clientList[i].ClientMetrics = metrics

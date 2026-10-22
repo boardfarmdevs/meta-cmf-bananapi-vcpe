@@ -21,9 +21,10 @@ but the WSC handshake (no VAP teardown, no shared timers). Self-clearing once M2
  2 files changed, 49 insertions(+), 1 deletion(-)
 
 diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index 68f7a8a..c828d9d 100644
 --- a/inc/em_configuration.h
 +++ b/inc/em_configuration.h
-@@ -1597,6 +1597,14 @@ private:
+@@ -1622,6 +1622,14 @@ private:
      unsigned char m_m2_encrypted_settings[em_haul_type_max][MAX_EM_BUFF_SZ];
      unsigned int m_m2_encrypted_settings_len[em_haul_type_max];
  
@@ -37,11 +38,12 @@ diff --git a/inc/em_configuration.h b/inc/em_configuration.h
 +
  public:
  
- 	bool send_autoconf_search_ext_chirp(em_dpp_chirp_value_t *chirp, size_t hash_len);
+ 	/* Parse a received AKM Suite Capabilities TLV and store the
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index ec54c38..626778c 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -5677,8 +5689,11 @@ int em_configuration_t::handle_autoconfig_resp(unsigned char *buff, unsigned int
+@@ -5839,8 +5839,11 @@ int em_configuration_t::handle_autoconfig_resp(unsigned char *buff, unsigned int
      }
      em_printfout("autoconfig wsc m1 send success, len:%d", sz);
      set_state(em_state_agent_wsc_m2_pending);
@@ -54,7 +56,7 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
  }
  
  int em_configuration_t::handle_autoconfig_search(unsigned char *buff, unsigned int len)
-@@ -6024,9 +6075,45 @@ void em_configuration_t::handle_state_wsc_m1_pending()
+@@ -6232,9 +6235,45 @@ void em_configuration_t::handle_state_wsc_m1_pending()
      assert(get_service_type() == em_service_type_ctrl);
  }
  

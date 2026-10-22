@@ -28,10 +28,11 @@ Upstream-Status: Pending
  3 files changed, 86 insertions(+)
 
 diff --git a/inc/dm_bss_list.h b/inc/dm_bss_list.h
-index 1111111..2222222 100644
+index b099f83..c49dd9f 100644
 --- a/inc/dm_bss_list.h
 +++ b/inc/dm_bss_list.h
-@@ -192,5 +192,12 @@ public:
+@@ -192,6 +192,13 @@ public:
+ 	 * @note Ensure that the db_client and bss are properly initialized before calling this function.
  	 */
  	int set_config(db_client_t& db_client, dm_bss_t& bss, void *parent_id);
 +
@@ -45,14 +46,12 @@ index 1111111..2222222 100644
  	/**!
  	 * @brief Retrieves the configuration details from a JSON object.
 diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
-index 3333333..4444444 100644
+index d33e3f3..e7f3b70 100644
 --- a/src/dm/dm_bss_list.cpp
 +++ b/src/dm/dm_bss_list.cpp
-@@ -77,14 +77,59 @@ int dm_bss_list_t::set_config(db_client_t& db_client, dm_bss_t& bss, void *paren
-     dm_orch_type_t op;  
- 
+@@ -79,12 +79,57 @@ int dm_bss_list_t::set_config(db_client_t& db_client, dm_bss_t& bss, void *paren
      //printf("%s:%d: Parent: %s \n", __func__, __LINE__, (char *)parent_id);
-	parse_bss_id_from_key(static_cast<char *> (parent_id), &bss.m_bss_info.id);
+ 	parse_bss_id_from_key(static_cast<char *> (parent_id), &bss.m_bss_info.id);
  
 +    enforce_single_vap_bss(db_client, bss);
      update_db(db_client, (op = get_dm_orch_type(db_client, bss)), bss.get_bss_info());
@@ -108,20 +107,19 @@ index 3333333..4444444 100644
  int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void *parent_id)
  {
      cJSON *obj;
-@@ -97,6 +135,7 @@ int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void
+@@ -97,6 +142,7 @@ int dm_bss_list_t::set_config(db_client_t& db_client, const cJSON *obj_arr, void
      for (i = 0; i < size; i++) {
          obj = cJSON_GetArrayItem(obj_arr, i);
-		bss.decode(obj, parent_id);
+ 		bss.decode(obj, parent_id);
 +        enforce_single_vap_bss(db_client, bss);
-		update_db(db_client, (op = get_dm_orch_type(db_client, bss)), bss.get_bss_info());
-		update_list(bss, op);
+ 		update_db(db_client, (op = get_dm_orch_type(db_client, bss)), bss.get_bss_info());
+ 		update_list(bss, op);
      }
 diff --git a/src/dm/dm_easy_mesh.cpp b/src/dm/dm_easy_mesh.cpp
-index 5555555..6666666 100644
+index 15f5409..dadbbf0 100644
 --- a/src/dm/dm_easy_mesh.cpp
 +++ b/src/dm/dm_easy_mesh.cpp
-@@ -203,7 +203,40 @@ bool dm_easy_mesh_t::commit_config(dm_easy_mesh_t& dm, em_commit_target_t target
-         printf("%s:%d Commit radio=%s\n", __func__, __LINE__,target.params);
+@@ -207,6 +207,39 @@ int dm_easy_mesh_t::commit_config(dm_easy_mesh_t& dm, em_commit_target_t target)
          string_to_macbytes(reinterpret_cast<char *> (target.params),mac);
  		for (i = 0; i < dm.m_num_bss; i++) {
  			if (memcmp(mac, dm.get_bss(i)->get_bss_info()->ruid.mac, sizeof(mac_address_t)) == 0) {
@@ -161,5 +159,3 @@ index 5555555..6666666 100644
  				for (j = 0; j < m_num_bss; j++) {
  					if ((memcmp(get_bss(j)->get_bss_info()->bssid.mac, dm.get_bss(i)->get_bss_info()->bssid.mac, sizeof(mac_address_t)) == 0)){
  						m_bss[j] = dm.m_bss[i];
--- 
-2.43.0

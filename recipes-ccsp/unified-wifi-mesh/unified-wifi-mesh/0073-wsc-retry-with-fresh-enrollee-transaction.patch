@@ -28,18 +28,19 @@ Upstream-Status: Pending
  2 files changed, 19 insertions(+), 2 deletions(-)
 
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 303d8e9..aac210e 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -6081,7 +6081,7 @@ void em_configuration_t::handle_state_wsc_m1_pending()
- // number of M1 re-sends used to solicit a fresh M2. Reset each time a fresh M1 is
- // sent (handle_autoconfig_resp).
+@@ -6517,7 +6517,7 @@ void em_configuration_t::handle_state_wsc_m1_pending()
+ // dev_init/cfg_renew orch is in progress, so RESEND_TICKS is ~seconds between M1
+ // re-sends and MAX_RESENDS bounds them within the orch's time-to-live.
  #define EM_AGENT_M2_RESEND_TICKS 3
 -#define EM_AGENT_M2_MAX_RESENDS  4
 +#define EM_AGENT_M2_MAX_RESENDS  8
  
  void em_configuration_t::handle_state_wsc_m2_pending()
  {
-@@ -6102,6 +6102,15 @@ void em_configuration_t::handle_state_wsc_m2_pending()
+@@ -6538,6 +6538,15 @@ void em_configuration_t::handle_state_wsc_m2_pending()
          return;
      }
  
@@ -56,9 +57,10 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
      int msg_len = create_autoconfig_wsc_m1_msg(msg, get_peer_mac());
      if (msg_len < 0) {
 diff --git a/src/em/crypto/em_crypto.cpp b/src/em/crypto/em_crypto.cpp
+index 0709cd3..015d6b8 100644
 --- a/src/em/crypto/em_crypto.cpp
 +++ b/src/em/crypto/em_crypto.cpp
-@@ -211,6 +211,18 @@ int em_crypto_t::init()
+@@ -205,6 +205,18 @@ int em_crypto_t::init()
      m_crypto_info.r_pub_len = static_cast<unsigned int> (BN_num_bytes(pub_key));
      m_crypto_info.r_priv_len = static_cast<unsigned int> (BN_num_bytes(priv_key));
      
@@ -77,5 +79,3 @@ diff --git a/src/em/crypto/em_crypto.cpp b/src/em/crypto/em_crypto.cpp
      return 0;
  bail:
  
--- 
-2.43.0

@@ -20,20 +20,40 @@ confirmed state, which is also a valid starting point for this independent
 measurement transaction.
 
 diff --git a/inc/em_metrics.h b/inc/em_metrics.h
+index ada1eca..d831dba 100644
 --- a/inc/em_metrics.h
 +++ b/inc/em_metrics.h
-@@ -655,6 +655,7 @@ class em_metrics_t {
+@@ -662,6 +662,7 @@ class em_metrics_t {
          *
          * @note Used for ACK tracking and response correlation.
          */
 +public:
          unsigned short m_unassoc_sta_query_msg_id = 0;
- 
+  
         /**
+diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
+index 06da97c..d10c660 100644
+--- a/src/agent/dm_easy_mesh_agent.cpp
++++ b/src/agent/dm_easy_mesh_agent.cpp
+@@ -1023,7 +1023,12 @@ int dm_easy_mesh_agent_t::analyze_unassoc_sta_result(em_bus_event_t *evt, em_cmd
+         return 0;
+     }
+ 
+-    pcmd[num] = new em_cmd_unassoc_sta_result_t(evt->params, *this);
++    auto *result_cmd = new em_cmd_unassoc_sta_result_t(evt->params, *this);
++    /* dm_easy_mesh_t::operator= intentionally copies the persistent model,
++     * but not this transient callback result.  Preserve it explicitly in the
++     * immutable command snapshot consumed by the selected radio. */
++    result_cmd->get_data_model()->m_unassoc_sta_metrics_rsp = *rsp;
++    pcmd[num] = result_cmd;
+     tmp = pcmd[num];
+     num++;
+ 
 diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index 74aa852..9df9567 100644
 --- a/src/agent/em_agent.cpp
 +++ b/src/agent/em_agent.cpp
-@@ -2296,15 +2296,53 @@ em_t *em_agent_t::find_em_for_msg_type(unsigned char *data, unsigned int len,
+@@ -2268,15 +2268,53 @@ em_t *em_agent_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em
             }
             break;
  
@@ -41,11 +61,6 @@ diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
 -           em = (em_t *)hash_map_get_first(m_em_map);
 -           while (em != NULL) {
 -                if ((em->is_al_interface_em() == false)) {
--                    break;
--                }
--                em = (em_t *)hash_map_get_next(m_em_map, em);
--            }
--            break;
 +        case em_msg_type_unassoc_sta_link_metrics_query: {
 +            unsigned char requested_opclass = 0;
 +            unsigned char *tlv_ptr = data + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t);
@@ -63,8 +78,9 @@ diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
 +                    break;
 +                }
 +                if (query_tlv->type == em_tlv_type_eom) {
-+                    break;
-+                }
+                     break;
+                 }
+-                em = (em_t *)hash_map_get_next(m_em_map, em);
 +                tlv_ptr += sizeof(em_tlv_t) + query_tlv_len;
 +            }
 +
@@ -90,17 +106,17 @@ diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
 +                    break;
 +                }
 +                em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
-+            }
-+            break;
+             }
+             break;
 +        }
  
          case em_msg_type_unassoc_sta_link_metrics_rsp:
             printf("%s:%d: Sending Unassoc STA Link Metrics response\n", __func__, __LINE__);
 diff --git a/src/em/em.cpp b/src/em/em.cpp
+index cf1168a..7f3762f 100644
 --- a/src/em/em.cpp
 +++ b/src/em/em.cpp
-@@ -267,14 +267,22 @@ void em_t::orch_execute(em_cmd_t *pcmd)
-         case em_cmd_type_get_link_quality_report:
+@@ -268,14 +268,22 @@ void em_t::orch_execute(em_cmd_t *pcmd)
              m_sm.set_state(em_state_agent_link_quality_report_pending);
              break;
  
@@ -126,10 +142,12 @@ diff --git a/src/em/em.cpp b/src/em/em.cpp
 -        
  	default:
              break;
+ 
 diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 495a3c6..adb9998 100644
 --- a/src/em/metrics/em_metrics.cpp
 +++ b/src/em/metrics/em_metrics.cpp
-@@ -403,6 +403,28 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+@@ -404,6 +404,28 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsig
          return -1;
      }
  
@@ -158,7 +176,8 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
      dm_easy_mesh_t *dm = get_data_model();
  
      memset(dm->m_unassoc_sta_metrics, 0, sizeof(dm->m_unassoc_sta_metrics));
-@@ -440,16 +462,18 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
+@@ -438,17 +460,19 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsig
+ 
      if (dm->m_num_unassoc_sta_metrics > 0) {
          struct timeval received_at;
 -        em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
@@ -179,15 +198,13 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
  
      m_unassoc_in_progress = false;
      return 0;
-@@ -2091,7 +2115,6 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
+@@ -2142,13 +2166,13 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
              (response_msg_id == em->get_unassoc_sta_query_msg_id()))
          {
              matched_em = em;
 -	    em->clear_unassoc_sta_query_msg_id();
              break;
          }
-     }
-@@ -2099,7 +2122,8 @@ int em_metrics_t::handle_1905_ack(unsigned char *buff, unsigned int len)
      }
  
      if (matched_em != nullptr) {
@@ -197,7 +214,7 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
      }
  
      em_radios.clear();
-@@ -2400,6 +2424,12 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+@@ -2454,6 +2478,12 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
          return -1;
      }
  
@@ -210,7 +227,7 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
      em_cmd_unassoc_sta_query_t *cmd = static_cast<em_cmd_unassoc_sta_query_t *>(get_current_cmd());
      if (cmd == NULL) {
          return -1;
-@@ -2494,7 +2524,6 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
+@@ -2545,7 +2575,6 @@ int em_metrics_t::send_unassoc_sta_link_metrics_query_msg()
  
      em_printfout("%s:%d: Unassoc Query sent to Agent successfully", __func__, __LINE__);
  
@@ -218,13 +235,12 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
      em->m_unassoc_sta_query_msg_id = ntohs(cmdu->id);
      em_printfout("%s:%d Stored query msg_id=%u", 
               __func__, __LINE__, em->m_unassoc_sta_query_msg_id);
-@@ -2605,7 +2634,16 @@ void em_metrics_t::send_unassoc_sta_link_metrics_resp_msg()
+@@ -2656,7 +2685,16 @@ void em_metrics_t::send_unassoc_sta_link_metrics_resp_msg()
  
      dm_easy_mesh_t *dm = get_data_model();
      unsigned short msg_id = dm->get_msg_id();
--    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
 +    em_cmd_t *cmd = get_current_cmd();
-+    em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
+     em_unassoc_sta_metrics_rsp_t *rsp = &dm->m_unassoc_sta_metrics_rsp;
 +    if (cmd != NULL && cmd->get_type() == em_cmd_type_unassoc_sta_result) {
 +        /* analyze_unassoc_sta_result() populates the immutable command
 +         * snapshot, not the selected radio's persistent data model. */
@@ -234,23 +250,13 @@ diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
 +    em_printfout("Sending %u candidate metrics with query MID %u",
 +        rsp->num_entries, msg_id);
  
-    memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
-    tmp += sizeof(mac_address_t);
-diff --git a/src/agent/dm_easy_mesh_agent.cpp b/src/agent/dm_easy_mesh_agent.cpp
---- a/src/agent/dm_easy_mesh_agent.cpp
-+++ b/src/agent/dm_easy_mesh_agent.cpp
-@@ -1022 +1022,6 @@ int dm_easy_mesh_agent_t::analyze_unassoc_sta_result(em_bus_event_t *evt, em_cmd
--    pcmd[num] = new em_cmd_unassoc_sta_result_t(evt->params, *this);
-+    auto *result_cmd = new em_cmd_unassoc_sta_result_t(evt->params, *this);
-+    /* dm_easy_mesh_t::operator= intentionally copies the persistent model,
-+     * but not this transient callback result.  Preserve it explicitly in the
-+     * immutable command snapshot consumed by the selected radio. */
-+    result_cmd->get_data_model()->m_unassoc_sta_metrics_rsp = *rsp;
-+    pcmd[num] = result_cmd;
+     memcpy(tmp, dm->get_ctl_mac(), sizeof(mac_address_t));
+     tmp += sizeof(mac_address_t);
 diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index f259f68..64d4d80 100644
 --- a/src/orch/em_orch_agent.cpp
 +++ b/src/orch/em_orch_agent.cpp
-@@ -199,8 +199,9 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+@@ -200,8 +200,9 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
              return true;
          }
      } else if (pcmd->m_type == em_cmd_type_unassoc_sta_result) {
@@ -262,7 +268,7 @@ diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
              return true;
          }
      }
-@@ -529,12 +530,34 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
+@@ -530,12 +531,34 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
                  break;
  
              case em_cmd_type_unassoc_sta_result:
@@ -304,9 +310,10 @@ diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
                  break;
  
 diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 1d7a896..c0c387a 100644
 --- a/src/orch/em_orch_ctrl.cpp
 +++ b/src/orch/em_orch_ctrl.cpp
-@@ -369,13 +369,25 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+@@ -376,13 +376,25 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
          case em_cmd_type_scan_channel:
          case em_cmd_type_set_policy:
          case em_cmd_type_bsta_cap:
@@ -333,7 +340,7 @@ diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
          default:
              break;
      }
-@@ -449,6 +460,17 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
+@@ -447,6 +459,17 @@ void em_orch_ctrl_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
              break;
          }
  

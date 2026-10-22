@@ -31,9 +31,10 @@ Upstream-Status: Pending
  1 file changed, 67 insertions(+), 10 deletions(-)
 
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index aac210e..2dc690c 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -1647,7 +1647,24 @@ int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
+@@ -1667,7 +1667,24 @@ int em_configuration_t::create_associated_clients_tlv(unsigned char *buff,
                             sizeof(bssid_t)) == 0) {
                  memcpy(tmp, sta->m_sta_info.id, sizeof(mac_address_t));
                  tmp += sizeof(mac_address_t);
@@ -59,22 +60,21 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
                  memcpy(tmp, &assoc_time_be, sizeof(assoc_time_be));
                  tmp += sizeof(assoc_time_be);
              }
-@@ -2313,8 +2330,12 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+@@ -2384,8 +2401,12 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
  
                  em_sta_info_t sta_info = {};
                  memcpy(sta_info.id, value, sizeof(mac_address_t));
 -                value += sizeof(mac_address_t) + sizeof(uint16_t);
--                value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
 +                value += sizeof(mac_address_t);
 +                uint16_t assoc_time_be;
 +                memcpy(&assoc_time_be, value, sizeof(assoc_time_be));
 +                value += sizeof(uint16_t);
-+                value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
+                 value_remaining -= sizeof(mac_address_t) + sizeof(uint16_t);
 +                const unsigned int assoc_time = ntohs(assoc_time_be);
                  if (bss_info == NULL) {
                      continue;
                  }
-@@ -2323,14 +2344,17 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+@@ -2393,16 +2414,19 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
                  memcpy(sta_info.bssid, bssid, sizeof(bssid_t));
                  memcpy(sta_info.radiomac, bss_info->ruid.mac, sizeof(mac_address_t));
                  sta_info.associated = true;
@@ -98,10 +98,13 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
 -                while (claim_dm != NULL && !conflicting_claim) {
 +                while (claim_dm != NULL) {
                      if (claim_dm != dm) {
-@@ -2338,7 +2362,22 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                         dm_sta_t *claim = claim_dm->get_first_sta(sta_info.id);
+                         while (claim != NULL) {
+@@ -2411,35 +2435,56 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
                                             sta_info.bssid,
                                             sizeof(bssid_t)) != 0) {
                                  conflicting_claim = true;
+-                                break;
 +                                const unsigned int claim_time =
 +                                        claim->m_sta_info.last_conn_time;
 +                                if (claim_time == 0 || assoc_time == 65535 ||
@@ -118,11 +121,10 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
 +                                 * accepting the incoming association. */
 +                                claim = claim_dm->get_next_sta(sta_info.id, claim);
 +                                continue;
--                                break;
                              }
                              claim = claim_dm->get_next_sta(sta_info.id, claim);
                          }
-@@ -2346,27 +2385,33 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+                     }
                      claim_dm = get_mgr()->get_next_dm(claim_dm);
                  }
 -                if (conflicting_claim) {
@@ -170,5 +172,3 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
                  }
              }
          }
--- 
-2.43.0

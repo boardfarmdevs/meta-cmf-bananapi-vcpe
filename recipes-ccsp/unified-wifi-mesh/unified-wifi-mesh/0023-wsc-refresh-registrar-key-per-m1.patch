@@ -23,10 +23,11 @@ starting a radio object with zero or partial key material.
  2 files changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index 9c98b32..5f6ecfe 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -5581,6 +5581,15 @@ int em_configuration_t::handle_autoconfig_wsc_m1(unsigned char *buff, unsigned
-         //return -1;
+@@ -5725,6 +5725,15 @@ int em_configuration_t::handle_autoconfig_wsc_m1(unsigned char *buff, unsigned i
+         return -1;
      }
  
 +    // M1 begins a fresh WSC transaction.  Generate a new registrar nonce and
@@ -42,9 +43,10 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
      tlv_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
      em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
 diff --git a/src/em/em.cpp b/src/em/em.cpp
+index 6544974..f1cec1f 100644
 --- a/src/em/em.cpp
 +++ b/src/em/em.cpp
-@@ -2810,7 +2810,10 @@ int em_t::init()
+@@ -2814,7 +2814,10 @@ int em_t::init()
      m_iq.timeout = EM_PROTO_TOUT;
  
      // initialize the crypto
@@ -56,5 +58,3 @@ diff --git a/src/em/em.cpp b/src/em/em.cpp
  
      size_t stack_size = 0x800000; /* 8MB */
      pthread_attr_t attr;
--- 
-2.43.0

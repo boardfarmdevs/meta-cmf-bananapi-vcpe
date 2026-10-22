@@ -19,9 +19,10 @@ unchanged.
  4 files changed, 8 insertions(+), 47 deletions(-)
 
 diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index b12507f..fbba4b7 100644
 --- a/src/ctrl/dm_easy_mesh_ctrl.cpp
 +++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
-@@ -4028,8 +4028,7 @@ void dm_easy_mesh_ctrl_t::encode_config(em_subdoc_info_t *subdoc,
+@@ -4486,8 +4486,7 @@ void dm_easy_mesh_ctrl_t::get_config(em_long_string_t net_id, em_subdoc_info_t *
          em_printfout("Unknown Subdoc Name: %s\n", subdoc->name);
      }
  
@@ -31,7 +32,7 @@ diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
      strncpy(subdoc->buff, tmp, strlen(tmp) + 1);
      cJSON_free(tmp);
      cJSON_Delete(parent);
-@@ -4247,7 +4246,6 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+@@ -4705,7 +4704,6 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
  			dm_easy_mesh_t::macbytes_to_string(bss.m_bss_info.bssid.mac, bssid_str);
  			snprintf(parent, sizeof(em_2xlong_string_t), "%s@%s@%s@%s@%d", dm->m_network.m_net_info.id, 
  					dev_mac_str, radio_mac_str, bssid_str, bss.m_bss_info.id.haul_type);
@@ -40,10 +41,10 @@ diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
              if (dm_bss_list_t::set_config(m_db_client, bss, parent) != 0) {
                  at_least_one_failed = true;
 diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
+index cf04a0d..e35b062 100644
 --- a/src/ctrl/em_network_topo.cpp
 +++ b/src/ctrl/em_network_topo.cpp
-@@ -56,9 +56,6 @@ void em_network_topo_t::encode(cJSON *parent)
- 			if ((memcmp(op_class_info->id.ruid, m_data_model->m_radio[i].get_radio_interface_mac(), sizeof(mac_address_t)) == 0) &&
+@@ -57,9 +57,6 @@ void em_network_topo_t::encode(cJSON *parent)
  				(op_class_info->id.type == em_op_class_type_current)) {
  				cJSON_AddNumberToObject(radio_obj, "Class", op_class_info->op_class);
  				cJSON_AddNumberToObject(radio_obj, "Channel", op_class_info->channel);
@@ -54,6 +55,7 @@ diff --git a/src/ctrl/em_network_topo.cpp b/src/ctrl/em_network_topo.cpp
  		}
  		cJSON_AddItemToArray(radio_list_obj, radio_obj);
 diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
+index dc3afba..63fd053 100644
 --- a/src/dm/dm_bss_list.cpp
 +++ b/src/dm/dm_bss_list.cpp
 @@ -281,7 +281,6 @@ void dm_bss_list_t::update_list(const dm_bss_t& bss, dm_orch_type_t op)
@@ -65,9 +67,10 @@ diff --git a/src/dm/dm_bss_list.cpp b/src/dm/dm_bss_list.cpp
      switch (op) {
          case dm_orch_type_db_insert:
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index c7c51e6..897bb6c 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
-@@ -1297,29 +1297,8 @@ short unsigned int em_configuration_t::create_ap_vendor_operational_bss_tlv(unsi
+@@ -1297,29 +1297,8 @@ int em_configuration_t::create_vendor_operational_bss_tlv(unsigned char *buff)
  
  void em_configuration_t::print_ap_vendor_operational_bss_tlv(unsigned char *value, unsigned int len)
  {
@@ -99,7 +102,7 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
  }
  
  void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, unsigned int len)
-@@ -1334,15 +1314,11 @@ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value,
+@@ -1334,15 +1313,11 @@ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value,
  	dm = get_data_model();
  	ap = reinterpret_cast<em_ap_vendor_op_bss_t *> (value);
  	radio = ap->radios;
@@ -115,7 +118,7 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
  			dm_bss = dm->get_bss(radio->ruid, bss->bssid);
  			if (dm_bss == NULL) {
  				dm_bss = &dm->m_bss[dm->m_num_bss];
-@@ -1947,32 +1923,8 @@ short unsigned int em_configuration_t::create_ap_operational_bss_tlv(unsigned ch
+@@ -1967,32 +1942,8 @@ void em_configuration_t::print_bss_configuration_report_tlv(unsigned char *value
  
  void em_configuration_t::print_ap_operational_bss_tlv(unsigned char *value, unsigned int len)
  {
@@ -150,5 +153,3 @@ diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration
  }
  
  int em_configuration_t::handle_bss_configuration_report(unsigned char *buff, unsigned int len)
--- 
-2.43.0

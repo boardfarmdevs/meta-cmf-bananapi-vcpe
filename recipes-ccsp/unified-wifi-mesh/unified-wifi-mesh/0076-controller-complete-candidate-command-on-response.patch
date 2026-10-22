@@ -26,21 +26,39 @@ Upstream-Status: Pending
  3 files changed, 34 insertions(+)
 
 diff --git a/inc/em_orch.h b/inc/em_orch.h
+index f360564..eee329b 100644
 --- a/inc/em_orch.h
 +++ b/inc/em_orch.h
-@@ -194,6 +194,8 @@ public:
+@@ -207,6 +207,8 @@ public:
       */
- 	void destroy_command(em_cmd_t *pcmd);
+     void cancel_command(em_cmd_type_t type, std::vector<em_t*> &em_radios);
  
 +    bool complete_command(em_cmd_type_t type);
 +
  	/**!
- 	 * @brief Cancels a command of the specified type if misconfiguration for specific EMs.
-      *
+ 	 * @brief Cancels a command of the specified type.
+ 	 *
+diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
+index 738b4f2..6a482ee 100644
+--- a/src/em/metrics/em_metrics.cpp
++++ b/src/em/metrics/em_metrics.cpp
+@@ -485,6 +485,11 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsig
+     }
+     matched_em->clear_unassoc_sta_query_msg_id();
+     matched_em->set_state(em_state_ctrl_configured);
++    em_orch_t *orch = get_mgr()->get_orch();
++    if (orch == nullptr || !orch->complete_command(em_cmd_type_unassoc_sta_query)) {
++        em_printfout("Candidate metrics response MID %u had no active command",
++            response_msg_id);
++    }
+     em_printfout("Completed candidate metrics transaction MID %u", response_msg_id);
+ 
+     m_unassoc_in_progress = false;
 diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
+index 42d963b..d77ff69 100644
 --- a/src/orch/em_orch.cpp
 +++ b/src/orch/em_orch.cpp
-@@ -170,6 +170,33 @@ void em_orch_t::destroy_command(em_cmd_t *pcmd)
+@@ -171,6 +171,33 @@ void em_orch_t::destroy_command(em_cmd_t *pcmd)
      delete pcmd;
  }
  
@@ -74,20 +92,3 @@ diff --git a/src/orch/em_orch.cpp b/src/orch/em_orch.cpp
  void em_orch_t::cancel_command(em_cmd_type_t type, std::vector<em_t*> &em_radios)
  {
      int i, j;
-diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
---- a/src/em/metrics/em_metrics.cpp
-+++ b/src/em/metrics/em_metrics.cpp
-@@ -485,6 +485,11 @@ int em_metrics_t::handle_unassoc_sta_link_metrics_rsp(unsigned char *buff, unsi
-     }
-     matched_em->clear_unassoc_sta_query_msg_id();
-     matched_em->set_state(em_state_ctrl_configured);
-+    em_orch_t *orch = get_mgr()->get_orch();
-+    if (orch == nullptr || !orch->complete_command(em_cmd_type_unassoc_sta_query)) {
-+        em_printfout("Candidate metrics response MID %u had no active command",
-+            response_msg_id);
-+    }
-     em_printfout("Completed candidate metrics transaction MID %u", response_msg_id);
- 
-     m_unassoc_in_progress = false;
--- 
-2.43.0

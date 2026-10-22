@@ -18,9 +18,10 @@ Upstream-Status: Pending
  1 file changed, 4 insertions(+), 2 deletions(-)
 
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index c11cf5a..9bbe8b1 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -4759,7 +4759,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+@@ -4730,7 +4730,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
              return
          }
  
@@ -30,7 +31,7 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
          haulTypes := buildHaulTypes(radioList)
  
          backhaulMacAddr := getTreeValue(backhaulTree, "MACAddress")
-@@ -4818,7 +4819,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+@@ -4790,7 +4791,8 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
              channel := 0
  
              // parse the band with extender connected
@@ -39,6 +40,4 @@ diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
 +            band, channel = getBandAndChannelFromRadioTree(childRadioTree)
  
             edges = append(edges, map[string]interface{}{
-                "from":     deviceID,
--- 
-2.43.0
+                 "from":     deviceID,

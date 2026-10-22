@@ -80,7 +80,7 @@ index 0000000..0244a61
 +
 +#endif
 diff --git a/src/em/metrics/em_metrics.cpp b/src/em/metrics/em_metrics.cpp
-index 0d1042c..e8e507f 100644
+index 313a3da..5a09910 100644
 --- a/src/em/metrics/em_metrics.cpp
 +++ b/src/em/metrics/em_metrics.cpp
 @@ -48,6 +48,7 @@
@@ -108,8 +108,8 @@ index 0d1042c..e8e507f 100644
      for (i = 0; i < sta_metrics->num_bssids; i++) {
          metrics = &sta_metrics->assoc_link_metrics[i];
 @@ -144,9 +137,12 @@ int em_metrics_t::handle_assoc_sta_link_metrics_tlv(unsigned char *buff,
-         sta->m_sta_info.est_dl_rate = metrics->est_mac_data_rate_dl;
-         sta->m_sta_info.est_ul_rate = metrics->est_mac_data_rate_ul;
+         sta->m_sta_info.est_dl_rate = ntohl(metrics->est_mac_data_rate_dl);
+         sta->m_sta_info.est_ul_rate = ntohl(metrics->est_mac_data_rate_ul);
          sta->m_sta_info.rcpi = metrics->rcpi;
 -        if (received_at[0] != '\0') {
 +        char observed_at[64] = {0};
@@ -321,10 +321,10 @@ index 0000000..2d595bb
 +	}
 +}
 diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
-index acc8035..e1f3ed5 100644
+index 51105f7..9788b07 100644
 --- a/src/rdkb-cli/main.go
 +++ b/src/rdkb-cli/main.go
-@@ -217,12 +217,6 @@ type STA struct {
+@@ -216,12 +216,6 @@ type STA struct {
      TimeStamp   string `json:"-"`
  }
  
@@ -337,7 +337,7 @@ index acc8035..e1f3ed5 100644
  type Device struct {
  	MAC             string         `json:"mac"`
  	Role            string         `json:"role"`
-@@ -3285,8 +3279,10 @@ func loadLiveRadioInventory() (map[string][]Radio, error) {
+@@ -3284,8 +3278,10 @@ func loadLiveRadioInventory() (map[string][]Radio, error) {
  }
  
  // collectBackhaulLinkMetrics joins the parent AP's associated-STA metrics to
@@ -350,7 +350,7 @@ index acc8035..e1f3ed5 100644
  func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]BackhaulLinkMetric {
  	metrics := make(map[string]BackhaulLinkMetric)
  	for _, radios := range inventory {
-@@ -3299,19 +3295,12 @@ func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]Backhau
+@@ -3298,19 +3294,12 @@ func collectBackhaulLinkMetrics(inventory map[string][]Radio) map[string]Backhau
  					if !sta.Associated || sta.MACAddress == "" {
  						continue
  					}
@@ -373,7 +373,7 @@ index acc8035..e1f3ed5 100644
  				}
  			}
  		}
-@@ -4847,6 +4836,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+@@ -4794,6 +4783,7 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
      }
      localRadioChannels := loadLocalRadioChannels()
      backhaulMetrics := collectBackhaulLinkMetrics(radioInventory)
@@ -381,7 +381,7 @@ index acc8035..e1f3ed5 100644
  
      // Helper to create STA list with circular layout
      createSTAList := func(deviceX, deviceY float32, radioList []Radio) []map[string]interface{} {
-@@ -4990,13 +4980,25 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
+@@ -4937,13 +4927,25 @@ func loadTopologyFromDeviceTree(w  http.ResponseWriter) {
                  "channel":       channel,
                  "upstreamBSSID": upstreamBSSID,
  				"backhaulSTA":   backhaulSTA,
@@ -448,5 +448,3 @@ index 5346212..f84401d 100644
 +    EXPECT_FALSE(em_format_link_metric_observed_at(
 +        observed_at, 0, received_at, 1000));
 +}
--- 
-2.53.0

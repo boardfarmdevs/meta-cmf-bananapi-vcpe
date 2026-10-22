@@ -24,6 +24,8 @@ Upstream-Status: Pending
  tests/test_l1_dm_sta.cpp  | 26 ++++++++++++++++++++++++++
  3 files changed, 85 insertions(+), 1 deletion(-)
 
+diff --git a/inc/dm_sta_list.h b/inc/dm_sta_list.h
+index f833e4b..d99c7b1 100644
 --- a/inc/dm_sta_list.h
 +++ b/inc/dm_sta_list.h
 @@ -203,6 +203,27 @@ public:
@@ -54,6 +56,8 @@ Upstream-Status: Pending
      
  	/**!
  	 * @brief Sets the configuration using the provided JSON object.
+diff --git a/src/dm/dm_sta_list.cpp b/src/dm/dm_sta_list.cpp
+index 95f6546..b3348af 100644
 --- a/src/dm/dm_sta_list.cpp
 +++ b/src/dm/dm_sta_list.cpp
 @@ -330,6 +330,43 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
@@ -109,6 +113,8 @@ Upstream-Status: Pending
  			break;
  
  		default:
+diff --git a/tests/test_l1_dm_sta.cpp b/tests/test_l1_dm_sta.cpp
+index f62b333..c6bc063 100644
 --- a/tests/test_l1_dm_sta.cpp
 +++ b/tests/test_l1_dm_sta.cpp
 @@ -22,6 +22,7 @@
@@ -119,9 +125,9 @@ Upstream-Status: Pending
  
  /**
  * @brief Test the decode function with a valid JSON object and valid parent ID
-@@ -1549,3 +1550,28 @@ TEST(dm_sta_t_Test, dm_sta_t_destructor_default_constructor) {
-     });
-     std::cout << "Exiting dm_sta_t::~dm_sta_t()_end test" << std::endl;
+@@ -1732,3 +1733,28 @@ TEST(dm_sta_t_Test, GetAssocFrameIeOffsetUnrecognisedBody) {
+     EXPECT_EQ(dm_sta_t::get_assoc_frame_ie_offset(nullptr, 32), 0u);
+     std::cout << "Exiting GetAssocFrameIeOffsetUnrecognisedBody test" << std::endl;
  }
 +
 +TEST(dm_sta_list_t_Test, DeleteQueryIsScopedToAssociationOwner) {
@@ -148,5 +154,3 @@ Upstream-Status: Pending
 +    EXPECT_EQ(dm_sta_list_t::format_scoped_delete_query(query, sizeof(query), info), -1);
 +    EXPECT_STREQ(query, "");
 +}
--- 
-2.43.0
