@@ -1,8 +1,9 @@
 /* Minimal non-interactive driver for libemcli.
  *
  * The shipped libemcli.so (built from src/rdkb-cli) implements the whole
- * em_ctrl command path -- TLS to EM_CTRL_PORT and the binary em_event_t
- * marshalling -- but the image ships no executable that drives it. This is
+ * em_ctrl command path -- TLS on the controller's command socket (a unix socket
+ * since patch 0281, whatever address set_remote_addr gives) and the binary
+ * em_event_t marshalling -- but the image ships no executable that drives it. This is
  * that executable, scriptable rather than the readline REPL in src/cli/main.c
  * (which in any case calls an init() the rdkb-cli variant does not export).
  *
