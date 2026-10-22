@@ -1,0 +1,172 @@
+Subject: [PATCH] cmd: the command sockets are unix sockets, reachable only on the box
+
+em_ctrl's command listener was TLS on TCP EM_CTRL_PORT (49153) bound to INADDR_ANY, and
+em_agent's on EM_AGENT_PORT (49152), with no client certificate check: any host that reached the
+port could send any command, Reset and RemoveDevice among them. LOCAL_CLI, which makes them
+unix sockets, was never defined in any build.
+
+- em_cmd_exec.h defines LOCAL_CLI, so every build of em_cmd_exec.cpp takes it: em_ctrl,
+  em_agent, and the libemcli of src/cli and src/rdkb-cli. Listeners and clients use
+  EM_PATH_PREFIX "_" EM_CTRL_PATH (/tmp/onewifi_mesh_ctrl) and EM_AGENT_PATH; a client ignores
+  the address set_remote_addr gives it. TLS runs over the unix socket as before.
+- em_cmd_exec.cpp does not build without LOCAL_CLI (#error).
+- EM_CMD_TRANSPORT ("em_cmd transport: unix socket") is named in the bind and connect errors,
+  with the socket's path, so a client that cannot reach its daemon says where it looked. Each
+  binary that carries the transport therefore holds the string, which the image's build checks
+  for in the daemons and in libemcli.
+- close_listener_socket's message passes the arguments its format names, now that the branch
+  is built.
+
+Unit tests (em_cmd_transport, in both the controller's and the agent's test binaries): the
+controller's and the agent's socket paths; a listener made for a service is a unix socket at that
+service's path, a client connects to it there, and closing the listener removes the path.
+---
+diff --git a/inc/em_cmd_exec.h b/inc/em_cmd_exec.h
+index b6e71d6a..de119ed0 100644
+--- a/inc/em_cmd_exec.h
++++ b/inc/em_cmd_exec.h
+@@ -24,6 +24,15 @@
+ #include "openssl/ssl.h"
+ #include "openssl/err.h"
+ 
++/* The command sockets are unix sockets, EM_PATH_PREFIX "_" EM_CTRL_PATH and EM_AGENT_PATH (and
++ * EM_CLI_PATH), reachable only on the box: nothing listens on TCP EM_CTRL_PORT or EM_AGENT_PORT
++ * on every interface. Every build of em_cmd_exec.cpp takes it from this header (em_ctrl, em_agent
++ * and the libemcli of src/cli and src/rdkb-cli), so the daemons and their clients agree, and
++ * em_cmd_exec.cpp does not build without it. Each of them carries EM_CMD_TRANSPORT, which the
++ * image's build checks it finds in the daemons and in libemcli. */
++#define LOCAL_CLI
++#define EM_CMD_TRANSPORT "em_cmd transport: unix socket"
++
+ class em_cmd_exec_t {
+ 
+     pthread_cond_t  m_cond;
+diff --git a/src/cmd/em_cmd_exec.cpp b/src/cmd/em_cmd_exec.cpp
+index 930cc7d2..66fc41ba 100644
+--- a/src/cmd/em_cmd_exec.cpp
++++ b/src/cmd/em_cmd_exec.cpp
+@@ -35,6 +35,10 @@
+ #include <cjson/cJSON.h>
+ #include "em_cli.h"
+ 
++#ifndef LOCAL_CLI
++#error "the command sockets are unix sockets: em_cmd_exec.h defines LOCAL_CLI for every build of this file"
++#endif
++
+ void em_cmd_exec_t::wait(struct timespec *time_to_wait)
+ {
+     printf("Waiting\n");
+@@ -143,7 +147,7 @@ void em_cmd_exec_t::close_listener_socket(int sock, em_service_type_t svc)
+ 	em_long_string_t path;
+ 
+     if (get_path_from_dst_service(svc, path) == NULL) {
+-        printf("%s:%d: Could not find path from destination service: %d\n", svc);
++        printf("%s:%d: Could not find path from destination service: %d\n", __func__, __LINE__, svc);
+         return;
+     }
+ 
+@@ -200,7 +204,8 @@ int em_cmd_exec_t::get_listener_socket(em_service_type_t svc)
+     setsockopt(lsock, SOL_SOCKET, SO_REUSEADDR, &do_reuse_sock, sizeof(do_reuse_sock)); // Reuse address 
+ 
+     if ((ret = bind(lsock, reinterpret_cast<const struct sockaddr *> (&addr), sizeof(struct sockaddr_un))) == -1) {
+-        printf("%s:%d: bind error on socket: %d, err:%d\n", __func__, __LINE__, lsock, errno);
++        printf("%s:%d: bind error on socket: %d (%s %s), err:%d\n", __func__, __LINE__, lsock, EM_CMD_TRANSPORT,
++            path, errno);
+         return -1;
+     }
+ 
+@@ -263,7 +268,8 @@ SSL *em_cmd_exec_t::get_ep_for_dst_svc(SSL_CTX *ctx, em_service_type_t svc)
+ #endif
+     
+ 	if ((ret = connect(sock, reinterpret_cast< struct sockaddr *> (&addr), sizeof(addr))) != 0) {
+-        printf("%s:%d: Could not connect to dest\n", __func__, __LINE__);
++        printf("%s:%d: Could not connect to dest (%s %s), err:%d\n", __func__, __LINE__, EM_CMD_TRANSPORT,
++            sock_path, errno);
+ 		close(sock);
+         return NULL;
+     }
+@@ -349,7 +355,8 @@ int em_cmd_exec_t::send_cmd(em_service_type_t to_svc, unsigned char *in, unsigne
+     //snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+ 
+     if ((ret = connect(dsock, reinterpret_cast<const struct sockaddr *> (&addr), sizeof(struct sockaddr_un))) != 0) {
+-        snprintf(out, out_len, "%s:%d: connect error on socket, err:%d\n", __func__, __LINE__, errno);
++        snprintf(out, out_len, "%s:%d: connect error on socket (%s %s), err:%d\n", __func__, __LINE__,
++            EM_CMD_TRANSPORT, sock_path, errno);
+         return -1;
+     }
+ 
+diff --git a/tests/test_l1_em_cmd_reset.cpp b/tests/test_l1_em_cmd_reset.cpp
+index bc1c91d4..535f37c7 100644
+--- a/tests/test_l1_em_cmd_reset.cpp
++++ b/tests/test_l1_em_cmd_reset.cpp
+@@ -20,7 +20,12 @@
+ #include <gtest/gtest.h>
+ #include <gmock/gmock.h>
+ #include <stdio.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <unistd.h>
+ #include "em_cmd_reset.h"
++#include "em_cmd_exec.h"
+ 
+ 
+ /**
+@@ -186,3 +191,57 @@ TEST(em_cmd_reset_t, em_cmd_reset_t_max_params)
+     cmd.deinit();
+     std::cout << "Exiting em_cmd_reset_t_max_params test" << std::endl;
+ }
++
++/* 0281: a Reset, like every command, reaches a daemon only on its unix socket, at the same path
++ * for the daemon's listener and for its clients (em_cmd_exec.h's LOCAL_CLI): nothing listens on
++ * TCP. */
++namespace {
++class em_cmd_transport_exec_t : public em_cmd_exec_t {
++public:
++    int execute(char *result) override { return 0; }
++};
++}
++
++TEST(em_cmd_transport, the_command_sockets_are_unix_socket_paths)
++{
++    em_long_string_t path;
++
++    ASSERT_NE(em_cmd_exec_t::get_path_from_dst_service(em_service_type_ctrl, path), nullptr);
++    EXPECT_STREQ(path, EM_PATH_PREFIX "_" EM_CTRL_PATH);
++    ASSERT_NE(em_cmd_exec_t::get_path_from_dst_service(em_service_type_agent, path), nullptr);
++    EXPECT_STREQ(path, EM_PATH_PREFIX "_" EM_AGENT_PATH);
++}
++
++TEST(em_cmd_transport, a_client_reaches_the_listener_at_its_path)
++{
++    em_cmd_transport_exec_t exec;
++    em_long_string_t path;
++    struct sockaddr_un addr = {};
++    struct sockaddr_storage bound = {};
++    socklen_t bound_len = sizeof(bound);
++    struct stat st;
++
++    // the cli service's socket: a controller or an agent on this host may hold the other two
++    ASSERT_NE(em_cmd_exec_t::get_path_from_dst_service(em_service_type_cli, path), nullptr);
++    int listener = exec.get_listener_socket(em_service_type_cli);
++    ASSERT_GE(listener, 0);
++    ASSERT_EQ(getsockname(listener, reinterpret_cast<struct sockaddr *>(&bound), &bound_len), 0);
++    EXPECT_EQ(bound.ss_family, AF_UNIX);
++    ASSERT_EQ(listen(listener, 1), 0);
++    ASSERT_EQ(stat(path, &st), 0);
++    EXPECT_TRUE(S_ISSOCK(st.st_mode));
++
++    int client = socket(AF_UNIX, SOCK_STREAM, 0);
++    ASSERT_GE(client, 0);
++    addr.sun_family = AF_UNIX;
++    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
++    EXPECT_EQ(connect(client, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)), 0);
++    int accepted = accept(listener, NULL, NULL);
++    EXPECT_GE(accepted, 0);
++    if (accepted >= 0) {
++        close(accepted);
++    }
++    close(client);
++    exec.close_listener_socket(listener, em_service_type_cli);
++    EXPECT_NE(stat(path, &st), 0);
++}
