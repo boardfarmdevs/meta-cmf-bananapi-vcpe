@@ -790,7 +790,8 @@ do_install_append() {
         fi
         grep -q -a -F "$marker" "$f" || \
             bbfatal "$f does not carry the unix command transport (0281): it would not meet em_ctrl, em_agent and libemcli"
-        n=$((n + 1))
+        # expr: bitbake's shell parser takes no $(( ))
+        n=$(expr $n + 1)
     done
     [ "$n" -gt 0 ] || bbfatal "no command transport binary to check (onewifi_em_ctrl, onewifi_em_agent, libemcli) in ${D}"
     bbnote "meta-cmf-bananapi-vcpe: $n command transport binaries carry the unix socket (0281)"
