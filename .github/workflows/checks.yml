@@ -2,6 +2,7 @@
 # documentation, the Python tests (the lab's, the medium's configurator, the optimizer's),
 # the Node tests and the VM builder's shell tests, with the medium and the optimizer at
 # the commits this repository pins. A step skipped for a missing tool fails the job.
+# unified-wifi-mesh's unit suites on the patched tree: the unit job.
 # The site and the explorer's tests: pages.yml.
 name: checks
 on:
@@ -43,3 +44,52 @@ jobs:
         with:
           name: static-results
           path: static-results/
+
+  # unified-wifi-mesh's unit suites, the controller's and the agent's, on the patched tree
+  # (gen/tests/uwm-unit.sh): upstream at the base recipe's commit with this repository's
+  # patches applied without fuzz, the test sets of the image's unit build, built with upstream's
+  # native makefiles against OneWifi at the image's commit. Each binary runs through
+  # gen/tests/uwm-unit-run.py, which passes only a run that reached its end with every listed
+  # test run and none failed. The database tests run against the MariaDB service, whose socket
+  # is the runner's /run/mysqld/mysqld.sock (the client library's default).
+  unit:
+    runs-on: ubuntu-24.04
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: OneWifiMesh
+          MARIADB_USER: bpi
+          MARIADB_PASSWORD: root
+          MARIADB_RANDOM_ROOT_PASSWORD: '1'
+        volumes:
+          - /run/mysqld:/run/mysqld
+        options: >-
+          --health-cmd "healthcheck.sh --connect"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: The build packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake git wget libev-dev libjansson-dev \
+            zlib1g-dev libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libavro-dev uuid-dev \
+            libmysqlcppconn-dev libreadline-dev libmariadb-dev libssl-dev libgtest-dev golang
+      - name: cJSON 1.7.18
+        run: |
+          cd "$RUNNER_TEMP"
+          wget -q https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.18.tar.gz
+          echo "3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5  v1.7.18.tar.gz" | sha256sum -c -
+          tar -xzf v1.7.18.tar.gz && cmake -S cJSON-1.7.18 -B cjson-build -DENABLE_CJSON_UTILS=On \
+            -DENABLE_CJSON_TEST=Off -DCMAKE_INSTALL_PREFIX=/usr > /dev/null
+          make -j"$(nproc)" -C cjson-build > /dev/null && sudo make -C cjson-build install > /dev/null && sudo ldconfig
+      - name: The unit suites
+        run: |
+          git config --global user.email ci@example.invalid
+          git config --global user.name ci
+          bash gen/tests/uwm-unit.sh "$RUNNER_TEMP/uwm-unit"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uwm-unit-logs
+          path: ${{ runner.temp }}/uwm-unit/logs/
