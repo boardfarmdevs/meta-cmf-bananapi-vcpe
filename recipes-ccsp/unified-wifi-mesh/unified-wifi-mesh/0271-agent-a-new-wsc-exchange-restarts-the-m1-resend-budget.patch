@@ -1,4 +1,4 @@
-Subject: [PATCH] agent: a new WSC exchange or a handled M2 restarts the M1 re-send budget; a spent round is followed by a new one
+Subject: [PATCH] agent: a radio's M1 re-sends for a lost M2 last until its M2: a new WSC exchange or a handled M2 restarts the budget, a spent round is followed by a new one, and no other command on the radio ends the exchange
 
 0021 re-sends a radio's M1 while it waits in wsc_m2_pending, every third tick, at most eight
 times, to solicit an M2 the controller sent once and that was lost. The count was reset only in
@@ -21,10 +21,58 @@ exchange with a fresh nonce and keys as the existing re-send already does. A res
 recovered controller answers the next M1 with an M2. The radio stays in wsc_m2_pending
 throughout; the other radios are untouched (a dev_init would redo every radio).
 
+The re-sends run from the radio's own protocol tick (em_t::proto_timeout, 0108), whatever command
+the orchestrator holds, and the M1 is built from the radio's own data. What ended them was another
+command. On rdk-1010 (21 October, a lone em_ctrl restart) the same extender's 6 GHz radio got the
+Renew's M2, had its OneWifi subdoc queued behind another radio's and was re-armed (0105, 0111),
+re-sent two M1s while its backhaul station was down, and then stopped: a sta_link_metrics command,
+built for the radio because it has stations and runnable only on a configured radio, waited on it
+for its 10 s time limit, and at the limit orch_transient set the radio, below
+topo_synchronized, to unconfigured. 0109 and 0110 kept the WSC states only for dev_init's and
+cfg_renew's time limits. Unconfigured, the radio left the re-send path for good, its agent
+answered no Topology Query for the 20 minutes watched, and a new sta_link_metrics timed out on it
+every 20 s. A command's time limit now keeps wsc_m2_pending and owconfig_pending whichever command
+timed out. Its "Preserving" line is logged once for a radio and command type, then at most once
+every 10 minutes with the count of such time limits since (wsc_kept_log_due): a command that
+waits on the radio times out every few seconds for as long as the radio waits.
+
+A command that runs on a radio in any state and sets its own state on it (ap_cap_query to
+ap_cap_report, op_channel_report to channel_report_pending) ends the exchange the same way; an
+ap_cap_query's time limit then left the radio at topo_synchronized, counted as configured with no
+M2. While its exchange is in flight a radio now runs only a new exchange (dev_init, cfg_renew),
+OneWifi's completion of its configuration (onewifi_cb) and the commands that leave its state as
+they found it (sta_list, unassoc_sta_result); any other command waits for the radio or for its
+time limit.
+
 The round arithmetic is a static helper, wsc_m2_recovery_tick(), with unit tests
 (test_l1_em_provisioning.cpp: the 30/60/120/120 waits, the first M1 on a round's tick, an unsent
-M1 not spending the budget, the reset).
+M1 not spending the budget, the reset). test_l1_em_orch_agent.cpp runs the rounds as the agent
+does, the orchestrator's handle_timeout and a test radio's proto_timeout each tick, the radio
+counting the frames it sends: the radio's Renew command timing out with the radio still waiting,
+another command timing out on it, another command coming for it, alone and with a configured
+sibling radio (the sibling runs its part at once and sends nothing, the command ends for both at
+its time limit), and the M2 landing then the radio re-armed. Each checks every re-send's tick
+(rounds at the 30, 60 and 120 tick boundaries) and at most one M1 a tick; another test checks the
+"Preserving" line's limit. Without the two orchestrator changes the two tests of another
+command fail as the lab did: the radio left unconfigured after two re-sends, or held by the
+ap_cap_query then at topo_synchronized after one; the Renew's and the M2's tests pass either way
+(0108 and 0110 already kept those).
 ---
+diff --git a/inc/em.h b/inc/em.h
+index 0b126f39..300860e0 100644
+--- a/inc/em.h
++++ b/inc/em.h
+@@ -217,6 +217,10 @@ class em_t :
+ 	bool initialize_ec_manager();
+ 
+ public:
++#ifdef UNIT_TEST
++    /* one tick of this node's protocol timer, as its thread runs it every m_iq.timeout */
++    void test_proto_timeout() { proto_timeout(); }
++#endif
+     int send_native_backhaul_frame(unsigned char *frame, unsigned int length) { return send_frame(frame, length); }
+     /* a complete 1905 frame (its header names source and destination) sent as this node's own:
+      * the controller's rejoin renew to a retired agent, which has no em left */
 diff --git a/inc/em_configuration.h b/inc/em_configuration.h
 index 72f9b536..882a9aa2 100644
 --- a/inc/em_configuration.h
@@ -56,6 +104,43 @@ index 72f9b536..882a9aa2 100644
  	/**
  	 * Return true only when a station row is safe to advertise as associated.
  	 * A disassociation tombstone for the same STA/BSSID/RUID is authoritative
+diff --git a/inc/em_orch_agent.h b/inc/em_orch_agent.h
+index 28160356..48106460 100644
+--- a/inc/em_orch_agent.h
++++ b/inc/em_orch_agent.h
+@@ -20,6 +20,9 @@
+ #define EM_ORCH_AGENT_H
+ 
+ #include "em_orch.h"
++#include <chrono>
++#include <map>
++#include <string>
+ 
+ class em_orch_agent_t : public em_orch_t {
+ 
+@@ -133,8 +136,21 @@ public:
+ 	 */
+ 	void orch_transient(em_cmd_t *pcmd, em_t *em);
+ 
++	/* The line a command's time limit logs when it keeps a radio's WSC exchange (orch_transient):
++	 * one for a radio and command type, then at most one every 10 minutes with the count of such
++	 * time limits since. A command that waits on the radio (sta_link_metrics) times out every few
++	 * seconds for as long as the radio waits, and an agent may keep its logs in RAM. */
++	struct wsc_kept_log_t {
++		std::chrono::steady_clock::time_point logged{};
++		unsigned int since = 0;
++	};
++	/* counts this time limit; true when its line is due, *since then the count it reports */
++	static bool wsc_kept_log_due(wsc_kept_log_t &kept, std::chrono::steady_clock::time_point now,
++		unsigned int *since);
++	std::map<std::string, wsc_kept_log_t> m_wsc_kept_log;
++
+ public:
+-    
++
+ 	/**!
+ 	 * @brief Constructor for em_orch_agent_t.
+ 	 *
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
 index 67963090..74dd34b6 100644
 --- a/src/em/config/em_configuration.cpp
@@ -168,6 +253,356 @@ index 67963090..74dd34b6 100644
      }
  
      // A retry starts a new WSC transaction.  Refresh the enrollee nonce and
+diff --git a/src/orch/em_orch_agent.cpp b/src/orch/em_orch_agent.cpp
+index 7a62804c..f209b380 100644
+--- a/src/orch/em_orch_agent.cpp
++++ b/src/orch/em_orch_agent.cpp
+@@ -197,6 +197,29 @@ unsigned int em_orch_agent_t::retain_full_sta_snapshot_deltas(
+     return assoc_delta + disassoc_delta;
+ }
+ 
++// A radio whose WSC exchange is in flight: its M1 sent and its M2 awaited
++// (re-sent from the radio's own tick, em_t::proto_timeout), or its M2's
++// configuration being applied by OneWifi.
++static bool wsc_exchange_in_flight(em_t *em)
++{
++    return (em->get_state() == em_state_agent_wsc_m2_pending) ||
++        (em->get_state() == em_state_agent_owconfig_pending);
++}
++
++bool em_orch_agent_t::wsc_kept_log_due(wsc_kept_log_t &kept, std::chrono::steady_clock::time_point now,
++    unsigned int *since)
++{
++    kept.since++;
++    if ((kept.logged != std::chrono::steady_clock::time_point{}) &&
++            (now - kept.logged < std::chrono::minutes(10))) {
++        return false;
++    }
++    *since = kept.since;
++    kept.logged = now;
++    kept.since = 0;
++    return true;
++}
++
+ void em_orch_agent_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+ {
+     em_cmd_stats_t *stats;
+@@ -224,17 +247,21 @@ void em_orch_agent_t::orch_transient(em_cmd_t *pcmd, em_t *em)
+         em_state_t state = em->get_state();
+         em_cmd_type_t cmd_type = pcmd->get_type();
+         cancel_command(cmd_type);
+-        if ((cmd_type == em_cmd_type_dev_init ||
+-             cmd_type == em_cmd_type_cfg_renew) &&
+-                (state == em_state_agent_wsc_m2_pending ||
+-                 state == em_state_agent_owconfig_pending)) {
++        if (wsc_exchange_in_flight(em)) {
+             // WSC is a per-radio protocol transaction and its bounded retry
+             // remains live after the shared onboarding command is gone.
+             // The per-radio state is the ownership boundary, not the command.
+-            // Do not erase that ownership state on the generic command TTL.
+-            em_printfout("Preserving %s after onboarding command timeout for radio %s",
+-                em_t::state_2_str(state),
+-                util::mac_to_string(em->get_radio_interface_mac()).c_str());
++            // Do not erase that ownership state on the generic command TTL,
++            // whichever command timed out: one that waited on this radio
++            // (sta_link_metrics, every few seconds while it has stations)
++            // reset it to unconfigured, which ended its M1 re-sends for good.
++            const std::string radio = util::mac_to_string(em->get_radio_interface_mac());
++            unsigned int since = 0;
++            if (wsc_kept_log_due(m_wsc_kept_log[radio + " " + em_cmd_t::get_cmd_type_str(cmd_type)],
++                    std::chrono::steady_clock::now(), &since)) {
++                em_printfout("Preserving %s after %s command timeout for radio %s (timeouts since the last such line: %u)",
++                    em_t::state_2_str(state), em_cmd_t::get_cmd_type_str(cmd_type), radio.c_str(), since);
++            }
+         } else if (state < em_state_agent_topo_synchronized) {
+ 	    	em->set_state(em_state_agent_unconfigured);
+ 		} else {
+@@ -334,6 +361,21 @@ bool em_orch_agent_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
+ 
+ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
+ {
++    // A radio in its WSC exchange runs a new exchange (dev_init, cfg_renew),
++    // OneWifi's completion of its configuration (onewifi_cb) and the commands
++    // that leave its state as they found it (sta_list, unassoc_sta_result).
++    // Any other command sets its own state on the radio (ap_cap_report,
++    // channel_report_pending) and so ends the exchange and its M1 re-sends
++    // without an M2: it waits for the radio, or for its time limit.
++    if (wsc_exchange_in_flight(em) &&
++            (pcmd->m_type != em_cmd_type_dev_init) &&
++            (pcmd->m_type != em_cmd_type_cfg_renew) &&
++            (pcmd->m_type != em_cmd_type_onewifi_cb) &&
++            (pcmd->m_type != em_cmd_type_sta_list) &&
++            (pcmd->m_type != em_cmd_type_unassoc_sta_result)) {
++        return false;
++    }
++
+ 	if (pcmd->m_type == em_cmd_type_dev_init) {
+         return true;
+     } else if (pcmd->m_type == em_cmd_type_onewifi_cb) {
+diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
+index 7a018bf2..07cc95f3 100644
+--- a/tests/test_l1_em_orch_agent.cpp
++++ b/tests/test_l1_em_orch_agent.cpp
+@@ -2153,3 +2153,259 @@ TEST_F(em_orch_agent_t_TEST, pre_process_orch_op_ValidCommandUnsupportedOp_NoneO
+     EXPECT_FALSE(ret);
+     std::cout << "Exiting pre_process_orch_op_ValidCommandUnsupportedOp_NoneOrchType test" << std::endl;
+ }
++
++// 0271: a radio's M1 re-sends for a lost M2, run as the agent runs them. The radio re-sends its
++// M1 from its own protocol tick (em_t::proto_timeout, once a second on its thread): 8 in a round,
++// every third tick, then a new round after 30 ticks, doubling to 120. The orchestrator ticks
++// alongside it (handle_timeout, once a second). A command on the radio that starts or ends, its
++// own or another one, neither ends the rounds nor adds an M1.
++#include <arpa/inet.h>
++#include <algorithm>
++#include <memory>
++
++namespace {
++
++// an agent radio whose 1905 frames are counted, none sent on a network
++class wsc_radio_t : public em_t {
++public:
++    unsigned int m1s = 0;
++    unsigned int frames = 0;    // every 1905 frame, M1s too
++
++    wsc_radio_t(em_interface_t *ruid, dm_easy_mesh_t *dm, em_mgr_t *mgr) :
++        em_t(ruid, em_freq_band_5, dm, mgr, em_profile_type_3, em_service_type_agent) {}
++
++    int send_frame(unsigned char *buff, unsigned int len, bool multicast = false) override
++    {
++        (void)multicast;
++        frames++;
++        if (len >= sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)) {
++            const em_cmdu_t *cmdu = reinterpret_cast<const em_cmdu_t *>(buff + sizeof(em_raw_hdr_t));
++            if (ntohs(cmdu->type) == em_msg_type_autoconf_wsc) {
++                m1s++;
++            }
++        }
++        return static_cast<int>(len);
++    }
++};
++
++struct wsc_rig_t {
++    em_orch_agent_t *orch;
++    std::unique_ptr<dm_easy_mesh_t> dm{new dm_easy_mesh_t()};
++    em_interface_t ruid{};
++    std::unique_ptr<wsc_radio_t> radio;
++    std::vector<unsigned int> sends;    // the ticks on which the radio sent an M1
++
++    wsc_rig_t(em_mgr_t *mgr, em_orch_agent_t *o) : orch(o)
++    {
++        dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:21:76:0e"), ruid.mac);
++        radio.reset(new wsc_radio_t(&ruid, dm.get(), mgr));
++    }
++
++    // a test stopped early leaves its command queued, which the fixture's queue_destroy would
++    // free() although it was made with new: destroyed as the orchestrator destroys commands
++    ~wsc_rig_t()
++    {
++        for (queue_t *queue : {orch->m_pending, orch->m_active}) {
++            while (queue_count(queue) != 0) {
++                em_cmd_t *cmd = static_cast<em_cmd_t *>(queue_remove(queue, 0));
++                orch->pop_stats(cmd);
++                orch->destroy_command(cmd);
++            }
++        }
++    }
++
++    // ticks first..last, the orchestrator's then the radio's: at most one M1 a tick
++    void run(unsigned int first, unsigned int last)
++    {
++        for (unsigned int tick = first; tick <= last; tick++) {
++            unsigned int before = radio->m1s;
++            orch->handle_timeout();
++            radio->test_proto_timeout();
++            EXPECT_LE(radio->m1s - before, 1u) << "tick " << tick;
++            if (radio->m1s != before) {
++                sends.push_back(tick);
++            }
++        }
++    }
++};
++
++// a command on the radio, queued as submit_command queues it once build_candidates picked it
++em_cmd_t *queue_on_radio(em_orch_agent_t *orch, em_cmd_type_t type, em_t *radio)
++{
++    em_cmd_params_t param{};
++    std::unique_ptr<dm_easy_mesh_t> dm(new dm_easy_mesh_t());
++    em_cmd_t *cmd = new em_cmd_t(type, param, *dm);
++    queue_push(cmd->m_em_candidates, radio);
++    queue_push(orch->m_pending, cmd);
++    orch->push_stats(cmd);
++    return cmd;
++}
++
++// the command's time limit passed (EM_MAX_CMD_GEN_TTL from when it became active)
++void age_past_time_limit(em_cmd_t *cmd)
++{
++    cmd->m_start_time.tv_sec -= EM_MAX_CMD_GEN_TTL + 1;
++}
++
++// the ticks up to last of a radio's re-sends when its exchange started on tick `start`: rounds
++// of 8 every third tick, the next round 30, 60, 120, 120 ... ticks after a round's last M1
++std::vector<unsigned int> expected_resends(unsigned int start, unsigned int last)
++{
++    std::vector<unsigned int> ticks;
++    unsigned int wait = 30, next = start + 3;
++    while (next <= last) {
++        for (unsigned int i = 0; i < 8 && next <= last; i++, next += 3) {
++            ticks.push_back(next);
++        }
++        next = ticks.back() + wait;
++        wait = std::min(wait * 2, 120u);
++    }
++    return ticks;
++}
++
++}
++
++TEST_F(em_orch_agent_t_TEST, WscRoundsOutliveTheRadiosRenewCommand)
++{
++    // the Renew's command runs on the radio, its M1 goes out and the M2 is lost. The command's
++    // time limit passes with the radio still waiting: the command ends, the radio keeps its rounds
++    wsc_rig_t rig(&mgr, orch);
++    em_cmd_t *renew = queue_on_radio(orch, em_cmd_type_cfg_renew, rig.radio.get());
++    orch->handle_timeout();
++    ASSERT_EQ(rig.radio->get_current_cmd(), renew);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_autoconfig_renew_pending);
++    // its M1 sent: what handle_state_autoconfig_renew does then (its M1 is validated, which
++    // takes radio capabilities this test's data model does not have)
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.radio->reset_wsc_m2_recovery();
++    rig.run(1, 12);
++    EXPECT_EQ(rig.radio->get_current_cmd(), renew);
++    age_past_time_limit(renew);
++    rig.run(13, 14);
++    EXPECT_EQ(queue_count(orch->m_active), 0u);
++    EXPECT_EQ(rig.radio->get_current_cmd(), nullptr);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    rig.run(15, 300);
++    EXPECT_EQ(rig.sends, expected_resends(0, 300));
++    // rounds at the 30, 60 and 120 boundaries: 24 + 30, 75 + 60, 156 + 120
++    EXPECT_NE(std::find(rig.sends.begin(), rig.sends.end(), 54u), rig.sends.end());
++    EXPECT_NE(std::find(rig.sends.begin(), rig.sends.end(), 135u), rig.sends.end());
++    EXPECT_NE(std::find(rig.sends.begin(), rig.sends.end(), 276u), rig.sends.end());
++}
++
++TEST_F(em_orch_agent_t_TEST, WscRoundsOutliveAnotherCommandTimingOut)
++{
++    // a command that runs only on a configured radio (sta_link_metrics, for a radio with
++    // stations) waits on a radio in its WSC exchange, its own command gone, and times out
++    wsc_rig_t rig(&mgr, orch);
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.run(1, 4);
++    em_cmd_t *metrics = queue_on_radio(orch, em_cmd_type_sta_link_metrics, rig.radio.get());
++    rig.run(5, 6);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    age_past_time_limit(metrics);
++    rig.run(7, 8);
++    EXPECT_EQ(queue_count(orch->m_active), 0u);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    rig.run(9, 300);
++    EXPECT_EQ(rig.sends, expected_resends(0, 300));
++}
++
++TEST_F(em_orch_agent_t_TEST, WscRoundsOutliveAnotherCommandStarting)
++{
++    // a command that runs on a radio in any state and sets its own state on it (ap_cap_query)
++    // comes for a radio in its WSC exchange: it waits for the radio, then times out
++    wsc_rig_t rig(&mgr, orch);
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.run(1, 4);
++    em_cmd_t *cap = queue_on_radio(orch, em_cmd_type_ap_cap_query, rig.radio.get());
++    rig.run(5, 8);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    EXPECT_EQ(rig.radio->get_current_cmd(), nullptr);
++    age_past_time_limit(cap);
++    rig.run(9, 10);
++    EXPECT_EQ(queue_count(orch->m_active), 0u);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    rig.run(11, 300);
++    EXPECT_EQ(rig.sends, expected_resends(0, 300));
++}
++
++TEST_F(em_orch_agent_t_TEST, WscRoundsOutliveAnotherCommandStartingOnASibling)
++{
++    // the same command for two radios of the agent, as build_candidates makes it (every radio):
++    // one in its WSC exchange, one configured. The configured radio runs its part at once, the
++    // other waits; the command stays active until its time limit, then ends for both. Its part
++    // sends nothing on either radio: the AP Capability Report is sent by the frame handler for
++    // the controller's query (em_capability_t::process_msg), once every radio is configured
++    std::unique_ptr<dm_easy_mesh_t> sibling_dm(new dm_easy_mesh_t());
++    em_interface_t sibling_ruid{};
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:41:40:85"), sibling_ruid.mac);
++    std::unique_ptr<wsc_radio_t> sibling(new wsc_radio_t(&sibling_ruid, sibling_dm.get(), &mgr));
++    sibling->set_state(em_state_agent_configured);
++    wsc_rig_t rig(&mgr, orch);
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.run(1, 4);
++    em_cmd_t *cap = queue_on_radio(orch, em_cmd_type_ap_cap_query, rig.radio.get());
++    queue_push(cap->m_em_candidates, sibling.get());
++    for (unsigned int tick = 5; tick <= 8; tick++) {
++        rig.run(tick, tick);
++        sibling->test_proto_timeout();
++    }
++    EXPECT_EQ(sibling->get_current_cmd(), cap);
++    EXPECT_EQ(sibling->get_state(), em_state_agent_ap_cap_report);
++    EXPECT_EQ(rig.radio->get_current_cmd(), nullptr);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    EXPECT_EQ(queue_count(orch->m_active), 1u);
++    age_past_time_limit(cap);
++    for (unsigned int tick = 9; tick <= 10; tick++) {
++        rig.run(tick, tick);
++        sibling->test_proto_timeout();
++    }
++    EXPECT_EQ(queue_count(orch->m_active), 0u);
++    EXPECT_EQ(sibling->get_current_cmd(), nullptr);
++    EXPECT_GE(sibling->get_state(), em_state_agent_topo_synchronized);
++    EXPECT_EQ(sibling->frames, 0u);
++    EXPECT_EQ(rig.radio->get_state(), em_state_agent_wsc_m2_pending);
++    rig.run(11, 300);
++    EXPECT_EQ(rig.sends, expected_resends(0, 300));
++    EXPECT_EQ(rig.radio->frames, rig.radio->m1s);
++}
++
++TEST(em_orch_agent_wsc_kept_log, FirstLineThenOneEveryTenMinutes)
++{
++    // a command timing out on a waiting radio every 20 s for an hour: its first time limit's line,
++    // then one every 10 minutes counting the time limits since (30), 6 lines in all
++    em_orch_agent_t::wsc_kept_log_t kept;
++    const auto t0 = std::chrono::steady_clock::now();
++    std::vector<unsigned int> at, counts;
++    for (unsigned int i = 0; i < 180; i++) {
++        unsigned int since = 0;
++        if (em_orch_agent_t::wsc_kept_log_due(kept, t0 + std::chrono::seconds(20 * i), &since)) {
++            at.push_back(i);
++            counts.push_back(since);
++        }
++    }
++    EXPECT_EQ(at, (std::vector<unsigned int>{0, 30, 60, 90, 120, 150}));
++    EXPECT_EQ(counts, (std::vector<unsigned int>{1, 30, 30, 30, 30, 30}));
++}
++
++TEST_F(em_orch_agent_t_TEST, WscRoundsStartAfreshAfterTheM2)
++{
++    // the M2 lands in round 1 (handle_wsc_m2's reset and owconfig_pending): no more M1s. Its
++    // configuration is then lost and the radio re-armed (rearm_onewifi_wsc_radio): a new
++    // exchange, its first re-send three ticks on, a full round of 8 before any wait
++    wsc_rig_t rig(&mgr, orch);
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.run(1, 60);
++    EXPECT_EQ(rig.sends, expected_resends(0, 60));
++    rig.radio->reset_wsc_m2_recovery();
++    rig.radio->set_state(em_state_agent_owconfig_pending);
++    rig.run(61, 100);
++    EXPECT_EQ(rig.sends, expected_resends(0, 60));
++    rig.radio->set_state(em_state_agent_wsc_m2_pending);
++    rig.run(101, 200);
++    std::vector<unsigned int> want = expected_resends(0, 60);
++    std::vector<unsigned int> again = expected_resends(100, 200);
++    want.insert(want.end(), again.begin(), again.end());
++    EXPECT_EQ(rig.sends, want);
++}
 diff --git a/tests/test_l1_em_provisioning.cpp b/tests/test_l1_em_provisioning.cpp
 index 715463e1..1e59828f 100644
 --- a/tests/test_l1_em_provisioning.cpp
