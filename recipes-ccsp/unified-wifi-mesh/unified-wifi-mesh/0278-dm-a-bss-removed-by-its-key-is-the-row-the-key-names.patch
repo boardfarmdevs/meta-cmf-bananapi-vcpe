@@ -1,0 +1,81 @@
+Subject: [PATCH] dm: a BSS removed by its key is the row the key names: its radio, BSSID and haul type
+
+dm_easy_mesh_list_t::remove_bss took out of the model the first BSS with the key's BSSID, on
+any radio and of any haul type. A BSSID names more than one row: each radio's backhaul station
+that is not associated is a row with the zero BSSID (net_id@AL@RUID@00:00:00:00:00:00@1). On a
+device with two such rows, deleting one (enforce_single_vap_bss when a station associates, or
+reconcile_device_bss) took the other radio's out of the model, and reconcile_device_bss then
+deleted that radio's row from BSSList until the next report added it again.
+
+The row is now matched on the fields its key is built from (dm_bss_list_t: ruid.mac, bssid.mac
+and the haul type); for a backhaul station they can be ahead of id.ruid and id.bssid, which
+find_matching_bss compares.
+
+Unit test (dm_easy_mesh_list_tTEST.remove_bss_takes_the_row_its_key_names): two zero-BSSID rows
+on two radios; removing radio B's leaves radio A's, a key of another radio or haul type removes
+nothing.
+---
+diff --git a/src/dm/dm_easy_mesh_list.cpp b/src/dm/dm_easy_mesh_list.cpp
+index 77cadabc..6fa14cfa 100644
+--- a/src/dm/dm_easy_mesh_list.cpp
++++ b/src/dm/dm_easy_mesh_list.cpp
+@@ -605,8 +605,15 @@ void dm_easy_mesh_list_t::remove_bss(const char *key)
+ 		return;
+ 	}
+ 
++	/* the row the key names: its radio, BSSID and haul type, the fields dm_bss_list_t builds the
++	 * key from (ruid.mac and bssid.mac, which for a backhaul station can be ahead of id.ruid and
++	 * id.bssid). A BSSID alone names more than one row: each radio's backhaul station that is not
++	 * associated has the zero BSSID, and the first of them went whichever radio the key named. */
+ 	for (i = 0; i < dm->m_num_bss; i++) {
+-		if (memcmp(dm->m_bss[i].m_bss_info.bssid.mac, id.bssid, sizeof(bssid_t)) == 0) {
++		em_bss_info_t *info = &dm->m_bss[i].m_bss_info;
++		if ((memcmp(info->ruid.mac, id.ruid, sizeof(mac_address_t)) == 0) &&
++				(memcmp(info->bssid.mac, id.bssid, sizeof(bssid_t)) == 0) &&
++				(info->id.haul_type == id.haul_type)) {
+ 			return dm->remove_bss_by_index(i);
+ 		}
+ 	}
+diff --git a/tests/test_l1_dm_easy_mesh_list.cpp b/tests/test_l1_dm_easy_mesh_list.cpp
+index 8e753f45..53dedbc8 100644
+--- a/tests/test_l1_dm_easy_mesh_list.cpp
++++ b/tests/test_l1_dm_easy_mesh_list.cpp
+@@ -5108,3 +5108,38 @@ TEST_F(dm_easy_mesh_list_tTEST, delete_data_model_absent_model_returns) {
+     list.delete_data_model("NoSuchNetwork", mac1);
+     EXPECT_NE(list.get_data_model("Network1", mac1), nullptr);
+ }
++
++// Each radio's backhaul station that is not associated is a row with the zero BSSID. Removing
++// one radio's row by its key takes that row out of the model and leaves the other radio's; a key
++// of a radio with no such row removes nothing.
++TEST_F(dm_easy_mesh_list_tTEST, remove_bss_takes_the_row_its_key_names) {
++    const unsigned char ruid_a[6] = {0x02, 0x00, 0x00, 0x00, 0x0a, 0x01};
++    const unsigned char ruid_b[6] = {0x02, 0x00, 0x00, 0x00, 0x0b, 0x01};
++    const unsigned char *ruids[2] = {ruid_a, ruid_b};
++    ASSERT_NE(dm1, nullptr);
++    unsigned int base = dm1->m_num_bss;
++    ASSERT_LE(base + 2, static_cast<unsigned int>(EM_MAX_BSSS));
++    for (unsigned int i = 0; i < 2; i++) {
++        em_bss_info_t *info = &dm1->m_bss[base + i].m_bss_info;
++        memset(info, 0, sizeof(*info));
++        strncpy(info->id.net_id, "Network1", sizeof(info->id.net_id) - 1);
++        memcpy(info->id.dev_mac, mac1, sizeof(mac_address_t));
++        memcpy(info->id.ruid, ruids[i], sizeof(mac_address_t));
++        memcpy(info->ruid.mac, ruids[i], sizeof(mac_address_t));
++        info->id.haul_type = em_haul_type_backhaul;
++        info->vap_mode = em_vap_mode_sta;
++    }
++    dm1->m_num_bss = base + 2;
++
++    list.remove_bss("Network1@11:22:33:44:55:66@02:00:00:00:0b:01@00:00:00:00:00:00@1");
++    ASSERT_EQ(dm1->m_num_bss, base + 1);
++    EXPECT_EQ(memcmp(dm1->m_bss[base].m_bss_info.ruid.mac, ruid_a, sizeof(mac_address_t)), 0);
++
++    list.remove_bss("Network1@11:22:33:44:55:66@02:00:00:00:0c:01@00:00:00:00:00:00@1");
++    EXPECT_EQ(dm1->m_num_bss, base + 1);
++    list.remove_bss("Network1@11:22:33:44:55:66@02:00:00:00:0a:01@00:00:00:00:00:00@0");
++    EXPECT_EQ(dm1->m_num_bss, base + 1);
++
++    list.remove_bss("Network1@11:22:33:44:55:66@02:00:00:00:0a:01@00:00:00:00:00:00@1");
++    EXPECT_EQ(dm1->m_num_bss, base);
++}
