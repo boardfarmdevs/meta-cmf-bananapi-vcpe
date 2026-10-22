@@ -1,24 +1,38 @@
-Subject: [PATCH] em: a deleted node is freed only after its thread ended and the nodes listener let it go
+Subject: [PATCH] em: a deleted node is freed only after its thread ended and no other thread can still hold it
 
 em_mgr_t::delete_node (RemoveDevice's em_delete) and delete_nodes (Reset's em_reset) freed a
 node's em while its detached thread could still run: stop() set m_exit and signalled without
 the queue's lock, deinit() destroyed the queue's lock and condition, and the em was deleted,
 with nothing waiting for the thread to leave proto_run. The nodes listener could also still
 hold the em, found in the map before it was removed, and push a frame into the freed queue.
+And the map itself: only the main thread removes nodes (delete_node, delete_nodes, retire_node),
+and hash_map_remove frees the map's element and key, but the nodes listener
+(find_em_for_msg_type, create_node) and the controller's node threads (em_channel's reports, the
+get_*node* helpers) walked and looked it up without m_mutex. A removal could free the element a
+reader was on. This gap is older than the delete path: it has been there with retire_node's
+removals since 0270.
 
 - A node's thread is joinable. stop() sets m_exit and signals under the queue's lock, so the
   wake-up cannot fall between proto_run's check and its wait.
 - delete_node and delete_nodes take the em out of the map under m_mutex and out of the
   orchestrator's commands first, then free_nodes stops each one, joins its thread (it ends
   once it handled what was queued to it; one EM_NODE_JOIN_MS deadline for them all), waits for
-  the next pass of the nodes listener when it runs, then deinit and delete. An em whose thread
-  does not end in time, or all of them when no listener pass comes, is detached and kept, not
-  freed, and logged.
+  the passes below, then deinit and delete. An em whose thread does not end in time, or all of
+  them when a pass does not come, is detached and kept, not freed, and logged.
+- Every read of the map off the main thread takes m_mutex, now recursive (rejoin_retired_agents
+  and build_candidates look nodes up holding it): find_node for a key, get_nodes for a walk (a
+  copy taken under the lock, whose body runs without it), and the get_*node* helpers, whose
+  walks only read the ems. find_em_for_msg_type, create_node and em_channel's report handlers
+  use them. The main thread's own reads need no lock: it is the only one that removes. The
+  agent removes no node at runtime.
 - The nodes listener takes the AL interface ems to read from the map under m_mutex and handles
   their frames without it: find_em_for_msg_type takes m_autoconfig_mutex and the liveness lock
   and can create a node, and em_ctrl_t takes those before the map's lock (the map's lock is
   innermost), so holding it across them could deadlock. Instead the listener marks a pass at
   the top of each loop, where it holds no em it found in the map.
+- Each node's thread marks a pass too, at the top of proto_run's loop and between events, and
+  free_nodes frees the unlinked ems only after the listener and each other node's thread passed
+  once (it wakes an idle thread, which passes at once).
 - retire_node detaches the retired em's thread: the em stays allocated, as before, so its
   thread ends on its own.
 - deinit frees what was still queued, and closes the descriptor only of an AL interface em,
@@ -33,23 +47,28 @@ Unit tests:
   deleted at once.
 - delete_node_waits_for_a_listener_pass: with the listener running, delete_node frees the node
   only after its next pass; with none it waits for none.
+- map_read_by_another_thread_while_nodes_come_and_go: a hundred rounds of four nodes created
+  and deleted while another thread walks and looks up the map through the helpers.
 - The orchestrator fixtures that destroy the map they made set m_em_map to NULL after it.
 ---
 diff --git a/inc/em.h b/inc/em.h
-index 300860e0..12cca7c8 100644
+index 300860e0..af54c8c4 100644
 --- a/inc/em.h
 +++ b/inc/em.h
-@@ -67,6 +67,9 @@ class em_t :
+@@ -67,6 +67,12 @@ class em_t :
      em_queue_t  m_iq;
      pthread_t   m_tid;
      bool    m_exit;
 +    // the em's thread: started by init (joinable), then joined, or detached and left to end
 +    bool m_thread_started = false;
 +    bool m_thread_joinable = false;
++    // the thread's passes: each is a point at which it holds no em it found in the map
++    // (em_mgr_t::free_nodes); read and counted with __atomic builtins
++    unsigned long m_passes = 0;
      bool m_is_al_em;
      bool dev_test_enable;
  
-@@ -258,7 +261,24 @@ public:
+@@ -258,7 +264,40 @@ public:
  	 * @note Ensure that all necessary cleanup operations are performed before calling this function.
  	 */
  	void stop() { proto_exit(); }
@@ -66,6 +85,22 @@ index 300860e0..12cca7c8 100644
 +	 * must not be freed.
 +	 */
 +	bool join(unsigned int timeout_ms);
++
++	/**!
++	 * @brief Whether the em's thread runs (started, not joined or detached).
++	 */
++	bool is_thread_running() const { return m_thread_started && m_thread_joinable; }
++
++	/**!
++	 * @brief How many passes the em's thread made: points at which it held no em it found in
++	 * the map (em_mgr_t::free_nodes waits for one).
++	 */
++	unsigned long get_passes() const { return __atomic_load_n(&m_passes, __ATOMIC_ACQUIRE); }
++
++	/**!
++	 * @brief Wakes the em's thread from its wait for an event, so that it makes a pass now.
++	 */
++	void wake();
 +
 +	/**!
 +	 * @brief Leaves the em's thread to end on its own after stop(); the em must then stay allocated.
@@ -115,10 +150,10 @@ index a2634f77..a11db31d 100644
  
      struct agent_liveness_t {
 diff --git a/inc/em_mgr.h b/inc/em_mgr.h
-index 044b1775..136b4bdf 100644
+index 044b1775..1afb08e8 100644
 --- a/inc/em_mgr.h
 +++ b/inc/em_mgr.h
-@@ -33,6 +33,25 @@ class em_mgr_t {
+@@ -33,6 +33,26 @@ class em_mgr_t {
  	unsigned short m_msg_id;
      std::mutex m_msg_id_mutex;
  
@@ -131,9 +166,10 @@ index 044b1775..136b4bdf 100644
 +
 +	/**!
 +	 * @brief Frees ems already unlinked from the map: each told to stop, its thread joined, then,
-+	 * after a pass of the nodes listener when it runs, deinit and delete. An em whose thread does
-+	 * not end within EM_NODE_JOIN_MS, or all of them when no listener pass comes in that time, is
-+	 * kept, not freed (its thread detached), and logged.
++	 * after a pass of the nodes listener when it runs and of each other node's thread (either may
++	 * hold one of them, found in the map before it left it), deinit and delete. An em whose thread
++	 * does not end within EM_NODE_JOIN_MS, or all of them when a pass does not come in that time,
++	 * is kept, not freed (its thread detached), and logged.
 +	 *
 +	 * @param[in] ems The unlinked ems.
 +	 *
@@ -144,7 +180,7 @@ index 044b1775..136b4bdf 100644
  public:
      virtual bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em) { return false; }
  	pthread_mutex_t m_mutex;
-@@ -178,34 +197,47 @@ public:
+@@ -178,34 +198,64 @@ public:
  	em_t *create_node(em_interface_t *ruid, em_freq_band_t band, dm_easy_mesh_t *dm, bool is_al_mac = false, em_profile_type_t profile = em_profile_type_3, em_service_type_t type = em_service_type_agent);
      
  	/**!
@@ -193,6 +229,23 @@ index 044b1775..136b4bdf 100644
 +	void stop_nodes();
 +
 +	/**!
++	 * @brief The node of a map key, looked up under m_mutex.
++	 *
++	 * Only the main thread removes nodes from the map (delete_node, delete_nodes, retire_node),
++	 * and hash_map_remove frees the map's element: another thread (the nodes listener, a node's
++	 * own thread) reads the map only under m_mutex, through find_node, get_nodes and the
++	 * get_*node* helpers. The main thread's own reads need no lock. The em found stays valid
++	 * until the reading thread's next pass (free_nodes).
++	 */
++	em_t *find_node(const char *key);
++
++	/**!
++	 * @brief The nodes in the map, copied under m_mutex: a walk of the map by a thread other than
++	 * the main one, whose body runs without the lock (find_node).
++	 */
++	std::vector<em_t *> get_nodes();
++
++	/**!
 +	 * @brief The nodes listener holds no em it found in the map: one pass (free_nodes waits for one).
 +	 */
 +	void note_listener_pass();
@@ -219,10 +272,177 @@ index 761bb1da..da3549df 100644
  #ifdef AL_SAP
  AlServiceAccessPoint* em_agent_t::al_sap_register(const std::string& data_socket_path, const std::string& control_socket_path)
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index d3240e06..e81c3bac 100644
+index d3240e06..fb4dc338 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -2465,6 +2465,8 @@ em_ctrl_t::em_ctrl_t()
+@@ -1979,7 +1979,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+ 
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str1);
+         
+-            if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) != NULL) {
++            if ((em = find_node(mac_str1)) != NULL) {
+                 em_util_dbg_print(EM_CTRL, "Found existing radio:%s", mac_str1);
+                 /* An agent sends M1 again only while it still waits for its M2
+                  * (0021): the M2 this radio was sent was lost, or not applied
+@@ -2019,7 +2019,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             }
+ 
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str1);
+-            if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) == NULL) {
++            if ((em = find_node(mac_str1)) == NULL) {
+                 em_printfout("Could not find radio:%s", mac_str1);
+                 return NULL;
+             }
+@@ -2036,7 +2036,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             em = NULL;
+             for (i = 0; i < dm->get_num_radios(); i++) {
+                 dm_easy_mesh_t::macbytes_to_string(dm->get_radio_info(i)->id.ruid, mac_str1);
+-                em = static_cast<em_t *>(hash_map_get(m_em_map, mac_str1));
++                em = find_node(mac_str1);
+                 if (em != NULL) {
+                     break;
+                 }
+@@ -2053,7 +2053,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                 // radio waiting for them.)
+                 for (i = 0; i < dm->get_num_radios(); i++) {
+                     dm_easy_mesh_t::macbytes_to_string(dm->get_radio_info(i)->id.ruid, mac_str1);
+-                    em_t *waiting = static_cast<em_t *>(hash_map_get(m_em_map, mac_str1));
++                    em_t *waiting = find_node(mac_str1);
+                     if ((waiting != NULL) && (waiting->get_state() == em_state_ctrl_topo_sync_pending)) {
+                         em = waiting;
+                         break;
+@@ -2066,15 +2066,13 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             if (em_msg_t(data + (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)),
+                     len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t))).get_bss_id(&bssid) == false) {
+                 neighbor_only = true;
+-                em_t *candidate = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-                while (candidate != NULL) {
++                for (em_t *candidate : get_nodes()) {
+                     if (!candidate->is_al_interface_em() &&
+                             candidate->get_service_type() == em_service_type_ctrl &&
+                             candidate->get_state() >= em_state_ctrl_topo_synchronized) {
+                         em = candidate;
+                         break;
+                     }
+-                    candidate = static_cast<em_t *> (hash_map_get_next(m_em_map, candidate));
+                 }
+                 break;
+             }
+@@ -2110,7 +2108,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                 }
+ 
+                 dm_easy_mesh_t::macbytes_to_string(bss->m_bss_info.ruid.mac, mac_str1);
+-                if ((em = static_cast<em_t *>(hash_map_get(m_em_map, mac_str1))) == NULL) {
++                if ((em = find_node(mac_str1)) == NULL) {
+                     em_printfout("Could not find radio:%s", mac_str1);
+                     return NULL;
+                 }
+@@ -2119,7 +2117,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                     (htons(cmdu->type) == em_msg_type_client_cap_rprt)) {
+                     if (dm->resolve_ap_mld_to_fallback_ruid(bssid, fallback_ruid)) {
+                         dm_easy_mesh_t::macbytes_to_string(fallback_ruid, mac_str1);
+-                        em = static_cast<em_t *>(hash_map_get(m_em_map, mac_str1));
++                        em = find_node(mac_str1);
+                         if (em != NULL) {
+                             em_printfout("Resolved AP-MLD bssid=%s to radio=%s for msg=0x%04x",
+                                 util::mac_to_string(bssid).c_str(),
+@@ -2164,29 +2162,29 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+ 
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str1);
+ 
+-            if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) != NULL) {        
++            if ((em = find_node(mac_str1)) != NULL) {        
+                 //printf("%s:%d: Found existing radio:%s\n", __func__, __LINE__, mac_str1);
+ 			}
+             break;
+ 
+         case em_msg_type_assoc_sta_link_metrics_rsp:
+-            em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-            while(em != NULL) {
+-                if ((em->is_al_interface_em() == false) && (em->has_at_least_one_associated_sta() == true)) {
++            em = NULL;
++            for (em_t *node : get_nodes()) {
++                if ((node->is_al_interface_em() == false) && (node->has_at_least_one_associated_sta() == true)) {
++                    em = node;
+                     break;
+                 }
+-                em = static_cast<em_t *> (hash_map_get_next(m_em_map, em));
+             }
+ 
+             break;
+ 
+         case em_msg_type_ap_mld_config_resp:
+-            em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-            while(em != NULL) {
+-                if ((em->is_al_interface_em() == false)) {
++            em = NULL;
++            for (em_t *node : get_nodes()) {
++                if ((node->is_al_interface_em() == false)) {
++                    em = node;
+                     break;
+                 }
+-                em = static_cast<em_t *> (hash_map_get_next(m_em_map, em));
+             }
+             break;
+ 
+@@ -2238,12 +2236,12 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+         }
+ 
+         case em_msg_type_beacon_metrics_rsp:
+-            em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-            while(em != NULL) {
+-                if ((em->is_al_interface_em() == false) && (em->has_at_least_one_associated_sta() == true)) {
++            em = NULL;
++            for (em_t *node : get_nodes()) {
++                if ((node->is_al_interface_em() == false) && (node->has_at_least_one_associated_sta() == true)) {
++                    em = node;
+                     break;
+                 }
+-                em = static_cast<em_t *> (hash_map_get_next(m_em_map, em));
+             }
+             break;
+ 
+@@ -2271,29 +2269,29 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+             }
+ 
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str1);
+-            if ((em = static_cast<em_t *> (hash_map_get(m_em_map, mac_str1))) != NULL) {
++            if ((em = find_node(mac_str1)) != NULL) {
+                 em_util_dbg_print(EM_CTRL, "Received bsta report, found em:%s", mac_str1);
+             }
+             break;
+ 
+         case em_msg_type_topo_vendor:
+-            em = static_cast<em_t *> (hash_map_get_first(m_em_map));
+-            while(em != NULL) {
+-                if (em->is_al_interface_em() == false) {
++            em = NULL;
++            for (em_t *node : get_nodes()) {
++                if (node->is_al_interface_em() == false) {
++                    em = node;
+                     break;
+                 }
+-                em = static_cast<em_t *> (hash_map_get_next(m_em_map, em));
+             }
+             break;
+ 
+ 	case em_msg_type_unassoc_sta_link_metrics_rsp:
+-            em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+-            while (em != NULL) {
+-                if ((em->is_al_interface_em() == false) && 
+-	          (memcmp(em->get_data_model()->get_agent_al_interface_mac(), hdr->src, sizeof(mac_address_t)) == 0)) {
++            em = NULL;
++            for (em_t *node : get_nodes()) {
++                if ((node->is_al_interface_em() == false) && 
++	          (memcmp(node->get_data_model()->get_agent_al_interface_mac(), hdr->src, sizeof(mac_address_t)) == 0)) {
++                    em = node;
+                     break;
+                 }
+-                em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
+             }
+             break;
+ 
+@@ -2465,6 +2463,8 @@ em_ctrl_t::em_ctrl_t()
  
  em_ctrl_t::~em_ctrl_t()
  {
@@ -231,11 +451,35 @@ index d3240e06..e81c3bac 100644
  }
  
  #ifdef AL_SAP
+diff --git a/src/em/channel/em_channel.cpp b/src/em/channel/em_channel.cpp
+index 00512c31..d5ef1626 100644
+--- a/src/em/channel/em_channel.cpp
++++ b/src/em/channel/em_channel.cpp
+@@ -1682,7 +1682,8 @@ int em_channel_t::handle_op_channel_report(unsigned char *buff, unsigned int len
+     // Find the per-radio EM instance by RUID and set its state
+     memcpy(ruid, rpt->ruid, sizeof(mac_address_t));
+     dm_easy_mesh_t::macbytes_to_string(ruid, ruid_str);
+-    em_t *radio_em = reinterpret_cast<em_t *>(hash_map_get(get_mgr()->m_em_map, ruid_str));
++    // on this em's thread: the map under its lock (em_mgr_t::find_node)
++    em_t *radio_em = get_mgr()->find_node(ruid_str);
+     if (radio_em) {
+         if(radio_em->get_state() == em_state_ctrl_channel_selected){
+             radio_em->set_state(em_state_ctrl_configured);
+@@ -2036,7 +2037,8 @@ int em_channel_t::handle_channel_sel_rsp(unsigned char *buff, unsigned int len)
+ 
+             memcpy(ruid, rsp->ruid, sizeof(mac_address_t));
+             dm_easy_mesh_t::macbytes_to_string(ruid, mac_str);
+-            em_t *radio_em = reinterpret_cast<em_t *>(hash_map_get(get_mgr()->m_em_map, mac_str));
++            // on this em's thread: the map under its lock (em_mgr_t::find_node)
++            em_t *radio_em = get_mgr()->find_node(mac_str);
+             if (radio_em) {
+                 /* the radio's report, handled on another em's thread, may complete it first
+                  * (handle_op_channel_report, under this lock) */
 diff --git a/src/em/em.cpp b/src/em/em.cpp
-index 74c381cc..6153763a 100644
+index 74c381cc..cca26d4c 100644
 --- a/src/em/em.cpp
 +++ b/src/em/em.cpp
-@@ -685,9 +685,46 @@ void em_t::proto_timeout()
+@@ -685,9 +685,54 @@ void em_t::proto_timeout()
  
  void em_t::proto_exit()
  {
@@ -245,6 +489,14 @@ index 74c381cc..6153763a 100644
      m_exit = true;
      pthread_cond_signal(&m_iq.cond);
 -    sched_yield();
++    pthread_mutex_unlock(&m_iq.lock);
++}
++
++void em_t::wake()
++{
++    // proto_run, woken with nothing queued, goes round its loop: a pass
++    pthread_mutex_lock(&m_iq.lock);
++    pthread_cond_signal(&m_iq.cond);
 +    pthread_mutex_unlock(&m_iq.lock);
 +}
 +
@@ -283,7 +535,25 @@ index 74c381cc..6153763a 100644
  }
  
  void em_t::proto_run()
-@@ -780,10 +817,26 @@ void *em_t::em_func(void *arg)
+@@ -717,6 +762,8 @@ void em_t::proto_run()
+ 
+     pthread_mutex_lock(&m_iq.lock);
+     while (m_exit == false) {
++        // a pass: this thread holds no em it found in the map (em_mgr_t::free_nodes)
++        __atomic_add_fetch(&m_passes, 1, __ATOMIC_RELEASE);
+         rc = 0;
+ 
+         gettimeofday(&tm, NULL);
+@@ -746,6 +793,8 @@ void em_t::proto_run()
+                     proto_process(&cevnt); // pass pointer
+                 }
+                 free(evt);
++                // between events too: a long queue must not hold off free_nodes
++                __atomic_add_fetch(&m_passes, 1, __ATOMIC_RELEASE);
+                 run_due_timeout();
+                 pthread_mutex_lock(&m_iq.lock);
+             }
+@@ -780,10 +829,26 @@ void *em_t::em_func(void *arg)
  
  void em_t::deinit()
  {
@@ -311,7 +581,7 @@ index 74c381cc..6153763a 100644
  
      queue_destroy(m_iq.queue);
  }
-@@ -2948,8 +3001,8 @@ int em_t::init()
+@@ -2948,8 +3013,8 @@ int em_t::init()
          printf("%s:%d pthread_attr_setstacksize failed for size:%ld ret:%d\n",
                  __func__, __LINE__, stack_size, ret);
      }
@@ -322,7 +592,7 @@ index 74c381cc..6153763a 100644
      if (pthread_create(&m_tid, attrp, em_t::em_func, this) != 0) {
          printf("%s:%d: Failed to start em thread\n", __func__, __LINE__);
          close(m_fd);
-@@ -2960,6 +3013,8 @@ int em_t::init()
+@@ -2960,6 +3025,8 @@ int em_t::init()
          }
          return -1;
      }
@@ -332,10 +602,20 @@ index 74c381cc..6153763a 100644
          pthread_attr_destroy(attrp);
      }
 diff --git a/src/em/em_mgr.cpp b/src/em/em_mgr.cpp
-index a69baa4d..3c00fa28 100644
+index a69baa4d..dd1eb3e6 100644
 --- a/src/em/em_mgr.cpp
 +++ b/src/em/em_mgr.cpp
-@@ -162,38 +162,145 @@ void em_mgr_t::proto_process(unsigned char *data, unsigned int len, em_t *al_em)
+@@ -37,7 +37,9 @@
+ #include <unistd.h>
+ #include <pthread.h>
+ #include <assert.h>
++#include <algorithm>
+ #include <chrono>
++#include <thread>
+ #include <openssl/bio.h> /* BasicInput/Output streams */
+ #include <openssl/err.h> /* errors */
+ #include <openssl/ssl.h> /* core library */
+@@ -162,38 +164,168 @@ void em_mgr_t::proto_process(unsigned char *data, unsigned int len, em_t *al_em)
  
  void em_mgr_t::delete_nodes()
  {
@@ -449,6 +729,29 @@ index a69baa4d..3c00fa28 100644
 +            EM_NODE_JOIN_MS);
 +        return;
 +    }
++    // each other node's thread may hold one of them too: free them after each of those threads
++    // passed once (woken, an idle thread passes at once)
++    std::vector<std::pair<em_t *, unsigned long>> others;
++    for (em_t *em : get_nodes()) {
++        if (em->is_thread_running() == true) {
++            others.emplace_back(em, em->get_passes());
++            em->wake();
++        }
++    }
++    while (true) {
++        others.erase(std::remove_if(others.begin(), others.end(),
++            [](const std::pair<em_t *, unsigned long> &other) { return other.first->get_passes() != other.second; }),
++            others.end());
++        if (others.empty() == true) {
++            break;
++        }
++        if (steady_clock::now() >= deadline) {
++            em_printfout("%zu nodes: %zu other nodes' threads made no pass in %d ms; kept, not freed", ended.size(),
++                others.size(), EM_NODE_JOIN_MS);
++            return;
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
 +    for (em_t *em : ended) {
 +        em->deinit();
 +        delete em;
@@ -496,7 +799,7 @@ index a69baa4d..3c00fa28 100644
  }
  
  em_t *em_mgr_t::retire_node(const unsigned char *ruid)
-@@ -210,6 +317,8 @@ em_t *em_mgr_t::retire_node(const unsigned char *ruid)
+@@ -210,6 +342,8 @@ em_t *em_mgr_t::retire_node(const unsigned char *ruid)
      pthread_mutex_unlock(&m_mutex);
      if (em != NULL) {
          em->stop();
@@ -505,7 +808,103 @@ index a69baa4d..3c00fa28 100644
      }
      return em;
  }
-@@ -405,11 +514,16 @@ void em_mgr_t::nodes_listener()
+@@ -233,7 +367,8 @@ em_t *em_mgr_t::create_node(em_interface_t *ruid, em_freq_band_t band, dm_easy_m
+ 		strcat(mac_str, "_al");
+ 	}
+ 	em_util_dbg_print(EM_CONF, "key value used:%s", mac_str);
+-    em = static_cast<em_t *>(hash_map_get(m_em_map, mac_str));
++    // the nodes listener creates nodes too (find_em_for_msg_type)
++    em = find_node(mac_str);
+ 
+     if (em != NULL) {
+         // update the em
+@@ -258,11 +393,36 @@ em_t *em_mgr_t::create_node(em_interface_t *ruid, em_freq_band_t band, dm_easy_m
+     return em;
+ }
+ 
++em_t *em_mgr_t::find_node(const char *key)
++{
++    em_t *em;
++
++    pthread_mutex_lock(&m_mutex);
++    em = static_cast<em_t *>(hash_map_get(m_em_map, key));
++    pthread_mutex_unlock(&m_mutex);
++    return em;
++}
++
++std::vector<em_t *> em_mgr_t::get_nodes()
++{
++    std::vector<em_t *> ems;
++
++    pthread_mutex_lock(&m_mutex);
++    for (em_t *em = static_cast<em_t *>(hash_map_get_first(m_em_map)); em != NULL;
++            em = static_cast<em_t *>(hash_map_get_next(m_em_map, em))) {
++        ems.push_back(em);
++    }
++    pthread_mutex_unlock(&m_mutex);
++    return ems;
++}
++
+ em_t *em_mgr_t::get_node_by_freq_band(em_freq_band_t *band)
+ {
+     em_t *em = NULL;
+     bool found = false;
+ 
++    // the walk under the map's lock (find_node): its body only reads the ems
++    pthread_mutex_lock(&m_mutex);
+     em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+     while (em != NULL) {
+         if (em->is_matching_freq_band(band) == true) {
+@@ -271,6 +431,7 @@ em_t *em_mgr_t::get_node_by_freq_band(em_freq_band_t *band)
+         }
+         em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
+     }
++    pthread_mutex_unlock(&m_mutex);
+ 
+     return (found == true) ? em:NULL;
+ }
+@@ -280,6 +441,7 @@ em_t *em_mgr_t::get_al_node()
+     em_t *em;
+     bool found = false;
+ 
++    pthread_mutex_lock(&m_mutex);
+     em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+     while (em != NULL) {
+         if (em->is_al_interface_em() == true) {
+@@ -288,6 +450,7 @@ em_t *em_mgr_t::get_al_node()
+         }
+         em = static_cast<em_t *>(hash_map_get_next(m_em_map, em));
+     }
++    pthread_mutex_unlock(&m_mutex);
+ 
+     return (found == true) ? em:NULL;
+ }
+@@ -303,7 +466,7 @@ em_t *em_mgr_t::get_phy_al_node()
+     // al_mac_str will be the key for the real `em_t` in the `m_em_map`
+     char al_mac_str[EM_MAC_STR_LEN+1] = {0};
+     dm_easy_mesh_t::macbytes_to_string(al_mac, al_mac_str);
+-    em_t *phy_al_em = reinterpret_cast<em_t *>(hash_map_get(m_em_map, al_mac_str));
++    em_t *phy_al_em = find_node(al_mac_str);
+     if (phy_al_em == NULL) {
+         printf("%s:%d: Can not find phy al node with key:%s\n", __func__, __LINE__, al_mac_str);
+         return NULL;
+@@ -313,6 +476,7 @@ em_t *em_mgr_t::get_phy_al_node()
+ 
+ void em_mgr_t::get_all_em_for_al_mac(mac_address_t mac, std::vector<em_t*> &em_radios)
+ {
++    pthread_mutex_lock(&m_mutex);
+     em_t* em = static_cast<em_t *>(hash_map_get_first(m_em_map));
+     std::string mac_str = util::mac_to_string(mac);
+     //em_printfout("*****al_mac:%s******", util::mac_to_string(mac).c_str());
+@@ -326,6 +490,7 @@ void em_mgr_t::get_all_em_for_al_mac(mac_address_t mac, std::vector<em_t*> &em_r
+         }
+         em = static_cast<em_t*>(hash_map_get_next(m_em_map, em));
+     }
++    pthread_mutex_unlock(&m_mutex);
+     //em_printfout("******end*******");
+ }
+ 
+@@ -405,11 +570,16 @@ void em_mgr_t::nodes_listener()
      struct timeval tm;
      int rc, highest_fd = 0;
  
@@ -522,7 +921,7 @@ index a69baa4d..3c00fa28 100644
          if (rc == 0) {
              tm.tv_sec = 0;
              tm.tv_usec = m_timeout * 1000;
-@@ -418,9 +532,24 @@ void em_mgr_t::nodes_listener()
+@@ -418,9 +588,24 @@ void em_mgr_t::nodes_listener()
              continue;
          }
  
@@ -549,7 +948,7 @@ index a69baa4d..3c00fa28 100644
  #ifdef AL_SAP
                  try{
                      AlServiceDataUnit sdu = g_sap->serviceAccessPointDataIndication();
-@@ -454,27 +583,21 @@ void em_mgr_t::nodes_listener()
+@@ -454,27 +639,21 @@ void em_mgr_t::nodes_listener()
                  }
  #else
                  unsigned char buff[MAX_EM_BUFF_SZ*EM_MAX_BANDS];
@@ -583,11 +982,18 @@ index a69baa4d..3c00fa28 100644
  }
  
  
-@@ -677,6 +800,11 @@ em_mgr_t::em_mgr_t()
+@@ -677,6 +856,18 @@ em_mgr_t::em_mgr_t()
      m_exit = false;
      m_timeout = EM_MGR_TOUT;
  	m_tick_demultiplex = 0;
 +    m_em_map = NULL;
++    // recursive: a lookup through find_node or a get_*node* helper can come from code that
++    // already holds it (rejoin_retired_agents, build_candidates)
++    pthread_mutexattr_t attr;
++    pthread_mutexattr_init(&attr);
++    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
++    pthread_mutex_init(&m_mutex, &attr);
++    pthread_mutexattr_destroy(&attr);
 +    pthread_mutex_init(&m_listen_lock, NULL);
 +    pthread_cond_init(&m_listen_cond, NULL);
 +    m_listen_passes = 0;
@@ -630,19 +1036,20 @@ index 0cfedaae..f6892361 100644
      // topology: the process aborts.
      "em_ctrl_t_Test.is_network_topology_initialized_valid:"
 diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
-index 828efa6b..1f68f5fd 100644
+index 828efa6b..061573a7 100644
 --- a/tests/test_l1_em_ctrl.cpp
 +++ b/tests/test_l1_em_ctrl.cpp
-@@ -22,6 +22,8 @@
+@@ -22,6 +22,9 @@
  #include <stdio.h>
  #include <string>
  #include <vector>
++#include <atomic>
 +#include <chrono>
 +#include <thread>
  #include "em_ctrl.h"
  
  class em_ctrl_t_Test : public ::testing::Test {
-@@ -4253,3 +4255,76 @@ TEST_F(em_ctrl_t_de_getters, StaMldRowsAreThoseOfTheirApMld) {
+@@ -4253,3 +4256,120 @@ TEST_F(em_ctrl_t_de_getters, StaMldRowsAreThoseOfTheirApMld) {
      a->m_num_assoc_sta_mld = 0;
      a->set_num_ap_mld(0);
  }
@@ -718,6 +1125,50 @@ index 828efa6b..1f68f5fd 100644
 +    EXPECT_LT(static_cast<long>(
 +        std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock::now() - start).count()), 1000);
 +    EXPECT_EQ(hash_map_get(ctrl.m_em_map, mac_str), nullptr);
++}
++
++/* 0280: the main thread deletes and recreates nodes while another thread walks and looks up the
++ * map through the manager's helpers, as the nodes listener and the nodes' threads do: no read of
++ * a map element the main thread freed (ASan). A hundred rounds of four nodes. */
++TEST_F(em_ctrl_t_Test, map_read_by_another_thread_while_nodes_come_and_go)
++{
++    dm_easy_mesh_t dm;
++    std::atomic<bool> done(false);
++    std::atomic<unsigned long> reads(0);
++    unsigned int failed = 0;
++
++    std::thread reader([this, &done, &reads]() {
++        mac_address_t al = {0x02, 0x00, 0x00, 0x28, 0x02, 0x00};
++        em_freq_band_t band = em_freq_band_5;
++        while (done.load() == false) {
++            std::vector<em_t *> radios;
++            ctrl.get_all_em_for_al_mac(al, radios);
++            (void)ctrl.get_node_by_freq_band(&band);
++            (void)ctrl.get_al_node();
++            (void)ctrl.find_node("02:00:00:28:02:03");
++            (void)ctrl.get_nodes();
++            reads++;
++        }
++    });
++    for (unsigned int round = 0; round < 100; round++) {
++        em_interface_t ruid[4] = {};
++        for (unsigned int i = 0; i < 4; i++) {
++            const unsigned char mac[6] = {0x02, 0x00, 0x00, 0x28, 0x02, static_cast<unsigned char>(i)};
++            setup_interface(ruid[i], "churn", mac);
++            ruid[i].media = em_media_type_ieee80211ac_5;
++            if (ctrl.create_node(&ruid[i], em_freq_band_5, &dm, false, em_profile_type_3, em_service_type_agent) == nullptr) {
++                failed++;
++            }
++        }
++        for (unsigned int i = 0; i < 4; i++) {
++            ctrl.delete_node(&ruid[i]);
++        }
++    }
++    done = true;
++    reader.join();
++    EXPECT_EQ(failed, 0U);
++    EXPECT_GT(reads.load(), 0UL);
++    EXPECT_TRUE(ctrl.get_nodes().empty());
 +}
 diff --git a/tests/test_l1_em_orch_agent.cpp b/tests/test_l1_em_orch_agent.cpp
 index 07cc95f3..20e4132f 100644
