@@ -159,10 +159,18 @@ PYEOF' 2>/dev/null || echo "0 0"
 # before the pods' statistics: EMOSA's broker, where its configuration is in /nvram, active and
 # listening on 8883 (a minute at most: the unit restarts itself). A broker that is not is said as
 # itself; it showed as two minutes of pods without statistics (rdk-1010, 22 October: it had
-# started before the LAN bridge's address and stayed failed).
+# started before the LAN bridge's address and stayed failed). A broker already failed when the
+# check starts is reset and started once first: a unit at its start limit stays failed whatever
+# the address does now (rdk-1010, 22 October: an update's room, before its redeploy, on a gateway
+# image without the drop-in's wait, whose broker had lost that race).
 broker_up() {
     local i state='' listening=0
     cx bpibroadband "test -f /nvram/emosa/mqtt/mosquitto.conf" 2>/dev/null || return 0
+    state=$(cx bpibroadband "systemctl is-active mosquitto" 2>/dev/null || true)
+    if [ "$state" = failed ]; then
+        log "the gateway's broker is failed: reset and started once"
+        cx bpibroadband "systemctl reset-failed mosquitto; systemctl start --no-block mosquitto" 2>/dev/null || true
+    fi
     for i in $(seq 30); do
         state=$(cx bpibroadband "systemctl is-active mosquitto" 2>/dev/null || true)
         listening=$(cx bpibroadband "netstat -ltn 2>/dev/null | grep -c ':8883 ' || true" 2>/dev/null || echo 0)
