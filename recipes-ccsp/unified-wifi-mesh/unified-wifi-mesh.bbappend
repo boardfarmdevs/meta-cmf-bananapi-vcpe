@@ -245,11 +245,12 @@ EASYMESH_CORE_PATCHES = " \
     file://0279-tests-a-default-run-reaches-its-end.patch \
     file://0280-em-a-deleted-node-is-freed-after-its-thread-ended.patch \
     file://0281-cmd-the-command-sockets-are-unix-sockets.patch \
+    file://0282-cli-the-web-ui-listens-where-its-environment-says.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
 SRC_URI += "file://native_steering.go file://native_steering_test.go"
-SRC_URI += "file://native_http.go file://native_http_test.go"
+SRC_URI += "file://native_http.go file://native_http_test.go file://native_http_listen_test.go"
 SRC_URI += "file://bss_inventory.go file://bss_inventory_test.go"
 SRC_URI += "file://room_layout.go file://room_layout_test.go file://steering_actions.go file://steering_actions_test.go"
 SRC_URI += "file://renew_request.go file://renew_request_test.go"
@@ -258,7 +259,7 @@ SRC_URI += "file://set_ssid_status.go file://set_ssid_status_test.go"
 python do_patch_append() {
     import os
     import shutil
-    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go", "renew_request.go", "renew_request_test.go", "set_ssid_status.go", "set_ssid_status_test.go"):
+    for name in ("candidate_coordination.go", "candidate_coordination_test.go", "native_steering.go", "native_steering_test.go", "native_http.go", "native_http_test.go", "native_http_listen_test.go", "bss_inventory.go", "bss_inventory_test.go", "room_layout.go", "room_layout_test.go", "steering_actions.go", "steering_actions_test.go", "renew_request.go", "renew_request_test.go", "set_ssid_status.go", "set_ssid_status_test.go"):
         shutil.copyfile(os.path.join(d.getVar("WORKDIR"), name),
                         os.path.join(d.getVar("S"), "src/rdkb-cli", name))
 }
@@ -751,6 +752,12 @@ do_install_append() {
 # ---------------------------------------------------------------------------
 # EasyMesh web UI (onewifi_em_cli, port 8888).
 #
+# Its address (patch 0282): EASYMESH_WEBUI_LISTEN, an IP literal and a port, written to
+# /etc/default/onewifi_em_cli as EM_CLI_LISTEN, which em_cli.service reads (its nvram.conf
+# drop-in). Every address by default, as before; an image that keeps the UI off the LAN sets
+# "127.0.0.1:8888" (for instance in a hand-off build profile's conf).
+EASYMESH_WEBUI_LISTEN ??= "0.0.0.0:8888"
+#
 # The stock unified-wifi-mesh-cli recipe never lands in this image -- its
 # do_fetch_mod ('go get -a' under the old go-native) fails, so /usr/bin/
 # onewifi_em_cli is absent and em_cli.service loops on start-limit-hit. Ship a
@@ -833,6 +840,17 @@ do_install_append_qemux86bpibroadband() {
     sh ${WORKDIR}/topology-ui/assemble.sh rdk ${D}/usr/ccsp/EasyMesh/static
     install -D -m 0644 ${WORKDIR}/em_cli-nvram.conf \
         ${D}${systemd_unitdir}/system/em_cli.service.d/nvram.conf
+    # The web UI's address (patch 0282), from EASYMESH_WEBUI_LISTEN: an IP literal and a port,
+    # or the build stops. The binary checks it again at start, fully, and exits on a bad one.
+    listen="${EASYMESH_WEBUI_LISTEN}"
+    printf '%s\n' "$listen" | grep -Eq '^(([0-9]{1,3}\.){3}[0-9]{1,3}|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$' || \
+        bbfatal "meta-cmf-bananapi-vcpe: EASYMESH_WEBUI_LISTEN '$listen' is not an IP literal and a port (127.0.0.1:8888, [::1]:8888)"
+    port="${listen##*:}"
+    { [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; } || \
+        bbfatal "meta-cmf-bananapi-vcpe: EASYMESH_WEBUI_LISTEN '$listen': the port is not 1 to 65535"
+    install -d ${D}${sysconfdir}/default
+    printf 'EM_CLI_LISTEN=%s\n' "$listen" > ${D}${sysconfdir}/default/onewifi_em_cli
+    bbnote "meta-cmf-bananapi-vcpe: the web UI listens on $listen"
 
     # Compile against the just-installed libemcli.so (${D}${libdir}); rpath-link the
     # staging libdirs so libemcli's own NEEDED deps resolve at link time.
@@ -873,4 +891,4 @@ LogRateLimitBurst=500' "$u"
     fi
 }
 
-FILES_${PN}_append_qemux86bpibroadband = " ${bindir}/onewifi_em_cli ${bindir}/steer_drv ${bindir}/steer.sh /usr/ccsp/EasyMesh/static ${systemd_unitdir}/system/em_cli.service.d/nvram.conf "
+FILES_${PN}_append_qemux86bpibroadband = " ${bindir}/onewifi_em_cli ${bindir}/steer_drv ${bindir}/steer.sh /usr/ccsp/EasyMesh/static ${systemd_unitdir}/system/em_cli.service.d/nvram.conf ${sysconfdir}/default/onewifi_em_cli "

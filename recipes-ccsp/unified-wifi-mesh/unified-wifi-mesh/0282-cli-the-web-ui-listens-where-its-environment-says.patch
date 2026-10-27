@@ -1,0 +1,45 @@
+Subject: [PATCH] cli: the web UI listens where its environment says
+
+onewifi_em_cli bound 0.0.0.0:8888 in code, so every image served its web UI and REST API to the
+LAN. It now takes its address from EM_CLI_LISTEN, an IP literal and a port ("127.0.0.1:8888",
+"[::1]:8888"). Unset, it is 0.0.0.0:8888 as before. Set but empty or anything else, the UI logs
+why and exits non-zero before anything starts, never falling back to every address: an image
+that asks for loopback must not end up serving the LAN. The banner prints the address in use.
+
+The address check (listenAddress) and the server (labHTTPServer) are in native_http.go and its
+tests in native_http_test.go and native_http_listen_test.go: the recipe copies those files into
+src/rdkb-cli after this patch (do_patch_append), so this patch is main.go only.
+---
+diff --git a/src/rdkb-cli/main.go b/src/rdkb-cli/main.go
+index c30657d4..3428184f 100644
+--- a/src/rdkb-cli/main.go
++++ b/src/rdkb-cli/main.go
+@@ -3013,6 +3013,12 @@ func loadSystemConfig() {
+ // ===== MAIN SERVER =====
+ 
+ func main() {
++	// The web UI's address, from its environment (native_http.go): a bad one stops it here,
++	// before anything starts, with a non-zero exit
++	address, err := listenAddress(os.LookupEnv("EM_CLI_LISTEN"))
++	if err != nil {
++		log.Fatalf("web UI not started: %v", err)
++	}
+ 
+ 	// Get the IP address and port number of controller device.
+     remoteIP, remotePort, err := getControllerRemoteIP()
+@@ -3177,11 +3183,11 @@ func main() {
+ 	go startMetricsUpdater()
+ 	go startWebSocketBroadcaster()
+ 
+-	fmt.Printf("🌐 EasyMesh R6 Controller running on http://0.0.0.0:8888\n")
+-	fmt.Printf("📊 Dashboard: http://0.0.0.0:8888\n")
+-	fmt.Printf("🔌 WebSocket: ws://0.0.0.0:8888/api/v1/ws\n")
++	fmt.Printf("🌐 EasyMesh R6 Controller running on http://%s\n", address)
++	fmt.Printf("📊 Dashboard: http://%s\n", address)
++	fmt.Printf("🔌 WebSocket: ws://%s/api/v1/ws\n", address)
+ 
+-	log.Fatal(labHTTPServer(router).ListenAndServe())
++	log.Fatal(labHTTPServer(router, address).ListenAndServe())
+ }
+ 
+ // ===== MIDDLEWARE =====

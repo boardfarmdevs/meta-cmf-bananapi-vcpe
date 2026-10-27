@@ -7,13 +7,38 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 type nativeConnectionKey struct{}
 
-func labHTTPServer(handler http.Handler) *http.Server {
-	return &http.Server{Addr: "0.0.0.0:8888", Handler: handler,
+// The web UI's address when its environment names none: every address, as before.
+const defaultListenAddress = "0.0.0.0:8888"
+
+// listenAddress is the web UI's address from EM_CLI_LISTEN (value, and whether it is set): an IP
+// literal and a port, "127.0.0.1:8888" or "[::1]:8888". Unset, the default. Set but empty or
+// anything else is an error, never the default: an image that asks for loopback must not end up
+// serving the LAN.
+func listenAddress(value string, set bool) (string, error) {
+	if !set {
+		return defaultListenAddress, nil
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		return "", fmt.Errorf("EM_CLI_LISTEN %q: %v", value, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("EM_CLI_LISTEN %q: the host is not an IP address", value)
+	}
+	if number, err := strconv.Atoi(port); err != nil || number < 1 || number > 65535 {
+		return "", fmt.Errorf("EM_CLI_LISTEN %q: the port is not 1 to 65535", value)
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+func labHTTPServer(handler http.Handler, address string) *http.Server {
+	return &http.Server{Addr: address, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536,
 		ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
 			return context.WithValue(ctx, nativeConnectionKey{}, connection)

@@ -124,7 +124,7 @@ func TestNativeHTTPRealSlowReaderDoesNotBlockOtherRequests(test *testing.T) {
 		_, _ = writer.Write([]byte("ready"))
 	}))
 	server := httptest.NewUnstartedServer(handler)
-	server.Config.ConnContext = labHTTPServer(handler).ConnContext
+	server.Config.ConnContext = labHTTPServer(handler, defaultListenAddress).ConnContext
 	server.Start()
 	defer server.Close()
 	connection, err := net.Dial("tcp", server.Listener.Addr().String())
