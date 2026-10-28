@@ -252,6 +252,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0286-agent-the-command-socket-answers-each-client-once-from-the-event-i.patch \
     file://0287-em-an-agent-node-handles-each-event-and-tick-under-the-orchestr.patch \
     file://0288-agent-the-main-thread-changes-the-shared-data-model-under-the-comm.patch \
+    file://0289-ctrl-removedevice-retires-the-device-s-ems-and-keeps-its-model.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

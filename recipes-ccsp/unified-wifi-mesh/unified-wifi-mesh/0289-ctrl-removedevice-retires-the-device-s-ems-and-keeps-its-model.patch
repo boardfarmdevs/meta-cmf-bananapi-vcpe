@@ -1,0 +1,265 @@
+Subject: [PATCH] ctrl: RemoveDevice retires the device's ems and keeps its model until nothing holds it
+
+A RemoveDevice (em_cmd_type_remove_device: db_delete, em_delete, dm_delete) freed memory other
+threads still used. The em step deleted only dm->get_em(), the em that last set itself on the
+command's model copy, and deleted it at once (delete_node), so an agent's other radios kept ems
+pointing at its model. The model step then freed the model (delete_data_model) while the network
+topology still held it and those ems still ran on it (the bus's method handlers and the ems take
+no lock on the list): a use-after-free on the next topology publish or the next frame.
+
+The em step now retires every em whose model is the device's (retire_ems_of_model, as a silent
+agent's ems are retired: out of the map and of the commands, stopped, kept allocated). The model
+step takes the model out of the topology and the list under the topology lock (unlink_device),
+keeps it with the retired agents' models, freed by free_retired_models once it is old enough and
+no em nor command holds it, and republishes the topology as the retire paths do. A RemoveDevice
+for a device gone meanwhile changes nothing.
+
+The controller's other direct walks of the node map (build_candidates, handle_ap_metrics_req, the
+dev-test encode and decode, rejoin_retired_agents) run on the main thread, which removes nodes
+itself and so needs no lock (0280's helpers are for the other threads): left as they are.
+
+Test: remove_device_retires_every_em_and_keeps_the_model (a two-radio agent: both ems retired, the
+model out of the list and the topology, kept and still readable under ASan, one publish; a second
+RemoveDevice changes nothing).
+---
+diff --git a/inc/dm_easy_mesh_ctrl.h b/inc/dm_easy_mesh_ctrl.h
+index 2b6582da..efd1b785 100644
+--- a/inc/dm_easy_mesh_ctrl.h
++++ b/inc/dm_easy_mesh_ctrl.h
+@@ -1874,7 +1874,15 @@ public:
+ 	 * model is not the list's (then nothing is taken out of the list)
+ 	 */
+ 	int retire_agent(dm_easy_mesh_t *dm);
+-    
++
++	/**!
++	 * @brief A removed device's model (RemoveDevice) out of the network topology and the list,
++	 * under the topology lock, radios or not. Not freed: the caller frees it once no other
++	 * thread can still hold it (em_ctrl_t's retired models).
++	 * @return the model taken out, or NULL when the list has none for the device
++	 */
++	dm_easy_mesh_t *unlink_device(const char *net_id, const unsigned char *al_mac);
++
+ 	/**!
+ 	 * @brief Deletes a data model associated with the given network ID and AL MAC address.
+ 	 *
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index a11db31d..88cd0d73 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -209,6 +209,28 @@ public:
+ 
+ 	dm_easy_mesh_ctrl_t *get_dm_ctrl() { return &m_data_model; }
+ 
++	/**!
++	 * @brief RemoveDevice's em step: every em on the device's model retired (retire_ems_of_model),
++	 * not only the one that last set itself on the model.
++	 * @return the number of ems retired
++	 */
++	unsigned int remove_device_ems(const char *net_id, const unsigned char *al_mac);
++
++	/**!
++	 * @brief RemoveDevice's model step: the device's model out of the network topology and the
++	 * list, its ems retired, and the model kept with the retired ones (m_retired_models), freed
++	 * by free_retired_models once no em, nor any command, can still hold it, as a retired agent's
++	 * is. Freed at once before, it left the topology and the agent's other radios' ems pointing
++	 * at freed memory. Called on the manager thread.
++	 */
++	void remove_device(const char *net_id, const unsigned char *al_mac);
++
++	/**!
++	 * @brief Whether a model is kept with the retired ones, not freed yet (m_retired_models).
++	 * Called on the manager thread.
++	 */
++	bool is_retired_model(const dm_easy_mesh_t *dm) const;
++
+ 	em_orch_t *get_orch() override { return m_orch; }
+     
+ 	/**!
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 78a59e8e..347069f7 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -5030,6 +5030,21 @@ int dm_easy_mesh_ctrl_t::retire_agent(dm_easy_mesh_t *dm)
+     return stations;
+ }
+ 
++dm_easy_mesh_t *dm_easy_mesh_ctrl_t::unlink_device(const char *net_id, const unsigned char *al_mac)
++{
++    std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    dm_easy_mesh_t *dm = m_data_model_list.get_data_model(net_id, al_mac);
++    if (dm == NULL) {
++        return NULL;
++    }
++    /* as retire_agent: its node first, since the topology holds the model's address */
++    if (g_network_topology != NULL) {
++        g_network_topology->remove(dm);
++    }
++    m_data_model_list.unlink_data_model(net_id, al_mac);
++    return dm;
++}
++
+ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
+ {
+     //dm_orch_type_t type = dm_orch_type_none;
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index fb4dc338..c43697cf 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1373,6 +1373,46 @@ unsigned int em_ctrl_t::retire_ems_of_model(const dm_easy_mesh_t *dm, const std:
+ 	return static_cast<unsigned int>(ems.size());
+ }
+ 
++unsigned int em_ctrl_t::remove_device_ems(const char *net_id, const unsigned char *al_mac)
++{
++	dm_easy_mesh_t *dm = m_data_model.get_data_model(net_id, al_mac);
++	if (dm == NULL) {
++		return 0;
++	}
++	return retire_ems_of_model(dm, util::mac_to_string(al_mac));
++}
++
++void em_ctrl_t::remove_device(const char *net_id, const unsigned char *al_mac)
++{
++	const std::string al = util::mac_to_string(al_mac);
++	dm_easy_mesh_t *dm = m_data_model.get_data_model(net_id, al_mac);
++	if (dm == NULL) {
++		/* already gone (a RemoveDevice for a device retired meanwhile) */
++		em_printfout("RemoveDevice %s: no model to remove", al.c_str());
++		return;
++	}
++	const unsigned int ems = retire_ems_of_model(dm, al);
++	if (m_data_model.unlink_device(net_id, al_mac) != dm) {
++		return;
++	}
++	m_retired_models.push_back({dm, al, std::chrono::steady_clock::now()});
++	em_printfout("RemoveDevice %s: model %p out of the list and the topology, %u ems on it retired, freed in "
++		"%ld s at the earliest", al.c_str(), static_cast<void *>(dm), ems,
++		static_cast<long>(EM_AGENT_MODEL_KEPT.count()));
++	update_network_topology();
++	publish_network_topology();
++}
++
++bool em_ctrl_t::is_retired_model(const dm_easy_mesh_t *dm) const
++{
++	for (const retired_model_t &retired : m_retired_models) {
++		if (retired.dm == dm) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ void em_ctrl_t::free_retired_models()
+ {
+ 	const auto now = std::chrono::steady_clock::now();
+diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
+index 1e653c1a..5957ea1a 100644
+--- a/src/orch/em_orch_ctrl.cpp
++++ b/src/orch/em_orch_ctrl.cpp
+@@ -554,8 +554,10 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
+             break;
+ 
+         case dm_orch_type_em_delete:
+-			em = dm->get_em();
+-            m_mgr->delete_node(em->get_radio_interface());
++            /* every em on the device's model (its other radios' too), retired: not freed under a
++             * thread still using it, as a retired agent's ems are */
++            ctrl->remove_device_ems((dm->get_device())->m_device_info.id.net_id,
++                (dm->get_device())->m_device_info.id.dev_mac);
+             break;
+         
+         case dm_orch_type_db_cfg:
+@@ -593,7 +595,8 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
+ 
+ 		case dm_orch_type_dm_delete:
+ 			printf("%s:%d: Deleting data model\n", __func__, __LINE__);
+-			m_mgr->delete_data_model((dm->get_device())->m_device_info.id.net_id, (dm->get_device())->m_device_info.id.dev_mac);
++			/* out of the topology and the list now, freed once nothing can hold it */
++			ctrl->remove_device((dm->get_device())->m_device_info.id.net_id, (dm->get_device())->m_device_info.id.dev_mac);
+ 			break;
+ 
+ 		case dm_orch_type_dm_delete_all:
+diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
+index 061573a7..67d12671 100644
+--- a/tests/test_l1_em_ctrl.cpp
++++ b/tests/test_l1_em_ctrl.cpp
+@@ -4373,3 +4373,78 @@ TEST_F(em_ctrl_t_Test, map_read_by_another_thread_while_nodes_come_and_go)
+     EXPECT_GT(reads.load(), 0UL);
+     EXPECT_TRUE(ctrl.get_nodes().empty());
+ }
++
++extern em_network_topo_t *g_network_topology;
++
++/* the controller with its topology publish counted, not sent: no bus in the unit build */
++class em_ctrl_removal_t : public em_ctrl_t {
++public:
++    unsigned int publishes = 0;
++    void publish_network_topology() override { publishes++; }
++};
++
++/* 0289: RemoveDevice of an agent with two radios. Each radio's em points at the agent's model:
++ * the em step retires both, not only the em that last set itself on the model (deleted at once
++ * before, under its own thread), and the model step takes the model out of the list and the
++ * network topology and keeps it with the retired models, not freed under the ems and the topology
++ * that pointed at it (ASan). A RemoveDevice for a device gone meanwhile changes nothing. */
++TEST(em_ctrl_t, remove_device_retires_every_em_and_keeps_the_model)
++{
++    __lsan_disable();
++    em_ctrl_removal_t ctrl;
++    ctrl.init("/tmp/test_config.db");
++    ctrl.orch_init();
++
++    const char *net_id = "OneWifiMesh";
++    const unsigned char ctrl_mac[6] = {0x02, 0x00, 0x00, 0x28, 0x09, 0x00};
++    const unsigned char agent_mac[6] = {0x02, 0x00, 0x00, 0x28, 0x09, 0x10};
++    em_interface_t ctrl_intf = {}, agent_intf = {};
++    strncpy(ctrl_intf.name, "eth0", sizeof(ctrl_intf.name) - 1);
++    memcpy(ctrl_intf.mac, ctrl_mac, sizeof(ctrl_intf.mac));
++    strncpy(agent_intf.name, "eth1", sizeof(agent_intf.name) - 1);
++    memcpy(agent_intf.mac, agent_mac, sizeof(agent_intf.mac));
++
++    dm_easy_mesh_t *ctrl_dm = ctrl.create_data_model(net_id, &ctrl_intf);
++    ASSERT_NE(ctrl_dm, nullptr);
++    ctrl.init_network_topology();
++    ASSERT_NE(g_network_topology, nullptr);
++    /* the agent's model into the topology by hand: update_network_topology asks the controller
++     * instance (get_em_ctrl_instance), not this one, whether an agent is reachable, and passes
++     * over the models made as the controller's (create_data_model here) */
++    dm_easy_mesh_t *dm = ctrl.create_data_model(net_id, &agent_intf);
++    ASSERT_NE(dm, nullptr);
++    g_network_topology->add(dm);
++    ASSERT_NE(g_network_topology->find_topology(dm), nullptr);
++
++    em_interface_t radio[2] = {};
++    const em_freq_band_t band[2] = {em_freq_band_24, em_freq_band_5};
++    for (unsigned int i = 0; i < 2; i++) {
++        const unsigned char mac[6] = {0x02, 0x00, 0x00, 0x28, 0x09, static_cast<unsigned char>(0x11 + i)};
++        strncpy(radio[i].name, "radio", sizeof(radio[i].name) - 1);
++        memcpy(radio[i].mac, mac, sizeof(radio[i].mac));
++        radio[i].media = (i == 0) ? em_media_type_ieee80211n_24 : em_media_type_ieee80211ac_5;
++        ASSERT_NE(ctrl.create_node(&radio[i], band[i], dm, false, em_profile_type_3, em_service_type_agent), nullptr);
++    }
++    ASSERT_EQ(ctrl.get_nodes().size(), 2U);
++
++    /* the em step (dm_orch_type_em_delete) */
++    EXPECT_EQ(ctrl.remove_device_ems(net_id, agent_mac), 2U);
++    EXPECT_TRUE(ctrl.get_nodes().empty());
++    EXPECT_EQ(ctrl.get_data_model(net_id, agent_mac), dm);
++
++    /* the model step (dm_orch_type_dm_delete) */
++    ctrl.remove_device(net_id, agent_mac);
++    EXPECT_EQ(ctrl.get_data_model(net_id, agent_mac), nullptr);
++    EXPECT_EQ(g_network_topology->find_topology(dm), nullptr);
++    EXPECT_TRUE(ctrl.is_retired_model(dm));
++    EXPECT_EQ(memcmp(dm->m_device.m_device_info.intf.mac, agent_mac, sizeof(agent_mac)), 0);
++    EXPECT_EQ(ctrl.publishes, 1U);
++    EXPECT_EQ(ctrl.get_data_model(net_id, ctrl_mac), ctrl_dm);
++
++    /* a RemoveDevice for the device again: already gone */
++    EXPECT_EQ(ctrl.remove_device_ems(net_id, agent_mac), 0U);
++    ctrl.remove_device(net_id, agent_mac);
++    EXPECT_EQ(ctrl.publishes, 1U);
++    EXPECT_TRUE(ctrl.is_retired_model(dm));
++    __lsan_enable();
++}
