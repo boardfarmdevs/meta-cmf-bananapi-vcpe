@@ -14,9 +14,13 @@ keeps it with the retired agents' models, freed by free_retired_models once it i
 no em nor command holds it, and republishes the topology as the retire paths do. A RemoveDevice
 for a device gone meanwhile changes nothing.
 
-The controller's other direct walks of the node map (build_candidates, handle_ap_metrics_req, the
-dev-test encode and decode, rejoin_retired_agents) run on the main thread, which removes nodes
-itself and so needs no lock (0280's helpers are for the other threads): left as they are.
+The node map's last reads outside its lock, all on the main thread, now take it: the em_config
+candidate lookup (build_candidates, find_node), the AP metrics request's radio walk
+(handle_ap_metrics_req, get_nodes) and the dev-test encode and decode walks (under m_mutex around
+the call; neither takes another lock nor waits). 0280 left them on the ground that only the main
+thread removes nodes, but the nodes listener inserts them (create_node), and the map keeps one
+cursor for every walker, so another thread's locked walk moved an unlocked one on the main thread:
+a skipped or repeated node. em_mgr.h's note says so now.
 
 Test: remove_device_retires_every_em_and_keeps_the_model (a two-radio agent: both ems retired, the
 model out of the list and the topology, kept and still readable under ASan, one publish; a second
@@ -76,6 +80,23 @@ index a11db31d..88cd0d73 100644
  	em_orch_t *get_orch() override { return m_orch; }
      
  	/**!
+diff --git a/inc/em_mgr.h b/inc/em_mgr.h
+index 4ce5c4a4..a1621b0d 100644
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -236,8 +236,10 @@ public:
+ 	 * Only the main thread removes nodes from the map (delete_node, delete_nodes, retire_node),
+ 	 * and hash_map_remove frees the map's element: another thread (the nodes listener, a node's
+ 	 * own thread) reads the map only under m_mutex, through find_node, get_nodes and the
+-	 * get_*node* helpers. The main thread's own reads need no lock. The em found stays valid
+-	 * until the reading thread's next pass (free_nodes).
++	 * get_*node* helpers. The main thread's reads take it too: the nodes listener inserts nodes
++	 * (create_node), and the map keeps one cursor for every walker, so another thread's walk
++	 * moves an unlocked one. The em found stays valid until the reading thread's next pass
++	 * (free_nodes), and on the main thread until it removes the node itself.
+ 	 */
+ 	em_t *find_node(const char *key);
+ 
 diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
 index 78a59e8e..347069f7 100644
 --- a/src/ctrl/dm_easy_mesh_ctrl.cpp
@@ -103,10 +124,58 @@ index 78a59e8e..347069f7 100644
  {
      //dm_orch_type_t type = dm_orch_type_none;
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index fb4dc338..c43697cf 100644
+index fb4dc338..dd446b20 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -1373,6 +1373,46 @@ unsigned int em_ctrl_t::retire_ems_of_model(const dm_easy_mesh_t *dm, const std:
+@@ -375,12 +375,17 @@ void em_ctrl_t::handle_get_dev_test(em_bus_event_t *evt)
+     if (m_orch->is_cmd_type_in_progress(evt) == true) {
+     }
+ 
++    /* the encode walks the node map: under its lock, as every walk of it (find_node) */
+     if ((temp = strstr(evt->u.subdoc.name, "update")) != NULL) {
++	pthread_mutex_lock(&m_mutex);
+ 	dev_test.encode(&evt->u.subdoc, m_em_map, true, false);
++	pthread_mutex_unlock(&m_mutex);
+     } else {
+-	   
++
+            teststatus = m_orch->get_dev_test_status();
++	   pthread_mutex_lock(&m_mutex);
+ 	   dev_test.encode(&evt->u.subdoc, m_em_map, false, teststatus);
++	   pthread_mutex_unlock(&m_mutex);
+     }
+     evt->data_len = static_cast<unsigned int> (strlen(evt->u.subdoc.buff)) + 1;
+     m_ctrl_cmd->copy_bus_event(evt);
+@@ -393,7 +398,10 @@ void em_ctrl_t::handle_set_dev_test(em_bus_event_t *evt)
+     if (m_orch->is_cmd_type_in_progress(evt) == true) {
+         m_ctrl_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
+     } else {
++	/* the decode walks the node map (Configure_active_em): under its lock */
++	pthread_mutex_lock(&m_mutex);
+ 	dev_test.analyze_set_dev_test(evt, m_em_map);
++	pthread_mutex_unlock(&m_mutex);
+         m_ctrl_cmd->send_result(em_cmd_out_status_success);
+     }
+ 
+@@ -478,10 +486,13 @@ void em_ctrl_t::handle_ap_metrics_req(em_bus_event_t *evt)
+         return;
+     }
+     std::unique_lock<std::recursive_mutex> topology_lock(g_network_topology_mutex);
+-    em_t *radio = static_cast<em_t *>(hash_map_get_first(m_em_map));
+-    while (radio != nullptr && (radio->is_al_interface_em() ||
+-        memcmp(radio->get_data_model()->get_agent_al_interface_mac(), destination, 6) != 0)) {
+-        radio = static_cast<em_t *>(hash_map_get_next(m_em_map, radio));
++    em_t *radio = nullptr;
++    for (em_t *em : get_nodes()) {
++        if (!em->is_al_interface_em() &&
++            memcmp(em->get_data_model()->get_agent_al_interface_mac(), destination, 6) == 0) {
++            radio = em;
++            break;
++        }
+     }
+     if (radio == nullptr) {
+         cJSON_Delete(document);
+@@ -1373,6 +1384,46 @@ unsigned int em_ctrl_t::retire_ems_of_model(const dm_easy_mesh_t *dm, const std:
  	return static_cast<unsigned int>(ems.size());
  }
  
@@ -154,7 +223,7 @@ index fb4dc338..c43697cf 100644
  {
  	const auto now = std::chrono::steady_clock::now();
 diff --git a/src/orch/em_orch_ctrl.cpp b/src/orch/em_orch_ctrl.cpp
-index 1e653c1a..5957ea1a 100644
+index 1e653c1a..46775d3a 100644
 --- a/src/orch/em_orch_ctrl.cpp
 +++ b/src/orch/em_orch_ctrl.cpp
 @@ -554,8 +554,10 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
@@ -180,6 +249,15 @@ index 1e653c1a..5957ea1a 100644
  			break;
  
  		case dm_orch_type_dm_delete_all:
+@@ -687,7 +690,7 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
+     mac_address_t null_mac = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+ 
+     if (pcmd->m_type == em_cmd_type_em_config) {
+-        em = static_cast<em_t *>(hash_map_get(m_mgr->m_em_map, pcmd->m_param.u.args.args[0]));
++        em = m_mgr->find_node(pcmd->m_param.u.args.args[0]);
+         if (em != NULL) {
+             queue_push(pcmd->m_em_candidates, em);
+             count++;
 diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
 index 061573a7..67d12671 100644
 --- a/tests/test_l1_em_ctrl.cpp
