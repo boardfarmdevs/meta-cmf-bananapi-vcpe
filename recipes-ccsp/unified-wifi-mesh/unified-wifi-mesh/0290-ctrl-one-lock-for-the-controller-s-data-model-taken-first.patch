@@ -1,0 +1,611 @@
+Subject: [PATCH] ctrl: one lock for the controller's data model, taken first by every thread
+
+The controller's threads shared the agents' models with no common lock: the nodes (one thread per
+radio, several on one agent's model), the main loop (the decoders, the orchestrator, the 250 ms
+database pass, the retire passes, the DataElements getters forwarded to it), the nodes listener
+(frame routing, which reads models, sets node states and makes nodes) and the bus threads (the
+seven TR-181 methods and the topology getter, which read the models). Station rows were added and
+deleted under the topology lock, the command lock, or neither, and read under neither: a row or a
+model freed under a reader is a use-after-free, and two walks of one map move its shared cursor.
+
+The orchestrator's command lock is now the controller's one lock (em_mgr_t::lock_data_model, none
+on the agent, which takes it in its own handlers). Every thread takes it first: each node around
+each frame and tick (em_t::proto_run, now for both services), the main loop around each event and
+each pass of the ticks (run_locked_step), the nodes listener around each frame it routes
+(em_mgr_t::proto_process) and the bus handlers for their run (through the controller instance
+they read the models of, get_em_ctrl_instance). The other locks (topology, liveness,
+backhaul, autoconfiguration, node map, queues) are taken inside it, so their own orders no longer
+matter between these threads. start_complete runs outside it, as before: its bus registration,
+ControllerID set and subscription wait for the bus, whose thread may be waiting for the lock.
+Under the lock the main thread only publishes on the bus, which waits for no reply.
+
+No thread holding it waits for another controller thread. Freeing a node did: free_nodes joins the
+node's thread and waits for passes of the listener and the other nodes, which may be waiting for
+the lock. A node deleted in a locked step (a Reset's delete_nodes) is now told to stop in the step
+and freed after it (free_deferred_nodes); a node stopped while it waited for the lock skips the
+frame or tick it waited for, so it never runs on a model the step freed after deleting it.
+
+The cost is latency: a node's frame waits while another thread finishes its step, the database
+pass's SQL included. A main-loop step that held the lock for EM_LOCKED_STEP_LOG_MS (1 s) or longer,
+and a node that waited that long for it, are logged.
+
+Tests: locked_step_frees_the_nodes_it_deleted_after_the_lock (a node waiting for the lock and
+deleted in a step: the step ends in well under EM_NODE_JOIN_MS and the node is freed after it);
+bus_methods_and_frame_routing_wait_for_the_lock (the seven method handlers and the listener's
+routing make no progress while another thread holds the lock, and all run once it is let go);
+station_rows_change_while_the_bus_and_the_listener_read (the main thread's steps put and remove an
+agent's station rows while a bus thread encodes the topology with its station lists and the
+listener routes the agent's Topology Responses: clean under ASan and ThreadSanitizer).
+---
+diff --git a/inc/em_base.h b/inc/em_base.h
+index 3fe96ba4..1a887570 100644
+--- a/inc/em_base.h
++++ b/inc/em_base.h
+@@ -59,6 +59,9 @@ extern "C"
+ #define EM_MGR_TOUT     250 // in milliseconds
+ /* how long freeing a node waits for its thread to end and for a pass of the nodes listener */
+ #define EM_NODE_JOIN_MS 3000
++/* a main-loop step, or a node's wait for the data model's lock, this long or longer is logged:
++ * every other thread of the controller waited that long too */
++#define EM_LOCKED_STEP_LOG_MS 1000
+ #define EM_1_TOUT_MULT 	(1000 / EM_MGR_TOUT)
+ #define EM_2_TOUT_MULT 	(2000 / EM_MGR_TOUT)
+ #define EM_5_TOUT_MULT 	(5000 / EM_MGR_TOUT)
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index 88cd0d73..f689a18d 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -232,6 +232,15 @@ public:
+ 	bool is_retired_model(const dm_easy_mesh_t *dm) const;
+ 
+ 	em_orch_t *get_orch() override { return m_orch; }
++
++	/**!
++	 * @brief The controller's one lock for its data model: the orchestrator's command lock
++	 * (em_mgr_t::lock_data_model).
++	 */
++	std::unique_lock<std::recursive_mutex> lock_data_model() override
++	{
++		return (m_orch != nullptr) ? m_orch->lock_commands() : std::unique_lock<std::recursive_mutex>();
++	}
+     
+ 	/**!
+ 	 * @brief Listens for input events and processes them accordingly.
+diff --git a/inc/em_mgr.h b/inc/em_mgr.h
+index a1621b0d..c2eb65f3 100644
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -22,6 +22,7 @@
+ #include "em.h"
+ #include "em_orch.h"
+ #include "ieee80211.h"
++#include <functional>
+ #include <mutex>
+ 
+ class em_mgr_t {
+@@ -50,9 +51,22 @@ class em_mgr_t {
+ 	 * @param[in] ems The unlinked ems.
+ 	 *
+ 	 * @note Called with no lock held: a thread being joined, or the listener, may wait on one.
++	 * Called in a main-loop step that holds the data model's lock (lock_data_model), it only
++	 * tells them to stop and keeps them: the step frees them once it let the lock go
++	 * (free_deferred_nodes).
+ 	 */
+ 	void free_nodes(std::vector<em_t *> &ems);
+ 
++	// The main loop's step holding the data model's lock (lock_data_model), and the nodes unlinked
++	// and told to stop in it, freed after it: the main thread's only
++	bool m_in_locked_step = false;
++	std::vector<em_t *> m_deferred_nodes;
++
++	/**!
++	 * @brief Frees the nodes a locked step unlinked (free_nodes), once it let the lock go.
++	 */
++	void free_deferred_nodes();
++
+ public:
+     virtual bool handle_native_backhaul_frame(unsigned char *data, unsigned int len, em_t *al_em) { return false; }
+ 	pthread_mutex_t m_mutex;
+@@ -203,7 +217,7 @@ public:
+ 	 *
+ 	 * @param[in] ruid Pointer to the interface from which the node will be deleted.
+ 	 *
+-	 * @note Called with no lock held (free_nodes).
++	 * @note Called with no lock held, or in a locked main-loop step (free_nodes).
+ 	 */
+ 	void delete_node(em_interface_t* ruid);
+ 
+@@ -220,7 +234,7 @@ public:
+ 	/**!
+ 	 * @brief Deletes every radio node (the AL interface nodes stay), as delete_node does each.
+ 	 *
+-	 * @note Called with no lock held (free_nodes).
++	 * @note Called with no lock held, or in a locked main-loop step (free_nodes).
+ 	 */
+ 	void delete_nodes();
+ 
+@@ -258,6 +272,23 @@ public:
+ 	 * @brief Whether the nodes listener runs, so free_nodes waits for its pass.
+ 	 */
+ 	void set_nodes_listening(bool listening);
++
++	/**!
++	 * @brief The lock a thread holds while it reads or changes the shared data model. None here:
++	 * the agent takes its orchestrator's command lock in its own handlers. The controller's is its
++	 * orchestrator's command lock, its one lock: the main loop holds it for each event and tick
++	 * (start), the nodes listener for each frame it routes (proto_process), each node for each
++	 * frame and tick (em_t::proto_run), and the bus handlers that read the model for their run.
++	 * Every other lock is taken inside it.
++	 */
++	virtual std::unique_lock<std::recursive_mutex> lock_data_model() { return std::unique_lock<std::recursive_mutex>(); }
++
++	/**!
++	 * @brief One step of the main loop (an event, the due ticks) under the data model's lock
++	 * (lock_data_model): nodes deleted in it are freed once it let the lock go (free_nodes), and
++	 * a step that held the lock EM_LOCKED_STEP_LOG_MS or longer is logged with what it ran.
++	 */
++	void run_locked_step(const char *what, const std::function<void()> &step);
+     
+ 	/**!
+ 	 * @brief Retrieves a node based on the specified frequency band.
+diff --git a/src/ctrl/dm_easy_mesh_ctrl.cpp b/src/ctrl/dm_easy_mesh_ctrl.cpp
+index 347069f7..e1e7c1ad 100644
+--- a/src/ctrl/dm_easy_mesh_ctrl.cpp
++++ b/src/ctrl/dm_easy_mesh_ctrl.cpp
+@@ -69,6 +69,9 @@ extern em_network_topo_t *g_network_topology;
+ 
+ bus_error_t em_ctrl_t::cmd_setssid(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     em_subdoc_info_t *subdoc = NULL;
+     unsigned char buff[sizeof(em_subdoc_info_t) + EM_IO_BUFF_SZ];
+     cJSON *json = NULL, *root = NULL, *new_json = NULL, *ssid_list = NULL, *target = NULL, *item = NULL, *ssid_item = NULL, *child = NULL, *next = NULL, *band_arr = NULL;
+@@ -404,6 +407,9 @@ bus_error_t em_ctrl_t::cmd_setssid(const char *method_name, const bus_data_prop_
+ 
+ bus_error_t em_ctrl_t::cmd_unassocstalinkmetricsquery(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+@@ -752,6 +758,9 @@ static unsigned char backhaul_op_class_for_radio(dm_easy_mesh_t *model, const ma
+ 
+ bus_error_t em_ctrl_t::cmd_steerwifibh(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+@@ -1044,6 +1053,9 @@ cleanup:
+ 
+ bus_error_t em_ctrl_t::cmd_channelscan(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+@@ -1324,6 +1336,9 @@ cleanup:
+ 
+ bus_error_t em_ctrl_t::cmd_channelselect(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+@@ -1862,6 +1877,9 @@ finish:
+ 
+ bus_error_t em_ctrl_t::cmd_clientsteer(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+@@ -2273,6 +2291,9 @@ cleanup:
+ 
+ bus_error_t em_ctrl_t::cmd_disassociate(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+ {
++    // a bus thread reading the models: under the controller's one lock (lock_data_model), the
++    // instance's it reads them through
++    std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl_t::get_em_ctrl_instance()->lock_data_model();
+     (void)async_handle;
+     const char *name = method_name;
+     const char *param;
+diff --git a/src/ctrl/tr_181/wfa_data_model/tr_181.cpp b/src/ctrl/tr_181/wfa_data_model/tr_181.cpp
+index 8d50b4bd..9dccc5a6 100644
+--- a/src/ctrl/tr_181/wfa_data_model/tr_181.cpp
++++ b/src/ctrl/tr_181/wfa_data_model/tr_181.cpp
+@@ -953,7 +953,11 @@ bus_error_t tr_181_t::get_network_topology(char *event_name, raw_data_t *p_data,
+         cJSON_Delete(parent);
+         return bus_error_general;
+     }
+-    dm_ctrl->get_network_config(parent, const_cast<char*>(GLOBAL_NET_ID));
++    {
++        // a bus thread reading the models: under the controller's one lock (lock_data_model)
++        std::unique_lock<std::recursive_mutex> data_model_lock = em_ctrl->lock_data_model();
++        dm_ctrl->get_network_config(parent, const_cast<char*>(GLOBAL_NET_ID));
++    }
+ 
+     str = cJSON_Print(parent);
+     cJSON_Delete(parent);
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index 3d61c365..08d536b3 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -750,22 +750,42 @@ void em_t::proto_run()
+     // wsc_m2_pending uses these ticks to retransmit M1 when one of several
+     // simultaneous radio M2 responses is lost.  This runs on the existing
+     // radio thread, so state transitions remain serialized with frames.
+-    // An agent node handles each event and each tick under the orchestrator's command lock, as the
+-    // controller's state handling does (handle_ctrl_state): the main thread sets, swaps and ends
+-    // this node's command and states under that lock (orch_execute, destroy_command), so this
+-    // node never sees a command being torn down, or a state being swapped, half-way, and its own
+-    // transitions are not lost to main's. The lock is recursive; its order is command lock, then
+-    // the node map (em_mgr_t::m_mutex), then the queues, as everywhere else.
++    // A node handles each event and each tick under the orchestrator's command lock: the main
++    // thread sets, swaps and ends this node's command and states under that lock (orch_execute,
++    // destroy_command), so this node never sees a command being torn down, or a state being
++    // swapped, half-way, and its own transitions are not lost to main's. On the controller it is
++    // also the data model's one lock (em_mgr_t::lock_data_model): the agents' models, their
++    // station rows among them, which every node, the main loop, the nodes listener and the bus
++    // handlers read and change, change under it only. The lock is recursive; every other lock
++    // (the topology, the node map em_mgr_t::m_mutex, the queues) is taken inside it.
+     em_orch_t *serialising = nullptr;
+-    if (m_service_type == em_service_type_agent && get_mgr() != nullptr) {
++    if (get_mgr() != nullptr) {
+         serialising = get_mgr()->get_orch();
+     }
++    auto stopping = [&]() {
++        pthread_mutex_lock(&m_iq.lock);
++        const bool exiting = m_exit;
++        pthread_mutex_unlock(&m_iq.lock);
++        return exiting;
++    };
+     auto serialised = [&](auto &&step) {
+         if (serialising == nullptr) {
+             step();
+             return;
+         }
++        const auto asked = steady_clock::now();
+         auto command_lock = serialising->lock_commands();
++        const long waited_ms = static_cast<long>(
++            std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock::now() - asked).count());
++        if (waited_ms >= EM_LOCKED_STEP_LOG_MS) {
++            em_printfout("Node %s waited %ld ms for the command lock",
++                util::mac_to_string(get_radio_interface_mac()).c_str(), waited_ms);
++        }
++        // stopped while it waited (a main-loop step deleting it, then maybe its model): nothing
++        // more of it runs
++        if (stopping() == true) {
++            return;
++        }
+         step();
+     };
+ 
+diff --git a/src/em/em_mgr.cpp b/src/em/em_mgr.cpp
+index 4831aea1..dfd75ec7 100644
+--- a/src/em/em_mgr.cpp
++++ b/src/em/em_mgr.cpp
+@@ -134,6 +134,10 @@ bool em_mgr_t::io_process(em_event_t *evt)
+ 
+ void em_mgr_t::proto_process(unsigned char *data, unsigned int len, em_t *al_em)
+ {
++    // the nodes listener's routing of a frame reads and changes the data model (the models, a
++    // node's state, a new node): under its lock (lock_data_model), as the main loop's steps and
++    // the nodes' frames are
++    std::unique_lock<std::recursive_mutex> data_model_lock = lock_data_model();
+     if (handle_native_backhaul_frame(data, len, al_em)) return;
+     em_event_t	*evt;
+     em_t *em = NULL;
+@@ -221,6 +225,16 @@ void em_mgr_t::free_nodes(std::vector<em_t *> &ems)
+     std::vector<em_t *> ended;
+     bool passed = true;
+ 
++    if (m_in_locked_step == true) {
++        // the step holds the data model's lock, which these nodes' threads, the nodes listener and
++        // the other nodes may be waiting on: told to stop now (a stopped node skips the frame or
++        // tick it waited for, em_t::proto_run), freed once the step let the lock go
++        for (em_t *em : ems) {
++            em->stop();
++            m_deferred_nodes.push_back(em);
++        }
++        return;
++    }
+     for (em_t *em : ems) {
+         em->stop();
+     }
+@@ -310,9 +324,40 @@ void em_mgr_t::stop_nodes()
+         ems.push_back(em);
+     }
+     pthread_mutex_unlock(&m_mutex);
++    // and those a locked step left to be freed after it (none once the main loop ended)
++    ems.insert(ems.end(), m_deferred_nodes.begin(), m_deferred_nodes.end());
++    m_deferred_nodes.clear();
++    free_nodes(ems);
++}
++
++void em_mgr_t::free_deferred_nodes()
++{
++    if (m_deferred_nodes.empty() == true) {
++        return;
++    }
++    std::vector<em_t *> ems;
++    ems.swap(m_deferred_nodes);
+     free_nodes(ems);
+ }
+ 
++void em_mgr_t::run_locked_step(const char *what, const std::function<void()> &step)
++{
++    using steady_clock = std::chrono::steady_clock;
++    {
++        std::unique_lock<std::recursive_mutex> data_model_lock = lock_data_model();
++        const auto start = steady_clock::now();
++        m_in_locked_step = data_model_lock.owns_lock();
++        step();
++        m_in_locked_step = false;
++        const long held_ms = static_cast<long>(
++            std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock::now() - start).count());
++        if (data_model_lock.owns_lock() == true && held_ms >= EM_LOCKED_STEP_LOG_MS) {
++            em_printfout("Main-loop step (%s) held the data model's lock %ld ms", what, held_ms);
++        }
++    }
++    free_deferred_nodes();
++}
++
+ void em_mgr_t::note_listener_pass()
+ {
+     pthread_mutex_lock(&m_listen_lock);
+@@ -762,7 +807,7 @@ int em_mgr_t::start()
+ 
+ 		unsigned int catch_up = 0;
+ 		do {
+-			handle_timeout();
++			run_locked_step("ticks", [this]() { handle_timeout(); });
+ 			next_timeout += timeout_interval;
+ 			catch_up++;
+ 		} while (now >= next_timeout && catch_up < EM_1_TOUT_MULT);
+@@ -798,9 +843,9 @@ int em_mgr_t::start()
+                       (evt->u.bevt.type == em_bus_event_type_get_reset))) ||
+ 						(is_data_model_initialized() == true)) {
+ 
+-                    handle_event(evt);
++                    run_locked_step("event", [this, evt]() { handle_event(evt); });
+                 } else if (evt->type == em_event_type_nb) {
+-                    handle_event(evt);
++                    run_locked_step("event", [this, evt]() { handle_event(evt); });
+                 }
+                 free(evt);
+ 				run_due_timeouts();
+diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
+index 2e6873a1..8fce0119 100644
+--- a/tests/test_l1_em_ctrl.cpp
++++ b/tests/test_l1_em_ctrl.cpp
+@@ -25,6 +25,7 @@
+ #include <atomic>
+ #include <chrono>
+ #include <thread>
++#include <arpa/inet.h>
+ #include "em_ctrl.h"
+ 
+ class em_ctrl_t_Test : public ::testing::Test {
+@@ -4451,3 +4452,209 @@ TEST(em_ctrl_t, remove_device_retires_every_em_and_keeps_the_model)
+     EXPECT_TRUE(ctrl.is_retired_model(dm));
+     __lsan_enable();
+ }
++
++/* 0290: a main-loop step holds the controller's one lock. A node with a frame queued waits for it;
++ * deleted in the step (a Reset's delete_nodes), it neither stalls the step nor runs the frame:
++ * freeing it there would wait EM_NODE_JOIN_MS for a thread that cannot end while the step holds
++ * the lock, then keep it. Told to stop in the step, still readable in it (ASan), it skips the
++ * frame once it has the lock and is freed after the step. */
++TEST_F(em_ctrl_t_Test, locked_step_frees_the_nodes_it_deleted_after_the_lock)
++{
++    using steady_clock = std::chrono::steady_clock;
++    dm_easy_mesh_t dm;
++    em_interface_t ruid = {};
++    const unsigned char mac[6] = {0x02, 0x00, 0x00, 0x29, 0x00, 0x01};
++
++    setup_interface(ruid, "step", mac);
++    ruid.media = em_media_type_ieee80211ac_5;
++    em_t *em = ctrl.create_node(&ruid, em_freq_band_5, &dm, false, em_profile_type_3, em_service_type_agent);
++    ASSERT_NE(em, nullptr);
++    ASSERT_TRUE(ctrl.lock_data_model().owns_lock());
++
++    bool readable = false;
++    const auto start = steady_clock::now();
++    ctrl.run_locked_step("test", [&]() {
++        em_event_t *evt = static_cast<em_event_t *>(calloc(1, sizeof(em_event_t)));
++        ASSERT_NE(evt, nullptr);
++        evt->type = em_event_type_frame;
++        evt->u.fevt.frame = static_cast<unsigned char *>(calloc(1, 64));
++        evt->u.fevt.frame_len = 64;
++        em->push_to_queue(evt);
++        /* the node's thread takes the frame and waits for the lock */
++        std::this_thread::sleep_for(std::chrono::milliseconds(200));
++        ctrl.delete_nodes();
++        EXPECT_TRUE(ctrl.get_nodes().empty());
++        readable = em->is_thread_running();
++    });
++    const long step_ms = static_cast<long>(
++        std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock::now() - start).count());
++    EXPECT_TRUE(readable);
++    EXPECT_LT(step_ms, 1500);
++    EXPECT_TRUE(ctrl.get_nodes().empty());
++}
++
++/* the controller instance the bus handlers read the models through (get_em_ctrl_instance), made
++ * ready once for the tests that call them: its orchestrator (the one lock) and its model list
++ * (init stops before it when the command socket finds no certificates, as in the unit build) */
++static em_ctrl_t *ready_instance()
++{
++    static bool ready = false;
++    em_ctrl_t *ctrl = em_ctrl_t::get_em_ctrl_instance();
++    if (ready == false) {
++        ctrl->init("/tmp/test_config.db");
++        ctrl->get_dm_ctrl()->test_data_model_list().init(ctrl);
++        ready = true;
++    }
++    return ctrl;
++}
++
++/* 0290: the seven TR-181 method handlers and the nodes listener's routing of a frame take the
++ * controller's one lock first: run while another thread holds it, none gets anywhere until it is
++ * let go. Each handler is given a method name it refuses right after taking the lock; the frame
++ * is not a 1905 frame, which the routing drops right after taking it. */
++TEST(em_ctrl_t, bus_methods_and_frame_routing_wait_for_the_lock)
++{
++    __lsan_disable();
++    em_ctrl_t *ctrl = ready_instance();
++    std::atomic<int> methods(0);
++    std::atomic<bool> routed(false);
++
++    std::unique_lock<std::recursive_mutex> held = ctrl->lock_data_model();
++    ASSERT_TRUE(held.owns_lock());
++    std::thread bus([&methods]() {
++        const bus_error_t refused[] = {
++            em_ctrl_t::cmd_setssid("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_unassocstalinkmetricsquery("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_steerwifibh("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_channelscan("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_channelselect("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_clientsteer("x", nullptr, nullptr, nullptr),
++            em_ctrl_t::cmd_disassociate("x", nullptr, nullptr, nullptr),
++        };
++        for (bus_error_t rc : refused) {
++            if (rc != bus_error_success) {
++                methods++;
++            }
++        }
++    });
++    std::thread listener([ctrl, &routed]() {
++        unsigned char frame[64] = {};
++        ctrl->proto_process(frame, sizeof(frame), nullptr);
++        routed = true;
++    });
++    std::this_thread::sleep_for(std::chrono::milliseconds(300));
++    EXPECT_EQ(methods.load(), 0);
++    EXPECT_FALSE(routed.load());
++    held.unlock();
++    bus.join();
++    listener.join();
++    EXPECT_EQ(methods.load(), 7);
++    EXPECT_TRUE(routed.load());
++    __lsan_enable();
++}
++
++/* 0290: an agent's station rows change while the bus reads the topology and the listener routes
++ * the agent's frames, as the database pass, a DataElements poll and a Topology Response meet in
++ * the field. The main thread's steps put and remove the rows (the list's put_sta and remove_sta,
++ * the database pass's), a bus thread encodes the network topology with each BSS's station list
++ * (tr_181_t::get_network_topology, which walks every model's station map), and the listener
++ * routes the agent's Topology Responses (its model and radios read). Under the one lock: no row
++ * read after it was freed (ASan) and no data race (the suite's TSan run). */
++TEST(em_ctrl_t, station_rows_change_while_the_bus_and_the_listener_read)
++{
++    __lsan_disable();
++    em_ctrl_t *ctrl = ready_instance();
++    const unsigned char ctrl_mac[6] = {0x02, 0x00, 0x00, 0x29, 0x01, 0x00};
++    const unsigned char agent_mac[6] = {0x02, 0x00, 0x00, 0x29, 0x01, 0x10};
++    const unsigned char ruid[6] = {0x02, 0x00, 0x00, 0x29, 0x01, 0x11};
++    const unsigned char bssid[6] = {0x02, 0x00, 0x00, 0x29, 0x01, 0x12};
++    em_interface_t ctrl_intf = {}, agent_intf = {};
++    strncpy(ctrl_intf.name, "eth0", sizeof(ctrl_intf.name) - 1);
++    memcpy(ctrl_intf.mac, ctrl_mac, sizeof(ctrl_intf.mac));
++    strncpy(agent_intf.name, "eth1", sizeof(agent_intf.name) - 1);
++    memcpy(agent_intf.mac, agent_mac, sizeof(agent_intf.mac));
++
++    dm_easy_mesh_t *dm = nullptr;
++    {
++        std::unique_lock<std::recursive_mutex> data_model_lock = ctrl->lock_data_model();
++        ASSERT_NE(ctrl->create_data_model(GLOBAL_NET_ID, &ctrl_intf), nullptr);
++        ctrl->init_network_topology();
++        ASSERT_NE(g_network_topology, nullptr);
++        /* an agent with one radio and its AP BSS, in the topology (by hand, as in the RemoveDevice
++         * test: the models made here are all the controller's) */
++        dm = ctrl->create_data_model(GLOBAL_NET_ID, &agent_intf);
++        ASSERT_NE(dm, nullptr);
++        dm->m_num_radios = 1;
++        memcpy(dm->m_radio[0].m_radio_info.intf.mac, ruid, sizeof(mac_address_t));
++        memcpy(dm->m_radio[0].m_radio_info.id.ruid, ruid, sizeof(mac_address_t));
++        dm->m_num_bss = 1;
++        memcpy(dm->m_bss[0].m_bss_info.id.ruid, ruid, sizeof(mac_address_t));
++        memcpy(dm->m_bss[0].m_bss_info.bssid.mac, bssid, sizeof(mac_address_t));
++        dm->m_bss[0].m_bss_info.vap_mode = em_vap_mode_ap;
++        std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++        g_network_topology->add(dm);
++        ASSERT_NE(g_network_topology->find_topology(dm), nullptr);
++    }
++
++    const unsigned int rows = 8;
++    std::vector<std::string> keys;
++    std::vector<dm_sta_t> stations(rows);
++    for (unsigned int i = 0; i < rows; i++) {
++        const unsigned char sta_mac[6] = {0x02, 0x00, 0x00, 0x29, 0x02, static_cast<unsigned char>(i)};
++        memcpy(stations[i].m_sta_info.id, sta_mac, sizeof(mac_address_t));
++        memcpy(stations[i].m_sta_info.bssid, bssid, sizeof(mac_address_t));
++        memcpy(stations[i].m_sta_info.radiomac, ruid, sizeof(mac_address_t));
++        keys.push_back(util::mac_to_string(sta_mac) + "@" + util::mac_to_string(bssid) + "@" +
++            util::mac_to_string(ruid));
++    }
++
++    std::atomic<bool> done(false);
++    std::atomic<unsigned long> encoded(0), routed(0);
++    std::thread bus([&done, &encoded]() {
++        while (done.load() == false) {
++            raw_data_t raw = {};
++            if (tr_181_t::get_network_topology(nullptr, &raw, nullptr) == bus_error_success) {
++                free(raw.raw_data.bytes);
++                encoded++;
++            }
++        }
++    });
++    std::thread listener([ctrl, &done, &routed, &agent_mac, &ctrl_mac]() {
++        unsigned char frame[sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t) + 8] = {};
++        em_raw_hdr_t *hdr = reinterpret_cast<em_raw_hdr_t *>(frame);
++        em_cmdu_t *cmdu = reinterpret_cast<em_cmdu_t *>(frame + sizeof(em_raw_hdr_t));
++        memcpy(hdr->dst, ctrl_mac, sizeof(mac_address_t));
++        memcpy(hdr->src, agent_mac, sizeof(mac_address_t));
++        hdr->type = htons(ETH_P_1905);
++        cmdu->type = htons(em_msg_type_topo_resp);
++        while (done.load() == false && routed.load() < 200) {
++            ctrl->proto_process(frame, sizeof(frame), nullptr);
++            routed++;
++            std::this_thread::sleep_for(std::chrono::milliseconds(2));
++        }
++    });
++    /* 400 rounds, and at least 300 ms, so the three overlap for a while */
++    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
++    for (unsigned int round = 0; round < 400 || std::chrono::steady_clock::now() < until; round++) {
++        ctrl->run_locked_step("test", [&]() {
++            for (unsigned int i = 0; i < rows; i++) {
++                if (round % 2 == 0) {
++                    ctrl->get_dm_ctrl()->test_data_model_list().put_sta(keys[i].c_str(), &stations[i]);
++                } else {
++                    ctrl->get_dm_ctrl()->test_data_model_list().remove_sta(keys[i].c_str());
++                }
++            }
++        });
++    }
++    done = true;
++    bus.join();
++    listener.join();
++    EXPECT_GT(encoded.load(), 0UL);
++    EXPECT_GT(routed.load(), 0UL);
++    {
++        std::unique_lock<std::recursive_mutex> data_model_lock = ctrl->lock_data_model();
++        std::lock_guard<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++        g_network_topology->remove(dm);
++    }
++    __lsan_enable();
++}
