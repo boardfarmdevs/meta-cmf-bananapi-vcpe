@@ -246,6 +246,10 @@ EASYMESH_CORE_PATCHES = " \
     file://0280-em-a-deleted-node-is-freed-after-its-thread-ended.patch \
     file://0281-cmd-the-command-sockets-are-unix-sockets.patch \
     file://0282-cli-the-web-ui-listens-where-its-environment-says.patch \
+    file://0283-db-the-database-password-stays-out-of-the-controller-s-log.patch \
+    file://0284-utils-a-timer-never-joins-its-own-thread-and-the-enrollee-s-chirp.patch \
+    file://0285-log-a-configuration-payload-reaches-the-log-with-its-secrets-red.patch \
+    file://0286-agent-the-command-socket-answers-each-client-once-from-the-event-i.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

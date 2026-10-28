@@ -1,0 +1,320 @@
+Subject: [PATCH] utils: a timer never joins its own thread, and the enrollee's chirp wait no longer owns itself
+
+ThreadedTimer::stop() joined its thread from any caller. A periodic callback that returns false
+calls it on the timer's own thread, and the enrollee's 10 s wait after a chirp response held the
+last reference to its own timer, so that timer was destroyed, and stopped, on its own thread when
+the callback ended: std::thread throws "Resource deadlock avoided" and the process aborts, about
+10 s after every chirp response (DPP over Ethernet). The thread handle also had no lock, while the
+chirp wait's thread restarts the search timer that the 1905 thread stops.
+
+- The timer: a stop or a restart takes the old thread's handle under a lock and joins it outside,
+  or detaches it when the caller is that thread. Each thread has its own state (alive, a condition
+  variable), so a thread still finishing never takes a later start's for its own, and a stop
+  wakes a sleeping thread at once instead of waiting out its delay.
+- The enrollee: the 10 s wait is its own member timer, stopped with the search timer first in its
+  destructor, and it copies the sender's MAC instead of keeping a pointer into the frame.
+
+Tests (test_l1_timer.cpp): a periodic callback that stops its own timer; a one-shot owned by its
+callback; stop() waking a 10 s sleep; starts and stops from two threads. The original timer aborts
+on the first two; the new one passes them, and ThreadSanitizer (GCC 13, clang 18) reports nothing.
+---
+diff --git a/inc/ec_enrollee.h b/inc/ec_enrollee.h
+index 8c036cff..36ade5f1 100644
+--- a/inc/ec_enrollee.h
++++ b/inc/ec_enrollee.h
+@@ -695,6 +695,12 @@ private:
+ 
+ 	std::shared_ptr<ThreadedTimer> m_autoconf_search_timer = std::make_shared<ThreadedTimer>();
+ 
++	/**
++	 * @brief The 10 s wait for the DPP Authentication Request after a chirp response. The
++	 * enrollee's own, stopped before it goes: the timer never owns itself.
++	 */
++	std::shared_ptr<ThreadedTimer> m_auth_request_timer = std::make_shared<ThreadedTimer>();
++
+ 	/**
+ 	 * @brief Metadata about a fragmented GAS response frame
+ 	 * 
+diff --git a/inc/timer.h b/inc/timer.h
+index 2aac675d..8bff8cfa 100644
+--- a/inc/timer.h
++++ b/inc/timer.h
+@@ -1,4 +1,3 @@
+-
+ #ifndef THREADED_TIMER_H
+ #define THREADED_TIMER_H
+ 
+@@ -7,7 +6,9 @@
+ #include <functional>
+ #include <chrono>
+ #include <atomic>
++#include <condition_variable>
+ #include <memory>
++#include <mutex>
+ 
+ class ThreadedTimer {
+ public:
+@@ -16,7 +17,7 @@ public:
+ 
+     /**
+      * @brief Call `callback` after `delay` milliseconds
+-     * 
++     *
+      * @param delay The delay for the callback
+      * @param callback The callback
+      */
+@@ -24,7 +25,7 @@ public:
+ 
+     /**
+      * @brief Starts a timer which calls `callback` with periodicity `interval`
+-     * 
++     *
+      * @param interval The periodicity at which to call the callback
+      * @param callback The callback. If the callback returns false, the timer will stop.
+      */
+@@ -32,13 +33,28 @@ public:
+ 
+     /**
+      * @brief Cancel this timer.
+-     * 
++     *
++     * Safe from any thread, the timer's own included (its callback stopping or dropping the
++     * timer): a thread never joins itself, it ends on its own. A sleeping timer thread wakes at
++     * once.
+      */
+     void stop();
+ 
+ private:
++    // One timer thread's own state: a stop or a restart clears it, so a thread still finishing
++    // never takes a later start's for its own
++    struct run_state {
++        std::mutex lock;
++        std::condition_variable wake;
++        bool alive = true;
++    };
++    // Sleeps up to `delay`; false when stopped meanwhile
++    static bool wait(const std::shared_ptr<run_state> &state, std::chrono::milliseconds delay);
++    void start(std::function<void(const std::shared_ptr<run_state> &)> body);
++
++    std::mutex lock;  // timer_thread and state, between the threads that start and stop it
+     std::unique_ptr<std::thread> timer_thread;
+-    std::atomic<bool> running;
++    std::shared_ptr<run_state> state;
+ };
+ 
+ #endif // THREADED_TIMER_H
+diff --git a/src/em/prov/easyconnect/ec_enrollee.cpp b/src/em/prov/easyconnect/ec_enrollee.cpp
+index db5d6050..92e0b45e 100644
+--- a/src/em/prov/easyconnect/ec_enrollee.cpp
++++ b/src/em/prov/easyconnect/ec_enrollee.cpp
+@@ -6,6 +6,7 @@
+ #include "cjson/cJSON.h"
+ #include "cjson_util.h"
+ #include <unistd.h>
++#include <array>
+ 
+ ec_enrollee_t::ec_enrollee_t(const std::string& al_mac_addr, ec_ops_t& ops, std::optional<ec_persistent_sec_ctx_t> existing_sec_ctx)
+     : m_al_mac_addr(al_mac_addr) {
+@@ -33,6 +34,9 @@ ec_enrollee_t::ec_enrollee_t(const std::string& al_mac_addr, ec_ops_t& ops, std:
+ 
+ ec_enrollee_t::~ec_enrollee_t()
+ {
++    // the timers' callbacks use this enrollee: stopped first, the wait (which starts the search) first
++    m_auth_request_timer->stop();
++    m_autoconf_search_timer->stop();
+     teardown_connection();
+     if (m_send_pres_announcement_thread.joinable()) m_send_pres_announcement_thread.join();
+     if (m_send_recfg_announcement_thread.joinable()) m_send_recfg_announcement_thread.join();
+@@ -2118,9 +2122,12 @@ bool ec_enrollee_t::handle_autoconf_response_chirp(em_dpp_chirp_value_t *chirp,
+     free(our_key_hash);
+ 
+     // Now, we can begin a 10 second timer awaiting a DPP Authentication Request frame from the Controller.
+-    // Created on heap to ensure it lives long enough for the timer callback
+-    auto timer = std::make_shared<ThreadedTimer>();
+-    timer->execute_after(std::chrono::seconds(10), [this, src_mac, timer]() {
++    // The enrollee's own timer (stopped in its destructor), and the sender's MAC copied: the frame
++    // it came in is gone by then
++    std::array<uint8_t, ETH_ALEN> sender;
++    memcpy(sender.data(), src_mac, ETH_ALEN);
++    m_auth_request_timer->execute_after(std::chrono::seconds(10), [this, sender]() {
++        const uint8_t *src_mac = sender.data();
+         if (m_received_auth_frame.load()) {
+             em_printfout("Received DPP Authentication Request frame");
+             return;
+diff --git a/src/utils/timer.cpp b/src/utils/timer.cpp
+index 59eaa8fc..5b4370a3 100644
+--- a/src/utils/timer.cpp
++++ b/src/utils/timer.cpp
+@@ -1,41 +1,82 @@
+ #include "timer.h"
+ 
+-ThreadedTimer::ThreadedTimer() : running(false) {}
++ThreadedTimer::ThreadedTimer() {}
+ 
+ ThreadedTimer::~ThreadedTimer() {
+     stop();
+ }
+ 
++bool ThreadedTimer::wait(const std::shared_ptr<run_state> &state, std::chrono::milliseconds delay) {
++    std::unique_lock<std::mutex> guard(state->lock);
++    state->wake.wait_for(guard, delay, [&state] { return !state->alive; });
++    return state->alive;
++}
++
++// The thread's own handle stays with this timer; the previous one (stopped) is joined outside the
++// lock, or detached when the caller is that thread
++static void finish(std::unique_ptr<std::thread> thread) {
++    if (!thread || !thread->joinable()) {
++        return;
++    }
++    if (thread->get_id() == std::this_thread::get_id()) {
++        thread->detach();  // joining itself would throw and end the process
++    } else {
++        thread->join();
++    }
++}
++
++void ThreadedTimer::start(std::function<void(const std::shared_ptr<run_state> &)> body) {
++    auto next = std::make_shared<run_state>();
++    std::unique_ptr<std::thread> previous;
++    std::shared_ptr<run_state> previous_state;
++    {
++        std::lock_guard<std::mutex> guard(lock);
++        previous = std::move(timer_thread);
++        previous_state = std::move(state);
++        state = next;
++        timer_thread = std::make_unique<std::thread>([next, body]() { body(next); });
++    }
++    if (previous_state) {
++        std::lock_guard<std::mutex> guard(previous_state->lock);
++        previous_state->alive = false;
++        previous_state->wake.notify_all();
++    }
++    finish(std::move(previous));
++}
++
+ void ThreadedTimer::execute_after(std::chrono::milliseconds delay, std::function<void()> callback) {
+-    stop();
+-    running = true;
+-    timer_thread = std::make_unique<std::thread>([this, delay, callback]() {
+-        std::this_thread::sleep_for(delay);
+-        if (running.load()) {
++    start([delay, callback](const std::shared_ptr<run_state> &state) {
++        if (wait(state, delay)) {
+             callback();
+         }
+     });
+ }
+ 
+ void ThreadedTimer::start_periodic(std::chrono::milliseconds interval, std::function<bool()> callback) {
+-    stop();
+-    running = true;
+-    timer_thread = std::make_unique<std::thread>([this, interval, callback]() {
+-        while (running.load()) {
+-            std::this_thread::sleep_for(interval);
+-            if (running.load()) {
+-                if (!callback()) {
+-                    stop();  // Stop if callback returns false
+-                    break;
+-                }
++    start([interval, callback](const std::shared_ptr<run_state> &state) {
++        while (wait(state, interval)) {
++            if (!callback()) {
++                // Stop if callback returns false: this thread only ends, it joins nothing
++                std::lock_guard<std::mutex> guard(state->lock);
++                state->alive = false;
++                break;
+             }
+         }
+     });
+ }
+ 
+ void ThreadedTimer::stop() {
+-    running = false;
+-    if (timer_thread && timer_thread->joinable()) {
+-        timer_thread->join();
++    std::unique_ptr<std::thread> thread;
++    std::shared_ptr<run_state> stopped;
++    {
++        std::lock_guard<std::mutex> guard(lock);
++        thread = std::move(timer_thread);
++        stopped = std::move(state);
++    }
++    if (stopped) {
++        std::lock_guard<std::mutex> guard(stopped->lock);
++        stopped->alive = false;
++        stopped->wake.notify_all();
+     }
++    finish(std::move(thread));
+ }
+diff --git a/tests/test_l1_timer.cpp b/tests/test_l1_timer.cpp
+index 097728e8..f816427b 100644
+--- a/tests/test_l1_timer.cpp
++++ b/tests/test_l1_timer.cpp
+@@ -202,3 +202,66 @@ TEST(ThreadedTimer, Stop_Only) {
+     timer.stop();
+     std::cout << "Exiting: ThreadedTimer_Stop_Only" << std::endl;
+ }
++
++// A periodic callback that returns false stops its timer from the timer's own thread: the thread
++// ends, nothing joins itself (which throws and ends the process), and a later stop() returns.
++TEST(ThreadedTimer, StartPeriodic_CallbackStopsItsOwnTimer) {
++    ThreadedTimer timer{};
++    std::atomic<int> calls{0};
++    timer.start_periodic(10ms, [&calls]() {
++        calls++;
++        return false;
++    });
++    std::this_thread::sleep_for(200ms);
++    EXPECT_EQ(calls.load(), 1);
++    timer.stop();
++    EXPECT_EQ(calls.load(), 1);
++}
++
++// A one-shot whose callback holds the last reference to its own timer: the timer is destroyed on
++// its own thread when that thread ends (the enrollee's chirp wait did this), with no abort.
++TEST(ThreadedTimer, ExecuteAfter_TimerOwnedByItsCallback) {
++    std::atomic<bool> ran{false};
++    {
++        auto timer = std::make_shared<ThreadedTimer>();
++        timer->execute_after(10ms, [timer, &ran]() { ran = true; });
++    }
++    std::this_thread::sleep_for(200ms);
++    EXPECT_TRUE(ran.load());
++}
++
++// stop() wakes a sleeping timer thread at once, and its callback never runs.
++TEST(ThreadedTimer, Stop_WakesASleepingTimer) {
++    ThreadedTimer timer{};
++    std::atomic<bool> ran{false};
++    timer.execute_after(10s, [&ran]() { ran = true; });
++    auto started = std::chrono::steady_clock::now();
++    timer.stop();
++    EXPECT_LT(std::chrono::steady_clock::now() - started, 1s);
++    EXPECT_FALSE(ran.load());
++}
++
++// Starts and stops of one timer from two threads at once (the enrollee's search timer: restarted
++// by the chirp wait's thread, stopped by the 1905 thread): no handle is lost or joined twice.
++TEST(ThreadedTimer, StartAndStopFromTwoThreads) {
++    ThreadedTimer timer{};
++    std::atomic<int> calls{0};
++    std::atomic<bool> done{false};
++    std::thread starter([&]() {
++        for (int i = 0; i < 200; i++) {
++            timer.start_periodic(1ms, [&calls]() {
++                calls++;
++                return true;
++            });
++        }
++        done = true;
++    });
++    while (!done.load()) {
++        timer.stop();
++    }
++    starter.join();
++    timer.stop();
++    int after = calls.load();
++    std::this_thread::sleep_for(20ms);
++    EXPECT_EQ(calls.load(), after);
++}

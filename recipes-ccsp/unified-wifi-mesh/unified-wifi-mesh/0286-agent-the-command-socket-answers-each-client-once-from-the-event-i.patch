@@ -1,0 +1,395 @@
+Subject: [PATCH] agent: the command socket answers each client once, from the event it sent
+
+The input thread kept the last accepted client in one member, m_dsock, never reset, while the main
+thread's send_result wrote to it and closed it, from 22 call sites, among them events no client
+sent (dev_init, a node's channel selection, the OneWifi callbacks). After the first client every
+such answer went to, and closed, whatever descriptor had that number by then: another thread's
+frame socket (a lost 1905 frame) or a newer client. Two clients overlapping got each other's
+answers. And a client that connected and sent nothing ended the accept loop for good.
+
+- The client's descriptor travels with its event. While the input thread queues a client's
+  event, the manager's new on_queue hook (a no-op but on the agent) lets the queued copy take that
+  client, before the main thread can see it; handling that copy, the main thread answers that
+  client in send_result, once, and closes it, or closes it unanswered when its handler sends
+  nothing. An event no client sent answers no one.
+- A client that sends nothing is closed, and the socket goes on serving.
+
+Tests (test_l1_em_cmd_agent_reply.cpp, the agent's unit build): a client answered once and closed;
+an event no client sent leaving another descriptor open and unwritten; two queued clients each
+getting its own reply; a client left unanswered closed.
+---
+diff --git a/inc/em_agent.h b/inc/em_agent.h
+index d947351f..73eb91e2 100644
+--- a/inc/em_agent.h
++++ b/inc/em_agent.h
+@@ -615,6 +615,11 @@ public:
+ 	 * @note Ensure that the event pointer is not null before calling this function.
+ 	 */
+ 	void handle_event(em_event_t *evt);
++
++	/**!
++	 * @brief A command socket client's event, about to be queued, takes that client (its reply).
++	 */
++	void on_queue(em_event_t *queued) override;
+     
+ 	/**!
+ 	 * @brief Handles a frame event.
+diff --git a/inc/em_cmd_agent.h b/inc/em_cmd_agent.h
+index 3a271d55..dc2215f6 100644
+--- a/inc/em_cmd_agent.h
++++ b/inc/em_cmd_agent.h
+@@ -20,13 +20,48 @@
+ #define EM_CMD_AGENT_H
+ 
+ #include "em_cmd_exec.h"
++#include <mutex>
++#include <unordered_map>
+ 
+ class em_agent_t;
+ extern em_agent_t g_agent;
+ 
+ class em_cmd_agent_t : public em_cmd_exec_t {
+     em_agent_t& m_agent = g_agent;
+-    int m_dsock;
++    // The command socket's clients, each answered once and only by the event it sent: the input
++    // thread accepts a client, and while it queues that client's event (attach, on that thread
++    // only) the queued copy takes the client's descriptor; the main thread, handling the copy
++    // (begin_reply), answers that descriptor in send_result and closes it, or closes it unanswered
++    // (end_reply). An event that no client sent (a bus callback's, a node's) answers no one.
++    std::mutex m_reply_lock;  // m_replies, between the input thread and the main thread
++    std::unordered_map<const void *, int> m_replies;  // queued event copy -> its client
++    int m_reply_fd;  // the client of the event the main thread is handling, or -1
++    static thread_local int s_queuing_fd;  // the client whose event this thread is queueing
++public:
++	/**!
++	 * @brief The event copy being queued on this thread takes the client it came from, if any.
++	 *
++	 * Called by the manager just before it queues `queued` (em_mgr_t::on_queue), so the main
++	 * thread can never handle a client's event before it knows the client.
++	 */
++	void attach(const void *queued);
++
++	/**!
++	 * @brief The main thread starts handling `evt`: its client, if it has one, is the one
++	 * send_result answers.
++	 */
++	void begin_reply(const void *evt);
++
++	/**!
++	 * @brief The main thread is done with its event: a client it did not answer is closed.
++	 */
++	void end_reply();
++
++	/**!
++	 * @brief The client whose event this thread queues next (execute, around io_process; -1 none).
++	 */
++	static void queuing_client(int fd) { s_queuing_fd = fd; }
++
+ public:
+     static em_cmd_t m_client_cmd_spec[];
+ public:
+diff --git a/inc/em_mgr.h b/inc/em_mgr.h
+index 1afb08e8..4ce5c4a4 100644
+--- a/inc/em_mgr.h
++++ b/inc/em_mgr.h
+@@ -796,7 +796,14 @@ public:
+ 	 * @returns True if the event was processed successfully, false otherwise.
+ 	 */
+ 	bool io_process(em_event_t *evt);
+-	
++
++	/**!
++	 * @brief io_process's copy of an event, just before it is queued: a derived manager can
++	 * record who sent it (the agent: its command socket's client) before the main thread can
++	 * handle it.
++	 */
++	virtual void on_queue(em_event_t *queued) { (void)queued; }
++
+ 	/**!
+ 	 * @brief Processes input/output events based on the event type and data provided.
+ 	 *
+diff --git a/src/agent/Makefile.am b/src/agent/Makefile.am
+index 2a47b851..391997ef 100644
+--- a/src/agent/Makefile.am
++++ b/src/agent/Makefile.am
+@@ -140,6 +140,7 @@ onewifi_em_agent_test_SOURCES = \
+ 	$(onewifi_em_agent_SOURCES) \
+ 	$(top_srcdir)/tests/main.cpp \
+ 	$(top_srcdir)/tests/test_l1_em_simulator.cpp \
++	$(top_srcdir)/tests/test_l1_em_cmd_agent_reply.cpp \
+ 	$(top_srcdir)/tests/test_l1_em_cmd_scan_result.cpp \
+ 	$(top_srcdir)/tests/test_l1_em_cmd_ap_metrics_report.cpp \
+ 	$(top_srcdir)/tests/test_l1_em_cmd_get_network.cpp \
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index da3549df..ad63beda 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1833,8 +1833,19 @@ void em_agent_t::handle_bus_event(em_bus_event_t *evt)
+     }    
+ }
+ 
++void em_agent_t::on_queue(em_event_t *queued)
++{
++    if (m_agent_cmd != NULL) {
++        m_agent_cmd->attach(queued);
++    }
++}
++
+ void em_agent_t::handle_event(em_event_t *evt)
+ {
++    // a command socket client's event answers that client (send_result), and only it
++    if (m_agent_cmd != NULL) {
++        m_agent_cmd->begin_reply(evt);
++    }
+     switch(evt->type) {
+         case em_event_type_frame:
+             handle_frame_event(&evt->u.fevt);
+@@ -1847,6 +1858,9 @@ void em_agent_t::handle_event(em_event_t *evt)
+         default:
+             break;
+     }
++    if (m_agent_cmd != NULL) {
++        m_agent_cmd->end_reply();
++    }
+ 
+     m_orch->handle_ready_commands();
+ }
+diff --git a/src/agent/em_cmd_agent.cpp b/src/agent/em_cmd_agent.cpp
+index bde3ee3b..46dd0013 100644
+--- a/src/agent/em_cmd_agent.cpp
++++ b/src/agent/em_cmd_agent.cpp
+@@ -69,32 +69,43 @@ int em_cmd_agent_t::execute(em_long_string_t result)
+         return -1;
+     }
+     while (1) {
++        int dsock;
+ 
+         printf("%s:%d: Waiting for client connection\n", __func__, __LINE__);
+-        if ((m_dsock = accept(lsock, NULL, NULL)) == -1) {
++        if ((dsock = accept(lsock, NULL, NULL)) == -1) {
+             printf("%s:%d: listen error on socket, err:%d\n", __func__, __LINE__, errno);
+             continue;
+         }
+ 
+-        setsockopt(m_dsock, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)); // Send buffer EM_MAX_EVENT_DATA_LEN
+-        setsockopt(m_dsock, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz)); // Receive buffer EM_MAX_EVENT_DATA_LEN
++        setsockopt(dsock, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)); // Send buffer EM_MAX_EVENT_DATA_LEN
++        setsockopt(dsock, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz)); // Receive buffer EM_MAX_EVENT_DATA_LEN
+ 
+         printf("%s:%d: Connection accepted from client\n", __func__, __LINE__);
+ 
+         tmp = reinterpret_cast<unsigned char *>(get_event());
+ 
+-        if ((ret = recv(m_dsock, tmp, sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN, 0)) <= 0) {
++        // a client that sends nothing is closed, and the socket keeps serving the next one
++        if ((ret = recv(dsock, tmp, sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN, 0)) <= 0) {
+             printf("%s:%d: listen error on socket, err:%d\n", __func__, __LINE__, errno);
+-            break;
++            close(dsock);
++            m_cmd.reset();
++            continue;
+         }
+ 
+         switch (get_event()->type) {
+             case em_event_type_bus:
+ 				//assert(0);
++                // the queued copy takes this client (attach), which its handler answers
++                queuing_client(dsock);
+                 m_agent.io_process(get_event());
++                if (s_queuing_fd >= 0) {
++                    close(s_queuing_fd);  // not queued: no one would answer it
++                }
++                queuing_client(-1);
+                 break;
+ 
+             default:
++                close(dsock);
+                 break;
+         }
+ 
+@@ -113,17 +124,53 @@ int em_cmd_agent_t::send_result(em_cmd_out_status_t status)
+     em_status_string_t str;
+     unsigned char *tmp;
+ 
++    // only the client of the event being handled, once; an event no client sent answers no one
++    if (m_reply_fd < 0) {
++        return 0;
++    }
+     tmp = reinterpret_cast<unsigned char *>(m_cmd.status_to_string(status, str));
+ 
+-    if ((ret = send(m_dsock, tmp, sizeof(em_status_string_t), 0)) <= 0) {
++    if ((ret = static_cast<int>(send(m_reply_fd, tmp, sizeof(em_status_string_t), MSG_NOSIGNAL))) <= 0) {
+         printf("%s:%d: write error on socket, err:%d\n", __func__, __LINE__, errno);
+     }
+ 
+-    close(m_dsock);
++    close(m_reply_fd);
++    m_reply_fd = -1;
+ 
+     return 0;
+ }
+ 
++thread_local int em_cmd_agent_t::s_queuing_fd = -1;
++
++void em_cmd_agent_t::attach(const void *queued)
++{
++    if (s_queuing_fd < 0) {
++        return;
++    }
++    std::lock_guard<std::mutex> guard(m_reply_lock);
++    m_replies[queued] = s_queuing_fd;
++    s_queuing_fd = -1;
++}
++
++void em_cmd_agent_t::begin_reply(const void *evt)
++{
++    end_reply();
++    std::lock_guard<std::mutex> guard(m_reply_lock);
++    auto client = m_replies.find(evt);
++    if (client != m_replies.end()) {
++        m_reply_fd = client->second;
++        m_replies.erase(client);
++    }
++}
++
++void em_cmd_agent_t::end_reply()
++{
++    if (m_reply_fd >= 0) {
++        close(m_reply_fd);
++        m_reply_fd = -1;
++    }
++}
++
+ em_event_t *em_cmd_agent_t::create_event(char *buff)
+ {
+     // here is the entry point of RBUS subdocuments
+@@ -205,17 +252,17 @@ em_event_t *em_cmd_agent_t::create_event(char *buff)
+     return evt;
+ }
+ 
+-em_cmd_agent_t::em_cmd_agent_t(em_cmd_t& obj) : m_dsock(-1)
++em_cmd_agent_t::em_cmd_agent_t(em_cmd_t& obj) : m_reply_fd(-1)
+ {
+     memcpy(&m_cmd.m_param, &obj.m_param, sizeof(em_cmd_params_t));
+ }
+ 
+-em_cmd_agent_t::em_cmd_agent_t(em_cmd_type_t type) : m_dsock(-1)
++em_cmd_agent_t::em_cmd_agent_t(em_cmd_type_t type) : m_reply_fd(-1)
+ {
+     memcpy(&m_cmd.m_param, &em_cmd_agent_t::m_client_cmd_spec[type].m_param, sizeof(em_cmd_params_t));
+ }
+ 
+-em_cmd_agent_t::em_cmd_agent_t() : m_dsock(-1)
++em_cmd_agent_t::em_cmd_agent_t() : m_reply_fd(-1)
+ {
+ 
+ }
+diff --git a/src/em/em_mgr.cpp b/src/em/em_mgr.cpp
+index dd1eb3e6..4831aea1 100644
+--- a/src/em/em_mgr.cpp
++++ b/src/em/em_mgr.cpp
+@@ -111,6 +111,7 @@ bool em_mgr_t::io_process(em_event_t *evt)
+     e = static_cast<em_event_t *>(malloc(sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN));
+     memcpy(reinterpret_cast<unsigned char *>(e), reinterpret_cast<unsigned char *>(evt), sizeof(em_event_t) + EM_MAX_EVENT_DATA_LEN);
+ 
++    on_queue(e);
+     push_to_queue(e);
+ 
+     // check if the server should wait
+diff --git a/tests/test_l1_em_cmd_agent_reply.cpp b/tests/test_l1_em_cmd_agent_reply.cpp
+new file mode 100644
+index 00000000..f3bd2531
+--- /dev/null
++++ b/tests/test_l1_em_cmd_agent_reply.cpp
+@@ -0,0 +1,91 @@
++/*
++ * The agent's command socket: each client is answered once, and only by the event it sent.
++ */
++#include <gtest/gtest.h>
++#include <fcntl.h>
++#include <sys/socket.h>
++#include <unistd.h>
++#include "em_cmd_agent.h"
++
++namespace {
++
++struct client_pair {
++    int peer = -1;   // the client's end
++    int agent = -1;  // the agent's end, as accept gives it
++    client_pair() {
++        int sv[2];
++        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
++            peer = sv[0];
++            agent = sv[1];
++        }
++    }
++    ~client_pair() {
++        if (peer >= 0) close(peer);
++    }
++    // what the client receives: the reply's size, 0 at a close, -1 when nothing is there yet
++    ssize_t receive() const {
++        em_status_string_t reply;
++        return recv(peer, reply, sizeof(reply), MSG_DONTWAIT);
++    }
++};
++
++bool is_open(int fd) { return fcntl(fd, F_GETFD) != -1; }
++
++}  // namespace
++
++TEST(EmCmdAgentReply, AClientsEventAnswersItOnceAndClosesIt) {
++    em_cmd_agent_t cmd;
++    client_pair client;
++    char queued = 0;
++    em_cmd_agent_t::queuing_client(client.agent);
++    cmd.attach(&queued);
++    cmd.begin_reply(&queued);
++    cmd.send_result(em_cmd_out_status_success);
++    EXPECT_EQ(client.receive(), static_cast<ssize_t>(sizeof(em_status_string_t)));
++    EXPECT_EQ(client.receive(), 0);  // closed after its one reply
++    cmd.send_result(em_cmd_out_status_no_change);  // a second answer goes nowhere
++    cmd.end_reply();
++}
++
++TEST(EmCmdAgentReply, AnEventNoClientSentAnswersNoOne) {
++    em_cmd_agent_t cmd;
++    client_pair other;  // another thread's descriptor, open
++    char from_bus = 0;
++    cmd.begin_reply(&from_bus);
++    EXPECT_EQ(cmd.send_result(em_cmd_out_status_prev_cmd_in_progress), 0);
++    cmd.end_reply();
++    EXPECT_TRUE(is_open(other.agent));
++    EXPECT_EQ(other.receive(), -1);
++    close(other.agent);
++}
++
++TEST(EmCmdAgentReply, TwoClientsEachGetTheirOwnReply) {
++    em_cmd_agent_t cmd;
++    client_pair first, second;
++    char first_event = 0, second_event = 0;
++    em_cmd_agent_t::queuing_client(first.agent);
++    cmd.attach(&first_event);
++    em_cmd_agent_t::queuing_client(second.agent);
++    cmd.attach(&second_event);
++    cmd.begin_reply(&second_event);
++    cmd.send_result(em_cmd_out_status_success);
++    cmd.end_reply();
++    EXPECT_EQ(second.receive(), static_cast<ssize_t>(sizeof(em_status_string_t)));
++    EXPECT_TRUE(is_open(first.agent));
++    EXPECT_EQ(first.receive(), -1);  // nothing for the first yet
++    cmd.begin_reply(&first_event);
++    cmd.send_result(em_cmd_out_status_success);
++    cmd.end_reply();
++    EXPECT_EQ(first.receive(), static_cast<ssize_t>(sizeof(em_status_string_t)));
++}
++
++TEST(EmCmdAgentReply, AClientLeftUnansweredIsClosed) {
++    em_cmd_agent_t cmd;
++    client_pair client;
++    char queued = 0;
++    em_cmd_agent_t::queuing_client(client.agent);
++    cmd.attach(&queued);
++    cmd.begin_reply(&queued);
++    cmd.end_reply();  // its handler sent nothing
++    EXPECT_EQ(client.receive(), 0);
++}
