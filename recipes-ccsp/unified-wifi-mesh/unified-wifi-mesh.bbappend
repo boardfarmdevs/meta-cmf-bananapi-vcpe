@@ -256,6 +256,9 @@ EASYMESH_CORE_PATCHES = " \
     file://0290-ctrl-one-lock-for-the-controller-s-data-model-taken-first.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
+# A lab qualification's diagnostic only, never on main: a frame the controller's routing drops
+# because the sender's model has no such BSS (a client leave, say) logged at INFO, not debug
+SRC_URI += "file://lab-ctrl-routing-drop-at-info.patch"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
 SRC_URI += "file://native_steering.go file://native_steering_test.go"
 SRC_URI += "file://native_http.go file://native_http_test.go file://native_http_listen_test.go"
