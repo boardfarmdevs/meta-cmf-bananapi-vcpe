@@ -1,0 +1,71 @@
+Subject: [PATCH] em: an agent node handles each event and tick under the orchestrator's command lock
+
+An agent's node threads ran their frames and their 1 s ticks with no lock, while the main thread
+sets, swaps and ends each node's command and states under the command lock (orch_execute,
+destroy_command, the temporary state swaps for sta_list, sta_link_metrics and the unassociated
+result). handle_agent_state could pass its m_orch_state check and then dereference an m_cmd that
+main had just destroyed (a cancelled cfg_renew at its 10 s limit against the radio's tick), run a
+second time on a swapped-in transient state, or lose its own transition to main's restore. The
+controller's state handling has always taken this lock (handle_ctrl_state).
+
+proto_run now takes the (recursive) command lock around each event it processes and around its
+timeout tick on an agent node; the controller's nodes are unchanged. The lock order stays
+command lock, then the node map's m_mutex, then the queues: nothing takes them the other way, no
+node path waits for the main thread (io_process only queues), and the agent frees no nodes at
+runtime. A node's DPP peer discovery sleeps 500 ms before its 4-way handshake; under the lock that
+holds the main thread for those 500 ms, DPP only.
+---
+diff --git a/src/em/em.cpp b/src/em/em.cpp
+index cca26d4c..3d61c365 100644
+--- a/src/em/em.cpp
++++ b/src/em/em.cpp
+@@ -750,12 +750,31 @@ void em_t::proto_run()
+     // wsc_m2_pending uses these ticks to retransmit M1 when one of several
+     // simultaneous radio M2 responses is lost.  This runs on the existing
+     // radio thread, so state transitions remain serialized with frames.
++    // An agent node handles each event and each tick under the orchestrator's command lock, as the
++    // controller's state handling does (handle_ctrl_state): the main thread sets, swaps and ends
++    // this node's command and states under that lock (orch_execute, destroy_command), so this
++    // node never sees a command being torn down, or a state being swapped, half-way, and its own
++    // transitions are not lost to main's. The lock is recursive; its order is command lock, then
++    // the node map (em_mgr_t::m_mutex), then the queues, as everywhere else.
++    em_orch_t *serialising = nullptr;
++    if (m_service_type == em_service_type_agent && get_mgr() != nullptr) {
++        serialising = get_mgr()->get_orch();
++    }
++    auto serialised = [&](auto &&step) {
++        if (serialising == nullptr) {
++            step();
++            return;
++        }
++        auto command_lock = serialising->lock_commands();
++        step();
++    };
++
+     auto run_due_timeout = [&]() {
+         const auto now = steady_clock::now();
+         if (now < next_timeout) {
+             return;
+         }
+-        proto_timeout();
++        serialised([&]() { proto_timeout(); });
+         // Resume from now rather than replaying delayed state transitions.
+         next_timeout = now + timeout_interval;
+     };
+@@ -783,14 +802,14 @@ void em_t::proto_run()
+                 }
+                 pthread_mutex_unlock(&m_iq.lock);
+                 if (evt->type == em_event_type_frame) {
+-                    proto_process(evt->u.fevt.frame, evt->u.fevt.frame_len);
++                    serialised([&]() { proto_process(evt->u.fevt.frame, evt->u.fevt.frame_len); });
+                 } else if (evt->type == em_event_type_cmd){
+                     // em_cmd_event_t cevnt;
+                     // memcpy(&cevnt, &evt->u.cevt, sizeof(em_cmd_event_t));
+                     // proto_process(&cevnt);
+                     em_cmd_event_t cevnt;
+                     memcpy(&cevnt, &evt->u.cevt, sizeof(cevnt)); // safe copy
+-                    proto_process(&cevnt); // pass pointer
++                    serialised([&]() { proto_process(&cevnt); }); // pass pointer
+                 }
+                 free(evt);
+                 // between events too: a long queue must not hold off free_nodes

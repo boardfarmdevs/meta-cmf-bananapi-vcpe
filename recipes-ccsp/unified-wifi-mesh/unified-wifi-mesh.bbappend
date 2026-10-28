@@ -250,6 +250,8 @@ EASYMESH_CORE_PATCHES = " \
     file://0284-utils-a-timer-never-joins-its-own-thread-and-the-enrollee-s-chirp.patch \
     file://0285-log-a-configuration-payload-reaches-the-log-with-its-secrets-red.patch \
     file://0286-agent-the-command-socket-answers-each-client-once-from-the-event-i.patch \
+    file://0287-em-an-agent-node-handles-each-event-and-tick-under-the-orchestr.patch \
+    file://0288-agent-the-main-thread-changes-the-shared-data-model-under-the-comm.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"

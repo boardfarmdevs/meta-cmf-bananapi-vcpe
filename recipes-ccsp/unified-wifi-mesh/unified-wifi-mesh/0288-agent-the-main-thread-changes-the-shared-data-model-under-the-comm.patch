@@ -1,0 +1,54 @@
+Subject: [PATCH] agent: the main thread changes the shared data model under the command lock
+
+The agent's one data model is shared by every node. The main thread added and deleted its station
+rows with no lock: the analyze_* decoders write OneWifi's reports into it (an AP Metrics Report's
+station info among them), and the orchestrator's pre-processing (pre_process_orch_op, outside the
+command lock in submit_commands) applies the full-snapshot deltas, the station aggregate and the
+link metrics, removing and deleting rows. Meanwhile a node built a Topology Response or an AP
+Metrics Response walking m_sta_map, holding a row across several TLV builders: a row deleted
+under it is a use-after-free, and the controller's usual answer to a station event (a Topology
+Query) makes the two meet. The 1 s tick also re-armed and recovered radios' WSC states unlocked,
+racing the radio's own transition.
+
+With the nodes now handling everything under the command lock, the main thread takes it around
+each event it handles (handle_event: the decoders, pre-processing and submission included) and
+around the 1 s tick's WSC rearm and recovery. The lock is recursive, so the orchestrator taking it
+again inside is unchanged; no main path waits for a node while holding it (the agent joins its
+nodes only in its destructor; bus callbacks only queue). The cost is latency: a node's reply waits
+while the main thread finishes an event, its bus calls included.
+---
+diff --git a/src/agent/em_agent.cpp b/src/agent/em_agent.cpp
+index ad63beda..016d0978 100644
+--- a/src/agent/em_agent.cpp
++++ b/src/agent/em_agent.cpp
+@@ -1842,6 +1842,17 @@ void em_agent_t::on_queue(em_event_t *queued)
+ 
+ void em_agent_t::handle_event(em_event_t *evt)
+ {
++    // The data model's station rows (m_sta_map, m_sta_dassoc_map), BSSs and radios change here:
++    // the analyze_* decoders write OneWifi's reports into the shared model, and the orchestrator's
++    // pre-processing (pre_process_orch_op: the full-snapshot deltas, the station aggregate, the
++    // link metrics) adds and deletes rows. The nodes read them under the command lock (proto_run),
++    // so the main thread changes them under it too: a node building a Topology Response or an AP
++    // Metrics Response never walks a row being deleted. The lock is recursive (submit_commands and
++    // handle_ready_commands take it again).
++    std::unique_lock<std::recursive_mutex> command_lock;
++    if (m_orch != NULL) {
++        command_lock = m_orch->lock_commands();
++    }
+     // a command socket client's event answers that client (send_result), and only it
+     if (m_agent_cmd != NULL) {
+         m_agent_cmd->begin_reply(evt);
+@@ -2014,6 +2025,12 @@ void em_agent_t::handle_2s_tick()
+ void em_agent_t::handle_1s_tick()
+ {
+     poll_native_backhaul_request();
++    // the radios' WSC states change here (rearm, recovery): under the command lock, as a radio's
++    // own transitions are (proto_run), so neither side's write is lost to the other's
++    std::unique_lock<std::recursive_mutex> command_lock;
++    if (m_orch != NULL) {
++        command_lock = m_orch->lock_commands();
++    }
+     if (m_onewifi_wsc_subdoc_active && ++m_onewifi_wsc_wait_ticks >= 5) {
+         std::string ruid = m_onewifi_wsc_ruid;
+         m_onewifi_wsc_subdoc_active = false;
