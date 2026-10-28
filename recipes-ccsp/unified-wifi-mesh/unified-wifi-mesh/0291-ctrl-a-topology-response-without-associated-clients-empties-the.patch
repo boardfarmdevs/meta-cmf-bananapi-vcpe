@@ -1,0 +1,722 @@
+Subject: [PATCH] ctrl: a Topology Response without Associated Clients empties the BSSs it lists
+
+A Topology Response's Associated Clients TLV is the controller's repair for a client leave it
+missed: handle_topology_response_clients takes it as the agent's whole association snapshot and
+removes the associations it omits. EasyMesh includes that TLV only when a client is associated
+with one of the agent's BSSs, so an agent whose BSSs have emptied sends none, and a leave the
+controller missed on such a BSS stayed in its model (STAList Associated) across every later
+response and cold start.
+
+A response with an AP Operational BSS TLV and no Associated Clients TLV now empties the BSSs that
+TLV lists: each station still associated on one of them, in every model of the sender's agent,
+leaves as a Topology Notification's leave does (remove_sta_assoc, the notification's leave branch
+moved into a helper both use: an MLD's affiliated links marked unassociated, else the station's
+own row removed and kept as a disassociation row, then the association event with assoc_event 0).
+A BSS the response does not list keeps its stations; a malformed AP Operational BSS TLV changes
+nothing. Each such response that removed stations is logged with the agent's counts since start
+(removals and responses), so an agent that omits the TLV with clients associated, whose stations
+would then leave at each response and come back with its next notifications, shows as numbers.
+A response with the TLV is reconciled as before.
+
+The frame routing's drop of a frame for a BSS the sender's model lacks ("Could not find bss") was
+a debug line: a client's join or leave lost there left no trace. It is now logged per message type
+and sender, the first at once and then at most one line a minute with the count since: an ERROR
+for a Topology Notification (it carries a client's join or leave), INFO for the other types
+(metrics, capability and BTM reports, which drop while an agent onboards). At most 256 pairs are
+kept; pairs quiet for 10 minutes go first.
+
+Tests: a_leave_without_an_mld_removes_the_live_owner (the shared leave path);
+operational_bssids_lists_every_bss_of_every_radio and operational_bssids_refuses_a_malformed_tlv
+(the TLV's walk, a radio with no BSS, a cut SSID, a trailing byte);
+listed_associations_takes_associated_stations_on_listed_bsss_only (an unlisted BSS keeps its
+station, an unassociated row is no leave); the_first_is_logged_then_one_line_a_minute_with_the_count
+and the_pairs_are_bounded_and_quiet_ones_go_first (the routing drop's line).
+---
+diff --git a/inc/em_configuration.h b/inc/em_configuration.h
+index 29ad2d11..75f3613d 100644
+--- a/inc/em_configuration.h
++++ b/inc/em_configuration.h
+@@ -19,6 +19,9 @@
+ #ifndef EM_CONFIGURATION_H
+ #define EM_CONFIGURATION_H
+ 
++#include <set>
++#include <string>
++#include <vector>
+ #include "em_base.h"
+ #include "em_crypto.h"
+ #include "dm_easy_mesh.h"
+@@ -827,6 +830,14 @@ class em_configuration_t {
+ 	 */
+ 	int handle_topology_response(unsigned char *buff, unsigned int len);
+ 	int handle_topology_response_clients(unsigned char *buff, unsigned int len);
++
++	/**
++	 * A Topology Response without an Associated Clients TLV: the stations still associated on
++	 * the BSSs its AP Operational BSS TLV lists leave as a Topology Notification's leave does.
++	 * Returns the number of associations removed.
++	 */
++	unsigned int reconcile_listed_bss_without_clients(dm_easy_mesh_t *dm,
++		const std::set<std::string> &bssids);
+     
+ 	/**!
+ 	 * @brief Handles topology notifications.
+@@ -1676,6 +1687,22 @@ public:
+ 	static bool remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
+ 		const em_sta_info_t& sta_info);
+ 
++	/**
++	 * A station's leave from one of the agent's BSSs, as a Topology Notification reports it: an
++	 * MLD's affiliated links marked unassociated, else the station's own row removed
++	 * (remove_non_mlo_sta_assoc). The caller holds the network topology lock.
++	 */
++	static bool remove_sta_assoc(dm_easy_mesh_t *dm,
++		const em_sta_info_t& sta_info);
++
++	/** The BSSIDs an AP Operational BSS TLV lists, added to bssids; false when it is malformed. */
++	static bool operational_bssids(const unsigned char *value, unsigned int len,
++		std::set<std::string> &bssids);
++
++	/** The model's associated stations on a BSS in bssids, copied into out. */
++	static void listed_associations(dm_easy_mesh_t *dm, const std::set<std::string> &bssids,
++		std::vector<em_sta_info_t> &out);
++
+ 
+ 	/* Parse a received AKM Suite Capabilities TLV and store the
+ 	 * advertised fronthaul/backhaul AKMs into every BSS of the data model. Wire format:
+diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
+index f689a18d..c5c1fbb3 100644
+--- a/inc/em_ctrl.h
++++ b/inc/em_ctrl.h
+@@ -67,6 +67,15 @@ class em_ctrl_t : public em_mgr_t {
+      * is rejoined without having to reboot: its model again if it was removed, then a targeted
+      * AP-Autoconfiguration Renew per band of its radios, so its M1s rebuild them. */
+ public:
++    /* A routing drop's line, per message type and sender: the first logged at once, then at most
++     * one a minute with the drops since the last line in *since (routing_drop_due). */
++    struct routing_drop_t {
++        std::chrono::steady_clock::time_point logged;
++        unsigned long dropped;
++    };
++    static bool routing_drop_due(std::map<std::string, routing_drop_t> &drops, const std::string &key,
++            std::chrono::steady_clock::time_point now, unsigned long *since);
++
+     struct retired_agent_t {
+         std::chrono::steady_clock::time_point since;    /* its radios queued */
+         bool removed = false;                           /* its model, device and rows gone */
+@@ -129,6 +138,12 @@ private:
+         std::chrono::steady_clock::time_point unlinked;
+     };
+     std::vector<retired_model_t> m_retired_models;    /* the manager thread only */
++    /* Frames the routing drops for a BSS the sender's model lacks, per message type and sender
++     * (the nodes listener only, under the data model's lock). A topology notification dropped
++     * here carries a client's join or leave, an ERROR; the other types' (metrics, capability and
++     * BTM reports while an agent onboards) are INFO. */
++    std::map<std::string, routing_drop_t> m_routing_drops;
++    void note_routing_drop(unsigned short msg_type, const unsigned char *src, const unsigned char *bssid);
+     unsigned int retire_ems_of_model(const dm_easy_mesh_t *dm, const std::string &al);
+     void free_retired_models();
+     void retire_silent_agents();
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index dd446b20..303e6842 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -1931,6 +1931,57 @@ int em_ctrl_t::orch_init()
+     return 0;
+ }
+ 
++bool em_ctrl_t::routing_drop_due(std::map<std::string, routing_drop_t> &drops, const std::string &key,
++        std::chrono::steady_clock::time_point now, unsigned long *since)
++{
++    *since = 0;
++    auto it = drops.find(key);
++    if (it == drops.end()) {
++        // bounded: pairs quiet for 10 minutes go first
++        if (drops.size() >= 256) {
++            for (auto old = drops.begin(); old != drops.end();) {
++                if (now - old->second.logged > std::chrono::minutes(10)) {
++                    old = drops.erase(old);
++                } else {
++                    ++old;
++                }
++            }
++        }
++        drops[key] = {now, 0};
++        return true;
++    }
++    if (now - it->second.logged < std::chrono::minutes(1)) {
++        it->second.dropped++;
++        return false;
++    }
++    *since = it->second.dropped;
++    it->second = {now, 0};
++    return true;
++}
++
++void em_ctrl_t::note_routing_drop(unsigned short msg_type, const unsigned char *src, const unsigned char *bssid)
++{
++    const std::string sender = util::mac_to_string(src);
++    char key[32];
++    unsigned long since = 0;
++
++    snprintf(key, sizeof(key), "%04x@%s", msg_type, sender.c_str());
++    if (!routing_drop_due(m_routing_drops, key, std::chrono::steady_clock::now(), &since)) {
++        return;
++    }
++    const easymesh_log_level_t level = (msg_type == em_msg_type_topo_notif) ?
++            EM_LOG_LVL_ERROR : EM_LOG_LVL_INFO;
++    if (since == 0) {
++        util::em_util_print(level, EM_STDOUT, __FILENAME__, __LINE__,
++                "msg 0x%04x from %s dropped: bss %s is not in its model",
++                msg_type, sender.c_str(), util::mac_to_string(bssid).c_str());
++    } else {
++        util::em_util_print(level, EM_STDOUT, __FILENAME__, __LINE__,
++                "msg 0x%04x from %s dropped: bss %s is not in its model (%lu more since the last line)",
++                msg_type, sender.c_str(), util::mac_to_string(bssid).c_str(), since);
++    }
++}
++
+ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_t *al_em)
+ {
+     em_raw_hdr_t *hdr;
+@@ -2153,8 +2204,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                 }
+ 
+                 if (bss == NULL) {
+-                    em_util_dbg_print(EM_CTRL, "Could not find bss=%s from data model",
+-                        util::mac_to_string(bssid).c_str());
++                    note_routing_drop(htons(cmdu->type), hdr->src, bssid);
+                     return NULL;
+                 }
+ 
+@@ -2181,8 +2231,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                         return NULL;
+                     }
+                 } else {
+-                    em_util_dbg_print(EM_CTRL, "Could not find bss=%s from data model",
+-                        util::mac_to_string(bssid).c_str());
++                    note_routing_drop(htons(cmdu->type), hdr->src, bssid);
+                     return NULL;
+                 }
+             }
+diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
+index ec68da0b..656b0061 100644
+--- a/src/em/config/em_configuration.cpp
++++ b/src/em/config/em_configuration.cpp
+@@ -41,6 +41,7 @@
+ #include <assert.h>
+ #include <string>
+ #include <set>
++#include <map>
+ #include <deque>
+ #include <mutex>
+ #include <ctime>
+@@ -2365,17 +2366,8 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+     em_client_assoc_event_t *assoc_evt_tlv;
+     em_sta_info_t sta_info;
+     em_bus_event_type_client_assoc_params_t    raw;
+-    bool updated_any = false;
+     bool found_assoc_event = false;
+     bool assoc_event;
+-    unsigned int mld_i, aff_j, r;
+-    em_assoc_sta_mld_info_t *assoc_info = NULL;
+-    em_sta_info_t link_sta;
+-    dm_bss_t *aff_bss = NULL;
+-    mac_addr_str_t b_str, r_str;
+-    em_long_string_t link_key;
+-    dm_sta_t *assoc_row = NULL;
+-    dm_sta_t *sta_row = NULL;
+     char *errors[EM_MAX_TLV_MEMBERS] = {0};
+ 
+ 	dm = get_data_model();
+@@ -2435,68 +2427,7 @@ int em_configuration_t::handle_topology_notification(unsigned char *buff, unsign
+             std::unique_lock<std::recursive_mutex> topology_lock(
+                 g_network_topology_mutex);
+             if (assoc_event == false) {
+-                updated_any = false;
+-
+-                for (mld_i = 0; mld_i < dm->get_num_assoc_sta_mld(); mld_i++) {
+-                    assoc_info = &dm->m_assoc_sta_mld[mld_i].m_assoc_sta_mld_info;
+-                    if (memcmp(assoc_info->mac_addr, sta_info.id, sizeof(mac_address_t)) != 0) {
+-                        continue;
+-                    }
+-                    for (aff_j = 0; aff_j < assoc_info->num_affiliated_sta; aff_j++) {
+-                        bool link_radio_resolved = false;
+-                        memset(&link_sta, 0, sizeof(em_sta_info_t));
+-                        memcpy(link_sta.id, sta_info.id, sizeof(mac_address_t));
+-                        memcpy(link_sta.bssid, assoc_info->affiliated_sta[aff_j].bssid, sizeof(mac_address_t));
+-                        link_sta.associated = false;
+-
+-                        aff_bss = NULL;
+-                        for (r = 0; r < dm->get_num_radios(); r++) {
+-                            aff_bss = dm->get_bss(dm->get_radio_info(r)->id.ruid, link_sta.bssid);
+-                            if (aff_bss != NULL) {
+-                                memcpy(link_sta.radiomac, aff_bss->m_bss_info.ruid.mac, sizeof(mac_address_t));
+-                                link_radio_resolved = true;
+-                                break;
+-                            }
+-                        }
+-
+-                        if (link_radio_resolved == false) {
+-                            em_printfout("TOPO_NOTIF_DISASSOC: skipping unresolved affiliated link sta=%s bssid=%s",
+-                                    util::mac_to_string(link_sta.id).c_str(),
+-                                    util::mac_to_string(link_sta.bssid).c_str());
+-                            continue;
+-                        }
+-
+-                        dm_easy_mesh_t::macbytes_to_string(link_sta.bssid, b_str);
+-                        dm_easy_mesh_t::macbytes_to_string(link_sta.radiomac, r_str);
+-                        snprintf(link_key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, b_str, r_str);
+-
+-                        assoc_row = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_assoc_map, link_key));
+-                        if (assoc_row != NULL) {
+-                            assoc_row->m_sta_info.associated = false;
+-                            assoc_row->m_sta_info.frame_body_len = 0;
+-                            memset(assoc_row->m_sta_info.frame_body, 0, sizeof(assoc_row->m_sta_info.frame_body));
+-                        } else {
+-                            hash_map_put(dm->m_sta_assoc_map, strdup(link_key), new dm_sta_t(&link_sta));
+-                        }
+-
+-                        sta_row = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_map, link_key));
+-                        if (sta_row != NULL) {
+-                            sta_row->m_sta_info.associated = false;
+-                            sta_row->m_sta_info.frame_body_len = 0;
+-                            memset(sta_row->m_sta_info.frame_body, 0, sizeof(sta_row->m_sta_info.frame_body));
+-                        }
+-
+-                        em_printfout("topo notification disassoc key=%s", link_key);
+-                        updated_any = true;
+-                    }
+-                    break;
+-                }
+-
+-                if (updated_any) {
+-                    dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
+-                } else {
+-                    updated_any = remove_non_mlo_sta_assoc(dm, sta_info);
+-                }
++                remove_sta_assoc(dm, sta_info);
+             } else {
+                 dm_sta_t *pending = static_cast<dm_sta_t *>(
+                         hash_map_get(dm->m_sta_assoc_map, key));
+@@ -2585,6 +2516,82 @@ em_profile_type_t em_configuration_t::get_peer_profile_from_al_em()
+     return valid_profile(al_profile) ? al_profile : em_profile_type_1;
+ }
+ 
++bool em_configuration_t::remove_sta_assoc(dm_easy_mesh_t *dm,
++    const em_sta_info_t& sta_info)
++{
++    mac_addr_str_t sta_mac_str, b_str, r_str;
++    em_long_string_t link_key;
++    em_sta_info_t link_sta;
++    bool updated_any = false;
++
++    if (dm == NULL) {
++        return false;
++    }
++    dm_easy_mesh_t::macbytes_to_string(
++        const_cast<unsigned char *>(sta_info.id), sta_mac_str);
++
++    for (unsigned int mld_i = 0; mld_i < dm->get_num_assoc_sta_mld(); mld_i++) {
++        em_assoc_sta_mld_info_t *assoc_info = &dm->m_assoc_sta_mld[mld_i].m_assoc_sta_mld_info;
++        if (memcmp(assoc_info->mac_addr, sta_info.id, sizeof(mac_address_t)) != 0) {
++            continue;
++        }
++        for (unsigned int aff_j = 0; aff_j < assoc_info->num_affiliated_sta; aff_j++) {
++            bool link_radio_resolved = false;
++            memset(&link_sta, 0, sizeof(em_sta_info_t));
++            memcpy(link_sta.id, sta_info.id, sizeof(mac_address_t));
++            memcpy(link_sta.bssid, assoc_info->affiliated_sta[aff_j].bssid, sizeof(mac_address_t));
++            link_sta.associated = false;
++
++            dm_bss_t *aff_bss = NULL;
++            for (unsigned int r = 0; r < dm->get_num_radios(); r++) {
++                aff_bss = dm->get_bss(dm->get_radio_info(r)->id.ruid, link_sta.bssid);
++                if (aff_bss != NULL) {
++                    memcpy(link_sta.radiomac, aff_bss->m_bss_info.ruid.mac, sizeof(mac_address_t));
++                    link_radio_resolved = true;
++                    break;
++                }
++            }
++
++            if (link_radio_resolved == false) {
++                em_printfout("TOPO_NOTIF_DISASSOC: skipping unresolved affiliated link sta=%s bssid=%s",
++                        util::mac_to_string(link_sta.id).c_str(),
++                        util::mac_to_string(link_sta.bssid).c_str());
++                continue;
++            }
++
++            dm_easy_mesh_t::macbytes_to_string(link_sta.bssid, b_str);
++            dm_easy_mesh_t::macbytes_to_string(link_sta.radiomac, r_str);
++            snprintf(link_key, sizeof(em_long_string_t), "%s@%s@%s", sta_mac_str, b_str, r_str);
++
++            dm_sta_t *assoc_row = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_assoc_map, link_key));
++            if (assoc_row != NULL) {
++                assoc_row->m_sta_info.associated = false;
++                assoc_row->m_sta_info.frame_body_len = 0;
++                memset(assoc_row->m_sta_info.frame_body, 0, sizeof(assoc_row->m_sta_info.frame_body));
++            } else {
++                hash_map_put(dm->m_sta_assoc_map, strdup(link_key), new dm_sta_t(&link_sta));
++            }
++
++            dm_sta_t *sta_row = static_cast<dm_sta_t *>(hash_map_get(dm->m_sta_map, link_key));
++            if (sta_row != NULL) {
++                sta_row->m_sta_info.associated = false;
++                sta_row->m_sta_info.frame_body_len = 0;
++                memset(sta_row->m_sta_info.frame_body, 0, sizeof(sta_row->m_sta_info.frame_body));
++            }
++
++            em_printfout("topo notification disassoc key=%s", link_key);
++            updated_any = true;
++        }
++        break;
++    }
++
++    if (updated_any) {
++        dm->set_db_cfg_param(db_cfg_type_sta_list_update, "");
++        return true;
++    }
++    return remove_non_mlo_sta_assoc(dm, sta_info);
++}
++
+ bool em_configuration_t::remove_non_mlo_sta_assoc(dm_easy_mesh_t *dm,
+     const em_sta_info_t& sta_info)
+ {
+@@ -2639,6 +2646,9 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+     dm_easy_mesh_t *dm = get_data_model();
+     unsigned int added = 0;
+     std::set<std::string> snapshot_keys;
++    std::set<std::string> op_bssids;
++    bool op_bss_seen = false;
++    bool op_bss_valid = true;
+ 
+     if (dm == NULL || len < header_len + sizeof(em_tlv_t)) {
+         return -1;
+@@ -2658,6 +2668,12 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+         if (tlv->type == em_tlv_type_eom) {
+             break;
+         }
++        if (tlv->type == em_tlv_type_operational_bss) {
++            op_bss_seen = true;
++            if (!operational_bssids(tlv->value, value_len, op_bssids)) {
++                op_bss_valid = false;
++            }
++        }
+         if (tlv->type != em_tlv_type_associated_clients) {
+             cursor += total_len;
+             remaining -= total_len;
+@@ -2880,7 +2896,138 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+         }
+         return static_cast<int>(added + total_removed);
+     }
+-    return 0;
++
++    /* No Associated Clients TLV. EasyMesh includes it only when a client is associated with one
++     * of the agent's BSSs, so the BSSs this response's AP Operational BSS TLV lists have none: a
++     * leave the controller missed on a BSS that emptied is repaired here, as the TLV's snapshot
++     * repairs it above. BSSs the response does not list are left alone. */
++    if (!op_bss_seen || op_bssids.empty()) {
++        return 0;
++    }
++    if (!op_bss_valid) {
++        em_printfout("Topology Response without Associated Clients: malformed AP Operational BSS TLV, nothing reconciled");
++        return 0;
++    }
++    return static_cast<int>(reconcile_listed_bss_without_clients(dm, op_bssids));
++}
++
++/* The BSSIDs an AP Operational BSS TLV (17.2.4) lists, added to bssids: false when it is
++ * malformed. */
++bool em_configuration_t::operational_bssids(const unsigned char *value, unsigned int len,
++                                            std::set<std::string> &bssids)
++{
++    unsigned int off = 0;
++
++    if (len < 1) {
++        return false;
++    }
++    const unsigned int radios = value[off++];
++    for (unsigned int r = 0; r < radios; r++) {
++        if (len - off < sizeof(mac_address_t) + 1) {
++            return false;
++        }
++        off += sizeof(mac_address_t);
++        const unsigned int bss_count = value[off++];
++        for (unsigned int b = 0; b < bss_count; b++) {
++            if (len - off < sizeof(bssid_t) + 1) {
++                return false;
++            }
++            bssids.insert(util::mac_to_string(value + off));
++            off += sizeof(bssid_t);
++            const unsigned int ssid_len = value[off++];
++            if (len - off < ssid_len) {
++                return false;
++            }
++            off += ssid_len;
++        }
++    }
++    return off == len;
++}
++
++/* The model's associated stations on a BSS in bssids, copied into out. */
++void em_configuration_t::listed_associations(dm_easy_mesh_t *dm,
++        const std::set<std::string> &bssids, std::vector<em_sta_info_t> &out)
++{
++    for (dm_sta_t *sta = static_cast<dm_sta_t *>(hash_map_get_first(dm->m_sta_map));
++            sta != NULL;
++            sta = static_cast<dm_sta_t *>(hash_map_get_next(dm->m_sta_map, sta))) {
++        if (sta->m_sta_info.associated &&
++                bssids.count(util::mac_to_string(sta->m_sta_info.bssid)) != 0) {
++            out.push_back(sta->m_sta_info);
++        }
++    }
++}
++
++/* A Topology Response without Associated Clients: each associated station on a BSS in bssids,
++ * in every model of the sender's agent, leaves through a Topology Notification's leave path (its
++ * rows out of the live and pending maps, then the association event with assoc_event 0). The
++ * summary line counts the agent's removals since start, so an agent whose responses keep
++ * removing stations (one omitting the TLV with clients associated) shows as numbers. */
++unsigned int em_configuration_t::reconcile_listed_bss_without_clients(dm_easy_mesh_t *dm,
++        const std::set<std::string> &bssids)
++{
++    struct leave_t {
++        dm_easy_mesh_t *dm;
++        em_sta_info_t sta;
++    };
++    std::vector<leave_t> leaves;
++    std::set<std::string> emptied;
++
++    std::unique_lock<std::recursive_mutex> topology_lock(g_network_topology_mutex);
++    for (dm_easy_mesh_t *owner_dm = get_mgr()->get_first_dm(); owner_dm != NULL;
++            owner_dm = get_mgr()->get_next_dm(owner_dm)) {
++        if (memcmp(owner_dm->get_agent_al_interface_mac(), dm->get_agent_al_interface_mac(),
++                   sizeof(mac_address_t)) != 0) {
++            continue;
++        }
++        std::vector<em_sta_info_t> listed;
++        listed_associations(owner_dm, bssids, listed);
++        for (const em_sta_info_t &sta : listed) {
++            leaves.push_back({owner_dm, sta});
++            emptied.insert(util::mac_to_string(sta.bssid));
++        }
++    }
++    /* the rows change only now: the maps are not walked while a leave removes from them */
++    for (const leave_t &leave : leaves) {
++        em_printfout("Topology Response without Associated Clients: leave sta=%s bssid=%s",
++                     util::mac_to_string(leave.sta.id).c_str(),
++                     util::mac_to_string(leave.sta.bssid).c_str());
++        remove_sta_assoc(leave.dm, leave.sta);
++    }
++    topology_lock.unlock();
++
++    if (leaves.empty()) {
++        return 0;
++    }
++    for (const leave_t &leave : leaves) {
++        em_bus_event_type_client_assoc_params_t raw = {};
++        memcpy(raw.dev, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
++        memcpy(raw.assoc.cli_mac_address, leave.sta.id, sizeof(mac_address_t));
++        memcpy(raw.assoc.bssid, leave.sta.bssid, sizeof(bssid_t));
++        raw.assoc.assoc_event = 0;
++        get_mgr()->io_process(em_bus_event_type_sta_assoc, reinterpret_cast<unsigned char *> (&raw),
++                              sizeof(em_bus_event_type_client_assoc_params_t));
++    }
++
++    struct counts_t {
++        unsigned long removals;
++        unsigned long responses;
++    };
++    static std::mutex counts_mutex;
++    static std::map<std::string, counts_t> counts_by_al;
++    const std::string al = util::mac_to_string(dm->get_agent_al_interface_mac());
++    unsigned long removals, responses;
++    {
++        std::lock_guard<std::mutex> counts_lock(counts_mutex);
++        counts_t &counts = counts_by_al[al];
++        counts.removals += leaves.size();
++        counts.responses++;
++        removals = counts.removals;
++        responses = counts.responses;
++    }
++    em_printfout("Topology Response without Associated Clients from %s: removed %zu association(s) from %zu BSS(s); %lu removal(s) in %lu response(s) since start",
++                 al.c_str(), leaves.size(), emptied.size(), removals, responses);
++    return static_cast<unsigned int>(leaves.size());
+ }
+ 
+ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
+diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
+index 8fce0119..67f1d90e 100644
+--- a/tests/test_l1_em_ctrl.cpp
++++ b/tests/test_l1_em_ctrl.cpp
+@@ -4658,3 +4658,52 @@ TEST(em_ctrl_t, station_rows_change_while_the_bus_and_the_listener_read)
+     }
+     __lsan_enable();
+ }
++
++// A routing drop for a BSS the sender's model lacks: the first per message type and sender is
++// logged at once, the next ones within a minute are counted, and the first line after the minute
++// carries that count.
++TEST(em_ctrl_routing_drop, the_first_is_logged_then_one_line_a_minute_with_the_count)
++{
++    std::map<std::string, em_ctrl_t::routing_drop_t> drops;
++    const auto t0 = std::chrono::steady_clock::now();
++    const std::string notif = "0001@02:72:f9:7f:07:85";
++    unsigned long since = 99;
++
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0, &since));
++    EXPECT_EQ(since, 0UL);
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(10), &since));
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(59), &since));
++    // another message type, or another sender, is its own pair
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "800c@02:72:f9:7f:07:85",
++        t0 + std::chrono::seconds(20), &since));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@02:c2:b8:31:3a:f8",
++        t0 + std::chrono::seconds(20), &since));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(61), &since));
++    EXPECT_EQ(since, 2UL);
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(62), &since));
++    // after a quiet while, the next drop is logged at once with the one counted at 62 s
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(200), &since));
++    EXPECT_EQ(since, 1UL);
++    // and the next after another quiet while with none
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(300), &since));
++    EXPECT_EQ(since, 0UL);
++}
++
++TEST(em_ctrl_routing_drop, the_pairs_are_bounded_and_quiet_ones_go_first)
++{
++    std::map<std::string, em_ctrl_t::routing_drop_t> drops;
++    const auto t0 = std::chrono::steady_clock::now();
++    unsigned long since = 0;
++
++    for (unsigned int i = 0; i < 256; i++) {
++        EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@sender-" + std::to_string(i), t0, &since));
++    }
++    EXPECT_EQ(drops.size(), 256u);
++    // within 10 minutes nothing goes
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@late", t0 + std::chrono::minutes(5), &since));
++    EXPECT_EQ(drops.size(), 257u);
++    // after them, the quiet pairs go and the late one stays
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@later", t0 + std::chrono::minutes(11), &since));
++    EXPECT_EQ(drops.size(), 2u);
++    EXPECT_EQ(drops.count("0001@late"), 1u);
++}
+diff --git a/tests/test_l1_em_orch_ctrl.cpp b/tests/test_l1_em_orch_ctrl.cpp
+index f7b3a604..6f515361 100644
+--- a/tests/test_l1_em_orch_ctrl.cpp
++++ b/tests/test_l1_em_orch_ctrl.cpp
+@@ -1764,3 +1764,113 @@ TEST(em_configuration_t, non_mlo_disassociation_removes_live_owner)
+     EXPECT_TRUE(dm.db_cfg_type_is_set(db_cfg_type_sta_list_delete));
+     dm.deinit();
+ }
++
++// A Topology Notification's leave path, shared with a Topology Response without Associated
++// Clients: a station that is no MLD leaves as remove_non_mlo_sta_assoc removes it.
++TEST(em_configuration_t, a_leave_without_an_mld_removes_the_live_owner)
++{
++    dm_easy_mesh_t dm;
++    em_sta_info_t info = {};
++
++    dm.init();
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:00:6c:00"), info.id);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("72:00:00:00:6a:00"), info.bssid);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:00:6a:00"), info.radiomac);
++    info.associated = true;
++    dm.put_sta_info(&info, em_target_sta_map_consolidated);
++
++    EXPECT_TRUE(em_configuration_t::remove_sta_assoc(&dm, info));
++    EXPECT_EQ(dm.get_sta_info(info.id, info.bssid, info.radiomac,
++        em_target_sta_map_consolidated), nullptr);
++    em_sta_info_t *withdrawn = dm.get_sta_info(info.id, info.bssid, info.radiomac,
++        em_target_sta_map_disassoc);
++    ASSERT_NE(withdrawn, nullptr);
++    EXPECT_FALSE(withdrawn->associated);
++    EXPECT_TRUE(dm.db_cfg_type_is_set(db_cfg_type_sta_list_delete));
++    dm.deinit();
++}
++
++// An AP Operational BSS TLV: radios(1); per radio its RUID(6) and BSS count(1); per BSS its
++// BSSID(6), SSID length(1) and SSID.
++static std::vector<unsigned char> operational_bss_tlv()
++{
++    return {
++        2,
++        0x02, 0x00, 0x00, 0x00, 0x6a, 0x00, 2,
++        0x72, 0x00, 0x00, 0x00, 0x6a, 0x00, 4, 'h', 'o', 'm', 'e',
++        0x72, 0x00, 0x00, 0x00, 0x6a, 0x01, 0,
++        0x02, 0x00, 0x00, 0x00, 0x6b, 0x00, 1,
++        0x72, 0x00, 0x00, 0x00, 0x6b, 0x00, 3, 'b', 'h', '5',
++    };
++}
++
++TEST(em_configuration_t, operational_bssids_lists_every_bss_of_every_radio)
++{
++    std::vector<unsigned char> tlv = operational_bss_tlv();
++    std::set<std::string> bssids;
++
++    EXPECT_TRUE(em_configuration_t::operational_bssids(tlv.data(),
++        static_cast<unsigned int>(tlv.size()), bssids));
++    EXPECT_EQ(bssids, (std::set<std::string>{"72:00:00:00:6a:00", "72:00:00:00:6a:01",
++        "72:00:00:00:6b:00"}));
++
++    // a radio that operates no BSS is well formed
++    std::vector<unsigned char> idle = {1, 0x02, 0x00, 0x00, 0x00, 0x6c, 0x00, 0};
++    bssids.clear();
++    EXPECT_TRUE(em_configuration_t::operational_bssids(idle.data(),
++        static_cast<unsigned int>(idle.size()), bssids));
++    EXPECT_TRUE(bssids.empty());
++}
++
++TEST(em_configuration_t, operational_bssids_refuses_a_malformed_tlv)
++{
++    std::vector<unsigned char> tlv = operational_bss_tlv();
++    std::set<std::string> bssids;
++
++    // the last SSID cut short
++    EXPECT_FALSE(em_configuration_t::operational_bssids(tlv.data(),
++        static_cast<unsigned int>(tlv.size() - 1), bssids));
++    // a byte after the last BSS
++    tlv.push_back(0);
++    EXPECT_FALSE(em_configuration_t::operational_bssids(tlv.data(),
++        static_cast<unsigned int>(tlv.size()), bssids));
++    // no radio count
++    EXPECT_FALSE(em_configuration_t::operational_bssids(tlv.data(), 0, bssids));
++    // a radio cut inside its RUID
++    EXPECT_FALSE(em_configuration_t::operational_bssids(tlv.data(), 4, bssids));
++}
++
++// Only the associated stations on a listed BSS leave: a BSS the response does not list keeps
++// its stations, and a row already unassociated is no leave.
++TEST(em_configuration_t, listed_associations_takes_associated_stations_on_listed_bsss_only)
++{
++    dm_easy_mesh_t dm;
++    em_sta_info_t listed = {}, unlisted = {}, gone = {};
++
++    dm.init();
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:ee:ee:01"), listed.id);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("72:00:00:00:6a:00"), listed.bssid);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:00:6a:00"), listed.radiomac);
++    listed.associated = true;
++    unlisted = listed;
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:ee:ee:02"), unlisted.id);
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("72:00:00:00:6b:00"), unlisted.bssid);
++    gone = listed;
++    dm_easy_mesh_t::string_to_macbytes(const_cast<char *>("02:00:00:ee:ee:03"), gone.id);
++    gone.associated = false;
++    dm.put_sta_info(&listed, em_target_sta_map_consolidated);
++    dm.put_sta_info(&unlisted, em_target_sta_map_consolidated);
++    dm.put_sta_info(&gone, em_target_sta_map_consolidated);
++
++    std::vector<em_sta_info_t> out;
++    em_configuration_t::listed_associations(&dm,
++        std::set<std::string>{"72:00:00:00:6a:00", "72:00:00:00:6a:01"}, out);
++    ASSERT_EQ(out.size(), 1u);
++    EXPECT_EQ(memcmp(out[0].id, listed.id, sizeof(mac_address_t)), 0);
++    EXPECT_EQ(memcmp(out[0].bssid, listed.bssid, sizeof(bssid_t)), 0);
++
++    out.clear();
++    em_configuration_t::listed_associations(&dm, std::set<std::string>{}, out);
++    EXPECT_TRUE(out.empty());
++    dm.deinit();
++}
