@@ -254,6 +254,7 @@ EASYMESH_CORE_PATCHES = " \
     file://0288-agent-the-main-thread-changes-the-shared-data-model-under-the-comm.patch \
     file://0289-ctrl-removedevice-retires-the-device-s-ems-and-keeps-its-model.patch \
     file://0290-ctrl-one-lock-for-the-controller-s-data-model-taken-first.patch \
+    file://0291-ctrl-a-topology-response-without-associated-clients-empties-the.patch \
 "
 SRC_URI += "${EASYMESH_CORE_PATCHES}"
 SRC_URI += "file://candidate_coordination.go file://candidate_coordination_test.go"
