@@ -23,7 +23,9 @@ def emosa_lab_commit(d):
         bb.fatal('%s: no EMOSA_LAB_COMMIT' % env)
     return found.group(1)
 
-SRC_URI = "git://github.com/boardfarmdevs/emosa-lab.git;protocol=https;branch=main"
+# the branch holding the pinned commit: a qualification pin's work branch until its fast-forward,
+# then main with the same SRCREV
+SRC_URI = "git://github.com/boardfarmdevs/emosa-lab.git;protocol=https;branch=wip/readmit"
 # RDK-B's part of the GTP (emosa-lab spec 8.2): the pods' onboarding SSID kept on OneWifi's
 # VAP across its restarts, from /nvram/emosa/podbh.conf (emosa-podbh.service)
 SRC_URI += "file://emosa-podbh-onewifi file://emosa-podbh.service"
