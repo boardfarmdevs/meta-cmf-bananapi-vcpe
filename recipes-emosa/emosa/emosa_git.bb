@@ -43,7 +43,10 @@ DEPENDS = "cjson openssl sqlite3 rdk-logger"
 # configuration and state on the gateway's persistent /nvram, which an image upgrade keeps,
 # and its agents' status (rewritten once a second) in RAM, /run; the agents' interfaces in a
 # network namespace of their own, emosa: the gateway's em_ctrl took an agent whose AL MAC
-# was on one of its own interfaces for its co-located agent (emosa-lab spec 2.1)
+# was on one of its own interfaces for its co-located agent (emosa-lab spec 2.1); RDK-B's own
+# loopback ports inside the agent ports reserved (emosa-lab spec 4, reserved ports): parodus's
+# local URL 6666 (PARODUS_URL in /etc/device.properties) and its WebPA client's 6667, so the
+# fleet never listens on them and the forwarder never takes them to the LAN
 EXTRA_OECMAKE = " \
     -DEMOSA_INSTALL_DATA=ON \
     -DEMOSA_RDK_LOGGER=ON \
@@ -58,6 +61,7 @@ EXTRA_OECMAKE = " \
     -DEMOSA_STATE_ROOT=/nvram/emosa/state \
     -DEMOSA_RUN_ROOT=/run/emosa \
     -DEMOSA_NETNS=emosa \
+    -DEMOSA_RESERVED_PORTS=6666-6667 \
 "
 
 # the GRE termination point a package of its own: the gateway serves the pods' onboarding
