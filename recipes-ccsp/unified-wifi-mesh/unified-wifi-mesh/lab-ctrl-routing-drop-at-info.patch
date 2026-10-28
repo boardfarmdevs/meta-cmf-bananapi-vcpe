@@ -1,0 +1,42 @@
+Subject: [PATCH] ctrl (lab only): a frame dropped because its BSS is not in
+ the sender's model is logged at INFO
+
+The routing of a frame that names a BSSID (a Topology Notification with a
+Client Association Event, a client capability report, AP metrics) drops it
+when the sender's model has no such BSS, with a debug print only. A lost
+client leave then leaves no trace in the journal. For a lab qualification
+only: the same text at INFO, with the message type and the sender.
+---
+ src/ctrl/em_ctrl.cpp | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
+index dd446b20..f887b81a 100644
+--- a/src/ctrl/em_ctrl.cpp
++++ b/src/ctrl/em_ctrl.cpp
+@@ -2153,8 +2153,10 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                 }
+ 
+                 if (bss == NULL) {
+-                    em_util_dbg_print(EM_CTRL, "Could not find bss=%s from data model",
+-                        util::mac_to_string(bssid).c_str());
++                    /* lab only: a routing drop shown (the debug print's text, at INFO) */
++                    em_printfout("Could not find bss=%s from data model: msg 0x%04x from %s dropped",
++                        util::mac_to_string(bssid).c_str(), htons(cmdu->type),
++                        util::mac_to_string(hdr->src).c_str());
+                     return NULL;
+                 }
+ 
+@@ -2181,8 +2183,10 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+                         return NULL;
+                     }
+                 } else {
+-                    em_util_dbg_print(EM_CTRL, "Could not find bss=%s from data model",
+-                        util::mac_to_string(bssid).c_str());
++                    /* lab only: a routing drop shown (the debug print's text, at INFO) */
++                    em_printfout("Could not find bss=%s from data model: msg 0x%04x from %s dropped (AP MLD)",
++                        util::mac_to_string(bssid).c_str(), htons(cmdu->type),
++                        util::mac_to_string(hdr->src).c_str());
+                     return NULL;
+                 }
+             }
