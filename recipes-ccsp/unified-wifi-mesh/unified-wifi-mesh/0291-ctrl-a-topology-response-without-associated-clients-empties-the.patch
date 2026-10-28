@@ -13,24 +13,28 @@ leaves as a Topology Notification's leave does (remove_sta_assoc, the notificati
 moved into a helper both use: an MLD's affiliated links marked unassociated, else the station's
 own row removed and kept as a disassociation row, then the association event with assoc_event 0).
 A BSS the response does not list keeps its stations; a malformed AP Operational BSS TLV changes
-nothing. Each such response that removed stations is logged with the agent's counts since start
-(removals and responses), so an agent that omits the TLV with clients associated, whose stations
-would then leave at each response and come back with its next notifications, shows as numbers.
-A response with the TLV is reconciled as before.
+nothing. Each such response that removed stations is logged with the agent's counts since start:
+its removals, and its responses without the TLV (every one, removals or not). An agent that omits
+the TLV with clients associated, whose stations would then leave at each response and come back
+with its next notifications, shows as removals in nearly every response. A response with the TLV
+is reconciled as before.
 
 The frame routing's drop of a frame for a BSS the sender's model lacks ("Could not find bss") was
 a debug line: a client's join or leave lost there left no trace. It is now logged per message type
 and sender, the first at once and then at most one line a minute with the count since: an ERROR
 for a Topology Notification (it carries a client's join or leave), INFO for the other types
-(metrics, capability and BTM reports, which drop while an agent onboards). At most 256 pairs are
-kept; pairs quiet for 10 minutes go first.
+(metrics, capability and BTM reports, which drop while an agent onboards). Only senders with a
+model reach the drop, for five message types, but the pairs kept are capped all the same at 256:
+pairs quiet for 10 minutes go first, and while none is, new pairs' drops are counted together
+under one overflow entry, logged as an ERROR at most once a minute.
 
 Tests: a_leave_without_an_mld_removes_the_live_owner (the shared leave path);
 operational_bssids_lists_every_bss_of_every_radio and operational_bssids_refuses_a_malformed_tlv
 (the TLV's walk, a radio with no BSS, a cut SSID, a trailing byte);
 listed_associations_takes_associated_stations_on_listed_bsss_only (an unlisted BSS keeps its
 station, an unassociated row is no leave); the_first_is_logged_then_one_line_a_minute_with_the_count
-and the_pairs_are_bounded_and_quiet_ones_go_first (the routing drop's line).
+and the_pairs_are_capped_and_the_rest_counted_together (the routing drop's line, the cap, the
+overflow entry and its count, quiet pairs going first).
 ---
 diff --git a/inc/em_configuration.h b/inc/em_configuration.h
 index 29ad2d11..75f3613d 100644
@@ -85,26 +89,31 @@ index 29ad2d11..75f3613d 100644
  	/* Parse a received AKM Suite Capabilities TLV and store the
  	 * advertised fronthaul/backhaul AKMs into every BSS of the data model. Wire format:
 diff --git a/inc/em_ctrl.h b/inc/em_ctrl.h
-index f689a18d..c5c1fbb3 100644
+index f689a18d..80e983c6 100644
 --- a/inc/em_ctrl.h
 +++ b/inc/em_ctrl.h
-@@ -67,6 +67,15 @@ class em_ctrl_t : public em_mgr_t {
+@@ -67,6 +67,20 @@ class em_ctrl_t : public em_mgr_t {
       * is rejoined without having to reboot: its model again if it was removed, then a targeted
       * AP-Autoconfiguration Renew per band of its radios, so its M1s rebuild them. */
  public:
 +    /* A routing drop's line, per message type and sender: the first logged at once, then at most
-+     * one a minute with the drops since the last line in *since (routing_drop_due). */
++     * one a minute with the drops since the last line in *since (routing_drop_due). Only senders
++     * with a model reach the drop, for five message types; the map is capped all the same: at
++     * routing_drop_pairs pairs, pairs quiet for 10 minutes go first, and while none is, new
++     * pairs' drops are counted together under routing_drop_overflow (*overflow set). */
 +    struct routing_drop_t {
 +        std::chrono::steady_clock::time_point logged;
 +        unsigned long dropped;
 +    };
++    static constexpr size_t routing_drop_pairs = 256;
++    static constexpr const char *routing_drop_overflow = "overflow";    /* no pair's key: "%04x@<mac>" */
 +    static bool routing_drop_due(std::map<std::string, routing_drop_t> &drops, const std::string &key,
-+            std::chrono::steady_clock::time_point now, unsigned long *since);
++            std::chrono::steady_clock::time_point now, unsigned long *since, bool *overflow);
 +
      struct retired_agent_t {
          std::chrono::steady_clock::time_point since;    /* its radios queued */
          bool removed = false;                           /* its model, device and rows gone */
-@@ -129,6 +138,12 @@ private:
+@@ -129,6 +143,12 @@ private:
          std::chrono::steady_clock::time_point unlinked;
      };
      std::vector<retired_model_t> m_retired_models;    /* the manager thread only */
@@ -118,21 +127,23 @@ index f689a18d..c5c1fbb3 100644
      void free_retired_models();
      void retire_silent_agents();
 diff --git a/src/ctrl/em_ctrl.cpp b/src/ctrl/em_ctrl.cpp
-index dd446b20..303e6842 100644
+index dd446b20..2bd1bcdf 100644
 --- a/src/ctrl/em_ctrl.cpp
 +++ b/src/ctrl/em_ctrl.cpp
-@@ -1931,6 +1931,57 @@ int em_ctrl_t::orch_init()
+@@ -1931,6 +1931,75 @@ int em_ctrl_t::orch_init()
      return 0;
  }
  
 +bool em_ctrl_t::routing_drop_due(std::map<std::string, routing_drop_t> &drops, const std::string &key,
-+        std::chrono::steady_clock::time_point now, unsigned long *since)
++        std::chrono::steady_clock::time_point now, unsigned long *since, bool *overflow)
 +{
 +    *since = 0;
++    *overflow = false;
 +    auto it = drops.find(key);
 +    if (it == drops.end()) {
-+        // bounded: pairs quiet for 10 minutes go first
-+        if (drops.size() >= 256) {
++        // bounded: pairs quiet for 10 minutes go first; while every kept pair is younger, a new
++        // pair's drops are counted together under the one overflow entry
++        if (drops.size() >= routing_drop_pairs) {
 +            for (auto old = drops.begin(); old != drops.end();) {
 +                if (now - old->second.logged > std::chrono::minutes(10)) {
 +                    old = drops.erase(old);
@@ -141,8 +152,16 @@ index dd446b20..303e6842 100644
 +                }
 +            }
 +        }
-+        drops[key] = {now, 0};
-+        return true;
++        if (drops.size() < routing_drop_pairs) {
++            drops[key] = {now, 0};
++            return true;
++        }
++        *overflow = true;
++        it = drops.find(routing_drop_overflow);
++        if (it == drops.end()) {
++            drops[routing_drop_overflow] = {now, 0};
++            return true;
++        }
 +    }
 +    if (now - it->second.logged < std::chrono::minutes(1)) {
 +        it->second.dropped++;
@@ -158,9 +177,17 @@ index dd446b20..303e6842 100644
 +    const std::string sender = util::mac_to_string(src);
 +    char key[32];
 +    unsigned long since = 0;
++    bool overflow = false;
 +
 +    snprintf(key, sizeof(key), "%04x@%s", msg_type, sender.c_str());
-+    if (!routing_drop_due(m_routing_drops, key, std::chrono::steady_clock::now(), &since)) {
++    if (!routing_drop_due(m_routing_drops, key, std::chrono::steady_clock::now(), &since, &overflow)) {
++        return;
++    }
++    if (overflow) {
++        // a Topology Notification may be among the drops counted together
++        util::em_util_print(EM_LOG_LVL_ERROR, EM_STDOUT, __FILENAME__, __LINE__,
++                "msg 0x%04x from %s dropped: bss %s is not in its model; drops of more than %zu message type and sender pairs counted together (%lu more since the last line)",
++                msg_type, sender.c_str(), util::mac_to_string(bssid).c_str(), routing_drop_pairs, since);
 +        return;
 +    }
 +    const easymesh_log_level_t level = (msg_type == em_msg_type_topo_notif) ?
@@ -179,7 +206,7 @@ index dd446b20..303e6842 100644
  em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_t *al_em)
  {
      em_raw_hdr_t *hdr;
-@@ -2153,8 +2204,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+@@ -2153,8 +2222,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
                  }
  
                  if (bss == NULL) {
@@ -189,7 +216,7 @@ index dd446b20..303e6842 100644
                      return NULL;
                  }
  
-@@ -2181,8 +2231,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
+@@ -2181,8 +2249,7 @@ em_t *em_ctrl_t::find_em_for_msg_type(unsigned char *data, unsigned int len, em_
                          return NULL;
                      }
                  } else {
@@ -200,7 +227,7 @@ index dd446b20..303e6842 100644
                  }
              }
 diff --git a/src/em/config/em_configuration.cpp b/src/em/config/em_configuration.cpp
-index ec68da0b..656b0061 100644
+index ec68da0b..2ffffb5d 100644
 --- a/src/em/config/em_configuration.cpp
 +++ b/src/em/config/em_configuration.cpp
 @@ -41,6 +41,7 @@
@@ -405,7 +432,7 @@ index ec68da0b..656b0061 100644
          if (tlv->type != em_tlv_type_associated_clients) {
              cursor += total_len;
              remaining -= total_len;
-@@ -2880,7 +2896,138 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
+@@ -2880,7 +2896,140 @@ int em_configuration_t::handle_topology_response_clients(unsigned char *buff,
          }
          return static_cast<int>(added + total_removed);
      }
@@ -475,8 +502,9 @@ index ec68da0b..656b0061 100644
 +/* A Topology Response without Associated Clients: each associated station on a BSS in bssids,
 + * in every model of the sender's agent, leaves through a Topology Notification's leave path (its
 + * rows out of the live and pending maps, then the association event with assoc_event 0). The
-+ * summary line counts the agent's removals since start, so an agent whose responses keep
-+ * removing stations (one omitting the TLV with clients associated) shows as numbers. */
++ * summary line counts the agent's removals and its responses without the TLV since start, so an
++ * agent whose responses keep removing stations (one omitting the TLV with clients associated)
++ * shows as numbers. */
 +unsigned int em_configuration_t::reconcile_listed_bss_without_clients(dm_easy_mesh_t *dm,
 +        const std::set<std::string> &bssids)
 +{
@@ -510,19 +538,8 @@ index ec68da0b..656b0061 100644
 +    }
 +    topology_lock.unlock();
 +
-+    if (leaves.empty()) {
-+        return 0;
-+    }
-+    for (const leave_t &leave : leaves) {
-+        em_bus_event_type_client_assoc_params_t raw = {};
-+        memcpy(raw.dev, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
-+        memcpy(raw.assoc.cli_mac_address, leave.sta.id, sizeof(mac_address_t));
-+        memcpy(raw.assoc.bssid, leave.sta.bssid, sizeof(bssid_t));
-+        raw.assoc.assoc_event = 0;
-+        get_mgr()->io_process(em_bus_event_type_sta_assoc, reinterpret_cast<unsigned char *> (&raw),
-+                              sizeof(em_bus_event_type_client_assoc_params_t));
-+    }
-+
++    /* every response reconciled here is counted, so a flap shows as removals in nearly every
++     * response; one that removed nothing logs nothing */
 +    struct counts_t {
 +        unsigned long removals;
 +        unsigned long responses;
@@ -539,17 +556,29 @@ index ec68da0b..656b0061 100644
 +        removals = counts.removals;
 +        responses = counts.responses;
 +    }
-+    em_printfout("Topology Response without Associated Clients from %s: removed %zu association(s) from %zu BSS(s); %lu removal(s) in %lu response(s) since start",
++    if (leaves.empty()) {
++        return 0;
++    }
++    for (const leave_t &leave : leaves) {
++        em_bus_event_type_client_assoc_params_t raw = {};
++        memcpy(raw.dev, dm->get_agent_al_interface_mac(), sizeof(mac_address_t));
++        memcpy(raw.assoc.cli_mac_address, leave.sta.id, sizeof(mac_address_t));
++        memcpy(raw.assoc.bssid, leave.sta.bssid, sizeof(bssid_t));
++        raw.assoc.assoc_event = 0;
++        get_mgr()->io_process(em_bus_event_type_sta_assoc, reinterpret_cast<unsigned char *> (&raw),
++                              sizeof(em_bus_event_type_client_assoc_params_t));
++    }
++    em_printfout("Topology Response without Associated Clients from %s: removed %zu association(s) from %zu BSS(s); %lu removal(s) in %lu response(s) without the TLV since start",
 +                 al.c_str(), leaves.size(), emptied.size(), removals, responses);
 +    return static_cast<unsigned int>(leaves.size());
  }
  
  int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned int len)
 diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
-index 8fce0119..67f1d90e 100644
+index 8fce0119..b915a802 100644
 --- a/tests/test_l1_em_ctrl.cpp
 +++ b/tests/test_l1_em_ctrl.cpp
-@@ -4658,3 +4658,52 @@ TEST(em_ctrl_t, station_rows_change_while_the_bus_and_the_listener_read)
+@@ -4658,3 +4658,84 @@ TEST(em_ctrl_t, station_rows_change_while_the_bus_and_the_listener_read)
      }
      __lsan_enable();
  }
@@ -563,44 +592,76 @@ index 8fce0119..67f1d90e 100644
 +    const auto t0 = std::chrono::steady_clock::now();
 +    const std::string notif = "0001@02:72:f9:7f:07:85";
 +    unsigned long since = 99;
++    bool overflow = true;
 +
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0, &since));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0, &since, &overflow));
 +    EXPECT_EQ(since, 0UL);
-+    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(10), &since));
-+    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(59), &since));
++    EXPECT_FALSE(overflow);
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(10), &since, &overflow));
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(59), &since, &overflow));
 +    // another message type, or another sender, is its own pair
 +    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "800c@02:72:f9:7f:07:85",
-+        t0 + std::chrono::seconds(20), &since));
++        t0 + std::chrono::seconds(20), &since, &overflow));
 +    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@02:c2:b8:31:3a:f8",
-+        t0 + std::chrono::seconds(20), &since));
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(61), &since));
++        t0 + std::chrono::seconds(20), &since, &overflow));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(61), &since, &overflow));
 +    EXPECT_EQ(since, 2UL);
-+    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(62), &since));
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(62), &since, &overflow));
 +    // after a quiet while, the next drop is logged at once with the one counted at 62 s
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(200), &since));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(200), &since, &overflow));
 +    EXPECT_EQ(since, 1UL);
 +    // and the next after another quiet while with none
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(300), &since));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, notif, t0 + std::chrono::seconds(300), &since, &overflow));
 +    EXPECT_EQ(since, 0UL);
++    EXPECT_FALSE(overflow);
 +}
 +
-+TEST(em_ctrl_routing_drop, the_pairs_are_bounded_and_quiet_ones_go_first)
++// The pairs kept are capped: quiet ones go first, and while every kept pair is younger than 10
++// minutes, new pairs' drops are counted together under the one overflow entry, logged at most
++// once a minute.
++TEST(em_ctrl_routing_drop, the_pairs_are_capped_and_the_rest_counted_together)
 +{
 +    std::map<std::string, em_ctrl_t::routing_drop_t> drops;
 +    const auto t0 = std::chrono::steady_clock::now();
++    const size_t cap = em_ctrl_t::routing_drop_pairs;
 +    unsigned long since = 0;
++    bool overflow = false;
 +
-+    for (unsigned int i = 0; i < 256; i++) {
-+        EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@sender-" + std::to_string(i), t0, &since));
++    for (size_t i = 0; i < cap; i++) {
++        EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@sender-" + std::to_string(i), t0,
++            &since, &overflow));
++        EXPECT_FALSE(overflow);
 +    }
-+    EXPECT_EQ(drops.size(), 256u);
-+    // within 10 minutes nothing goes
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@late", t0 + std::chrono::minutes(5), &since));
-+    EXPECT_EQ(drops.size(), 257u);
-+    // after them, the quiet pairs go and the late one stays
-+    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@later", t0 + std::chrono::minutes(11), &since));
-+    EXPECT_EQ(drops.size(), 2u);
-+    EXPECT_EQ(drops.count("0001@late"), 1u);
++    EXPECT_EQ(drops.size(), cap);
++    // full of young pairs: a new pair is the overflow entry's, its first drop logged at once
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@late", t0 + std::chrono::minutes(5),
++        &since, &overflow));
++    EXPECT_TRUE(overflow);
++    EXPECT_EQ(since, 0UL);
++    EXPECT_EQ(drops.count("0001@late"), 0u);
++    EXPECT_EQ(drops.size(), cap + 1);
++    // the next new pairs within its minute are counted, and the line after it carries the count
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, "0001@late-2",
++        t0 + std::chrono::minutes(5) + std::chrono::seconds(10), &since, &overflow));
++    EXPECT_FALSE(em_ctrl_t::routing_drop_due(drops, "800c@late-3",
++        t0 + std::chrono::minutes(5) + std::chrono::seconds(20), &since, &overflow));
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@late-4",
++        t0 + std::chrono::minutes(6) + std::chrono::seconds(1), &since, &overflow));
++    EXPECT_TRUE(overflow);
++    EXPECT_EQ(since, 2UL);
++    EXPECT_EQ(drops.size(), cap + 1);
++    // a kept pair is still its own
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@sender-0",
++        t0 + std::chrono::minutes(7), &since, &overflow));
++    EXPECT_FALSE(overflow);
++    // once pairs are quiet for 10 minutes they go, and a new pair is kept again
++    EXPECT_TRUE(em_ctrl_t::routing_drop_due(drops, "0001@later", t0 + std::chrono::minutes(11),
++        &since, &overflow));
++    EXPECT_FALSE(overflow);
++    EXPECT_EQ(drops.count("0001@later"), 1u);
++    EXPECT_EQ(drops.count("0001@sender-0"), 1u);
++    EXPECT_EQ(drops.count(em_ctrl_t::routing_drop_overflow), 1u);
++    EXPECT_EQ(drops.size(), 3u);
 +}
 diff --git a/tests/test_l1_em_orch_ctrl.cpp b/tests/test_l1_em_orch_ctrl.cpp
 index f7b3a604..6f515361 100644
