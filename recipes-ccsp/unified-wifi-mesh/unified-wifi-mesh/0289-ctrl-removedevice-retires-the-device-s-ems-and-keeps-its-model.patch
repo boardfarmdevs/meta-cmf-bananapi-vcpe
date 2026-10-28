@@ -259,10 +259,10 @@ index 1e653c1a..46775d3a 100644
              queue_push(pcmd->m_em_candidates, em);
              count++;
 diff --git a/tests/test_l1_em_ctrl.cpp b/tests/test_l1_em_ctrl.cpp
-index 061573a7..67d12671 100644
+index 061573a7..2e6873a1 100644
 --- a/tests/test_l1_em_ctrl.cpp
 +++ b/tests/test_l1_em_ctrl.cpp
-@@ -4373,3 +4373,78 @@ TEST_F(em_ctrl_t_Test, map_read_by_another_thread_while_nodes_come_and_go)
+@@ -4373,3 +4373,81 @@ TEST_F(em_ctrl_t_Test, map_read_by_another_thread_while_nodes_come_and_go)
      EXPECT_GT(reads.load(), 0UL);
      EXPECT_TRUE(ctrl.get_nodes().empty());
  }
@@ -287,6 +287,9 @@ index 061573a7..67d12671 100644
 +    em_ctrl_removal_t ctrl;
 +    ctrl.init("/tmp/test_config.db");
 +    ctrl.orch_init();
++    /* the model list made here: init stops before the data model when the command socket finds
++     * no certificates, as in the unit build */
++    ctrl.get_dm_ctrl()->test_data_model_list().init(&ctrl);
 +
 +    const char *net_id = "OneWifiMesh";
 +    const unsigned char ctrl_mac[6] = {0x02, 0x00, 0x00, 0x28, 0x09, 0x00};
