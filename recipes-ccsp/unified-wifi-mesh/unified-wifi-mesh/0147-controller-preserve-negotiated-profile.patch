@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Subject: [PATCH] controller: preserve negotiated peer profile
 
 AP-Autoconfiguration Search establishes the agent's EasyMesh profile. A

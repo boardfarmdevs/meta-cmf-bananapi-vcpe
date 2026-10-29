@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000125 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 27 Aug 2026 10:35:00 -0700
 Subject: [PATCH] steering: report BTM outcomes from synchronized agents
 
@@ -15,7 +15,7 @@ restore it after the matching ACK, rather than changing every reporting radio
 to configured.  Completion accepts either restored operational state.
 
 Upstream-Status: Pending
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  inc/em_steering.h                  | 3 +++
  src/em/em.cpp                      | 1 +

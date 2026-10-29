@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Mon, 31 Aug 2026 09:20:00 -0700
 Subject: [PATCH] wifi_em: clean partial AP metrics reports on bad radio IDs
 

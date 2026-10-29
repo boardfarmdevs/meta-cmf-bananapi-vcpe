@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000122 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 27 Aug 2026 07:15:00 -0700
 Subject: [PATCH] controller: reconcile authoritative client snapshots
 

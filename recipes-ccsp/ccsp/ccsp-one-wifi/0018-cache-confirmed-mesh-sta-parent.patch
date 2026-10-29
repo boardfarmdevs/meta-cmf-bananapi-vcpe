@@ -1,5 +1,5 @@
 From 85d7a819fe482f1e8222a7c5ab65d71ca098ea87 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sat, 22 Aug 2026 23:55:00 -0700
 Subject: [PATCH] mesh-ext: cache a confirmed parent while already connected
 

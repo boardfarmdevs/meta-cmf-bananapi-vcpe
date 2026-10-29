@@ -1,5 +1,5 @@
 From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Mon, 1 Sep 2026 08:30:00 -0700
 Subject: [PATCH] metrics: apply associated reports to exact BSS owner
 
@@ -23,7 +23,7 @@ regression which resolves the exact current owner but rejects the same STA
 reported under a stale BSSID.  Rejection leaves the current row's timestamp
 and RCPI unchanged.
 
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  inc/em_metrics.h              | 12 ++++++++++
  src/em/metrics/em_metrics.cpp | 26 +++++++++-------------

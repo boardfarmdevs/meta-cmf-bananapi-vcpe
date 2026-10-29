@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000124 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 27 Aug 2026 10:15:00 -0700
 Subject: [PATCH] association: reject metrics-only fronthaul owners
 

@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Subject: [PATCH] controller: preserve profile through asynchronous DM commit
 
 An AP-Autoconfiguration Search supplies the agent's negotiated EasyMesh

@@ -1,5 +1,5 @@
 From afa6617faa6aca48da00e9e25ff5f46911d2f0ca Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sat, 22 Aug 2026 19:30:00 -0700
 Subject: [PATCH] cli: stabilize layout and show client channel
 

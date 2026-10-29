@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Subject: [PATCH] controller: commit the validated topology response profile
 
 The current Topology Response handler robustly parses the Profile TLV, falls

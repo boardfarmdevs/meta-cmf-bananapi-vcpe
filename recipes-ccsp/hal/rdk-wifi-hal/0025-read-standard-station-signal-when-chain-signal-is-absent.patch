@@ -1,5 +1,5 @@
 From a1e9a93889f20416c18a55cd8187bf62f776e67f Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sun, 23 Aug 2026 00:02:00 -0700
 Subject: [PATCH] nl80211: fall back to the standard station signal attribute
 

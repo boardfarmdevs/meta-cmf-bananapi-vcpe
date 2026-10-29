@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Subject: [PATCH] verify native backhaul handovers with targeted topology refresh
 
 A successful native handover response arrives while the controller can still

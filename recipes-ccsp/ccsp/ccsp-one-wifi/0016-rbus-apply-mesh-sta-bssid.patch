@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000016 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sat, 22 Aug 2026 22:30:00 -0700
 Subject: [PATCH] rbus: apply mesh STA BSSID writes
 

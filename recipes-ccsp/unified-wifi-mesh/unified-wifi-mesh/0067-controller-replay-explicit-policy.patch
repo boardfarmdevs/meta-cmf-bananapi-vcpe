@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 20 Aug 2026 19:01:00 -0700
 Subject: [PATCH] controller: replay explicitly submitted policy
 
@@ -21,7 +21,7 @@ the atomic compound policy and repairs volatile agent state without changing
 the desired configuration.
 
 Upstream-Status: Pending
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/ctrl/dm_easy_mesh_ctrl.cpp | 57 +++++++++++++-----------------------------
  1 file changed, 15 insertions(+), 42 deletions(-)

@@ -1,5 +1,5 @@
 From 6c40191093637026078a8b8f7e65500ab29670bb Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sun, 30 Aug 2026 22:10:00 -0700
 Subject: [PATCH] controller: keep em-config stage clones lightweight
 

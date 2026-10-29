@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000123 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 27 Aug 2026 04:00:00 -0700
 Subject: [PATCH] controller: resolve steer candidate by source BSS
 
@@ -14,7 +14,7 @@ the STA-map lookup as the primary path and, when it misses, resolve the radio
 from the source BSS's RUID.  This makes steering tolerant of model refresh
 ordering without guessing an agent or accepting an unknown source BSS.
 
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/orch/em_orch_ctrl.cpp | 31 ++++++++++++++++++++++++++++++-
  1 file changed, 30 insertions(+), 1 deletion(-)

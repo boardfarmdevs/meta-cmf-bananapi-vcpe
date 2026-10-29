@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Thu, 20 Aug 2026 23:15:00 -0700
 Subject: [PATCH] cli: expose live fronthaul BSS inventory
 
@@ -17,7 +17,7 @@ Exclude backhaul/zero BSS entries and sort by BSSID for deterministic capture.
 No signal, candidate quality or synthetic metric is inferred.
 
 Upstream-Status: Pending
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/rdkb-cli/main.go | 98 ++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 98 insertions(+)

@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000087 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sat, 22 Aug 2026 23:15:00 -0700
 Subject: [PATCH] dm: replace stale BSSID for one logical VAP
 

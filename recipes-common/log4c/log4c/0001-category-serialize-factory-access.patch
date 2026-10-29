@@ -1,5 +1,5 @@
 From 3f0e052e3dd5cf55e42c39f988bbcc50a3a0f78a Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Wed, 19 Aug 2026 17:00:00 -0700
 Subject: [PATCH] category: serialize factory access
 
@@ -17,7 +17,7 @@ log4c_category_new(), which obtains the parent through log4c_category_get().
 
 Upstream-Status: Pending
 
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/log4c/category.c | 35 +++++++++++++++++++++++++++++++++--
  1 file changed, 33 insertions(+), 2 deletions(-)

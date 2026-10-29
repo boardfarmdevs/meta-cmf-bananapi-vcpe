@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Fri, 21 Aug 2026 18:10:00 -0700
 Subject: [PATCH] metrics: preserve associated report receipt time
 
@@ -13,7 +13,7 @@ client_metrics.last_updated.  Invalid or absent timestamps remain the Go zero
 time, so consumers can fail closed rather than infer freshness.
 
 Upstream-Status: Pending
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/em/metrics/em_metrics.cpp | 15 +++++++++++++++
  src/rdkb-cli/main.go          |  8 +++++++-

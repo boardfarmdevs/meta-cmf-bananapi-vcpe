@@ -1,5 +1,5 @@
 From 086ee2977bed6f6924e9161495b8b53b54ac3b14 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Sun, 23 Aug 2026 23:20:08 -0700
 Subject: [PATCH] cli: report extender signal freshness end to end
 

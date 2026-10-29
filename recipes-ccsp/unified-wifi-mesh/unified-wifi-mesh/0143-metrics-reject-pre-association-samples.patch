@@ -1,5 +1,5 @@
 From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Mon, 1 Sep 2026 02:15:00 -0700
 Subject: [PATCH] metrics: reject samples from a prior association epoch
 
@@ -20,7 +20,7 @@ Add a focused regression for a return to the same BSSID: the prior-epoch
 sample is ignored, a current-epoch sample is accepted, and a later stale
 copy cannot regress its RCPI or timestamp.
 
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  src/em/metrics/em_metrics.cpp | 22 ++++++++++++++++++-
  tests/test_l1_em_metrics.cpp  | 53 +++++++++++++++++++++++++++++++++++++++++++

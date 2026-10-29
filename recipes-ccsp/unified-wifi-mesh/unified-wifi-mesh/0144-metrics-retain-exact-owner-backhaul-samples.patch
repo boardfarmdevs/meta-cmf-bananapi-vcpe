@@ -1,5 +1,5 @@
 From 6ccdbfac6fb4613375357d2860d77d9d225b1784 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Tue, 1 Sep 2026 03:22:46 -0700
 Subject: [PATCH] metrics: retain exact-owner backhaul samples
 
@@ -17,7 +17,7 @@ accepted when the same exact owner is classified as backhaul.  Add a
 unit-test-only forwarding method so the 0143 handler regression is actually
 compilable without changing production visibility.
 
-Signed-off-by: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+Signed-off-by: Rob Vogelaar <revogelaar@gmail.com>
 ---
  inc/em_metrics.h              |  8 ++++++++
  src/em/metrics/em_metrics.cpp |  7 ++++++-

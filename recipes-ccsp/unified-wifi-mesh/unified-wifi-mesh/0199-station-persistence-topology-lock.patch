@@ -1,4 +1,4 @@
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Subject: [PATCH] serialize station persistence with native topology departures
 
 The native controller crashed writing address4 in update_list's memcpy after

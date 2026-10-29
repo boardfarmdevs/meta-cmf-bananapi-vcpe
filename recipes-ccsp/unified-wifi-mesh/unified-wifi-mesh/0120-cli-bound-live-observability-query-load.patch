@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000120 Mon Sep 17 00:00:00 2001
-From: Rob Vogelaar <rob.vogelaar@libertyglobal.com>
+From: Rob Vogelaar <revogelaar@gmail.com>
 Date: Wed, 26 Aug 2026 21:30:00 -0700
 Subject: [PATCH] cli: bound live observability query load
 
